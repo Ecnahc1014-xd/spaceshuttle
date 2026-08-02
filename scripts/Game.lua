@@ -9,13 +9,13 @@ local Game = {}
 local DW = 540
 local DH = 960
 
--- 砖块为正方形（基础尺寸，前期波次会缩小）
-local BASE_BRICK_SIZE = 14
+-- 砖块为正方形（小像素飞船）
+local BASE_BRICK_SIZE = 16
 
--- 根据波次获取砖块尺寸：小像素飞船敌人
+-- 根据波次获取砖块尺寸
 local function GetBrickSize(waveNum)
-    if waveNum <= 2 then return 10 end
-    if waveNum <= 4 then return 12 end
+    if waveNum <= 2 then return 14 end
+    if waveNum <= 4 then return 15 end
     return BASE_BRICK_SIZE
 end
 
@@ -43,6 +43,7 @@ local BALL_TYPES = {
         name = "巨型", r = 16, speed = 420, damage = 2,
         color = {200, 140, 255}, glow = {160, 80, 220},
         stroke = {120, 50, 180}, trail = {190, 130, 255},
+        pierce = true,  -- 贯穿伤害：不反弹，直接穿透砖块
     },
 }
 
@@ -177,7 +178,6 @@ local function GetVeggieSize(veggieKey, brickSize)
     local bs = brickSize or BASE_BRICK_SIZE
     return d.gridW * bs, d.gridH * bs
 end
-
 local function GetAvailableTypes(waveNum)
     local keys = {}
     local allKeys = { "tomato", "chili", "onion", "carrot", "corn", "eggplant" }
@@ -198,24 +198,29 @@ local function CreateEnemy(veggieKey, x, y, brickSize)
     end
     local bs = brickSize or BASE_BRICK_SIZE
     local bricks = {}
-    for _, b in ipairs(d.bricks) do
-        -- 数组格式: {col, row, r, g, b, dr, dg, db}
-        table.insert(bricks, {
-            col = b[1], row = b[2],
-            r = b[3], g = b[4], b = b[5],
-            dr = b[6], dg = b[7], db = b[8],
-            hp = 1, maxHp = 1,
-            alive = true, hitFlash = 0,
-        })
+    -- 解析紧凑字符串: "col,row,r,g,b;col,row,r,g,b;..."
+    for entry in (d.data .. ";"):gmatch("(.-);") do
+        local col, row, r, g, b = entry:match("(%d+),(%d+),(%d+),(%d+),(%d+)")
+        if col then
+            table.insert(bricks, {
+                col = tonumber(col), row = tonumber(row),
+                r = tonumber(r), g = tonumber(g), b = tonumber(b),
+                dr = math.floor(tonumber(r) * 0.55),
+                dg = math.floor(tonumber(g) * 0.55),
+                db = math.floor(tonumber(b) * 0.55),
+                hp = 1, maxHp = 1,
+                alive = true, hitFlash = 0,
+            })
+        end
     end
     return {
         veggieKey = veggieKey,
         brickSize = bs,
         x = x, y = y, baseX = x,
-        vx = (math.random() > 0.5 and 1 or -1) * (8 + math.random() * 12),
-        vy = 16 + wave * 2.5,
-        swayAmp = 12 + math.random() * 18,
-        swayFreq = 0.4 + math.random() * 0.3,
+        vx = (math.random() > 0.5 and 1 or -1) * (6 + math.random() * 8),
+        vy = 10 + wave * 1.8,
+        swayAmp = 10 + math.random() * 14,
+        swayFreq = 0.3 + math.random() * 0.25,
         phase = math.random() * 6.28,
         bricks = bricks, dead = false,
         frozen = 0,
@@ -257,7 +262,7 @@ local function SpawnWave()
         local y = -vh * 0.3 - (i - 1) * (vh * 0.18) - math.random(0, 8)
         local e = CreateEnemy(vk, x, y, bs)
         if e then
-            e.vy = (16 + wave * 2.5) * VeggieData[vk].speedMul
+            e.vy = (10 + wave * 1.8) * VeggieData[vk].speedMul
             table.insert(veggies, e)
         end
     end
@@ -470,6 +475,8 @@ function UpdateMarbles(dt)
 
             -- 砖块碰撞
             local hit = false
+            local hitBrickKeys = {}
+            local savedVx, savedVy = m.vx, m.vy
             for _, enemy in ipairs(veggies) do
                 if not enemy.dead then
                     local ebs = enemy.brickSize
@@ -477,14 +484,26 @@ function UpdateMarbles(dt)
                         if brick.alive then
                             local rx = enemy.x + (brick.col - 1) * ebs
                             local ry = enemy.y + (brick.row - 1) * ebs
-                            if CollideBrick(m, rx + 1, ry + 1, ebs - 2, ebs - 2) then
-                                DamageBrick(enemy, brick, def.damage or 1)
-                                -- 冰冻效果
-                                if def.freezeDuration then
-                                    enemy.frozen = def.freezeDuration
+                            local bkey = tostring(enemy) .. "_" .. brick.col .. "_" .. brick.row
+                            if not hitBrickKeys[bkey] then
+                                if CollideBrick(m, rx + 1, ry + 1, ebs - 2, ebs - 2) then
+                                    hitBrickKeys[bkey] = true
+                                    DamageBrick(enemy, brick, def.damage or 1)
+                                    if def.freezeDuration then
+                                        enemy.frozen = def.freezeDuration
+                                    end
+                                    if def.pierce then
+                                        -- 贯穿球：恢复速度，不反弹，继续穿透
+                                        m.vx = savedVx
+                                        m.vy = savedVy
+                                        -- 贯穿球每击中一块砖，位置稍微向前推进避免卡住
+                                        m.x = m.x + savedVx * sdt * 0.5
+                                        m.y = m.y + savedVy * sdt * 0.5
+                                    else
+                                        hit = true
+                                        break
+                                    end
                                 end
-                                hit = true
-                                break
                             end
                         end
                     end

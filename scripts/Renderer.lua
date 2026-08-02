@@ -133,8 +133,8 @@ end
 
 local function DrawEnemy(ctx, enemy, brickSize, elapsed)
     local frozen = enemy.frozen > 0
-    -- 所有蔬菜都是 14x14 网格
-    local gw, gh = 14, 14
+    -- 所有蔬菜都是 10x10 网格
+    local gw, gh = 10, 10
     local totalW = gw * brickSize
     local totalH = gh * brickSize
 
@@ -303,13 +303,13 @@ local function DrawMarble(ctx, m)
     nvgFillColor(ctx, nvgRGBA(255, 255, 255, 230))
     nvgFill(ctx)
 
-    -- 巨型球标记
+    -- 巨型球标记（贯穿）
     if m.ballType == "giant" then
         nvgFontFace(ctx, "zpix")
-        nvgFontSize(ctx, 14)
+        nvgFontSize(ctx, 13)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
-        nvgFillColor(ctx, nvgRGBA(255, 255, 255, 200))
-        nvgText(ctx, m.x, m.y + 1, "大", nil)
+        nvgFillColor(ctx, nvgRGBA(255, 255, 255, 220))
+        nvgText(ctx, m.x, m.y + 1, "贯", nil)
     -- 加速球标记
     elseif m.ballType == "speed" then
         nvgBeginPath(ctx)
@@ -530,7 +530,7 @@ local function DrawMenu(ctx, s)
         { "常规", "normal", "标准弹珠" },
         { "冰冻", "ice", "冰冻减速敌人" },
         { "加速", "speed", "碰撞后越弹越快" },
-        { "巨型", "giant", "双倍伤害大范围" },
+        { "巨型", "giant", "贯穿多块砖块" },
     }
     for i, d in ipairs(descs) do
         local y = descY + (i - 1) * 48
