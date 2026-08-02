@@ -9,8 +9,15 @@ local Game = {}
 local DW = 540
 local DH = 960
 
--- 砖块为正方形
-local BRICK_SIZE = 24
+-- 砖块为正方形（基础尺寸，前期波次会缩小）
+local BASE_BRICK_SIZE = 18
+
+-- 根据波次获取砖块尺寸：前期小像素敌人，后期逐渐变大
+local function GetBrickSize(waveNum)
+    if waveNum <= 1 then return 14 end
+    if waveNum <= 3 then return 16 end
+    return BASE_BRICK_SIZE
+end
 
 -- 弹珠类型定义
 local BALL_TYPES = {
@@ -44,11 +51,11 @@ local BALL_ORDER = { "normal", "ice", "speed", "giant" }
 
 -- 常量
 local SLING_X = 270
-local SLING_Y = 880
-local MAX_PULL = 110
-local DANGER_Y = 820
+local SLING_Y = 900       -- 弹弓在安全区底部
+local MAX_PULL = 150       -- 扩大拖拽操作区
+local DANGER_Y = 800       -- 警戒线（给玩家更大操作空间）
 local BASE_HP = 5
-local RELOAD_DELAY = 1.2  -- 所有球退场后重新装填的延迟
+local AIM_DETECT_RADIUS = 200  -- 开始瞄准的检测半径（扩大操作区）
 
 -- 游戏状态
 local state = "menu"  -- menu / playing / gameover
@@ -66,10 +73,10 @@ local marbles = {}
 local particles = {}
 local floatTexts = {}
 
--- 弹珠装填系统
+-- 弹珠装填系统：每颗球独立，消失后立刻补充
 local ballQueue = {}       -- 待发射的弹珠类型队列
 local activeBall = nil     -- 当前在弹弓上的弹珠
-local reloadTimer = 0      -- 重新装填计时
+local ballCycleIndex = 0   -- 球类型循环索引
 
 -- 弹弓瞄准
 local aiming = false
@@ -104,7 +111,7 @@ function Game.GetState()
         activeBall = activeBall, ballQueue = ballQueue,
         ballTypes = BALL_TYPES, ballOrder = BALL_ORDER,
         elapsed = elapsed, DW = DW, DH = DH,
-        BRICK_SIZE = BRICK_SIZE, DANGER_Y = DANGER_Y,
+        BASE_BRICK_SIZE = BASE_BRICK_SIZE, DANGER_Y = DANGER_Y,
     }
 end
 
@@ -119,13 +126,28 @@ local function CreateMarble(ballType)
     }
 end
 
+-- 获取循环中的下一个球类型
+local function NextBallType()
+    ballCycleIndex = ballCycleIndex + 1
+    if ballCycleIndex > #BALL_ORDER then ballCycleIndex = 1 end
+    return BALL_ORDER[ballCycleIndex]
+end
+
+-- 向队列补充一颗球（独立重生）
+local function EnqueueNextBall()
+    table.insert(ballQueue, NextBallType())
+end
+
 local function LoadBalls()
     ballQueue = {}
-    for _, bt in ipairs(BALL_ORDER) do
-        table.insert(ballQueue, bt)
+    ballCycleIndex = 0
+    for _ = 1, #BALL_ORDER do
+        EnqueueNextBall()
     end
     -- 第一颗放到弹弓上
     activeBall = CreateMarble(table.remove(ballQueue, 1))
+    -- 立刻补充一颗，保持队列满
+    EnqueueNextBall()
 end
 
 function ResetGame()
@@ -142,7 +164,6 @@ function ResetGame()
     aiming = false
     aimX = SLING_X
     aimY = SLING_Y
-    reloadTimer = 0
     waveCooldown = 0.5
     LoadBalls()
 end
@@ -151,9 +172,10 @@ end
 -- 敌人生成
 ----------------------------------------------------------------------
 
-local function GetVeggieSize(veggieKey)
+local function GetVeggieSize(veggieKey, brickSize)
     local d = VeggieData[veggieKey]
-    return d.gridW * BRICK_SIZE, d.gridH * BRICK_SIZE
+    local bs = brickSize or BASE_BRICK_SIZE
+    return d.gridW * bs, d.gridH * bs
 end
 
 local function GetAvailableTypes(waveNum)
@@ -168,12 +190,13 @@ local function GetAvailableTypes(waveNum)
     return keys
 end
 
-local function CreateEnemy(veggieKey, x, y)
+local function CreateEnemy(veggieKey, x, y, brickSize)
     local d = VeggieData[veggieKey]
     if not d then
         print("[Game] ERROR: no veggie data for " .. tostring(veggieKey))
         return nil
     end
+    local bs = brickSize or BASE_BRICK_SIZE
     local bricks = {}
     for _, b in ipairs(d.bricks) do
         -- 数组格式: {col, row, r, g, b, dr, dg, db}
@@ -187,6 +210,7 @@ local function CreateEnemy(veggieKey, x, y)
     end
     return {
         veggieKey = veggieKey,
+        brickSize = bs,
         x = x, y = y, baseX = x,
         vx = (math.random() > 0.5 and 1 or -1) * (15 + math.random() * 20),
         vy = 32 + wave * 4.5,
@@ -194,7 +218,7 @@ local function CreateEnemy(veggieKey, x, y)
         swayFreq = 0.6 + math.random() * 0.4,
         phase = math.random() * 6.28,
         bricks = bricks, dead = false,
-        frozen = 0,  -- 冰冻剩余时间
+        frozen = 0,
     }
 end
 
@@ -204,17 +228,38 @@ local function SpawnWave()
         print("[Game] WARNING: empty veggie pool")
         return
     end
-    local count = math.min(5, 2 + math.floor(wave / 2))
-    local margin = 30
+    -- 前期小像素敌人数量更多；后期大敌人数量适中
+    local count
+    if wave <= 1 then count = 5
+    elseif wave <= 3 then count = 4
+    else count = math.min(5, 3 + math.floor(wave / 3))
+    end
+    local bs = GetBrickSize(wave)
+    local margin = 20
 
+    -- 计算每个敌人宽度，避免重叠
+    local usedX = {}
     for i = 1, count do
         local vk = pool[math.random(#pool)]
-        local vw, vh = GetVeggieSize(vk)
-        local x = margin + math.random() * math.max(1, DW - vw - margin * 2)
-        local y = -vh * 0.5 - (i - 1) * (vh * 0.3) - math.random(0, 15)
-        local e = CreateEnemy(vk, x, y)
+        local vw, vh = GetVeggieSize(vk, bs)
+        -- 尝试找不重叠的 x 位置
+        local x, tries = margin, 0
+        repeat
+            x = margin + math.random() * math.max(1, DW - vw - margin * 2)
+            local overlap = false
+            for _, ux in ipairs(usedX) do
+                if math.abs(ux - (x + vw / 2)) < vw * 0.7 then overlap = true break end
+            end
+            tries = tries + 1
+            if not overlap or tries > 15 then break end
+        until false
+        table.insert(usedX, x + vw / 2)
+
+        -- 从顶部交错进入（缩小敌人后起始 y 更近）
+        local y = -vh * 0.4 - (i - 1) * (vh * 0.25) - math.random(0, 10)
+        local e = CreateEnemy(vk, x, y, bs)
         if e then
-            e.vy = (32 + wave * 4.5) * VeggieData[vk].speedMul
+            e.vy = (28 + wave * 4.0) * VeggieData[vk].speedMul
             table.insert(veggies, e)
         end
     end
@@ -288,8 +333,9 @@ local function DamageBrick(enemy, brick, damage)
     brick.hp = brick.hp - damage
     brick.hitFlash = 0.12
     local d = VeggieData[enemy.veggieKey]
-    local bx = enemy.x + (brick.col - 0.5) * BRICK_SIZE
-    local by = enemy.y + (brick.row - 0.5) * BRICK_SIZE
+    local bs = enemy.brickSize
+    local bx = enemy.x + (brick.col - 0.5) * bs
+    local by = enemy.y + (brick.row - 0.5) * bs
 
     if brick.hp <= 0 then
         brick.alive = false
@@ -428,11 +474,12 @@ function UpdateMarbles(dt)
             local hit = false
             for _, enemy in ipairs(veggies) do
                 if not enemy.dead then
+                    local ebs = enemy.brickSize
                     for _, brick in ipairs(enemy.bricks) do
                         if brick.alive then
-                            local rx = enemy.x + (brick.col - 1) * BRICK_SIZE
-                            local ry = enemy.y + (brick.row - 1) * BRICK_SIZE
-                            if CollideBrick(m, rx + 1, ry + 1, BRICK_SIZE - 2, BRICK_SIZE - 2) then
+                            local rx = enemy.x + (brick.col - 1) * ebs
+                            local ry = enemy.y + (brick.row - 1) * ebs
+                            if CollideBrick(m, rx + 1, ry + 1, ebs - 2, ebs - 2) then
                                 DamageBrick(enemy, brick, def.damage or 1)
                                 -- 冰冻效果
                                 if def.freezeDuration then
@@ -469,6 +516,8 @@ function UpdateMarbles(dt)
 
         if not m.alive then
             table.remove(marbles, i)
+            -- 弹珠消失后立刻独立重生：补充一颗到队列
+            EnqueueNextBall()
         end
     end
 end
@@ -477,8 +526,9 @@ function UpdateEnemies(dt)
     for i = #veggies, 1, -1 do
         local e = veggies[i]
         local d = VeggieData[e.veggieKey]
-        local vw = d.gridW * BRICK_SIZE
-        local vh = d.gridH * BRICK_SIZE
+        local bs = e.brickSize
+        local vw = d.gridW * bs
+        local vh = d.gridH * bs
 
         -- 冰冻减速
         local speedMul = 1.0
@@ -541,21 +591,9 @@ function UpdateEnemies(dt)
 end
 
 function UpdateReload(dt)
-    -- 没有弹弓上的球，也没有飞行中的球，且队列空 → 重新装填
-    if activeBall == nil and #marbles == 0 and #ballQueue == 0 then
-        reloadTimer = reloadTimer - dt
-        if reloadTimer <= 0 then
-            LoadBalls()
-            reloadTimer = RELOAD_DELAY
-        end
-    else
-        reloadTimer = RELOAD_DELAY
-    end
-
-    -- 发射后立即装填下一颗（如果有）
+    -- 发射后（activeBall 为 nil）立刻从队列取下一颗放到弹弓上
+    -- 每颗球独立重生：球退场时在 UpdateMarbles 中已调用 EnqueueNextBall 补充队列
     if activeBall == nil and #ballQueue > 0 then
-        -- 短暂延迟让玩家看到球飞出
-        -- 实际上立即装填，玩家可以快速连射
         QueueNextBall()
     end
 end
@@ -585,6 +623,9 @@ local function GetPullState(px, py)
         dy = dy / dist * MAX_PULL
         dist = MAX_PULL
     end
+    -- 限制弹珠不超出屏幕底部（安全边距）
+    local maxDownDy = DH - SLING_Y - 20
+    if dy > maxDownDy then dy = maxDownDy end
     return dx, dy, dist
 end
 
@@ -599,14 +640,13 @@ function Game.PointerDown(px, py)
     if state ~= "playing" then return end
     if activeBall == nil then return end
 
-    local dx = px - SLING_X
-    local dy = py - SLING_Y
-    if dx * dx + dy * dy < 140 * 140 then
-        aiming = true
-        local pdx, pdy = GetPullState(px, py)
-        aimX = SLING_X + pdx
-        aimY = SLING_Y + pdy
-    end
+    -- 扩大操作区：在安全区（警戒线以下）任意位置按下都可瞄准
+    if py < DANGER_Y then return end
+    -- 点击位置即作为初始拖拽点
+    aiming = true
+    local pdx, pdy = GetPullState(px, py)
+    aimX = SLING_X + pdx
+    aimY = SLING_Y + pdy
 end
 
 function Game.PointerMove(px, py)

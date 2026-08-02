@@ -321,7 +321,7 @@ end
 -- 瞄准轨迹
 ----------------------------------------------------------------------
 
-local function DrawAimTrajectory(ctx, sx, sy, mx, my, maxPull, ballTypes, activeType)
+local function DrawAimTrajectory(ctx, sx, sy, mx, my, maxPull, ballTypes, activeType, screenW, screenH)
     local def = ballTypes[activeType]
     if not def then return end
     local dx = mx - sx
@@ -344,9 +344,9 @@ local function DrawAimTrajectory(ctx, sx, sy, mx, my, maxPull, ballTypes, active
         px = px + (vx / len) * stepDist
         py = py + (vy / len) * stepDist
         if px - r < 0 then px = r; vx = math.abs(vx) end
-        if px + r > 540 then px = 540 - r; vx = -math.abs(vx) end
+        if px + r > screenW then px = screenW - r; vx = -math.abs(vx) end
         if py - r < 0 then py = r; vy = math.abs(vy) end
-        if py - r > 960 then break end
+        if py - r > screenH then break end
         local alpha = math.floor(180 * (1 - i / 50))
         local radius = 3 * (1 - i / 50) + 1.5
         nvgBeginPath(ctx)
@@ -576,7 +576,7 @@ function Renderer.Render(ctx, s)
     DrawDangerLine(ctx, s.DW, s.DANGER_Y, s.elapsed)
 
     for _, e in ipairs(s.veggies) do
-        DrawEnemy(ctx, e, s.BRICK_SIZE)
+        DrawEnemy(ctx, e, e.brickSize)
     end
 
     -- 橡皮筋
@@ -615,7 +615,7 @@ function Renderer.Render(ctx, s)
     if s.aiming and s.activeBall then
         DrawAimTrajectory(ctx, s.slingX, s.slingY,
             s.activeBall.x, s.activeBall.y,
-            s.maxPull, s.ballTypes, s.activeBall.ballType)
+            s.maxPull, s.ballTypes, s.activeBall.ballType, s.DW, s.DH)
     end
 
     DrawParticles(ctx, s.particles)
