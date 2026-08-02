@@ -19,13 +19,19 @@ local function GetBrickSize(waveNum)
     return BASE_BRICK_SIZE
 end
 
--- 难度曲线：根据波次返回参数
--- count: 敌人数量, speed: 基础下落速度, hp: 砖块血量
+-- 难度曲线：前期平缓引导，后期递增
+-- W1: 1个慢速敌人（练习瞄准）；之后逐步加数量/速度/血量
 local function GetWaveParams(waveNum)
-    local count = math.min(6, 3 + math.floor((waveNum - 1) / 2))
-    local speed = 26 + waveNum * 7
-    local hp = 1 + math.floor((waveNum - 1) / 4)
-    if hp > 3 then hp = 3 end
+    local count
+    if waveNum <= 1 then count = 1
+    elseif waveNum == 2 then count = 2
+    elseif waveNum <= 4 then count = 2 + math.floor((waveNum - 2) / 2)
+    else count = math.min(6, 3 + math.floor((waveNum - 4) / 2))
+    end
+    local speed = 22 + (waveNum - 1) * 6
+    local hp = 1
+    if waveNum >= 6 then hp = 2 end
+    if waveNum >= 10 then hp = 3 end
     return count, speed, hp
 end
 
@@ -191,12 +197,13 @@ end
 local function GetAvailableTypes(waveNum)
     local keys = {}
     local allKeys = { "tomato", "chili", "onion", "carrot", "corn", "eggplant" }
-    -- 逐波解锁：wave1→2种, wave2→3, wave4→4, wave6→5, wave8→全部
-    local maxIdx = 2
-    if waveNum >= 2 then maxIdx = 3 end
-    if waveNum >= 4 then maxIdx = 4 end
-    if waveNum >= 6 then maxIdx = 5 end
-    if waveNum >= 8 then maxIdx = 6 end
+    -- 逐波解锁：W1仅番茄（教学）, W2解锁辣椒, W3解锁洋葱, W5胡萝卜, W7玉米, W9茄子
+    local maxIdx = 1
+    if waveNum >= 2 then maxIdx = 2 end
+    if waveNum >= 3 then maxIdx = 3 end
+    if waveNum >= 5 then maxIdx = 4 end
+    if waveNum >= 7 then maxIdx = 5 end
+    if waveNum >= 9 then maxIdx = 6 end
     maxIdx = math.min(#allKeys, maxIdx)
     for i = 1, maxIdx do
         if VeggieData[allKeys[i]] then
