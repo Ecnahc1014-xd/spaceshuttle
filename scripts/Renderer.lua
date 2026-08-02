@@ -133,8 +133,8 @@ end
 
 local function DrawEnemy(ctx, enemy, brickSize, elapsed)
     local frozen = enemy.frozen > 0
-    -- 所有蔬菜都是 10x10 网格
-    local gw, gh = 10, 10
+    -- 所有蔬菜都是 7x7 网格
+    local gw, gh = 7, 7
     local totalW = gw * brickSize
     local totalH = gh * brickSize
 

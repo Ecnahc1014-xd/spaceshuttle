@@ -9,13 +9,13 @@ local Game = {}
 local DW = 540
 local DH = 960
 
--- 砖块为正方形（小像素飞船）
-local BASE_BRICK_SIZE = 16
+-- 砖块为正方形（7x7网格，单块更大更清晰）
+local BASE_BRICK_SIZE = 20
 
 -- 根据波次获取砖块尺寸
 local function GetBrickSize(waveNum)
-    if waveNum <= 2 then return 14 end
-    if waveNum <= 4 then return 15 end
+    if waveNum <= 2 then return 18 end
+    if waveNum <= 4 then return 19 end
     return BASE_BRICK_SIZE
 end
 
