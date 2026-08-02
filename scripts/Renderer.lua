@@ -131,8 +131,56 @@ local function DrawBrick(ctx, x, y, size, r, g, b, dr, dg, db, hitFlash, frozen)
     end
 end
 
-local function DrawEnemy(ctx, enemy, brickSize)
+local function DrawEnemy(ctx, enemy, brickSize, elapsed)
     local frozen = enemy.frozen > 0
+    -- 所有蔬菜都是 14x14 网格
+    local gw, gh = 14, 14
+    local totalW = gw * brickSize
+    local totalH = gh * brickSize
+
+    -- 飞船底座（蔬菜下方的几何船体）
+    local hullY = enemy.y + totalH
+    local hullH = brickSize * 0.8
+    local hullColor = frozen and {120, 180, 220} or {90, 90, 110}
+    local hullDark = frozen and {60, 120, 160} or {50, 50, 70}
+
+    -- 梯形船体
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, enemy.x + totalW * 0.15, hullY)
+    nvgLineTo(ctx, enemy.x + totalW * 0.85, hullY)
+    nvgLineTo(ctx, enemy.x + totalW * 0.65, hullY + hullH)
+    nvgLineTo(ctx, enemy.x + totalW * 0.35, hullY + hullH)
+    nvgClosePath(ctx)
+    nvgFillColor(ctx, nvgRGBA(hullColor[1], hullColor[2], hullColor[3], 255))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, enemy.x + totalW * 0.15, hullY)
+    nvgLineTo(ctx, enemy.x + totalW * 0.85, hullY)
+    nvgLineTo(ctx, enemy.x + totalW * 0.65, hullY + hullH)
+    nvgLineTo(ctx, enemy.x + totalW * 0.35, hullY + hullH)
+    nvgClosePath(ctx)
+    nvgStrokeColor(ctx, nvgRGBA(hullDark[1], hullDark[2], hullDark[3], 255))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+
+    -- 推进器火焰（左右两个）
+    if not frozen then
+        local flicker = 0.7 + 0.3 * math.sin(elapsed * 20 + enemy.phase)
+        local flameH = hullH * (1.0 + flicker * 0.6)
+        local fx1 = enemy.x + totalW * 0.3
+        local fx2 = enemy.x + totalW * 0.7
+        for _, fx in ipairs({fx1, fx2}) do
+            nvgBeginPath(ctx)
+            nvgMoveTo(ctx, fx - brickSize * 0.2, hullY + hullH)
+            nvgLineTo(ctx, fx + brickSize * 0.2, hullY + hullH)
+            nvgLineTo(ctx, fx, hullY + hullH + flameH)
+            nvgClosePath(ctx)
+            nvgFillColor(ctx, nvgRGBA(255, 160 + math.floor(60 * flicker), 40, 230))
+            nvgFill(ctx)
+        end
+    end
+
+    -- 蔬菜砖块
     for _, b in ipairs(enemy.bricks) do
         if b.alive then
             local bx = enemy.x + (b.col - 1) * brickSize
@@ -576,7 +624,7 @@ function Renderer.Render(ctx, s)
     DrawDangerLine(ctx, s.DW, s.DANGER_Y, s.elapsed)
 
     for _, e in ipairs(s.veggies) do
-        DrawEnemy(ctx, e, e.brickSize)
+        DrawEnemy(ctx, e, e.brickSize, s.elapsed)
     end
 
     -- 橡皮筋

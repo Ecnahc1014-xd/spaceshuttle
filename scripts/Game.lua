@@ -10,12 +10,12 @@ local DW = 540
 local DH = 960
 
 -- 砖块为正方形（基础尺寸，前期波次会缩小）
-local BASE_BRICK_SIZE = 18
+local BASE_BRICK_SIZE = 14
 
--- 根据波次获取砖块尺寸：前期小像素敌人，后期逐渐变大
+-- 根据波次获取砖块尺寸：小像素飞船敌人
 local function GetBrickSize(waveNum)
-    if waveNum <= 1 then return 14 end
-    if waveNum <= 3 then return 16 end
+    if waveNum <= 2 then return 10 end
+    if waveNum <= 4 then return 12 end
     return BASE_BRICK_SIZE
 end
 
@@ -51,11 +51,11 @@ local BALL_ORDER = { "normal", "ice", "speed", "giant" }
 
 -- 常量
 local SLING_X = 270
-local SLING_Y = 900       -- 弹弓在安全区底部
-local MAX_PULL = 150       -- 扩大拖拽操作区
-local DANGER_Y = 800       -- 警戒线（给玩家更大操作空间）
+local SLING_Y = 850       -- 弹弓位置
+local MAX_PULL = 150      -- 最大拖拽距离
+local DANGER_Y = 900      -- 警戒线（下移，给玩家更大操作空间）
 local BASE_HP = 5
-local AIM_DETECT_RADIUS = 200  -- 开始瞄准的检测半径（扩大操作区）
+local AIM_DETECT_RADIUS = 200
 
 -- 游戏状态
 local state = "menu"  -- menu / playing / gameover
@@ -204,7 +204,7 @@ local function CreateEnemy(veggieKey, x, y, brickSize)
             col = b[1], row = b[2],
             r = b[3], g = b[4], b = b[5],
             dr = b[6], dg = b[7], db = b[8],
-            hp = d.hp, maxHp = d.hp,
+            hp = 1, maxHp = 1,
             alive = true, hitFlash = 0,
         })
     end
@@ -212,10 +212,10 @@ local function CreateEnemy(veggieKey, x, y, brickSize)
         veggieKey = veggieKey,
         brickSize = bs,
         x = x, y = y, baseX = x,
-        vx = (math.random() > 0.5 and 1 or -1) * (15 + math.random() * 20),
-        vy = 32 + wave * 4.5,
-        swayAmp = 20 + math.random() * 30,
-        swayFreq = 0.6 + math.random() * 0.4,
+        vx = (math.random() > 0.5 and 1 or -1) * (8 + math.random() * 12),
+        vy = 16 + wave * 2.5,
+        swayAmp = 12 + math.random() * 18,
+        swayFreq = 0.4 + math.random() * 0.3,
         phase = math.random() * 6.28,
         bricks = bricks, dead = false,
         frozen = 0,
@@ -228,38 +228,36 @@ local function SpawnWave()
         print("[Game] WARNING: empty veggie pool")
         return
     end
-    -- 前期小像素敌人数量更多；后期大敌人数量适中
+    -- 小飞船敌人：数量更多
     local count
-    if wave <= 1 then count = 5
-    elseif wave <= 3 then count = 4
-    else count = math.min(5, 3 + math.floor(wave / 3))
+    if wave <= 1 then count = 6
+    elseif wave <= 3 then count = 5
+    else count = math.min(7, 4 + math.floor(wave / 3))
     end
     local bs = GetBrickSize(wave)
-    local margin = 20
+    local margin = 15
 
-    -- 计算每个敌人宽度，避免重叠
     local usedX = {}
     for i = 1, count do
         local vk = pool[math.random(#pool)]
         local vw, vh = GetVeggieSize(vk, bs)
-        -- 尝试找不重叠的 x 位置
         local x, tries = margin, 0
         repeat
             x = margin + math.random() * math.max(1, DW - vw - margin * 2)
             local overlap = false
             for _, ux in ipairs(usedX) do
-                if math.abs(ux - (x + vw / 2)) < vw * 0.7 then overlap = true break end
+                if math.abs(ux - (x + vw / 2)) < vw * 0.8 then overlap = true break end
             end
             tries = tries + 1
-            if not overlap or tries > 15 then break end
+            if not overlap or tries > 20 then break end
         until false
         table.insert(usedX, x + vw / 2)
 
-        -- 从顶部交错进入（缩小敌人后起始 y 更近）
-        local y = -vh * 0.4 - (i - 1) * (vh * 0.25) - math.random(0, 10)
+        -- 从顶部交错进入
+        local y = -vh * 0.3 - (i - 1) * (vh * 0.18) - math.random(0, 8)
         local e = CreateEnemy(vk, x, y, bs)
         if e then
-            e.vy = (28 + wave * 4.0) * VeggieData[vk].speedMul
+            e.vy = (16 + wave * 2.5) * VeggieData[vk].speedMul
             table.insert(veggies, e)
         end
     end
@@ -556,8 +554,9 @@ function UpdateEnemies(dt)
             end
         end
 
-        -- 越过警戒线
-        if e.y + vh > DANGER_Y then
+        -- 越过警戒线（蔬菜 + 飞船底座）
+        local hullH = bs * 0.8
+        if e.y + vh + hullH > DANGER_Y then
             e.dead = true
             baseHp = baseHp - 1
             screenShake = 0.4
@@ -640,9 +639,8 @@ function Game.PointerDown(px, py)
     if state ~= "playing" then return end
     if activeBall == nil then return end
 
-    -- 扩大操作区：在安全区（警戒线以下）任意位置按下都可瞄准
-    if py < DANGER_Y then return end
-    -- 点击位置即作为初始拖拽点
+    -- 安全区以下任意位置按下都可瞄准拖拽
+    if py < DANGER_Y - 100 then return end
     aiming = true
     local pdx, pdy = GetPullState(px, py)
     aimX = SLING_X + pdx
