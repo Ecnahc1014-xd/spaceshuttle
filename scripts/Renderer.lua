@@ -258,7 +258,7 @@ end
 -- 瞄准轨迹预测
 ----------------------------------------------------------------------
 
-local function DrawAimTrajectory(ctx, sx, sy, mx, my, maxPull, minSpeed, maxSpeed, gravity)
+local function DrawAimTrajectory(ctx, sx, sy, mx, my, maxPull, minSpeed, maxSpeed, screenW, screenH)
     local dx = mx - sx
     local dy = my - sy
     local dist = math.sqrt(dx * dx + dy * dy)
@@ -271,17 +271,38 @@ local function DrawAimTrajectory(ctx, sx, sy, mx, my, maxPull, minSpeed, maxSpee
     local vx = nx * speed
     local vy = ny * speed
 
-    -- 模拟抛物线画点
+    -- 模拟匀速直线运动 + 墙面反弹（左右+顶部），碰底部结束
     local px, py = mx, my
-    local dt = 0.025
-    nvgBeginPath(ctx)
-    for i = 1, 30 do
-        vy = vy + gravity * dt
-        px = px + vx * dt
-        py = py + vy * dt
-        if py > 960 then break end
-        local alpha = math.floor(200 * (1 - i / 30))
-        local radius = 3 * (1 - i / 30) + 1
+    local r = 9
+    local stepDist = 14
+    local maxSteps = 60
+    for i = 1, maxSteps do
+        -- 每步推进固定距离，检测墙面反弹
+        local len = math.sqrt(vx * vx + vy * vy)
+        if len < 0.001 then break end
+        local dirX = vx / len
+        local dirY = vy / len
+        px = px + dirX * stepDist
+        py = py + dirY * stepDist
+
+        -- 左右墙反弹
+        if px - r < 0 then
+            px = r
+            vx = math.abs(vx)
+        elseif px + r > screenW then
+            px = screenW - r
+            vx = -math.abs(vx)
+        end
+        -- 顶部反弹
+        if py - r < 0 then
+            py = r
+            vy = math.abs(vy)
+        end
+        -- 碰底部结束
+        if py - r > screenH then break end
+
+        local alpha = math.floor(200 * (1 - i / maxSteps))
+        local radius = 3 * (1 - i / maxSteps) + 1.5
         nvgBeginPath(ctx)
         nvgCircle(ctx, px, py, radius)
         nvgFillColor(ctx, nvgRGBA(255, 240, 150, alpha))
@@ -525,7 +546,7 @@ function Renderer.Render(ctx, s)
     if s.aiming and s.currentMarble then
         DrawAimTrajectory(ctx, s.slingX, s.slingY,
             s.currentMarble.x, s.currentMarble.y,
-            s.maxPull, 200, 820, 520)
+            s.maxPull, 320, 720, s.DW, s.DH)
     end
 
     -- 粒子

@@ -14,9 +14,9 @@ local BRICK_SIZE = 24
 
 -- 常量
 local MARBLE_RADIUS = 9
-local MAX_LAUNCH_SPEED = 820
-local MIN_LAUNCH_SPEED = 200
-local GRAVITY = 520              -- 弹珠受重力下落（反弹后会落回）
+local MAX_LAUNCH_SPEED = 720
+local MIN_LAUNCH_SPEED = 320
+local MARBLE_SPEED = 560         -- 弹珠匀速飞行速度
 local SLING_X = 270              -- 弹弓锚点 X（设计坐标）
 local SLING_Y = 880              -- 弹弓锚点 Y
 local MAX_PULL = 110             -- 最大拖拽距离
@@ -176,22 +176,27 @@ end
 
 local function SpawnWave()
     local pool = VeggieLoader.GetAvailableTypes(veggieData, wave)
+    if #pool == 0 then
+        print("[Game] WARNING: vegetable pool is empty, cannot spawn wave " .. wave)
+        return
+    end
     local count = math.min(5, 2 + math.floor(wave / 2))
     local margin = 30
-    local spacing = (DW - margin * 2) / count
 
     for i = 1, count do
         local vk = pool[math.random(#pool)]
         local vw, vh = GetVeggieSize(vk)
-        local x = margin + (i - 0.5) * spacing - vw / 2
-        x = math.max(margin, math.min(DW - margin - vw, x))
-        local y = -vh - (i - 1) * 20 - math.random(0, 40)
+        -- 水平随机分布
+        local x = margin + math.random() * math.max(1, DW - vw - margin * 2)
+        -- 从屏幕顶部外进入（部分可见），交错排列
+        local y = -vh * 0.5 - (i - 1) * (vh * 0.3) - math.random(0, 15)
         local e = CreateEnemy(vk, x, y)
-        e.vy = (14 + wave * 2.0) * veggieData[vk].speedMul
+        e.vy = (32 + wave * 4.5) * veggieData[vk].speedMul
         table.insert(veggies, e)
     end
 
     waveBannerTimer = 1.8
+    print("[Game] wave " .. wave .. " spawned " .. #veggies .. " enemies")
 end
 
 ----------------------------------------------------------------------
@@ -296,6 +301,7 @@ end
 
 local function LaunchMarble(dx, dy, power)
     if currentMarble == nil or not canAim then return end
+    -- 力度影响速度（在 MIN/MAX 之间），但发射后匀速飞行不受重力
     local speed = MIN_LAUNCH_SPEED + (MAX_LAUNCH_SPEED - MIN_LAUNCH_SPEED) * power
     -- dx,dy 是拖拽向量（向后拉），发射方向取反
     local len = math.sqrt(dx * dx + dy * dy)
@@ -304,6 +310,7 @@ local function LaunchMarble(dx, dy, power)
     local ny = -dy / len
     currentMarble.vx = nx * speed
     currentMarble.vy = ny * speed
+    currentMarble.speed = speed
     currentMarble.onSling = false
     table.insert(marbles, currentMarble)
     currentMarble = nil
@@ -346,12 +353,8 @@ function Game.Update(dt)
     UpdateMarbles(dt)
     UpdateEnemies(dt)
 
-    -- 检查波次清空（所有敌人被消灭且弹珠已回收）
-    local anyAlive = false
-    for _, e in ipairs(veggies) do
-        if not e.dead then anyAlive = true break end
-    end
-    if not anyAlive and canAim and state ~= "menu" and state ~= "gameover" then
+    -- 检查波次清空（本波敌人已全部生成且被消灭，且弹珠已回收）
+    if state ~= "menu" and state ~= "gameover" and canAim and #veggies == 0 then
         waveCooldown = waveCooldown - dt
         if waveCooldown <= 0 then
             wave = wave + 1
@@ -412,15 +415,14 @@ function UpdateMarbles(dt)
         table.insert(m.trail, 1, {x = m.x, y = m.y})
         if #m.trail > 10 then table.remove(m.trail) end
 
-        -- 子步进防穿透
-        local steps = 3
+        -- 子步进防穿透（匀速直线运动，无重力）
+        local steps = 4
         local sdt = dt / steps
         for _ = 1, steps do
-            m.vy = m.vy + GRAVITY * sdt
             m.x = m.x + m.vx * sdt
             m.y = m.y + m.vy * sdt
 
-            -- 墙壁反弹（左右+顶部）
+            -- 墙壁反弹（左右+顶部），碰底部不反弹直接退场
             if m.x - m.r < 0 then
                 m.x = m.r
                 m.vx = math.abs(m.vx)
@@ -452,7 +454,17 @@ function UpdateMarbles(dt)
                 end
             end
 
-            -- 掉出底部 = 回收
+            -- 反弹后归一化速度，保持匀速
+            if hit then
+                local spd = m.speed or MARBLE_SPEED
+                local vl = math.sqrt(m.vx * m.vx + m.vy * m.vy)
+                if vl > 0.001 then
+                    m.vx = m.vx / vl * spd
+                    m.vy = m.vy / vl * spd
+                end
+            end
+
+            -- 掉出底部 = 回收（不反弹）
             if m.y - m.r > DH then
                 m.dead = true
                 break
