@@ -19,6 +19,16 @@ local function GetBrickSize(waveNum)
     return BASE_BRICK_SIZE
 end
 
+-- 难度曲线：根据波次返回参数
+-- count: 敌人数量, speed: 基础下落速度, hp: 砖块血量
+local function GetWaveParams(waveNum)
+    local count = math.min(6, 3 + math.floor((waveNum - 1) / 2))
+    local speed = 26 + waveNum * 7
+    local hp = 1 + math.floor((waveNum - 1) / 4)
+    if hp > 3 then hp = 3 end
+    return count, speed, hp
+end
+
 -- 弹珠类型定义
 local BALL_TYPES = {
     normal = {
@@ -181,7 +191,13 @@ end
 local function GetAvailableTypes(waveNum)
     local keys = {}
     local allKeys = { "tomato", "chili", "onion", "carrot", "corn", "eggplant" }
-    local maxIdx = math.min(#allKeys, 2 + math.floor(waveNum / 1.5))
+    -- 逐波解锁：wave1→2种, wave2→3, wave4→4, wave6→5, wave8→全部
+    local maxIdx = 2
+    if waveNum >= 2 then maxIdx = 3 end
+    if waveNum >= 4 then maxIdx = 4 end
+    if waveNum >= 6 then maxIdx = 5 end
+    if waveNum >= 8 then maxIdx = 6 end
+    maxIdx = math.min(#allKeys, maxIdx)
     for i = 1, maxIdx do
         if VeggieData[allKeys[i]] then
             table.insert(keys, allKeys[i])
@@ -190,25 +206,27 @@ local function GetAvailableTypes(waveNum)
     return keys
 end
 
-local function CreateEnemy(veggieKey, x, y, brickSize)
+local function CreateEnemy(veggieKey, x, y, brickSize, brickHp, baseSpeed)
     local d = VeggieData[veggieKey]
     if not d then
         print("[Game] ERROR: no veggie data for " .. tostring(veggieKey))
         return nil
     end
     local bs = brickSize or BASE_BRICK_SIZE
+    local hp = brickHp or 1
     local bricks = {}
     -- 解析紧凑字符串: "col,row,r,g,b;col,row,r,g,b;..."
     for entry in (d.data .. ";"):gmatch("(.-);") do
         local col, row, r, g, b = entry:match("(%d+),(%d+),(%d+),(%d+),(%d+)")
         if col then
+            local rv, gv, bv = tonumber(r), tonumber(g), tonumber(b)
             table.insert(bricks, {
                 col = tonumber(col), row = tonumber(row),
-                r = tonumber(r), g = tonumber(g), b = tonumber(b),
-                dr = math.floor(tonumber(r) * 0.55),
-                dg = math.floor(tonumber(g) * 0.55),
-                db = math.floor(tonumber(b) * 0.55),
-                hp = 1, maxHp = 1,
+                r = rv, g = gv, b = bv,
+                dr = math.floor(rv * 0.55),
+                dg = math.floor(gv * 0.55),
+                db = math.floor(bv * 0.55),
+                hp = hp, maxHp = hp,
                 alive = true, hitFlash = 0,
             })
         end
@@ -218,7 +236,7 @@ local function CreateEnemy(veggieKey, x, y, brickSize)
         brickSize = bs,
         x = x, y = y, baseX = x,
         vx = (math.random() > 0.5 and 1 or -1) * (6 + math.random() * 8),
-        vy = 10 + wave * 1.8,
+        vy = (baseSpeed or 30) * d.speedMul,
         swayAmp = 10 + math.random() * 14,
         swayFreq = 0.3 + math.random() * 0.25,
         phase = math.random() * 6.28,
@@ -233,14 +251,9 @@ local function SpawnWave()
         print("[Game] WARNING: empty veggie pool")
         return
     end
-    -- 小飞船敌人：数量更多
-    local count
-    if wave <= 1 then count = 6
-    elseif wave <= 3 then count = 5
-    else count = math.min(7, 4 + math.floor(wave / 3))
-    end
+    local count, baseSpeed, brickHp = GetWaveParams(wave)
     local bs = GetBrickSize(wave)
-    local margin = 15
+    local margin = 20
 
     local usedX = {}
     for i = 1, count do
@@ -251,18 +264,17 @@ local function SpawnWave()
             x = margin + math.random() * math.max(1, DW - vw - margin * 2)
             local overlap = false
             for _, ux in ipairs(usedX) do
-                if math.abs(ux - (x + vw / 2)) < vw * 0.8 then overlap = true break end
+                if math.abs(ux - (x + vw / 2)) < vw * 0.9 then overlap = true break end
             end
             tries = tries + 1
-            if not overlap or tries > 20 then break end
+            if not overlap or tries > 25 then break end
         until false
         table.insert(usedX, x + vw / 2)
 
         -- 从顶部交错进入
-        local y = -vh * 0.3 - (i - 1) * (vh * 0.18) - math.random(0, 8)
-        local e = CreateEnemy(vk, x, y, bs)
+        local y = -vh * 0.3 - (i - 1) * (vh * 0.2) - math.random(0, 10)
+        local e = CreateEnemy(vk, x, y, bs, brickHp, baseSpeed)
         if e then
-            e.vy = (10 + wave * 1.8) * VeggieData[vk].speedMul
             table.insert(veggies, e)
         end
     end
