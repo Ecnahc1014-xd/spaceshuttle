@@ -326,29 +326,28 @@ local function DrawMarble(ctx, marble, visualCatalog, trail)
         nvgFillColor(ctx, nvgRGBA(255, 255, 200, 220))
         nvgFill(ctx)
 
-        local charge = marble.overloadCharge or 0
-        for i = 1, 4 do
-            local angle = (i - 1) * math.pi * 0.5 - math.pi * 0.5
-            nvgBeginPath(ctx)
-            nvgCircle(ctx, marble.x + math.cos(angle) * (r + 4),
-                marble.y + math.sin(angle) * (r + 4), 1.5)
-            if i <= charge then
-                nvgFillColor(ctx, nvgRGBA(255, 230, 100, 240))
-            else
-                nvgFillColor(ctx, nvgRGBA(120, 70, 40, 120))
-            end
-            nvgFill(ctx)
-        end
+        local speedRatio = math.min(1,
+            math.max(0, (marble.speed - 680) / (1250 - 680)))
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, marble.x, marble.y, r + 3 + speedRatio * 4)
+        nvgStrokeColor(ctx, nvgRGBA(255, 180, 60,
+            math.floor(100 + 155 * speedRatio)))
+        nvgStrokeWidth(ctx, 1.5 + speedRatio * 2)
+        nvgStroke(ctx)
     elseif marble.ballType == "ice" then
         nvgBeginPath(ctx)
         nvgRect(ctx, marble.x - 1, marble.y - 5, 2, 10)
         nvgRect(ctx, marble.x - 5, marble.y - 1, 10, 2)
         nvgFillColor(ctx, nvgRGBA(255, 255, 255, 200))
         nvgFill(ctx)
-    elseif marble.ballType == "normal" and not marble.isEcho then
+    elseif marble.ballType == "normal" then
         nvgBeginPath(ctx)
         nvgCircle(ctx, marble.x, marble.y, 2.2)
-        nvgFillColor(ctx, nvgRGBA(255, 210, 80, 230))
+        if marble.generation > 0 then
+            nvgFillColor(ctx, nvgRGBA(255, 170, 70, 240))
+        else
+            nvgFillColor(ctx, nvgRGBA(255, 210, 80, 230))
+        end
         nvgFill(ctx)
     end
 end
@@ -525,10 +524,10 @@ local function DrawMenu(ctx, s, visualCatalog)
     -- 四种球说明
     local descY = s.height * 0.40
     local descs = {
-        { "常规", "normal", "首撞分裂双回响" },
+        { "常规", "normal", "命中有5%概率递归分裂" },
         { "冰冻", "ice", "冰冻减速敌人" },
-        { "加速", "speed", "四连撞触发超载电弧" },
-        { "巨型", "giant", "先反震再贯穿" },
+        { "加速", "speed", "反弹加速并追击增伤" },
+        { "巨型", "giant", "反弹后触发7格圆域贯穿" },
     }
     for i, d in ipairs(descs) do
         local y = descY + (i - 1) * 48

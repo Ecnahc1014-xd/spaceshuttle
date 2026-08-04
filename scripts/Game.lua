@@ -17,12 +17,12 @@ local BASE_HP = 5
 local BALL_TYPES = {
     normal = {
         radius = 9, speed = 560, damage = 1,
-        echoAngle = 18, echoLifetime = 1.2, echoHits = 1,
+        splitChance = 0.05, splitAngle = 18,
     },
     speed = {
         radius = 8, speed = 680, damage = 1,
-        speedBoost = 1.08, maxSpeed = 1100,
-        overloadHits = 4, chainTargets = 2, chainRadius = 85,
+        speedBoost = 1.15, maxSpeed = 1250,
+        damageStep = 190, maxDamage = 3,
     },
     ice = {
         radius = 9, speed = 520, damage = 1,
@@ -31,6 +31,7 @@ local BALL_TYPES = {
     giant = {
         radius = 16, speed = 420, damage = 2,
         pierceAfterBounce = true,
+        areaRadiusCells = 3.5,
     },
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
@@ -116,11 +117,9 @@ local function CreateMarble(ballType)
         onSling = true,
         alive = true,
         bounceCount = 0,
-        echoTriggered = false,
-        isEcho = false,
-        echoLife = 0,
-        echoHitsRemaining = 0,
-        overloadCharge = 0,
+        isPrimary = true,
+        generation = 0,
+        ignoredBrick = nil,
         giantPiercing = false,
     }
     nextMarbleId = nextMarbleId + 1
@@ -215,7 +214,7 @@ local function CreateEnemy(veggieKey, x, y, brickSize, brickHp, baseSpeed)
         gridH = data.gridH,
         brickSize = brickSize,
         x = x, y = y, baseX = x,
-        vy = baseSpeed * data.speedMul,
+        vy = baseSpeed * data.speedMul * 0.25,
         swayAmp = 10 + Random() * 14,
         swayFreq = 0.3 + Random() * 0.25,
         phase = Random() * math.pi * 2,
@@ -342,44 +341,45 @@ local function RotateVelocity(vx, vy, degrees)
     return vx * c - vy * s, vx * s + vy * c
 end
 
-local function CreateEchoMarble(source, angle, originBrick)
-    local def = BALL_TYPES.normal
+local function CreateSplitMarble(source, angle, originBrick)
     local vx, vy = RotateVelocity(source.vx, source.vy, angle)
     local marble = {
         id = nextMarbleId,
         x = source.x, y = source.y,
         vx = vx, vy = vy,
-        radius = math.max(5, source.radius * 0.72),
+        radius = source.radius,
         speed = source.speed,
         ballType = "normal",
         onSling = false,
         alive = true,
-        bounceCount = 0,
-        echoTriggered = true,
-        isEcho = true,
-        echoLife = def.echoLifetime,
-        echoHitsRemaining = def.echoHits,
-        overloadCharge = 0,
-        giantPiercing = false,
+        bounceCount = source.bounceCount,
+        isPrimary = false,
+        generation = source.generation + 1,
         ignoredBrick = originBrick,
+        giantPiercing = false,
     }
     nextMarbleId = nextMarbleId + 1
     return marble
 end
 
-local function TriggerNormalEcho(marble, originBrick, pendingMarbles)
+local function TrySplitNormal(marble, originBrick, pendingMarbles)
     local def = BALL_TYPES.normal
-    if marble.echoTriggered or marble.isEcho then return end
-    marble.echoTriggered = true
-    table.insert(pendingMarbles, CreateEchoMarble(marble, -def.echoAngle, originBrick))
-    table.insert(pendingMarbles, CreateEchoMarble(marble, def.echoAngle, originBrick))
-    Emit("normal_echo", {x = marble.x, y = marble.y})
-    print("[Game] normal marble triggered double echo")
+    if Random() >= def.splitChance then return end
+
+    table.insert(pendingMarbles,
+        CreateSplitMarble(marble, -def.splitAngle, originBrick))
+    table.insert(pendingMarbles,
+        CreateSplitMarble(marble, def.splitAngle, originBrick))
+    Emit("normal_split", {
+        x = marble.x, y = marble.y,
+        generation = marble.generation + 1,
+    })
+    print("[Game] normal marble split, generation=" .. (marble.generation + 1))
 end
 
-local function CollectChainTargets(originEnemy, originBrick, originX, originY, def)
-    local candidates = {}
-    local radiusSq = def.chainRadius * def.chainRadius
+local function FindNearestBrick(originEnemy, originBrick, originX, originY)
+    local nearest = nil
+    local nearestDistanceSq = math.huge
     for _, enemy in ipairs(veggies) do
         if not enemy.dead then
             for _, brick in ipairs(enemy.bricks) do
@@ -389,41 +389,101 @@ local function CollectChainTargets(originEnemy, originBrick, originX, originY, d
                     local dx = x - originX
                     local dy = y - originY
                     local distanceSq = dx * dx + dy * dy
-                    if distanceSq <= radiusSq then
-                        table.insert(candidates, {
-                            enemy = enemy, brick = brick,
-                            x = x, y = y, distanceSq = distanceSq,
-                        })
+                    if distanceSq < nearestDistanceSq then
+                        nearestDistanceSq = distanceSq
+                        nearest = {x = x, y = y}
                     end
                 end
             end
         end
     end
-    table.sort(candidates, function(a, b) return a.distanceSq < b.distanceSq end)
-    return candidates
+    return nearest
 end
 
-local function TriggerSpeedOverload(marble, originEnemy, originBrick, frameHitBricks)
+local function BoostSpeedMarble(marble)
     local def = BALL_TYPES.speed
-    marble.overloadCharge = marble.overloadCharge + 1
-    if marble.overloadCharge < def.overloadHits then return end
-    marble.overloadCharge = 0
+    if marble.ballType ~= "speed" then return end
 
-    local originX = originEnemy.x + (originBrick.col - 0.5) * originEnemy.brickSize
-    local originY = originEnemy.y + (originBrick.row - 0.5) * originEnemy.brickSize
-    local candidates = CollectChainTargets(originEnemy, originBrick, originX, originY, def)
-    local targets = {}
-    local hitCount = math.min(def.chainTargets, #candidates)
-    for i = 1, hitCount do
-        local target = candidates[i]
-        frameHitBricks[target.brick] = true
-        DamageBrick(target.enemy, target.brick, 1)
-        table.insert(targets, {x = target.x, y = target.y})
+    marble.speed = math.min(def.maxSpeed, marble.speed * def.speedBoost)
+    local velocityLength = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
+    if velocityLength > 0.001 then
+        marble.vx = marble.vx / velocityLength * marble.speed
+        marble.vy = marble.vy / velocityLength * marble.speed
     end
-    if hitCount > 0 then
-        Emit("speed_overload", {x = originX, y = originY, targets = targets})
-        print("[Game] speed marble overload chained " .. hitCount .. " bricks")
+end
+
+local function GetMarbleDamage(marble, def)
+    if marble.ballType ~= "speed" then return def.damage end
+    local bonus = math.floor(math.max(0, marble.speed - def.speed) / def.damageStep)
+    return math.min(def.maxDamage, def.damage + bonus)
+end
+
+local function RedirectSpeedMarble(marble, originEnemy, originBrick)
+    local target = FindNearestBrick(originEnemy, originBrick, marble.x, marble.y)
+    if not target then return end
+
+    local dx = target.x - marble.x
+    local dy = target.y - marble.y
+    local distance = math.sqrt(dx * dx + dy * dy)
+    if distance < 0.001 then return end
+
+    marble.vx = dx / distance * marble.speed
+    marble.vy = dy / distance * marble.speed
+    Emit("speed_dash", {
+        x = marble.x, y = marble.y,
+        targetX = target.x, targetY = target.y,
+        damage = GetMarbleDamage(marble, BALL_TYPES.speed),
+    })
+end
+
+local function ArmGiantPiercing(marble)
+    local def = BALL_TYPES.giant
+    if marble.ballType ~= "giant" or not def.pierceAfterBounce or marble.giantPiercing then
+        return
     end
+    marble.giantPiercing = true
+    Emit("giant_pierce_armed", {x = marble.x, y = marble.y})
+    print("[Game] giant marble rebound armed circular piercing")
+end
+
+-- 巨型弹贯穿伤害区：以命中砖块中心为圆心，直径 7 个敌方单元格。
+--
+--          o o o
+--        o o o o o
+--      o o o X o o o    X = 命中格
+--        o o o o o       半径 = 3.5 × 命中敌人的单格尺寸
+--          o o o
+--
+-- 圆形边缘按砖块中心判断；跨敌人但仍在圆内的单元格也会受到伤害。
+local function DamageGiantArea(originEnemy, originBrick, damage, frameHitBricks)
+    local centerX = originEnemy.x + (originBrick.col - 0.5) * originEnemy.brickSize
+    local centerY = originEnemy.y + (originBrick.row - 0.5) * originEnemy.brickSize
+    local radius = originEnemy.brickSize * BALL_TYPES.giant.areaRadiusCells
+    local radiusSq = radius * radius
+    local hitCount = 0
+
+    for _, enemy in ipairs(veggies) do
+        if not enemy.dead then
+            for _, brick in ipairs(enemy.bricks) do
+                if brick.alive and not frameHitBricks[brick] then
+                    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
+                    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
+                    local dx = x - centerX
+                    local dy = y - centerY
+                    if dx * dx + dy * dy <= radiusSq then
+                        frameHitBricks[brick] = true
+                        DamageBrick(enemy, brick, damage)
+                        hitCount = hitCount + 1
+                    end
+                end
+            end
+        end
+    end
+
+    Emit("giant_area_hit", {
+        x = centerX, y = centerY,
+        radius = radius, hitCount = hitCount,
+    })
 end
 
 local function LaunchMarble(dx, dy, power)
@@ -467,11 +527,6 @@ UpdateMarbles = function(dt)
         local subDt = dt / steps
         local frameHitBricks = {}
 
-        if marble.isEcho then
-            marble.echoLife = marble.echoLife - dt
-            if marble.echoLife <= 0 then marble.alive = false end
-        end
-
         for _ = 1, steps do
             if not marble.alive then break end
 
@@ -482,15 +537,21 @@ UpdateMarbles = function(dt)
                 marble.x = marble.radius
                 marble.vx = math.abs(marble.vx)
                 marble.bounceCount = marble.bounceCount + 1
+                BoostSpeedMarble(marble)
+                ArmGiantPiercing(marble)
             elseif marble.x + marble.radius > DW then
                 marble.x = DW - marble.radius
                 marble.vx = -math.abs(marble.vx)
                 marble.bounceCount = marble.bounceCount + 1
+                BoostSpeedMarble(marble)
+                ArmGiantPiercing(marble)
             end
             if marble.y - marble.radius < 0 then
                 marble.y = marble.radius
                 marble.vy = math.abs(marble.vy)
                 marble.bounceCount = marble.bounceCount + 1
+                BoostSpeedMarble(marble)
+                ArmGiantPiercing(marble)
             end
 
             local hit = false
@@ -522,25 +583,26 @@ UpdateMarbles = function(dt)
                             end
 
                             if collided then
-                                frameHitBricks[brick] = true
-                                DamageBrick(enemy, brick, def.damage)
+                                if marble.ballType == "speed" then
+                                    BoostSpeedMarble(marble)
+                                end
+
+                                if marble.giantPiercing then
+                                    DamageGiantArea(enemy, brick,
+                                        GetMarbleDamage(marble, def), frameHitBricks)
+                                else
+                                    frameHitBricks[brick] = true
+                                    DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
+                                end
                                 if def.freezeDuration then enemy.frozen = def.freezeDuration end
 
                                 if marble.ballType == "normal" then
-                                    if marble.isEcho then
-                                        marble.echoHitsRemaining = marble.echoHitsRemaining - 1
-                                        if marble.echoHitsRemaining <= 0 then marble.alive = false end
-                                    else
-                                        TriggerNormalEcho(marble, brick, pendingMarbles)
-                                    end
+                                    TrySplitNormal(marble, brick, pendingMarbles)
                                 elseif marble.ballType == "speed" then
-                                    TriggerSpeedOverload(marble, enemy, brick, frameHitBricks)
-                                elseif def.pierceAfterBounce and not marble.giantPiercing then
-                                    -- 首次命中已经完成伤害与物理反弹；结束本子步，下一次命中才走贯穿分支。
-                                    marble.giantPiercing = true
+                                    RedirectSpeedMarble(marble, enemy, brick)
+                                elseif marble.ballType == "giant" and not marble.giantPiercing then
                                     hit = true
-                                    Emit("giant_pierce_armed", {x = marble.x, y = marble.y})
-                                    print("[Game] giant marble bounced, piercing activated")
+                                    ArmGiantPiercing(marble)
                                 end
 
                                 if not marble.giantPiercing then hit = true end
@@ -552,17 +614,6 @@ UpdateMarbles = function(dt)
                 end
             end
 
-            if hit and def.speedBoost then
-                marble.bounceCount = marble.bounceCount + 1
-                local newSpeed = math.min(def.maxSpeed, marble.speed * def.speedBoost)
-                marble.speed = newSpeed
-                local velocityLength = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
-                if velocityLength > 0.001 then
-                    marble.vx = marble.vx / velocityLength * newSpeed
-                    marble.vy = marble.vy / velocityLength * newSpeed
-                end
-            end
-
             if marble.y - marble.radius > DH then
                 marble.alive = false
                 break
@@ -571,14 +622,17 @@ UpdateMarbles = function(dt)
 
         if not marble.alive then
             table.remove(marbles, i)
-            if not marble.isEcho then EnqueueNextBall() end
+            if marble.isPrimary then EnqueueNextBall() end
             Emit("marble_removed", {id = marble.id})
         end
     end
 
     for _, marble in ipairs(pendingMarbles) do
         table.insert(marbles, marble)
-        Emit("marble_echo_spawned", {id = marble.id})
+        Emit("marble_split_spawned", {
+            id = marble.id,
+            generation = marble.generation,
+        })
     end
 end
 

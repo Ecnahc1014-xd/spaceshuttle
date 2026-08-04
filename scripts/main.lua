@@ -3,7 +3,7 @@
 
 local Game = require "Game"
 local Presentation = require "Presentation"
-local RenderBackend = require "NanoVGBackend"
+local RenderBackend = require "Scene3DBackend"
 
 local gameSnapshot = nil
 local presentationSnapshot = nil
