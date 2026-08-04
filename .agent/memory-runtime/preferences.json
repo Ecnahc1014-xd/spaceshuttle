@@ -1,0 +1,23 @@
+{
+  "_comment": "跨项目用户偏好，POST-3 同步时自动更新",
+  "_last_sync": "2026-08-04",
+  "_source_project": "燃烧的蔬菜",
+  "wake_word": null,
+  "persona_type": null,
+  "communication_style": "简体中文",
+  "code_preferences": {
+    "gamedev_architecture": "渲染与权威玩法逻辑分离"
+  },
+  "workflow_preferences": {
+    "gamedev": "大规模 3D 开发前先建立可替换渲染边界"
+  },
+  "explicit_preferences": [],
+  "implicit_preferences": [
+    "重视可维护性和后续 3D 迁移成本"
+  ],
+  "scoped_preferences": {
+    "gamedev": {
+      "separate_rendering_and_gameplay": true
+    }
+  }
+}

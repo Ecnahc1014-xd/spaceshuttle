@@ -131,12 +131,11 @@ local function DrawBrick(ctx, x, y, size, r, g, b, dr, dg, db, hitFlash, frozen)
     end
 end
 
-local function DrawEnemy(ctx, enemy, brickSize, elapsed)
+local function DrawEnemy(ctx, enemy, elapsed, visualCatalog, hitFlashes)
     local frozen = enemy.frozen > 0
-    -- 所有蔬菜都是 7x7 网格
-    local gw, gh = 7, 7
-    local totalW = gw * brickSize
-    local totalH = gh * brickSize
+    local totalW = enemy.gridW * enemy.brickSize
+    local totalH = enemy.gridH * enemy.brickSize
+    local brickSize = enemy.brickSize
 
     -- 飞船底座（蔬菜下方的几何船体）
     local hullY = enemy.y + totalH
@@ -183,10 +182,15 @@ local function DrawEnemy(ctx, enemy, brickSize, elapsed)
     -- 蔬菜砖块
     for _, b in ipairs(enemy.bricks) do
         if b.alive then
-            local bx = enemy.x + (b.col - 1) * brickSize
-            local by = enemy.y + (b.row - 1) * brickSize
-            DrawBrick(ctx, bx, by, brickSize,
-                b.r, b.g, b.b, b.dr, b.dg, b.db, b.hitFlash, frozen)
+            local style = visualCatalog.GetBrickStyle(enemy.veggieKey, b.col, b.row)
+            if style then
+                local bx = enemy.x + (b.col - 1) * brickSize
+                local by = enemy.y + (b.row - 1) * brickSize
+                local flashKey = enemy.id .. ":" .. b.col .. ":" .. b.row
+                DrawBrick(ctx, bx, by, brickSize,
+                    style.r, style.g, style.b, style.dr, style.dg, style.db,
+                    hitFlashes[flashKey] or 0, frozen)
+            end
         end
     end
 end
@@ -262,72 +266,89 @@ end
 -- 弹珠
 ----------------------------------------------------------------------
 
-local function DrawMarble(ctx, m)
-    local def = ctx.__ballTypes[m.ballType]
-    local r = m.r
+local function DrawMarble(ctx, marble, visualCatalog, trail)
+    local def = visualCatalog.GetBallStyle(marble.ballType)
+    if not def then return end
+    local r = marble.radius
 
-    -- 拖尾
-    for i, p in ipairs(m.trail) do
-        local t = 1 - (i / #m.trail)
+    for i, point in ipairs(trail or {}) do
+        local t = 1 - (i / #trail)
         local alpha = math.floor(80 * t)
         local radius = r * (0.4 + 0.6 * t)
         nvgBeginPath(ctx)
-        nvgCircle(ctx, p.x, p.y, radius)
+        nvgCircle(ctx, point.x, point.y, radius)
         nvgFillColor(ctx, nvgRGBA(def.trail[1], def.trail[2], def.trail[3], alpha))
         nvgFill(ctx)
     end
 
     -- 外发光
-    local glow = nvgRadialGradient(ctx, m.x, m.y, r * 0.5, r * 2.2,
+    local glow = nvgRadialGradient(ctx, marble.x, marble.y, r * 0.5, r * 2.2,
         nvgRGBA(def.glow[1], def.glow[2], def.glow[3], 130),
         nvgRGBA(def.glow[1], def.glow[2], def.glow[3], 0))
     nvgBeginPath(ctx)
-    nvgCircle(ctx, m.x, m.y, r * 2.2)
+    nvgCircle(ctx, marble.x, marble.y, r * 2.2)
     nvgFillPaint(ctx, glow)
     nvgFill(ctx)
 
     -- 主体
     nvgBeginPath(ctx)
-    nvgCircle(ctx, m.x, m.y, r)
+    nvgCircle(ctx, marble.x, marble.y, r)
     nvgFillColor(ctx, nvgRGBA(def.color[1], def.color[2], def.color[3], 255))
     nvgFill(ctx)
     nvgBeginPath(ctx)
-    nvgCircle(ctx, m.x, m.y, r)
+    nvgCircle(ctx, marble.x, marble.y, r)
     nvgStrokeColor(ctx, nvgRGBA(def.stroke[1], def.stroke[2], def.stroke[3], 255))
     nvgStrokeWidth(ctx, 1.5)
     nvgStroke(ctx)
 
     -- 高光
     nvgBeginPath(ctx)
-    nvgCircle(ctx, m.x - r * 0.3, m.y - r * 0.3, r * 0.32)
+    nvgCircle(ctx, marble.x - r * 0.3, marble.y - r * 0.3, r * 0.32)
     nvgFillColor(ctx, nvgRGBA(255, 255, 255, 230))
     nvgFill(ctx)
 
-    -- 巨型球标记（贯穿）
-    if m.ballType == "giant" then
+    -- 技能标记
+    if marble.ballType == "giant" then
         nvgFontFace(ctx, "zpix")
         nvgFontSize(ctx, 13)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
         nvgFillColor(ctx, nvgRGBA(255, 255, 255, 220))
-        nvgText(ctx, m.x, m.y + 1, "贯", nil)
-    -- 加速球标记
-    elseif m.ballType == "speed" then
+        nvgText(ctx, marble.x, marble.y + 1, marble.giantPiercing and "贯" or "震", nil)
+    elseif marble.ballType == "speed" then
         nvgBeginPath(ctx)
-        nvgMoveTo(ctx, m.x + 1, m.y - 5)
-        nvgLineTo(ctx, m.x - 3, m.y)
-        nvgLineTo(ctx, m.x, m.y)
-        nvgLineTo(ctx, m.x - 1, m.y + 5)
-        nvgLineTo(ctx, m.x + 4, m.y - 1)
-        nvgLineTo(ctx, m.x + 1, m.y - 1)
+        nvgMoveTo(ctx, marble.x + 1, marble.y - 5)
+        nvgLineTo(ctx, marble.x - 3, marble.y)
+        nvgLineTo(ctx, marble.x, marble.y)
+        nvgLineTo(ctx, marble.x - 1, marble.y + 5)
+        nvgLineTo(ctx, marble.x + 4, marble.y - 1)
+        nvgLineTo(ctx, marble.x + 1, marble.y - 1)
         nvgClosePath(ctx)
         nvgFillColor(ctx, nvgRGBA(255, 255, 200, 220))
         nvgFill(ctx)
-    -- 冰冻球标记
-    elseif m.ballType == "ice" then
+
+        local charge = marble.overloadCharge or 0
+        for i = 1, 4 do
+            local angle = (i - 1) * math.pi * 0.5 - math.pi * 0.5
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, marble.x + math.cos(angle) * (r + 4),
+                marble.y + math.sin(angle) * (r + 4), 1.5)
+            if i <= charge then
+                nvgFillColor(ctx, nvgRGBA(255, 230, 100, 240))
+            else
+                nvgFillColor(ctx, nvgRGBA(120, 70, 40, 120))
+            end
+            nvgFill(ctx)
+        end
+    elseif marble.ballType == "ice" then
         nvgBeginPath(ctx)
-        nvgRect(ctx, m.x - 1, m.y - 5, 2, 10)
-        nvgRect(ctx, m.x - 5, m.y - 1, 10, 2)
+        nvgRect(ctx, marble.x - 1, marble.y - 5, 2, 10)
+        nvgRect(ctx, marble.x - 5, marble.y - 1, 10, 2)
         nvgFillColor(ctx, nvgRGBA(255, 255, 255, 200))
+        nvgFill(ctx)
+    elseif marble.ballType == "normal" and not marble.isEcho then
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, marble.x, marble.y, 2.2)
+        nvgFillColor(ctx, nvgRGBA(255, 210, 80, 230))
         nvgFill(ctx)
     end
 end
@@ -336,11 +357,11 @@ end
 -- 弹珠槽位（待发射队列）
 ----------------------------------------------------------------------
 
-local function DrawBallSlot(ctx, x, y, ballType, ballTypes, scale)
+local function DrawBallSlot(ctx, x, y, ballType, visualCatalog, scale)
     scale = scale or 0.6
-    local def = ballTypes[ballType]
+    local def = visualCatalog.GetBallStyle(ballType)
     if not def then return end
-    local r = def.r * scale
+    local r = def.displayRadius * scale
 
     -- 槽位底圆
     nvgBeginPath(ctx)
@@ -369,36 +390,14 @@ end
 -- 瞄准轨迹
 ----------------------------------------------------------------------
 
-local function DrawAimTrajectory(ctx, sx, sy, mx, my, maxPull, ballTypes, activeType, screenW, screenH)
-    local def = ballTypes[activeType]
+local function DrawAimTrajectory(ctx, points, visualCatalog, activeType)
+    local def = visualCatalog.GetBallStyle(activeType)
     if not def then return end
-    local dx = mx - sx
-    local dy = my - sy
-    local dist = math.sqrt(dx * dx + dy * dy)
-    if dist < 5 then return end
-
-    local speed = def.speed * (0.7 + 0.3 * math.min(1, dist / maxPull))
-    local nx = -dx / dist
-    local ny = -dy / dist
-    local vx = nx * speed
-    local vy = ny * speed
-
-    local px, py = mx, my
-    local r = def.r
-    local stepDist = 14
-    for i = 1, 50 do
-        local len = math.sqrt(vx * vx + vy * vy)
-        if len < 0.001 then break end
-        px = px + (vx / len) * stepDist
-        py = py + (vy / len) * stepDist
-        if px - r < 0 then px = r; vx = math.abs(vx) end
-        if px + r > screenW then px = screenW - r; vx = -math.abs(vx) end
-        if py - r < 0 then py = r; vy = math.abs(vy) end
-        if py - r > screenH then break end
-        local alpha = math.floor(180 * (1 - i / 50))
-        local radius = 3 * (1 - i / 50) + 1.5
+    for _, point in ipairs(points) do
+        local alpha = math.floor(180 * (1 - point.progress))
+        local radius = 3 * (1 - point.progress) + 1.5
         nvgBeginPath(ctx)
-        nvgCircle(ctx, px, py, radius)
+        nvgCircle(ctx, point.x, point.y, radius)
         nvgFillColor(ctx, nvgRGBA(def.trail[1], def.trail[2], def.trail[3], alpha))
         nvgFill(ctx)
     end
@@ -439,7 +438,7 @@ end
 -- HUD
 ----------------------------------------------------------------------
 
-local function DrawHUD(ctx, s)
+local function DrawHUD(ctx, s, presentation)
     nvgFontFace(ctx, "zpix")
     nvgFontSize(ctx, 30)
     nvgTextAlign(ctx, NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
@@ -455,10 +454,10 @@ local function DrawHUD(ctx, s)
     nvgFontSize(ctx, 18)
     nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgFillColor(ctx, nvgRGBA(255, 180, 100, 230))
-    nvgText(ctx, s.DW / 2, 14, "WAVE " .. tostring(s.wave), nil)
+    nvgText(ctx, s.width / 2, 14, "WAVE " .. tostring(s.wave), nil)
 
     for i = 1, s.maxBaseHp do
-        local hx = s.DW - 20 - (s.maxBaseHp - i) * 24
+        local hx = s.width - 20 - (s.maxBaseHp - i) * 24
         local hy = 22
         local filled = i <= s.baseHp
         nvgBeginPath(ctx)
@@ -487,16 +486,16 @@ local function DrawHUD(ctx, s)
         nvgStroke(ctx)
     end
 
-    if s.waveBannerTimer > 0 then
-        local t = s.waveBannerTimer
+    if presentation.waveBannerTimer > 0 then
+        local t = presentation.waveBannerTimer
         local alpha = t > 1.5 and (1.8 - t) / 0.3 or (t < 0.3 and t / 0.3 or 1)
         alpha = math.floor(math.max(0, math.min(1, alpha)) * 255)
         nvgFontSize(ctx, 40)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
         nvgFillColor(ctx, nvgRGBA(0, 0, 0, alpha))
-        nvgText(ctx, s.DW / 2 + 3, s.DH * 0.35 + 3, "WAVE " .. tostring(s.wave), nil)
+        nvgText(ctx, s.width / 2 + 3, s.height * 0.35 + 3, "WAVE " .. tostring(s.wave), nil)
         nvgFillColor(ctx, nvgRGBA(255, 180, 80, alpha))
-        nvgText(ctx, s.DW / 2, s.DH * 0.35, "WAVE " .. tostring(s.wave), nil)
+        nvgText(ctx, s.width / 2, s.height * 0.35, "WAVE " .. tostring(s.wave), nil)
     end
 end
 
@@ -504,9 +503,9 @@ end
 -- 菜单 / 结束
 ----------------------------------------------------------------------
 
-local function DrawMenu(ctx, s)
+local function DrawMenu(ctx, s, visualCatalog)
     nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, s.DW, s.DH)
+    nvgRect(ctx, 0, 0, s.width, s.height)
     nvgFillColor(ctx, nvgRGBA(8, 10, 24, 200))
     nvgFill(ctx)
 
@@ -515,32 +514,31 @@ local function DrawMenu(ctx, s)
 
     nvgFontSize(ctx, 52)
     nvgFillColor(ctx, nvgRGBA(60, 10, 0, 255))
-    nvgText(ctx, s.DW / 2 + 3, s.DH * 0.20 + 3, "燃烧的蔬菜", nil)
+    nvgText(ctx, s.width / 2 + 3, s.height * 0.20 + 3, "燃烧的蔬菜", nil)
     nvgFillColor(ctx, nvgRGBA(255, 110, 40, 255))
-    nvgText(ctx, s.DW / 2, s.DH * 0.20, "燃烧的蔬菜", nil)
+    nvgText(ctx, s.width / 2, s.height * 0.20, "燃烧的蔬菜", nil)
 
     nvgFontSize(ctx, 24)
     nvgFillColor(ctx, nvgRGBA(255, 220, 140, 255))
-    nvgText(ctx, s.DW / 2, s.DH * 0.20 + 48, "四弹珠连射", nil)
+    nvgText(ctx, s.width / 2, s.height * 0.20 + 48, "四弹珠连射", nil)
 
     -- 四种球说明
-    local bt = s.ballTypes
-    local descY = s.DH * 0.40
+    local descY = s.height * 0.40
     local descs = {
-        { "常规", "normal", "标准弹珠" },
+        { "常规", "normal", "首撞分裂双回响" },
         { "冰冻", "ice", "冰冻减速敌人" },
-        { "加速", "speed", "碰撞后越弹越快" },
-        { "巨型", "giant", "贯穿多块砖块" },
+        { "加速", "speed", "四连撞触发超载电弧" },
+        { "巨型", "giant", "先反震再贯穿" },
     }
     for i, d in ipairs(descs) do
         local y = descY + (i - 1) * 48
-        local def = bt[d[2]]
+        local def = visualCatalog.GetBallStyle(d[2])
         nvgBeginPath(ctx)
-        nvgCircle(ctx, s.DW / 2 - 110, y, def.r * 0.9)
+        nvgCircle(ctx, s.width / 2 - 110, y, def.displayRadius * 0.9)
         nvgFillColor(ctx, nvgRGBA(def.color[1], def.color[2], def.color[3], 255))
         nvgFill(ctx)
         nvgBeginPath(ctx)
-        nvgCircle(ctx, s.DW / 2 - 110, y, def.r * 0.9)
+        nvgCircle(ctx, s.width / 2 - 110, y, def.displayRadius * 0.9)
         nvgStrokeColor(ctx, nvgRGBA(def.stroke[1], def.stroke[2], def.stroke[3], 255))
         nvgStrokeWidth(ctx, 1.5)
         nvgStroke(ctx)
@@ -548,33 +546,33 @@ local function DrawMenu(ctx, s)
         nvgFontSize(ctx, 18)
         nvgTextAlign(ctx, NVG_ALIGN_LEFT + NVG_ALIGN_MIDDLE)
         nvgFillColor(ctx, nvgRGBA(255, 240, 200, 255))
-        nvgText(ctx, s.DW / 2 - 80, y - 8, d[1], nil)
+        nvgText(ctx, s.width / 2 - 80, y - 8, d[1], nil)
         nvgFontSize(ctx, 13)
         nvgFillColor(ctx, nvgRGBA(180, 190, 210, 220))
-        nvgText(ctx, s.DW / 2 - 80, y + 12, d[3], nil)
+        nvgText(ctx, s.width / 2 - 80, y + 12, d[3], nil)
     end
 
     nvgFontSize(ctx, 14)
     nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
     nvgFillColor(ctx, nvgRGBA(200, 210, 230, 220))
-    nvgText(ctx, s.DW / 2, s.DH * 0.72, "向后拖拽弹弓瞄准,松开发射", nil)
-    nvgText(ctx, s.DW / 2, s.DH * 0.72 + 22, "四颗弹珠可连射,同场反弹", nil)
+    nvgText(ctx, s.width / 2, s.height * 0.72, "向后拖拽弹弓瞄准,松开发射", nil)
+    nvgText(ctx, s.width / 2, s.height * 0.72 + 22, "四颗弹珠可连射,同场反弹", nil)
 
     local blink = 0.5 + 0.5 * math.sin(s.elapsed * 3)
     nvgFontSize(ctx, 22)
     nvgFillColor(ctx, nvgRGBA(255, 255, 220, 180 + 60 * blink))
-    nvgText(ctx, s.DW / 2, s.DH * 0.82, "点击屏幕开始", nil)
+    nvgText(ctx, s.width / 2, s.height * 0.82, "点击屏幕开始", nil)
 end
 
 local function DrawGameOver(ctx, s)
     nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, s.DW, s.DH)
+    nvgRect(ctx, 0, 0, s.width, s.height)
     nvgFillColor(ctx, nvgRGBA(20, 5, 10, 210))
     nvgFill(ctx)
 
     local pw, ph = 360, 300
-    local px = (s.DW - pw) / 2
-    local py = s.DH * 0.32
+    local px = (s.width - pw) / 2
+    local py = s.height * 0.32
     nvgBeginPath(ctx)
     nvgRoundedRect(ctx, px, py, pw, ph, 8)
     nvgFillColor(ctx, nvgRGBA(35, 25, 40, 245))
@@ -589,93 +587,86 @@ local function DrawGameOver(ctx, s)
     nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
     nvgFontSize(ctx, 38)
     nvgFillColor(ctx, nvgRGBA(255, 90, 70, 255))
-    nvgText(ctx, s.DW / 2, py + 55, "游戏结束", nil)
+    nvgText(ctx, s.width / 2, py + 55, "游戏结束", nil)
     nvgFontSize(ctx, 18)
     nvgFillColor(ctx, nvgRGBA(200, 200, 220, 255))
-    nvgText(ctx, s.DW / 2, py + 105, "SCORE", nil)
+    nvgText(ctx, s.width / 2, py + 105, "SCORE", nil)
     nvgFontSize(ctx, 32)
     nvgFillColor(ctx, nvgRGBA(255, 230, 120, 255))
-    nvgText(ctx, s.DW / 2, py + 138, tostring(s.score), nil)
+    nvgText(ctx, s.width / 2, py + 138, tostring(s.score), nil)
     nvgFontSize(ctx, 16)
     nvgFillColor(ctx, nvgRGBA(180, 190, 220, 255))
-    nvgText(ctx, s.DW / 2, py + 178, "BEST " .. tostring(s.highScore), nil)
-    nvgText(ctx, s.DW / 2, py + 202, "WAVE " .. tostring(s.wave), nil)
+    nvgText(ctx, s.width / 2, py + 178, "BEST " .. tostring(s.highScore), nil)
+    nvgText(ctx, s.width / 2, py + 202, "WAVE " .. tostring(s.wave), nil)
     local blink = 0.5 + 0.5 * math.sin(s.elapsed * 3)
     nvgFontSize(ctx, 20)
     nvgFillColor(ctx, nvgRGBA(255, 255, 220, 160 + 70 * blink))
-    nvgText(ctx, s.DW / 2, py + 255, "点击重新开始", nil)
+    nvgText(ctx, s.width / 2, py + 255, "点击重新开始", nil)
 end
 
 ----------------------------------------------------------------------
 -- 主渲染
 ----------------------------------------------------------------------
 
-function Renderer.Render(ctx, s)
-    if #stars == 0 then InitStars(s.DW, s.DH, 70) end
-    ctx.__ballTypes = s.ballTypes  -- 传递给 DrawMarble
+function Renderer.Render(ctx, game, presentation)
+    local visualCatalog = presentation.visualCatalog
+    if #stars == 0 then InitStars(game.width, game.height, 70) end
 
     nvgSave(ctx)
-    if s.screenShake > 0 then
-        local amp = s.screenShake * 12
+    if presentation.screenShake > 0 then
+        local amp = presentation.screenShake * 12
         nvgTranslate(ctx, (math.random() - 0.5) * amp, (math.random() - 0.5) * amp)
     end
 
-    DrawBackground(ctx, s.DW, s.DH, s.elapsed)
-    DrawDangerLine(ctx, s.DW, s.DANGER_Y, s.elapsed)
+    DrawBackground(ctx, game.width, game.height, game.elapsed)
+    DrawDangerLine(ctx, game.width, game.dangerY, game.elapsed)
 
-    for _, e in ipairs(s.veggies) do
-        DrawEnemy(ctx, e, e.brickSize, s.elapsed)
+    for _, enemy in ipairs(game.veggies) do
+        DrawEnemy(ctx, enemy, game.elapsed, visualCatalog, presentation.hitFlashes)
     end
 
-    -- 橡皮筋
-    if s.activeBall then
-        DrawSlingBands(ctx, s.slingX, s.slingY, s.activeBall.x, s.activeBall.y, s.aiming)
+    if game.activeBall then
+        DrawSlingBands(ctx, game.slingX, game.slingY,
+            game.activeBall.x, game.activeBall.y, game.aiming)
     else
-        DrawSlingBands(ctx, s.slingX, s.slingY, s.slingX, s.slingY, false)
+        DrawSlingBands(ctx, game.slingX, game.slingY, game.slingX, game.slingY, false)
     end
+    DrawSlingshot(ctx, game.slingX, game.slingY)
 
-    DrawSlingshot(ctx, s.slingX, s.slingY)
-
-    -- 槽位中待发射的球（弹弓左右各两种）
     local slotPositions = {
-        { x = s.slingX - 55, y = s.slingY + 40 },
-        { x = s.slingX - 55, y = s.slingY + 68 },
-        { x = s.slingX + 55, y = s.slingY + 40 },
-        { x = s.slingX + 55, y = s.slingY + 68 },
+        { x = game.slingX - 55, y = game.slingY + 40 },
+        { x = game.slingX - 55, y = game.slingY + 68 },
+        { x = game.slingX + 55, y = game.slingY + 40 },
+        { x = game.slingX + 55, y = game.slingY + 68 },
     }
-    for i, bt in ipairs(s.ballQueue) do
+    for i, ballType in ipairs(game.ballQueue) do
         if slotPositions[i] then
-            DrawBallSlot(ctx, slotPositions[i].x, slotPositions[i].y, bt, s.ballTypes, 0.6)
+            DrawBallSlot(ctx, slotPositions[i].x, slotPositions[i].y,
+                ballType, visualCatalog, 0.6)
         end
     end
 
-    -- 弹弓上的弹珠
-    if s.activeBall then
-        DrawMarble(ctx, s.activeBall)
+    if game.activeBall then
+        DrawMarble(ctx, game.activeBall, visualCatalog, nil)
+    end
+    for _, marble in ipairs(game.marbles) do
+        DrawMarble(ctx, marble, visualCatalog, presentation.marbleTrails[marble.id])
     end
 
-    -- 飞行中的弹珠
-    for _, m in ipairs(s.marbles) do
-        DrawMarble(ctx, m)
+    if game.aiming and game.activeBall then
+        DrawAimTrajectory(ctx, game.aimTrajectory, visualCatalog, game.activeBall.ballType)
     end
 
-    -- 瞄准轨迹
-    if s.aiming and s.activeBall then
-        DrawAimTrajectory(ctx, s.slingX, s.slingY,
-            s.activeBall.x, s.activeBall.y,
-            s.maxPull, s.ballTypes, s.activeBall.ballType, s.DW, s.DH)
-    end
-
-    DrawParticles(ctx, s.particles)
-    DrawFloatTexts(ctx, s.floatTexts)
+    DrawParticles(ctx, presentation.particles)
+    DrawFloatTexts(ctx, presentation.floatTexts)
 
     nvgRestore(ctx)
-    DrawHUD(ctx, s)
+    DrawHUD(ctx, game, presentation)
 
-    if s.state == "menu" then
-        DrawMenu(ctx, s)
-    elseif s.state == "gameover" then
-        DrawGameOver(ctx, s)
+    if game.state == "menu" then
+        DrawMenu(ctx, game, visualCatalog)
+    elseif game.state == "gameover" then
+        DrawGameOver(ctx, game)
     end
 end
 

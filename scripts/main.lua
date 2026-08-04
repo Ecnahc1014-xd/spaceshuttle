@@ -1,71 +1,35 @@
 -- main.lua
--- 燃烧的蔬菜 - 弹珠砖块大战入口
--- 9:16 竖屏 / 纯 NanoVG 几何块渲染 / Zpix 像素字体
+-- 应用编排入口：桥接引擎事件、核心玩法、表现状态与可替换渲染后端。
 
 local Game = require "Game"
-local Renderer = require "Renderer"
+local Presentation = require "Presentation"
+local RenderBackend = require "NanoVGBackend"
 
--- ============================================================================
--- 分辨率适配（模式 A：设计分辨率 + letterbox）
--- ============================================================================
+local gameSnapshot = nil
+local presentationSnapshot = nil
 
-local vg_ = nil
-
-local DESIGN_W = 540
-local DESIGN_H = 960
-
-local physW_, physH_ = 0, 0
-local dpr_ = 1
-local logicalW_, logicalH_ = 0, 0
-local scale_ = 1
-local screenDesignW_, screenDesignH_ = 0, 0
-local offsetX_, offsetY_ = 0, 0
-
-local function UpdateScreenMetrics()
-    physW_ = graphics:GetWidth()
-    physH_ = graphics:GetHeight()
-    dpr_ = graphics:GetDPR()
-    logicalW_ = physW_ / dpr_
-    logicalH_ = physH_ / dpr_
-
-    scale_ = math.min(logicalW_ / DESIGN_W, logicalH_ / DESIGN_H)
-    screenDesignW_ = logicalW_ / scale_
-    screenDesignH_ = logicalH_ / scale_
-    offsetX_ = (screenDesignW_ - DESIGN_W) * 0.5
-    offsetY_ = (screenDesignH_ - DESIGN_H) * 0.5
+local function RefreshSnapshots()
+    gameSnapshot = Game.GetSnapshot()
+    presentationSnapshot = Presentation.GetSnapshot()
 end
 
--- 物理像素 -> 设计坐标
-local function ScreenToDesign(sx, sy)
-    local lx = sx / dpr_
-    local ly = sy / dpr_
-    return lx / scale_ - offsetX_, ly / scale_ - offsetY_
+local function ToGameCoordinates(eventData)
+    local x = eventData:GetInt("X")
+    local y = eventData:GetInt("Y")
+    return RenderBackend.ScreenToGame(x, y)
 end
-
--- ============================================================================
--- 生命周期
--- ============================================================================
 
 function Start()
     graphics.windowTitle = "燃烧的蔬菜 - 弹珠砖块大战"
+    input.mouseVisible = true
 
-    vg_ = nvgCreate(1)
-    if vg_ == nil then
-        print("ERROR: Failed to create NanoVG context")
-        return
-    end
+    if not RenderBackend.Init("HandleRender") then return end
 
-    local fontId = nvgCreateFont(vg_, "zpix", "Fonts/Zpix.ttf")
-    if fontId == -1 then
-        print("ERROR: Failed to load Zpix font from Fonts/Zpix.ttf")
-        return
-    end
-    print("Zpix font loaded, id=" .. tostring(fontId))
+    local width, height = RenderBackend.GetDesignSize()
+    Game.Init({width = width, height = height, seed = os.time()})
+    Presentation.Init()
+    RefreshSnapshots()
 
-    UpdateScreenMetrics()
-    Game.Init(DESIGN_W, DESIGN_H)
-
-    SubscribeToEvent(vg_, "NanoVGRender", "HandleRender")
     SubscribeToEvent("Update", "HandleUpdate")
     SubscribeToEvent("MouseButtonDown", "HandleMouseDown")
     SubscribeToEvent("MouseButtonUp", "HandleMouseUp")
@@ -77,127 +41,76 @@ function Start()
     SubscribeToEvent("KeyUp", "HandleKeyUp")
     SubscribeToEvent("ScreenMode", "HandleScreenMode")
 
-    input.mouseVisible = true
-
-    -- 初始化随机种子
-    math.randomseed(os.time())
-    math.random()
-    math.random()
-    math.random()
-
-    print("=== 燃烧的蔬菜 启动成功 ===")
+    print("[Main] rendering and gameplay layers connected")
 end
 
 function Stop()
-    if vg_ ~= nil then
-        nvgDelete(vg_)
-        vg_ = nil
-    end
+    RenderBackend.Shutdown()
 end
-
--- ============================================================================
--- 事件处理
--- ============================================================================
 
 ---@param eventType string
 ---@param eventData UpdateEventData
 function HandleUpdate(eventType, eventData)
-    local dt = eventData:GetFloat("TimeStep")
-    -- 限制 dt 防止卡顿后大跳
-    if dt > 0.05 then dt = 0.05 end
+    local dt = math.min(eventData:GetFloat("TimeStep"), 0.05)
     Game.Update(dt)
+    local snapshot = Game.GetSnapshot()
+    Presentation.Update(dt, snapshot, Game.DrainEvents())
+    gameSnapshot = snapshot
+    presentationSnapshot = Presentation.GetSnapshot()
 end
 
-function HandleRender(eventType, eventData)
-    if vg_ == nil then return end
-
-    nvgBeginFrame(vg_, logicalW_, logicalH_, dpr_)
-    nvgScale(vg_, scale_, scale_)
-
-    -- 黑边背景（屏幕设计空间）
-    nvgBeginPath(vg_)
-    nvgRect(vg_, 0, 0, screenDesignW_, screenDesignH_)
-    nvgFillColor(vg_, nvgRGBA(0, 0, 0, 255))
-    nvgFill(vg_)
-
-    -- 进入设计坐标系
-    nvgTranslate(vg_, offsetX_, offsetY_)
-
-    -- 裁剪到游戏设计区域
-    nvgSave(vg_)
-    nvgIntersectScissor(vg_, 0, 0, DESIGN_W, DESIGN_H)
-    local state = Game.GetState()
-    Renderer.Render(vg_, state)
-    nvgRestore(vg_)
-
-    nvgEndFrame(vg_)
+function HandleRender()
+    if gameSnapshot and presentationSnapshot then
+        RenderBackend.Render(gameSnapshot, presentationSnapshot)
+    end
 end
 
 function HandleScreenMode()
-    UpdateScreenMetrics()
+    RenderBackend.Resize()
 end
 
--- 鼠标
 function HandleMouseDown(eventType, eventData)
-    local x = eventData:GetInt("X")
-    local y = eventData:GetInt("Y")
-    local button = eventData:GetInt("Button")
-    if button == MOUSEB_LEFT then
-        local dx, dy = ScreenToDesign(x, y)
-        Game.PointerDown(dx, dy)
-    end
+    if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
+    local x, y = ToGameCoordinates(eventData)
+    Game.PointerDown(x, y)
 end
 
 function HandleMouseUp(eventType, eventData)
-    local x = eventData:GetInt("X")
-    local y = eventData:GetInt("Y")
-    local button = eventData:GetInt("Button")
-    if button == MOUSEB_LEFT then
-        local dx, dy = ScreenToDesign(x, y)
-        Game.PointerUp(dx, dy)
-    end
+    if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
+    local x, y = ToGameCoordinates(eventData)
+    Game.PointerUp(x, y)
 end
 
 function HandleMouseMove(eventType, eventData)
-    local x = eventData:GetInt("X")
-    local y = eventData:GetInt("Y")
-    local dx, dy = ScreenToDesign(x, y)
-    Game.PointerMove(dx, dy)
+    local x, y = ToGameCoordinates(eventData)
+    Game.PointerMove(x, y)
 end
 
--- 触摸
 function HandleTouchBegin(eventType, eventData)
-    local x = eventData:GetInt("X")
-    local y = eventData:GetInt("Y")
-    local dx, dy = ScreenToDesign(x, y)
-    Game.PointerDown(dx, dy)
+    local x, y = ToGameCoordinates(eventData)
+    Game.PointerDown(x, y)
 end
 
 function HandleTouchMove(eventType, eventData)
-    local x = eventData:GetInt("X")
-    local y = eventData:GetInt("Y")
-    local dx, dy = ScreenToDesign(x, y)
-    Game.PointerMove(dx, dy)
+    local x, y = ToGameCoordinates(eventData)
+    Game.PointerMove(x, y)
 end
 
 function HandleTouchEnd(eventType, eventData)
-    local x = eventData:GetInt("X")
-    local y = eventData:GetInt("Y")
-    local dx, dy = ScreenToDesign(x, y)
-    Game.PointerUp(dx, dy)
+    local x, y = ToGameCoordinates(eventData)
+    Game.PointerUp(x, y)
 end
 
--- 键盘
 function HandleKeyDown(eventType, eventData)
     local key = eventData:GetInt("Key")
-    if key == KEY_ESCAPE then
-        -- 引擎默认行为
-        return
+    if key == KEY_SPACE or key == KEY_RETURN then
+        Game.HandleAction("start", true)
     end
-    Game.KeyDown(key)
 end
 
 function HandleKeyUp(eventType, eventData)
     local key = eventData:GetInt("Key")
-    Game.KeyUp(key)
+    if key == KEY_SPACE or key == KEY_RETURN then
+        Game.HandleAction("start", false)
+    end
 end

@@ -1,33 +1,102 @@
 -- Game.lua
--- 燃烧的蔬菜 - 弹弓拖拽发射 + 四种弹珠 + 像素砖块敌人
+-- 燃烧的蔬菜核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
 
 local VeggieData = require "VeggiePixelData"
 
 local Game = {}
 
--- 设计尺寸
 local DW = 540
 local DH = 960
-
--- 砖块为正方形（7x7网格，单块更大更清晰）
 local BASE_BRICK_SIZE = 20
+local SLING_X = 270
+local SLING_Y = 850
+local MAX_PULL = 150
+local DANGER_Y = 900
+local BASE_HP = 5
 
--- 根据波次获取砖块尺寸
+local BALL_TYPES = {
+    normal = {
+        radius = 9, speed = 560, damage = 1,
+        echoAngle = 18, echoLifetime = 1.2, echoHits = 1,
+    },
+    speed = {
+        radius = 8, speed = 680, damage = 1,
+        speedBoost = 1.08, maxSpeed = 1100,
+        overloadHits = 4, chainTargets = 2, chainRadius = 85,
+    },
+    ice = {
+        radius = 9, speed = 520, damage = 1,
+        freezeDuration = 3.0,
+    },
+    giant = {
+        radius = 16, speed = 420, damage = 2,
+        pierceAfterBounce = true,
+    },
+}
+local BALL_ORDER = { "normal", "ice", "speed", "giant" }
+
+local gameState = "menu"
+local score = 0
+local highScore = 0
+local baseHp = BASE_HP
+local wave = 1
+local elapsed = 0
+local waveCooldown = 0
+
+local veggies = {}
+local marbles = {}
+local ballQueue = {}
+local activeBall = nil
+local ballCycleIndex = 0
+local aiming = false
+local aimX = SLING_X
+local aimY = SLING_Y
+
+local pendingEvents = {}
+local nextEnemyId = 1
+local nextMarbleId = 1
+local randomState = 1
+
+local ResetGame
+local SpawnWave
+local UpdateMarbles
+local UpdateEnemies
+local UpdateReload
+local UpdateWaveLogic
+
+local function Emit(eventType, data)
+    data = data or {}
+    data.type = eventType
+    table.insert(pendingEvents, data)
+end
+
+local function SetRandomSeed(seed)
+    randomState = math.floor(tonumber(seed) or 1) % 2147483647
+    if randomState <= 0 then randomState = 1 end
+end
+
+local function Random()
+    randomState = (randomState * 16807) % 2147483647
+    return (randomState - 1) / 2147483646
+end
+
+local function RandomInt(minValue, maxValue)
+    return minValue + math.floor(Random() * (maxValue - minValue + 1))
+end
+
 local function GetBrickSize(waveNum)
     if waveNum <= 2 then return 18 end
     if waveNum <= 4 then return 19 end
     return BASE_BRICK_SIZE
 end
 
--- 难度曲线：前期平缓引导，后期递增
--- W1: 1个慢速敌人（练习瞄准）；之后逐步加数量/速度/血量
 local function GetWaveParams(waveNum)
     local count
     if waveNum <= 1 then count = 1
     elseif waveNum == 2 then count = 2
     elseif waveNum <= 4 then count = 2 + math.floor((waveNum - 2) / 2)
-    else count = math.min(6, 3 + math.floor((waveNum - 4) / 2))
-    end
+    else count = math.min(6, 3 + math.floor((waveNum - 4) / 2)) end
+
     local speed = 22 + (waveNum - 1) * 6
     local hp = 1
     if waveNum >= 6 then hp = 2 end
@@ -35,122 +104,35 @@ local function GetWaveParams(waveNum)
     return count, speed, hp
 end
 
--- 弹珠类型定义
-local BALL_TYPES = {
-    normal = {
-        name = "常规", r = 9, speed = 560, damage = 1,
-        color = {255, 248, 220}, glow = {255, 220, 120},
-        stroke = {220, 160, 50}, trail = {255, 230, 140},
-    },
-    speed = {
-        name = "加速", r = 8, speed = 680, damage = 1,
-        color = {255, 120, 60}, glow = {255, 80, 40},
-        stroke = {200, 60, 30}, trail = {255, 140, 80},
-        speedBoost = 1.06,  -- 每次碰撞加速 6%
-        maxSpeed = 1100,
-    },
-    ice = {
-        name = "冰冻", r = 9, speed = 520, damage = 1,
-        color = {180, 240, 255}, glow = {100, 200, 255},
-        stroke = {60, 140, 200}, trail = {150, 220, 255},
-        freezeDuration = 3.0,  -- 命中后冰冻敌人 3 秒
-    },
-    giant = {
-        name = "巨型", r = 16, speed = 420, damage = 2,
-        color = {200, 140, 255}, glow = {160, 80, 220},
-        stroke = {120, 50, 180}, trail = {190, 130, 255},
-        pierce = true,  -- 贯穿伤害：不反弹，直接穿透砖块
-    },
-}
-
--- 弹珠装填顺序（弹弓左右各两种）
-local BALL_ORDER = { "normal", "ice", "speed", "giant" }
-
--- 常量
-local SLING_X = 270
-local SLING_Y = 850       -- 弹弓位置
-local MAX_PULL = 150      -- 最大拖拽距离
-local DANGER_Y = 900      -- 警戒线（下移，给玩家更大操作空间）
-local BASE_HP = 5
-local AIM_DETECT_RADIUS = 200
-
--- 游戏状态
-local state = "menu"  -- menu / playing / gameover
-local score = 0
-local highScore = 0
-local baseHp = BASE_HP
-local wave = 1
-local screenShake = 0
-local waveBannerTimer = 0
-local elapsed = 0
-
--- 实体
-local veggies = {}
-local marbles = {}
-local particles = {}
-local floatTexts = {}
-
--- 弹珠装填系统：每颗球独立，消失后立刻补充
-local ballQueue = {}       -- 待发射的弹珠类型队列
-local activeBall = nil     -- 当前在弹弓上的弹珠
-local ballCycleIndex = 0   -- 球类型循环索引
-
--- 弹弓瞄准
-local aiming = false
-local aimX = SLING_X
-local aimY = SLING_Y
-
--- 波次
-local waveCooldown = 0
-
-----------------------------------------------------------------------
--- 初始化
-----------------------------------------------------------------------
-
-local ResetGame  -- 前向声明
-
-function Game.Init(w, h)
-    DW = w
-    DH = h
-    ResetGame()
-    state = "menu"
-end
-
-function Game.GetState()
-    return {
-        state = state, score = score, highScore = highScore,
-        baseHp = baseHp, maxBaseHp = BASE_HP, wave = wave,
-        screenShake = screenShake, waveBannerTimer = waveBannerTimer,
-        veggies = veggies, marbles = marbles,
-        particles = particles, floatTexts = floatTexts,
-        aiming = aiming, aimX = aimX, aimY = aimY,
-        slingX = SLING_X, slingY = SLING_Y, maxPull = MAX_PULL,
-        activeBall = activeBall, ballQueue = ballQueue,
-        ballTypes = BALL_TYPES, ballOrder = BALL_ORDER,
-        elapsed = elapsed, DW = DW, DH = DH,
-        BASE_BRICK_SIZE = BASE_BRICK_SIZE, DANGER_Y = DANGER_Y,
-    }
-end
-
 local function CreateMarble(ballType)
     local def = BALL_TYPES[ballType]
-    return {
+    local marble = {
+        id = nextMarbleId,
         x = SLING_X, y = SLING_Y,
-        vx = 0, vy = 0, r = def.r, speed = def.speed,
-        ballType = ballType, onSling = true,
-        trail = {}, alive = true,
+        vx = 0, vy = 0,
+        radius = def.radius,
+        speed = def.speed,
+        ballType = ballType,
+        onSling = true,
+        alive = true,
         bounceCount = 0,
+        echoTriggered = false,
+        isEcho = false,
+        echoLife = 0,
+        echoHitsRemaining = 0,
+        overloadCharge = 0,
+        giantPiercing = false,
     }
+    nextMarbleId = nextMarbleId + 1
+    return marble
 end
 
--- 获取循环中的下一个球类型
 local function NextBallType()
     ballCycleIndex = ballCycleIndex + 1
     if ballCycleIndex > #BALL_ORDER then ballCycleIndex = 1 end
     return BALL_ORDER[ballCycleIndex]
 end
 
--- 向队列补充一颗球（独立重生）
 local function EnqueueNextBall()
     table.insert(ballQueue, NextBallType())
 end
@@ -158,486 +140,505 @@ end
 local function LoadBalls()
     ballQueue = {}
     ballCycleIndex = 0
-    for _ = 1, #BALL_ORDER do
-        EnqueueNextBall()
-    end
-    -- 第一颗放到弹弓上
+    for _ = 1, #BALL_ORDER do EnqueueNextBall() end
     activeBall = CreateMarble(table.remove(ballQueue, 1))
-    -- 立刻补充一颗，保持队列满
     EnqueueNextBall()
 end
 
-function ResetGame()
+ResetGame = function()
     score = 0
     baseHp = BASE_HP
     wave = 1
-    screenShake = 0
-    waveBannerTimer = 0
     elapsed = 0
     veggies = {}
     marbles = {}
-    particles = {}
-    floatTexts = {}
     aiming = false
     aimX = SLING_X
     aimY = SLING_Y
     waveCooldown = 0.5
+    nextEnemyId = 1
+    nextMarbleId = 1
     LoadBalls()
+    Emit("game_reset")
 end
 
-----------------------------------------------------------------------
--- 敌人生成
-----------------------------------------------------------------------
+local function StartGame()
+    ResetGame()
+    gameState = "playing"
+    SpawnWave()
+    print("[Game] game started")
+end
 
 local function GetVeggieSize(veggieKey, brickSize)
-    local d = VeggieData[veggieKey]
-    local bs = brickSize or BASE_BRICK_SIZE
-    return d.gridW * bs, d.gridH * bs
+    local data = VeggieData[veggieKey]
+    return data.gridW * brickSize, data.gridH * brickSize
 end
+
 local function GetAvailableTypes(waveNum)
     local keys = {}
     local allKeys = { "tomato", "chili", "onion", "carrot", "corn", "eggplant" }
-    -- 逐波解锁：W1仅番茄（教学）, W2解锁辣椒, W3解锁洋葱, W5胡萝卜, W7玉米, W9茄子
-    local maxIdx = 1
-    if waveNum >= 2 then maxIdx = 2 end
-    if waveNum >= 3 then maxIdx = 3 end
-    if waveNum >= 5 then maxIdx = 4 end
-    if waveNum >= 7 then maxIdx = 5 end
-    if waveNum >= 9 then maxIdx = 6 end
-    maxIdx = math.min(#allKeys, maxIdx)
-    for i = 1, maxIdx do
-        if VeggieData[allKeys[i]] then
-            table.insert(keys, allKeys[i])
-        end
+    local maxIndex = 1
+    if waveNum >= 2 then maxIndex = 2 end
+    if waveNum >= 3 then maxIndex = 3 end
+    if waveNum >= 5 then maxIndex = 4 end
+    if waveNum >= 7 then maxIndex = 5 end
+    if waveNum >= 9 then maxIndex = 6 end
+
+    for i = 1, math.min(#allKeys, maxIndex) do
+        if VeggieData[allKeys[i]] then table.insert(keys, allKeys[i]) end
     end
     return keys
 end
 
 local function CreateEnemy(veggieKey, x, y, brickSize, brickHp, baseSpeed)
-    local d = VeggieData[veggieKey]
-    if not d then
+    local data = VeggieData[veggieKey]
+    if not data then
         print("[Game] ERROR: no veggie data for " .. tostring(veggieKey))
         return nil
     end
-    local bs = brickSize or BASE_BRICK_SIZE
-    local hp = brickHp or 1
+
     local bricks = {}
-    -- 解析紧凑字符串: "col,row,r,g,b;col,row,r,g,b;..."
-    for entry in (d.data .. ";"):gmatch("(.-);") do
-        local col, row, r, g, b = entry:match("(%d+),(%d+),(%d+),(%d+),(%d+)")
+    for entry in (data.data .. ";"):gmatch("(.-);") do
+        local col, row = entry:match("(%d+),(%d+),%d+,%d+,%d+")
         if col then
-            local rv, gv, bv = tonumber(r), tonumber(g), tonumber(b)
             table.insert(bricks, {
                 col = tonumber(col), row = tonumber(row),
-                r = rv, g = gv, b = bv,
-                dr = math.floor(rv * 0.55),
-                dg = math.floor(gv * 0.55),
-                db = math.floor(bv * 0.55),
-                hp = hp, maxHp = hp,
-                alive = true, hitFlash = 0,
+                hp = brickHp, maxHp = brickHp, alive = true,
             })
         end
     end
-    return {
+
+    local enemy = {
+        id = nextEnemyId,
         veggieKey = veggieKey,
-        brickSize = bs,
+        gridW = data.gridW,
+        gridH = data.gridH,
+        brickSize = brickSize,
         x = x, y = y, baseX = x,
-        vx = (math.random() > 0.5 and 1 or -1) * (6 + math.random() * 8),
-        vy = (baseSpeed or 30) * d.speedMul,
-        swayAmp = 10 + math.random() * 14,
-        swayFreq = 0.3 + math.random() * 0.25,
-        phase = math.random() * 6.28,
-        bricks = bricks, dead = false,
+        vy = baseSpeed * data.speedMul,
+        swayAmp = 10 + Random() * 14,
+        swayFreq = 0.3 + Random() * 0.25,
+        phase = Random() * math.pi * 2,
+        bricks = bricks,
+        dead = false,
         frozen = 0,
     }
+    nextEnemyId = nextEnemyId + 1
+    return enemy
 end
 
-local function SpawnWave()
+SpawnWave = function()
     local pool = GetAvailableTypes(wave)
     if #pool == 0 then
         print("[Game] WARNING: empty veggie pool")
         return
     end
-    local count, baseSpeed, brickHp = GetWaveParams(wave)
-    local bs = GetBrickSize(wave)
-    local margin = 20
 
+    local count, baseSpeed, brickHp = GetWaveParams(wave)
+    local brickSize = GetBrickSize(wave)
+    local margin = 20
     local usedX = {}
+
     for i = 1, count do
-        local vk = pool[math.random(#pool)]
-        local vw, vh = GetVeggieSize(vk, bs)
+        local veggieKey = pool[RandomInt(1, #pool)]
+        local veggieWidth, veggieHeight = GetVeggieSize(veggieKey, brickSize)
         local x, tries = margin, 0
         repeat
-            x = margin + math.random() * math.max(1, DW - vw - margin * 2)
+            x = margin + Random() * math.max(1, DW - veggieWidth - margin * 2)
             local overlap = false
-            for _, ux in ipairs(usedX) do
-                if math.abs(ux - (x + vw / 2)) < vw * 0.9 then overlap = true break end
+            for _, usedCenterX in ipairs(usedX) do
+                if math.abs(usedCenterX - (x + veggieWidth * 0.5)) < veggieWidth * 0.9 then
+                    overlap = true
+                    break
+                end
             end
             tries = tries + 1
             if not overlap or tries > 25 then break end
         until false
-        table.insert(usedX, x + vw / 2)
+        table.insert(usedX, x + veggieWidth * 0.5)
 
-        -- 从顶部交错进入
-        local y = -vh * 0.3 - (i - 1) * (vh * 0.2) - math.random(0, 10)
-        local e = CreateEnemy(vk, x, y, bs, brickHp, baseSpeed)
-        if e then
-            table.insert(veggies, e)
-        end
+        local y = -veggieHeight * 0.3 - (i - 1) * (veggieHeight * 0.2) - RandomInt(0, 10)
+        local enemy = CreateEnemy(veggieKey, x, y, brickSize, brickHp, baseSpeed)
+        if enemy then table.insert(veggies, enemy) end
     end
-    waveBannerTimer = 1.8
+
+    Emit("wave_started", {wave = wave})
     print("[Game] wave " .. wave .. " spawned " .. #veggies .. " enemies")
 end
 
-----------------------------------------------------------------------
--- 碰撞
-----------------------------------------------------------------------
+-- 碰撞区域设计：圆形弹珠对单个方形砖块。
+--
+--        圆心 (cx, cy)
+--             o
+--          .-' '-.
+--       +----------+  <- 砖块 AABB (rx, ry, rw, rh)
+--       |          |
+--       +----------+
+--
+-- 目的：圆与 AABB 重叠时，按归一化穿透较大的轴反射速度并推出表面。
+-- 边界：相切不算命中；推出 0.5 设计单位避免重复卡碰；高速球由四次子步进降低穿透。
+local function IntersectsBrick(marble, rx, ry, rw, rh)
+    local closestX = math.max(rx, math.min(marble.x, rx + rw))
+    local closestY = math.max(ry, math.min(marble.y, ry + rh))
+    local dx = marble.x - closestX
+    local dy = marble.y - closestY
+    return dx * dx + dy * dy < marble.radius * marble.radius
+end
 
 local function CollideBrick(marble, rx, ry, rw, rh)
-    local cx, cy, r = marble.x, marble.y, marble.r
-    local closestX = math.max(rx, math.min(cx, rx + rw))
-    local closestY = math.max(ry, math.min(cy, ry + rh))
-    local dx = cx - closestX
-    local dy = cy - closestY
-    if dx * dx + dy * dy >= r * r then return false end
+    if not IntersectsBrick(marble, rx, ry, rw, rh) then return false end
 
     local centerX = rx + rw * 0.5
     local centerY = ry + rh * 0.5
-    local ox = math.abs(cx - centerX) / (rw * 0.5 + r)
-    local oy = math.abs(cy - centerY) / (rh * 0.5 + r)
+    local overlapX = math.abs(marble.x - centerX) / (rw * 0.5 + marble.radius)
+    local overlapY = math.abs(marble.y - centerY) / (rh * 0.5 + marble.radius)
 
-    if ox >= oy then
+    if overlapX >= overlapY then
         marble.vx = -marble.vx
-        if cx >= centerX then marble.x = rx + rw + r + 0.5
-        else marble.x = rx - r - 0.5 end
+        if marble.x >= centerX then marble.x = rx + rw + marble.radius + 0.5
+        else marble.x = rx - marble.radius - 0.5 end
     else
         marble.vy = -marble.vy
-        if cy >= centerY then marble.y = ry + rh + r + 0.5
-        else marble.y = ry - r - 0.5 end
+        if marble.y >= centerY then marble.y = ry + rh + marble.radius + 0.5
+        else marble.y = ry - marble.radius - 0.5 end
     end
     return true
 end
 
-----------------------------------------------------------------------
--- 粒子 / 飘字
-----------------------------------------------------------------------
+local function DamageBrick(enemy, brick, damage)
+    brick.hp = brick.hp - (damage or 1)
+    local data = VeggieData[enemy.veggieKey]
+    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
+    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
+    local destroyed = brick.hp <= 0
 
-local function SpawnParticles(x, y, r, g, b, count)
-    count = count or 8
-    for _ = 1, count do
-        local angle = math.random() * math.pi * 2
-        local speed = 60 + math.random() * 160
-        table.insert(particles, {
-            x = x, y = y,
-            vx = math.cos(angle) * speed,
-            vy = math.sin(angle) * speed - 50,
-            life = 0.4 + math.random() * 0.3, maxLife = 0.7,
-            r = r, g = g, b = b, size = 3 + math.random() * 3,
-        })
+    if destroyed then
+        brick.alive = false
+        score = score + data.score
     end
-end
 
-local function SpawnFloatText(x, y, text, color, sizeMul)
-    table.insert(floatTexts, {
-        x = x, y = y, vy = -40,
-        life = 0.9, maxLife = 0.9, text = text,
-        color = color or {255, 255, 255},
-        size = (sizeMul or 1) * 20,
+    Emit("brick_hit", {
+        enemyId = enemy.id,
+        veggieKey = enemy.veggieKey,
+        col = brick.col,
+        row = brick.row,
+        x = x, y = y,
+        destroyed = destroyed,
+        score = destroyed and data.score or 0,
     })
 end
 
-----------------------------------------------------------------------
--- 伤害
-----------------------------------------------------------------------
-
-local function DamageBrick(enemy, brick, damage)
-    damage = damage or 1
-    brick.hp = brick.hp - damage
-    brick.hitFlash = 0.12
-    local d = VeggieData[enemy.veggieKey]
-    local bs = enemy.brickSize
-    local bx = enemy.x + (brick.col - 0.5) * bs
-    local by = enemy.y + (brick.row - 0.5) * bs
-
-    if brick.hp <= 0 then
-        brick.alive = false
-        score = score + d.score
-        SpawnParticles(bx, by, brick.r, brick.g, brick.b, 10)
-        SpawnFloatText(bx, by - 4, "+" .. d.score, {255, 240, 180}, 0.8)
-    else
-        SpawnParticles(bx, by, 255, 240, 180, 4)
-    end
-end
-
 local function IsEnemyCleared(enemy)
-    for _, b in ipairs(enemy.bricks) do
-        if b.alive then return false end
+    for _, brick in ipairs(enemy.bricks) do
+        if brick.alive then return false end
     end
     return true
 end
 
-----------------------------------------------------------------------
--- 发射 / 装填
-----------------------------------------------------------------------
+local function RotateVelocity(vx, vy, degrees)
+    local radians = math.rad(degrees)
+    local c = math.cos(radians)
+    local s = math.sin(radians)
+    return vx * c - vy * s, vx * s + vy * c
+end
+
+local function CreateEchoMarble(source, angle, originBrick)
+    local def = BALL_TYPES.normal
+    local vx, vy = RotateVelocity(source.vx, source.vy, angle)
+    local marble = {
+        id = nextMarbleId,
+        x = source.x, y = source.y,
+        vx = vx, vy = vy,
+        radius = math.max(5, source.radius * 0.72),
+        speed = source.speed,
+        ballType = "normal",
+        onSling = false,
+        alive = true,
+        bounceCount = 0,
+        echoTriggered = true,
+        isEcho = true,
+        echoLife = def.echoLifetime,
+        echoHitsRemaining = def.echoHits,
+        overloadCharge = 0,
+        giantPiercing = false,
+        ignoredBrick = originBrick,
+    }
+    nextMarbleId = nextMarbleId + 1
+    return marble
+end
+
+local function TriggerNormalEcho(marble, originBrick, pendingMarbles)
+    local def = BALL_TYPES.normal
+    if marble.echoTriggered or marble.isEcho then return end
+    marble.echoTriggered = true
+    table.insert(pendingMarbles, CreateEchoMarble(marble, -def.echoAngle, originBrick))
+    table.insert(pendingMarbles, CreateEchoMarble(marble, def.echoAngle, originBrick))
+    Emit("normal_echo", {x = marble.x, y = marble.y})
+    print("[Game] normal marble triggered double echo")
+end
+
+local function CollectChainTargets(originEnemy, originBrick, originX, originY, def)
+    local candidates = {}
+    local radiusSq = def.chainRadius * def.chainRadius
+    for _, enemy in ipairs(veggies) do
+        if not enemy.dead then
+            for _, brick in ipairs(enemy.bricks) do
+                if brick.alive and not (enemy == originEnemy and brick == originBrick) then
+                    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
+                    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
+                    local dx = x - originX
+                    local dy = y - originY
+                    local distanceSq = dx * dx + dy * dy
+                    if distanceSq <= radiusSq then
+                        table.insert(candidates, {
+                            enemy = enemy, brick = brick,
+                            x = x, y = y, distanceSq = distanceSq,
+                        })
+                    end
+                end
+            end
+        end
+    end
+    table.sort(candidates, function(a, b) return a.distanceSq < b.distanceSq end)
+    return candidates
+end
+
+local function TriggerSpeedOverload(marble, originEnemy, originBrick, frameHitBricks)
+    local def = BALL_TYPES.speed
+    marble.overloadCharge = marble.overloadCharge + 1
+    if marble.overloadCharge < def.overloadHits then return end
+    marble.overloadCharge = 0
+
+    local originX = originEnemy.x + (originBrick.col - 0.5) * originEnemy.brickSize
+    local originY = originEnemy.y + (originBrick.row - 0.5) * originEnemy.brickSize
+    local candidates = CollectChainTargets(originEnemy, originBrick, originX, originY, def)
+    local targets = {}
+    local hitCount = math.min(def.chainTargets, #candidates)
+    for i = 1, hitCount do
+        local target = candidates[i]
+        frameHitBricks[target.brick] = true
+        DamageBrick(target.enemy, target.brick, 1)
+        table.insert(targets, {x = target.x, y = target.y})
+    end
+    if hitCount > 0 then
+        Emit("speed_overload", {x = originX, y = originY, targets = targets})
+        print("[Game] speed marble overload chained " .. hitCount .. " bricks")
+    end
+end
 
 local function LaunchMarble(dx, dy, power)
-    if activeBall == nil then return end
+    if not activeBall then return end
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length < 1 then return end
+
     local def = BALL_TYPES[activeBall.ballType]
-    local speed = def.speed * (0.7 + 0.3 * power)  -- 力度影响 0.7~1.0 倍速
-    local len = math.sqrt(dx * dx + dy * dy)
-    if len < 1 then return end
-    local nx = -dx / len
-    local ny = -dy / len
-    activeBall.vx = nx * speed
-    activeBall.vy = ny * speed
+    local speed = def.speed * (0.7 + 0.3 * power)
+    activeBall.vx = -dx / length * speed
+    activeBall.vy = -dy / length * speed
     activeBall.speed = speed
     activeBall.onSling = false
     table.insert(marbles, activeBall)
+    Emit("marble_launched", {id = activeBall.id, ballType = activeBall.ballType})
     activeBall = nil
 end
 
 local function QueueNextBall()
     if #ballQueue > 0 then
-        local nextType = table.remove(ballQueue, 1)
-        activeBall = CreateMarble(nextType)
+        activeBall = CreateMarble(table.remove(ballQueue, 1))
     end
 end
 
-----------------------------------------------------------------------
--- 更新
-----------------------------------------------------------------------
-
-function Game.Update(dt)
-    elapsed = elapsed + dt
-    if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
-    if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
-
-    UpdateParticles(dt)
-    UpdateFloatTexts(dt)
-
-    if state == "menu" or state == "gameover" then return end
-
-    UpdateAiming()
-    UpdateMarbles(dt)
-    UpdateEnemies(dt)
-    UpdateReload(dt)
-    UpdateWaveLogic(dt)
-end
-
-function UpdateParticles(dt)
-    for i = #particles, 1, -1 do
-        local p = particles[i]
-        p.life = p.life - dt
-        if p.life <= 0 then
-            table.remove(particles, i)
-        else
-            p.x = p.x + p.vx * dt
-            p.y = p.y + p.vy * dt
-            p.vy = p.vy + 300 * dt
-            p.vx = p.vx * 0.98
-        end
-    end
-end
-
-function UpdateFloatTexts(dt)
-    for i = #floatTexts, 1, -1 do
-        local f = floatTexts[i]
-        f.life = f.life - dt
-        if f.life <= 0 then
-            table.remove(floatTexts, i)
-        else
-            f.y = f.y + f.vy * dt
-            f.vy = f.vy * 0.96
-        end
-    end
-end
-
-function UpdateAiming()
+local function UpdateAiming()
     if aiming and activeBall then
         activeBall.x = aimX
         activeBall.y = aimY
-    end
-end
-
-function UpdateMarbles(dt)
-    -- 弹弓上的弹珠回位
-    if activeBall and activeBall.onSling and not aiming then
+    elseif activeBall and activeBall.onSling then
         activeBall.x = SLING_X
         activeBall.y = SLING_Y
     end
+end
 
+UpdateMarbles = function(dt)
+    local pendingMarbles = {}
     for i = #marbles, 1, -1 do
-        local m = marbles[i]
-        local def = BALL_TYPES[m.ballType]
-
-        -- 拖尾
-        table.insert(m.trail, 1, {x = m.x, y = m.y})
-        if #m.trail > 10 then table.remove(m.trail) end
-
-        -- 子步进（匀速直线，无重力）
+        local marble = marbles[i]
+        local def = BALL_TYPES[marble.ballType]
         local steps = 4
-        local sdt = dt / steps
+        local subDt = dt / steps
+        local frameHitBricks = {}
+
+        if marble.isEcho then
+            marble.echoLife = marble.echoLife - dt
+            if marble.echoLife <= 0 then marble.alive = false end
+        end
+
         for _ = 1, steps do
-            m.x = m.x + m.vx * sdt
-            m.y = m.y + m.vy * sdt
+            if not marble.alive then break end
 
-            -- 左右墙反弹
-            if m.x - m.r < 0 then
-                m.x = m.r; m.vx = math.abs(m.vx); m.bounceCount = m.bounceCount + 1
-            elseif m.x + m.r > DW then
-                m.x = DW - m.r; m.vx = -math.abs(m.vx); m.bounceCount = m.bounceCount + 1
+            marble.x = marble.x + marble.vx * subDt
+            marble.y = marble.y + marble.vy * subDt
+
+            if marble.x - marble.radius < 0 then
+                marble.x = marble.radius
+                marble.vx = math.abs(marble.vx)
+                marble.bounceCount = marble.bounceCount + 1
+            elseif marble.x + marble.radius > DW then
+                marble.x = DW - marble.radius
+                marble.vx = -math.abs(marble.vx)
+                marble.bounceCount = marble.bounceCount + 1
             end
-            -- 顶部反弹
-            if m.y - m.r < 0 then
-                m.y = m.r; m.vy = math.abs(m.vy); m.bounceCount = m.bounceCount + 1
+            if marble.y - marble.radius < 0 then
+                marble.y = marble.radius
+                marble.vy = math.abs(marble.vy)
+                marble.bounceCount = marble.bounceCount + 1
             end
 
-            -- 砖块碰撞
             local hit = false
-            local hitBrickKeys = {}
-            local savedVx, savedVy = m.vx, m.vy
             for _, enemy in ipairs(veggies) do
                 if not enemy.dead then
-                    local ebs = enemy.brickSize
                     for _, brick in ipairs(enemy.bricks) do
-                        if brick.alive then
-                            local rx = enemy.x + (brick.col - 1) * ebs
-                            local ry = enemy.y + (brick.row - 1) * ebs
-                            local bkey = tostring(enemy) .. "_" .. brick.col .. "_" .. brick.row
-                            if not hitBrickKeys[bkey] then
-                                if CollideBrick(m, rx + 1, ry + 1, ebs - 2, ebs - 2) then
-                                    hitBrickKeys[bkey] = true
-                                    DamageBrick(enemy, brick, def.damage or 1)
-                                    if def.freezeDuration then
-                                        enemy.frozen = def.freezeDuration
-                                    end
-                                    if def.pierce then
-                                        -- 贯穿球：恢复速度，不反弹，继续穿透
-                                        m.vx = savedVx
-                                        m.vy = savedVy
-                                        -- 贯穿球每击中一块砖，位置稍微向前推进避免卡住
-                                        m.x = m.x + savedVx * sdt * 0.5
-                                        m.y = m.y + savedVy * sdt * 0.5
-                                    else
-                                        hit = true
-                                        break
-                                    end
+                        if marble.ignoredBrick == brick then
+                            local irx = enemy.x + (brick.col - 1) * enemy.brickSize + 1
+                            local iry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
+                            if not IntersectsBrick(marble, irx, iry,
+                                enemy.brickSize - 2, enemy.brickSize - 2) then
+                                marble.ignoredBrick = nil
+                            end
+                        elseif brick.alive and not frameHitBricks[brick] then
+                            local rx = enemy.x + (brick.col - 1) * enemy.brickSize + 1
+                            local ry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
+                            local rw = enemy.brickSize - 2
+                            local rh = enemy.brickSize - 2
+                            local collided = false
+
+                            if marble.giantPiercing then
+                                collided = IntersectsBrick(marble, rx, ry, rw, rh)
+                                if collided then
+                                    marble.x = marble.x + marble.vx * subDt * 0.5
+                                    marble.y = marble.y + marble.vy * subDt * 0.5
                                 end
+                            else
+                                collided = CollideBrick(marble, rx, ry, rw, rh)
+                            end
+
+                            if collided then
+                                frameHitBricks[brick] = true
+                                DamageBrick(enemy, brick, def.damage)
+                                if def.freezeDuration then enemy.frozen = def.freezeDuration end
+
+                                if marble.ballType == "normal" then
+                                    if marble.isEcho then
+                                        marble.echoHitsRemaining = marble.echoHitsRemaining - 1
+                                        if marble.echoHitsRemaining <= 0 then marble.alive = false end
+                                    else
+                                        TriggerNormalEcho(marble, brick, pendingMarbles)
+                                    end
+                                elseif marble.ballType == "speed" then
+                                    TriggerSpeedOverload(marble, enemy, brick, frameHitBricks)
+                                elseif def.pierceAfterBounce and not marble.giantPiercing then
+                                    -- 首次命中已经完成伤害与物理反弹；结束本子步，下一次命中才走贯穿分支。
+                                    marble.giantPiercing = true
+                                    hit = true
+                                    Emit("giant_pierce_armed", {x = marble.x, y = marble.y})
+                                    print("[Game] giant marble bounced, piercing activated")
+                                end
+
+                                if not marble.giantPiercing then hit = true end
+                                break
                             end
                         end
                     end
-                    if hit then break end
+                    if hit or not marble.alive then break end
                 end
             end
 
-            -- 加速球：碰撞后加速
             if hit and def.speedBoost then
-                m.bounceCount = m.bounceCount + 1
-                local newSpeed = m.speed * def.speedBoost
-                if newSpeed > def.maxSpeed then newSpeed = def.maxSpeed end
-                m.speed = newSpeed
-                local vl = math.sqrt(m.vx * m.vx + m.vy * m.vy)
-                if vl > 0.001 then
-                    m.vx = m.vx / vl * newSpeed
-                    m.vy = m.vy / vl * newSpeed
+                marble.bounceCount = marble.bounceCount + 1
+                local newSpeed = math.min(def.maxSpeed, marble.speed * def.speedBoost)
+                marble.speed = newSpeed
+                local velocityLength = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
+                if velocityLength > 0.001 then
+                    marble.vx = marble.vx / velocityLength * newSpeed
+                    marble.vy = marble.vy / velocityLength * newSpeed
                 end
             end
 
-            -- 碰底部退场（不反弹）
-            if m.y - m.r > DH then
-                m.alive = false
+            if marble.y - marble.radius > DH then
+                marble.alive = false
                 break
             end
         end
 
-        if not m.alive then
+        if not marble.alive then
             table.remove(marbles, i)
-            -- 弹珠消失后立刻独立重生：补充一颗到队列
-            EnqueueNextBall()
+            if not marble.isEcho then EnqueueNextBall() end
+            Emit("marble_removed", {id = marble.id})
         end
+    end
+
+    for _, marble in ipairs(pendingMarbles) do
+        table.insert(marbles, marble)
+        Emit("marble_echo_spawned", {id = marble.id})
     end
 end
 
-function UpdateEnemies(dt)
+UpdateEnemies = function(dt)
     for i = #veggies, 1, -1 do
-        local e = veggies[i]
-        local d = VeggieData[e.veggieKey]
-        local bs = e.brickSize
-        local vw = d.gridW * bs
-        local vh = d.gridH * bs
+        local enemy = veggies[i]
+        local width = enemy.gridW * enemy.brickSize
+        local height = enemy.gridH * enemy.brickSize
+        local speedMultiplier = 1
 
-        -- 冰冻减速
-        local speedMul = 1.0
-        if e.frozen > 0 then
-            e.frozen = e.frozen - dt
-            speedMul = 0.3
+        if enemy.frozen > 0 then
+            enemy.frozen = math.max(0, enemy.frozen - dt)
+            speedMultiplier = 0.3
         end
 
-        -- 左右摆动
-        e.phase = e.phase + dt * e.swayFreq
-        e.x = e.baseX + math.sin(e.phase) * e.swayAmp
-        if e.x < 10 then
-            e.baseX = 10 + (e.baseX - e.x); e.x = 10
-        elseif e.x + vw > DW - 10 then
-            e.baseX = DW - 10 - vw - ((e.x + vw) - (DW - 10)); e.x = DW - 10 - vw
+        enemy.phase = enemy.phase + dt * enemy.swayFreq
+        enemy.x = enemy.baseX + math.sin(enemy.phase) * enemy.swayAmp
+        if enemy.x < 10 then
+            enemy.baseX = 10 + (enemy.baseX - enemy.x)
+            enemy.x = 10
+        elseif enemy.x + width > DW - 10 then
+            enemy.baseX = DW - 10 - width - ((enemy.x + width) - (DW - 10))
+            enemy.x = DW - 10 - width
         end
+        enemy.y = enemy.y + enemy.vy * speedMultiplier * dt
 
-        -- 下落
-        e.y = e.y + e.vy * speedMul * dt
-
-        -- hitFlash 衰减
-        for _, b in ipairs(e.bricks) do
-            if b.hitFlash > 0 then
-                b.hitFlash = math.max(0, b.hitFlash - dt)
-            end
-        end
-
-        -- 越过警戒线（蔬菜 + 飞船底座）
-        local hullH = bs * 0.8
-        if e.y + vh + hullH > DANGER_Y then
-            e.dead = true
+        local hullHeight = enemy.brickSize * 0.8
+        if enemy.y + height + hullHeight > DANGER_Y then
+            enemy.dead = true
             baseHp = baseHp - 1
-            screenShake = 0.4
-            for _ = 1, 16 do
-                local angle = math.random() * math.pi * 2
-                local spd = 80 + math.random() * 180
-                table.insert(particles, {
-                    x = e.x + vw / 2, y = DANGER_Y,
-                    vx = math.cos(angle) * spd,
-                    vy = math.sin(angle) * spd - 80,
-                    life = 0.6, maxLife = 0.6,
-                    r = 255, g = 80, b = 60, size = 4 + math.random() * 3,
-                })
-            end
+            Emit("base_hit", {x = enemy.x + width * 0.5, y = DANGER_Y})
             if baseHp <= 0 then
                 baseHp = 0
-                state = "gameover"
+                gameState = "gameover"
                 if score > highScore then highScore = score end
+                Emit("game_over", {score = score, highScore = highScore, wave = wave})
+                print("[Game] game over, score=" .. score .. ", wave=" .. wave)
             end
         end
 
-        -- 全灭
-        if not e.dead and IsEnemyCleared(e) then
-            e.dead = true
+        if not enemy.dead and IsEnemyCleared(enemy) then
+            enemy.dead = true
             score = score + 50
-            SpawnFloatText(e.x + vw / 2, e.y + vh / 2, "击破!", {120, 255, 160}, 1.2)
+            Emit("enemy_cleared", {
+                enemyId = enemy.id,
+                x = enemy.x + width * 0.5,
+                y = enemy.y + height * 0.5,
+            })
         end
 
-        if e.dead then table.remove(veggies, i) end
+        if enemy.dead then table.remove(veggies, i) end
     end
 end
 
-function UpdateReload(dt)
-    -- 发射后（activeBall 为 nil）立刻从队列取下一颗放到弹弓上
-    -- 每颗球独立重生：球退场时在 UpdateMarbles 中已调用 EnqueueNextBall 补充队列
-    if activeBall == nil and #ballQueue > 0 then
-        QueueNextBall()
-    end
+UpdateReload = function()
+    if not activeBall and #ballQueue > 0 then QueueNextBall() end
 end
 
-function UpdateWaveLogic(dt)
-    -- 本波敌人全部消灭且弹珠已回收
-    if state ~= "menu" and state ~= "gameover" and #veggies == 0 then
+UpdateWaveLogic = function(dt)
+    if gameState == "playing" and #veggies == 0 then
         waveCooldown = waveCooldown - dt
         if waveCooldown <= 0 then
             wave = wave + 1
@@ -647,77 +648,151 @@ function UpdateWaveLogic(dt)
     end
 end
 
-----------------------------------------------------------------------
--- 输入
-----------------------------------------------------------------------
-
 local function GetPullState(px, py)
     local dx = px - SLING_X
     local dy = py - SLING_Y
-    local dist = math.sqrt(dx * dx + dy * dy)
-    if dist > MAX_PULL then
-        dx = dx / dist * MAX_PULL
-        dy = dy / dist * MAX_PULL
-        dist = MAX_PULL
+    local distance = math.sqrt(dx * dx + dy * dy)
+    if distance > MAX_PULL then
+        dx = dx / distance * MAX_PULL
+        dy = dy / distance * MAX_PULL
+        distance = MAX_PULL
     end
-    -- 限制弹珠不超出屏幕底部（安全边距）
     local maxDownDy = DH - SLING_Y - 20
     if dy > maxDownDy then dy = maxDownDy end
-    return dx, dy, dist
+    return dx, dy, distance
+end
+
+local function BuildAimTrajectory()
+    local points = {}
+    if not aiming or not activeBall then return points end
+
+    local dx = activeBall.x - SLING_X
+    local dy = activeBall.y - SLING_Y
+    local distance = math.sqrt(dx * dx + dy * dy)
+    if distance < 5 then return points end
+
+    local def = BALL_TYPES[activeBall.ballType]
+    local speed = def.speed * (0.7 + 0.3 * math.min(1, distance / MAX_PULL))
+    local vx = -dx / distance * speed
+    local vy = -dy / distance * speed
+    local x, y = activeBall.x, activeBall.y
+    local stepDistance = 14
+
+    for i = 1, 50 do
+        local velocityLength = math.sqrt(vx * vx + vy * vy)
+        if velocityLength < 0.001 then break end
+        x = x + vx / velocityLength * stepDistance
+        y = y + vy / velocityLength * stepDistance
+        if x - activeBall.radius < 0 then
+            x = activeBall.radius
+            vx = math.abs(vx)
+        elseif x + activeBall.radius > DW then
+            x = DW - activeBall.radius
+            vx = -math.abs(vx)
+        end
+        if y - activeBall.radius < 0 then
+            y = activeBall.radius
+            vy = math.abs(vy)
+        end
+        if y - activeBall.radius > DH then break end
+        table.insert(points, {x = x, y = y, progress = i / 50})
+    end
+    return points
+end
+
+function Game.Init(config)
+    config = config or {}
+    DW = config.width or DW
+    DH = config.height or DH
+    SetRandomSeed(config.seed or 1)
+    pendingEvents = {}
+    highScore = 0
+    ResetGame()
+    pendingEvents = {}
+    gameState = "menu"
+    print("[Game] core initialized at " .. DW .. "x" .. DH)
+end
+
+function Game.Update(dt)
+    elapsed = elapsed + dt
+    if gameState == "playing" then
+        UpdateAiming()
+        UpdateMarbles(dt)
+        UpdateEnemies(dt)
+        UpdateReload()
+        UpdateWaveLogic(dt)
+    end
 end
 
 function Game.PointerDown(px, py)
-    if state == "menu" then
-        ResetGame(); state = "playing"; SpawnWave()
-        return
-    elseif state == "gameover" then
-        ResetGame(); state = "playing"; SpawnWave()
+    if gameState == "menu" or gameState == "gameover" then
+        StartGame()
         return
     end
-    if state ~= "playing" then return end
-    if activeBall == nil then return end
+    if gameState ~= "playing" or not activeBall or py < DANGER_Y - 100 then return end
 
-    -- 安全区以下任意位置按下都可瞄准拖拽
-    if py < DANGER_Y - 100 then return end
     aiming = true
-    local pdx, pdy = GetPullState(px, py)
-    aimX = SLING_X + pdx
-    aimY = SLING_Y + pdy
+    local dx, dy = GetPullState(px, py)
+    aimX = SLING_X + dx
+    aimY = SLING_Y + dy
 end
 
 function Game.PointerMove(px, py)
-    if aiming then
-        local pdx, pdy = GetPullState(px, py)
-        aimX = SLING_X + pdx
-        aimY = SLING_Y + pdy
-    end
+    if not aiming then return end
+    local dx, dy = GetPullState(px, py)
+    aimX = SLING_X + dx
+    aimY = SLING_Y + dy
 end
 
 function Game.PointerUp(px, py)
-    if aiming then
-        local pdx, pdy, dist = GetPullState(px, py)
-        aiming = false
-        if dist > 15 then
-            local power = dist / MAX_PULL
-            LaunchMarble(pdx, pdy, power)
-        elseif activeBall then
-            activeBall.x = SLING_X
-            activeBall.y = SLING_Y
-        end
+    if not aiming then return end
+    local dx, dy, distance = GetPullState(px, py)
+    aiming = false
+    if distance > 15 then
+        LaunchMarble(dx, dy, distance / MAX_PULL)
+    elseif activeBall then
+        activeBall.x = SLING_X
+        activeBall.y = SLING_Y
     end
 end
 
-function Game.KeyDown(key)
-    if key == KEY_SPACE or key == KEY_RETURN then
-        if state == "menu" then
-            ResetGame(); state = "playing"; SpawnWave()
-        elseif state == "gameover" then
-            ResetGame(); state = "playing"; SpawnWave()
-        end
+function Game.HandleAction(action, pressed)
+    if pressed and action == "start" and (gameState == "menu" or gameState == "gameover") then
+        StartGame()
     end
 end
 
-function Game.KeyUp(key)
+function Game.DrainEvents()
+    local events = pendingEvents
+    pendingEvents = {}
+    return events
+end
+
+function Game.GetSnapshot()
+    return {
+        state = gameState,
+        score = score,
+        highScore = highScore,
+        baseHp = baseHp,
+        maxBaseHp = BASE_HP,
+        wave = wave,
+        elapsed = elapsed,
+        veggies = veggies,
+        marbles = marbles,
+        aiming = aiming,
+        aimX = aimX,
+        aimY = aimY,
+        aimTrajectory = BuildAimTrajectory(),
+        slingX = SLING_X,
+        slingY = SLING_Y,
+        maxPull = MAX_PULL,
+        activeBall = activeBall,
+        ballQueue = ballQueue,
+        ballOrder = BALL_ORDER,
+        width = DW,
+        height = DH,
+        dangerY = DANGER_Y,
+    }
 end
 
 return Game
