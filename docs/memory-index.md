@@ -8,7 +8,7 @@
 # 项目记忆索引
 
 项目：燃烧的蔬菜
-当前版本：0.2.0
+当前版本：0.2.1
 简述：540×960 竖屏弹弓弹珠砖块游戏，当前使用 NanoVG 2D 后端，已为 3D 后端完成逻辑/表现解耦。
 最后巩固：2026-08-04
 
@@ -54,13 +54,14 @@
 - validate 的 shader cache engine error 不是 Lua 错误；需结合 Lua/resource error 计数和真实截图判断。
 
 ## 最近变更
-- v0.2.0: 分离核心玩法、表现状态、视觉目录、NanoVG 后端和应用编排；保留并合并三类新增弹珠强化玩法；LSP 0 Error，官方构建成功，GLES 菜单截图正常。
+- v0.2.1: 完成常规“双响分裂”、加速“四连撞超载电弧”、巨型“首撞反震后贯穿”；加入一帧内砖块去重、回响弹出生砖忽略与技能领域事件；LSP 0 Error，官方构建成功。
+- v0.2.0: 分离核心玩法、表现状态、视觉目录、NanoVG 后端和应用编排。
 
 ## 验证记录
 - Lua LSP：0 Error。
 - 官方 build：成功，入口 `main.lua`，单机模式。
-- UrhoXRuntime：120 帧完整运行，`lua_errors=0`、`resource_errors=0`；验证器因 runtime shader cache 报 engine error。
-- GLES surfaceless：生成 `screenshots/architecture-refactor.png`，视觉检查正常。
+- UrhoXRuntime：120 帧完整运行，`run=PASS`、`lua_errors=0`、`resource_errors=0`；验证器总结果因 runtime shader cache engine error 为 FAIL。
+- GLES surfaceless：同样 `lua_errors=0`，但当前 runtime 的 NanoVG ESSL shader cache 无效，未生成可用截图；这属于验证运行时环境限制。
 
 ## 下一步
 1. 新建 3D 后端/renderer，消费相同的 `Game.GetSnapshot()` 和领域事件。

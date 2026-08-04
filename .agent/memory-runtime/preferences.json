@@ -13,7 +13,8 @@
   },
   "explicit_preferences": [],
   "implicit_preferences": [
-    "重视可维护性和后续 3D 迁移成本"
+    "重视可维护性和后续 3D 迁移成本",
+    "游戏技能应具备独立触发条件和战术用途，而非仅调整基础参数"
   ],
   "scoped_preferences": {
     "gamedev": {
