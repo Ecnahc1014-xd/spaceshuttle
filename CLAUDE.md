@@ -3,17 +3,17 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.3.1
-- 进度: 3D 后端性能与载具语义重构完成；敌方单位使用每敌人一个顶点色 CustomGeometry，击碎后分散旋转并缩小；待发射、飞行、反弹、碰撞和分裂对象均显示为完整运输车辆
-- 上次交付: `Renderer3D.lua` 移除逐体素 StaticModel 与固定四车发射台，接入低多边形越野皮卡 MDL；完成 Lua LSP、官方构建和单机/GLES 运行验证
+- 版本: 0.4.0
+- 进度: 3D 画面重构完成；敌方合并体素使用 `DiffVCol` 正确显示原始像素配色；每个弹珠由一个合并 `CustomGeometry` 体素战车表现；飞行车辆带双层世界空间拖尾；背景为 3 批动态视差星层和深空底板
+- 上次交付: `Renderer3D.lua` 用俯视体素拼装车辆替换外部整车 MDL，并补齐顶点色与拖尾；`Scene3DBackend.lua` 增加动态星空并移除会吞掉 3D 画面的 FXAA；完成菜单态和受控发射游戏态 GLES 截图验证
 
 ## 用户画像摘要
 - 使用简体中文沟通
 - 重视先做架构解耦，为后续 3D 开发降低迁移成本 [observed]
 
 ## 预测下一步
-- likely_next_task: 在真实交互截图中验证车辆拖拽、发射轨迹、碰撞和碎裂动画；必要时优化车辆朝向与颜色区分
-- 相关文件: `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `assets/model/6d5f1062-5bea-5cf8-a404-280333d4d4c8/`
+- likely_next_task: 真实交互复测四类车辆的拖拽、连续反弹、分裂和巨型圆域表现；按实机反馈微调体素车辆比例、拖尾长度与星空密度
+- 相关文件: `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`
 
 ## 恢复指令（新会话必执行）
 1. 读本文件 → 获取项目状态和避雷清单
@@ -34,9 +34,10 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 - 3D 后端的体素尺寸必须统一经过 `WORLD_SCALE` 映射；Renderer3D 只消费快照，碎片生命周期由 Presentation 维护
 - 3D 体素性能契约：每个敌人只允许一个 `CustomGeometry`，只在砖块存活拓扑或冻结状态改变时重建，禁止每体素创建 `Node + StaticModel`
-- 载具表现契约：每个 `marble.id` 对应一个完整车辆模型；`activeBall`、飞行弹、分裂弹和巨型弹统一走车辆同步，禁止恢复球形弹珠或固定装饰车发射台
-- 车辆模型资源路径固定为 `model/6d5f1062-5bea-5cf8-a404-280333d4d4c8/`；材质使用本地 diffuse/normal 纹理，避免未同步 UUID 贴图
-- 四辆运输车是四类弹珠的表现绑定，规则层仍保留统一发射坐标，避免改变既有弹道与技能平衡
+- 载具表现契约：每个 `marble.id` 对应一个合并体素车辆 `CustomGeometry`；`activeBall`、飞行弹、分裂弹和巨型弹统一走车辆同步，禁止恢复球形弹珠、外部整车 MDL 或固定装饰车发射台
+- 体素车辆局部 +X 为车头，俯视朝向绕 Z 轴由速度计算；车辆配色与 `ballType` 绑定，规则层仍保留统一发射坐标
+- 顶点色体素必须使用支持 VCol 的 Technique 并绑定白色基底纹理；`NoTextureUnlit` 不保证消费顶点颜色
+- 3D 星空必须位于游戏物体后、深空底板前，按层合批；禁止每颗星创建 Node。当前验证环境不可启用 FXAA，否则 ESSL shader cache 失败会吞掉整层 3D 画面
 - headless 运行时可出现自带 shader cache engine error；判断脚本需关注 `lua_errors=0`，同时确认资源错误不包含用户车辆/体素路径并结合 GLES 截图
 
 ## 工作流模板（收到任务后立即创建） 🔴

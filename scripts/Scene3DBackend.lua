@@ -2,6 +2,7 @@
 -- 3D 场景后端：固定 540x960 设计坐标，使用正交相机呈现体素敌人与运输车。
 
 local Renderer3D = require "Renderer3D"
+local SkyUtils = require "urhox-libs.Rendering.SkyUtils"
 
 local Backend = {}
 
@@ -12,6 +13,11 @@ local scene_ = nil
 local cameraNode_ = nil
 local camera_ = nil
 local viewport_ = nil
+local lightGroup_ = nil
+local zone_ = nil
+local skyNode_ = nil
+local starNode_ = nil
+local starFields_ = {}
 local CleanupFailedInit
 local ReleaseScene
 local vg_ = nil
@@ -40,6 +46,11 @@ CleanupFailedInit = function()
     cameraNode_ = nil
     camera_ = nil
     viewport_ = nil
+    lightGroup_ = nil
+    zone_ = nil
+    skyNode_ = nil
+    starNode_ = nil
+    starFields_ = {}
 end
 
 ReleaseScene = function()
@@ -50,6 +61,11 @@ ReleaseScene = function()
     cameraNode_ = nil
     camera_ = nil
     viewport_ = nil
+    lightGroup_ = nil
+    zone_ = nil
+    skyNode_ = nil
+    starNode_ = nil
+    starFields_ = {}
 end
 
 local function UpdateScreenMetrics()
@@ -75,14 +91,138 @@ local function CreateMaterial(rgb, roughness)
     return material
 end
 
-local function CreateBackdrop()
-    local node = scene_:CreateChild("Backdrop")
-    node.position = Vector3(0, 0, 1.4)
-    node.scale = Vector3(11.2, 19.5, 0.2)
-    local model = node:CreateComponent("StaticModel")
-    model:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
-    model:SetMaterial(CreateMaterial({0.035, 0.045, 0.10}, 0.95))
-    model.castShadows = false
+local function CreateUnlitMaterial(rgb)
+    local material = Material:new()
+    material:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/NoTextureUnlit.xml"))
+    material:SetShaderParameter("MatDiffColor", Variant(Color(rgb[1], rgb[2], rgb[3], 1)))
+    return material
+end
+
+local function CreateWhiteTexture()
+    local image = Image()
+    image:SetSize(1, 1, 4)
+    image:SetPixel(0, 0, Color(1, 1, 1, 1))
+    local texture = Texture2D:new()
+    texture:SetData(image, false)
+    texture:SetSRGB(true)
+    return texture
+end
+
+local function CreateStarMaterial(brightness)
+    local material = Material:new()
+    material:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
+    material:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
+    material:SetShaderParameter("MatDiffColor",
+        Variant(Color(brightness, brightness, brightness, 1)))
+    material:SetCullMode(CULL_NONE)
+    return material
+end
+
+local function CreateStarFieldLayer(parent, layerIndex, starCount, seed, z)
+    local state = seed
+    local function NextRandom()
+        state = (state * 48271) % 2147483647
+        return state / 2147483647
+    end
+
+    local node = parent:CreateChild("StarLayer_" .. tostring(layerIndex))
+    node.position = Vector3(0, 0, z)
+    local geometry = node:CreateComponent("CustomGeometry")
+    geometry:SetNumGeometries(1)
+    geometry:SetDynamic(false)
+    geometry:BeginGeometry(0, TRIANGLE_LIST)
+
+    local palettes = {
+        {0.58, 0.76, 1.00},
+        {0.90, 0.66, 1.00},
+        {1.00, 0.88, 0.58},
+        {0.72, 0.94, 1.00},
+    }
+    for i = 1, starCount do
+        local x = -5.6 + NextRandom() * 11.2
+        local y = -9.7 + NextRandom() * 19.4
+        local size = 0.012 + NextRandom() * (0.022 + layerIndex * 0.012)
+        local palette = palettes[1 + math.floor(NextRandom() * #palettes)]
+        local centerColor = Color(
+            math.min(1.0, palette[1] + 0.25),
+            math.min(1.0, palette[2] + 0.25),
+            math.min(1.0, palette[3] + 0.25), 1)
+        local edgeColor = Color(palette[1] * 0.72, palette[2] * 0.72, palette[3] * 0.72, 1)
+        local points = (i % 9 == 0) and 8 or 4
+        local phase = NextRandom() * math.pi
+        for p = 1, points do
+            local angle0 = phase + (p - 1) * math.pi * 2 / points
+            local angle1 = phase + p * math.pi * 2 / points
+            local radius0 = size * ((points == 8 and p % 2 == 0) and 0.34 or 1.0)
+            local radius1 = size * ((points == 8 and (p + 1) % 2 == 0) and 0.34 or 1.0)
+            local function Vertex(px, py, color)
+                geometry:DefineVertex(Vector3(px, py, 0))
+                geometry:DefineNormal(Vector3(0, 0, -1))
+                geometry:DefineColor(color)
+            end
+            Vertex(x, y, centerColor)
+            Vertex(x + math.cos(angle1) * radius1, y + math.sin(angle1) * radius1, edgeColor)
+            Vertex(x + math.cos(angle0) * radius0, y + math.sin(angle0) * radius0, edgeColor)
+        end
+    end
+
+    geometry:Commit()
+    local material = CreateStarMaterial(0.92 + layerIndex * 0.10)
+    geometry:SetMaterial(material)
+    geometry.castShadows = false
+    starFields_[#starFields_ + 1] = {
+        node = node,
+        material = material,
+        baseBrightness = 0.92 + layerIndex * 0.10,
+        speed = (0.35 + layerIndex * 0.16) * (layerIndex % 2 == 0 and -1 or 1),
+        phase = layerIndex * 1.73,
+    }
+end
+
+local function CreateSpaceEnvironment()
+    -- 深空底板负责稳定的竖屏渐变，三层星群位于底板前、游戏物体后。
+    local backdrop = scene_:CreateChild("DeepSpaceBackdrop")
+    backdrop.position = Vector3(0, 0, 1.65)
+    backdrop.scale = Vector3(11.4, 19.8, 0.08)
+    local backdropModel = backdrop:CreateComponent("StaticModel")
+    backdropModel:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
+    backdropModel:SetMaterial(CreateUnlitMaterial({0.0025, 0.0035, 0.018}))
+    backdropModel.castShadows = false
+
+    skyNode_ = SkyUtils.CreateGradientSky(scene_, {
+        zenith = Color(0.003, 0.006, 0.030),
+        horizon = Color(0.035, 0.012, 0.100),
+        ground = Color(0.002, 0.003, 0.012),
+        skyExp = 0.38,
+        groundExp = 1.8,
+        size = 128,
+        hdrBoost = 2.7,
+    })
+
+    starNode_ = scene_:CreateChild("DynamicStarField")
+    CreateStarFieldLayer(starNode_, 1, 46, 27183, 1.18)
+    CreateStarFieldLayer(starNode_, 2, 30, 91457, 1.12)
+    CreateStarFieldLayer(starNode_, 3, 16, 158923, 1.06)
+    print("[Scene3DBackend] dynamic star field created, stars=92, batches=3")
+end
+
+local function UpdateSpaceEnvironment(elapsed)
+    if skyNode_ then
+        skyNode_.rotation = Quaternion(elapsed * 0.18, Vector3(0, 1, 0))
+    end
+    for i, field in ipairs(starFields_) do
+        field.node.rotation = Quaternion(elapsed * field.speed, Vector3(0, 0, 1))
+        field.node.position = Vector3(
+            math.sin(elapsed * (0.07 + i * 0.011) + field.phase) * 0.055 * i,
+            math.cos(elapsed * (0.052 + i * 0.009) + field.phase) * 0.075 * i,
+            field.node.position.z)
+        local twinkle = 0.88 + 0.12 * math.sin(elapsed * (1.15 + i * 0.31) + field.phase)
+        local brightness = field.baseBrightness * twinkle
+        field.material:SetShaderParameter("MatDiffColor",
+            Variant(Color(brightness, brightness, brightness, 1)))
+    end
 end
 
 local function CreateDangerBand()
@@ -160,7 +300,7 @@ end
 local function DrawMenu(ctx, game)
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, 0, game.width, game.height)
-    nvgFillColor(ctx, nvgRGBA(8, 10, 24, 220))
+    nvgFillColor(ctx, nvgRGBA(8, 10, 24, 116))
     nvgFill(ctx)
 
     nvgFontFace(ctx, "zpix")
@@ -170,12 +310,12 @@ local function DrawMenu(ctx, game)
     nvgText(ctx, game.width * 0.5, 185, "燃烧的蔬菜", nil)
     nvgFontSize(ctx, 23)
     nvgFillColor(ctx, nvgRGBA(255, 220, 140, 255))
-    nvgText(ctx, game.width * 0.5, 235, "体素敌人与四辆运输车", nil)
+    nvgText(ctx, game.width * 0.5, 235, "俯视体素车队迎战像素蔬菜", nil)
 
     nvgFontSize(ctx, 16)
     nvgFillColor(ctx, nvgRGBA(190, 205, 230, 230))
-    nvgText(ctx, game.width * 0.5, 355, "敌方体素方块受击后分散旋转并缩小", nil)
-    nvgText(ctx, game.width * 0.5, 385, "四种弹珠由对应运输车装载并发射", nil)
+    nvgText(ctx, game.width * 0.5, 355, "彩色敌军方块受击后立体崩解", nil)
+    nvgText(ctx, game.width * 0.5, 385, "拖拽体素战车 · 发射 · 反弹 · 连锁", nil)
 
     local blink = 0.5 + 0.5 * math.sin(game.elapsed * 3)
     nvgFontSize(ctx, 22)
@@ -245,10 +385,17 @@ function Backend.Init(renderHandlerName)
         CleanupFailedInit()
         return false
     end
-    local lightGroup = scene_:CreateChild("LightGroup")
-    lightGroup:LoadXML(lightGroupFile:GetRoot())
+    lightGroup_ = scene_:CreateChild("LightGroup")
+    lightGroup_:LoadXML(lightGroupFile:GetRoot())
+    zone_ = lightGroup_:GetComponent("Zone", true)
+    if zone_ then
+        zone_.fogColor = Color(0.006, 0.008, 0.025)
+        zone_.fogStart = 32.0
+        zone_.fogEnd = 80.0
+        zone_.ambientIntensity = 0.52
+    end
 
-    CreateBackdrop()
+    CreateSpaceEnvironment()
     CreateDangerBand()
 
     cameraNode_ = scene_:CreateChild("Camera")
@@ -284,33 +431,8 @@ function Backend.Init(renderHandlerName)
         return false
     end
     SubscribeToEvent(vg_, "NanoVGRender", renderHandlerName)
-    print("[Scene3DBackend] initialized with voxel field and four trucks")
+    print("[Scene3DBackend] initialized with top-down voxel vehicles and dynamic star field")
     return true
-end
-
-local function CleanupFailedInit()
-    if vg_ then
-        nvgDelete(vg_)
-        vg_ = nil
-    end
-    renderer:SetViewport(0, nil)
-    if scene_ then
-        scene_:Dispose()
-        scene_ = nil
-    end
-    cameraNode_ = nil
-    camera_ = nil
-    viewport_ = nil
-end
-
-local function ReleaseScene()
-    if scene_ then
-        scene_:Dispose()
-        scene_ = nil
-    end
-    cameraNode_ = nil
-    camera_ = nil
-    viewport_ = nil
 end
 
 function Backend.Shutdown()
@@ -334,6 +456,7 @@ function Backend.ScreenToGame(screenX, screenY)
 end
 
 function Backend.Render(gameSnapshot, presentationSnapshot)
+    UpdateSpaceEnvironment(gameSnapshot.elapsed)
     Renderer3D.Render(gameSnapshot, presentationSnapshot)
     RenderOverlay(gameSnapshot, presentationSnapshot)
 end
