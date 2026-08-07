@@ -310,7 +310,7 @@ local function DrawMenu(ctx, game)
     nvgText(ctx, game.width * 0.5, 185, "燃烧的蔬菜", nil)
     nvgFontSize(ctx, 23)
     nvgFillColor(ctx, nvgRGBA(255, 220, 140, 255))
-    nvgText(ctx, game.width * 0.5, 235, "俯视体素车队迎战像素蔬菜", nil)
+    nvgText(ctx, game.width * 0.5, 235, "正交斜俯视 · 精品几何车队", nil)
 
     nvgFontSize(ctx, 16)
     nvgFillColor(ctx, nvgRGBA(190, 205, 230, 230))
@@ -399,7 +399,13 @@ function Backend.Init(renderHandlerName)
     CreateDangerBand()
 
     cameraNode_ = scene_:CreateChild("Camera")
-    cameraNode_.position = Vector3(0, 0, -25)
+    local cameraDistance = 25.0
+    local cameraTilt = math.rad(20.0)
+    cameraNode_.position = Vector3(
+        0,
+        cameraDistance * math.sin(cameraTilt),
+        -cameraDistance * math.cos(cameraTilt)
+    )
     cameraNode_:LookAt(Vector3(0, 0, 0))
     camera_ = cameraNode_:CreateComponent("Camera")
     camera_.orthographic = true
@@ -431,7 +437,7 @@ function Backend.Init(renderHandlerName)
         return false
     end
     SubscribeToEvent(vg_, "NanoVGRender", renderHandlerName)
-    print("[Scene3DBackend] initialized with top-down voxel vehicles and dynamic star field")
+    print("[Scene3DBackend] initialized with orthographic 20-degree camera, premium geometry vehicles and dynamic star field")
     return true
 end
 

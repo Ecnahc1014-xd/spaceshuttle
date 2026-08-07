@@ -61,6 +61,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.5.0: 相机保持 `orthographic=true`，从 XY 玩法平面法线向正视方向倾斜 20°，无近大远小；车辆由方块拼贴重建为单 `CustomGeometry` 五分区精品几何，包含倒角棱台车壳、透明驾驶舱、12 段圆柱轮胎与轮毂、金属饰件、自发光灯组；LSP 0 Error，官方构建成功，GLES 菜单态和受控发射游戏态截图验证通过。
 - v0.4.0: 修复敌人体素颜色未生效（`DiffVCol` + 白色基底纹理）；以每车一个合并 `CustomGeometry` 重建俯视体素车辆；增加按 `Presentation.marbleTrails` 生成的双层世界空间拖尾；增加 3 批合并动态星层和深空底板；关闭验证环境中会吞掉 3D 画面的 FXAA。Lua LSP 0 Error，官方构建成功，GLES 菜单态与受控发射游戏态截图均验证通过。
 - v0.3.1: 将逐体素 `Node + StaticModel` 改为每敌人顶点色 `CustomGeometry` 并剔除内部面；修复固定车辆字符串键长度判断导致的节点泄漏；使用低多边形越野皮卡 MDL 替代简陋基础几何；每个 marble 统一显示车辆本体；本地纹理路径消除 UUID 资源错误；Lua LSP 0 Error，官方构建成功，GLES 菜单截图成功生成。
 - v0.3.0: 新增 3D 体素/运输车后端；敌方方块击碎后生成分散、旋转、缩小碎片；四类弹珠绑定四辆运输车；Lua LSP 0 Error，官方构建成功，GLES 截图可生成但 runtime 的 NanoVG shader cache 有错误。
@@ -70,11 +71,11 @@
 ## 验证记录
 - Lua LSP：工作区 Error 0。
 - 官方 build：成功，入口 `main.lua`，单机模式。
-- GLES 菜单态：`screenshots/voxel-topdown-polished.png`，确认俯视体素车辆、深空底板和稀疏星层。
-- GLES 受控游戏态：`screenshots/voxel-gameplay-test.png`，确认敌方番茄原始红/绿/灰体素色、飞行车辆速度朝向、双层拖尾和待命冰车。
+- GLES 菜单态：`screenshots/orthographic-premium-menu.png`，确认正交 20° 斜俯视和待发射精品几何车辆。
+- GLES 受控游戏态：`screenshots/orthographic-premium-vehicle.png`，确认远近车辆尺寸不随深度变化、倒角车壳/透明舱体/圆柱轮胎/轮毂/发光灯正确显示，同时保留敌方体素颜色与拖尾。
 - Runtime：`lua_errors=0`；残余资源错误仅为环境自带 `Editor/Textures/Engine/Vignetting.png`、`Textures/Skybox.xml`，NanoVG ESSL shader cache 错误不来自用户 3D 代码；项目已禁用会吞掉 3D pass 的 FXAA。
 
 ## 下一步
-1. 在真实交互中复测四类体素车辆的拖拽、连续反弹、分裂、追击和巨型圆域。
-2. 根据设备实机观感微调星空密度、拖尾长度、车辆体素比例与四类配色。
+1. 在真实交互中复测四类精品几何车辆的拖拽、连续反弹、分裂、追击和巨型圆域。
+2. 根据设备实机观感微调 20° 斜俯视下的车辆比例、玻璃反射、拖尾长度与星空密度。
 3. 保持 HUD 与规则层解耦，继续让 3D 后端只消费两个 snapshot。

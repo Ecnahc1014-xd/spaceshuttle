@@ -1,16 +1,17 @@
 {
   "_comment": "跨项目用户偏好，POST-3 同步时自动更新",
-  "_last_sync": "2026-08-06",
+  "_last_sync": "2026-08-08",
   "_source_project": "燃烧的蔬菜",
   "wake_word": null,
   "persona_type": null,
   "communication_style": "简体中文",
   "code_preferences": {
     "gamedev_architecture": "渲染与权威玩法逻辑分离",
-    "voxel_rendering": "体素对象按实体合并 CustomGeometry，避免逐体素节点"
+    "voxel_rendering": "敌方体素对象按实体合并 CustomGeometry，避免逐体素节点",
+    "vehicle_rendering": "车辆使用单 CustomGeometry 多 PBR section 的精品程序化几何，不使用方块体素瓦片"
   },
   "workflow_preferences": {
-    "gamedev": "大规模 3D 开发前先建立可替换渲染边界，2D 玩法升级为 3D 体素/载具表现时保持规则契约，并用实际游戏态截图验证"
+    "gamedev": "大规模 3D 开发前先建立可替换渲染边界，保持规则契约，并用菜单态与实际游戏态截图同时验证镜头和表现"
   },
   "explicit_preferences": [],
   "implicit_preferences": [
@@ -18,13 +19,18 @@
     "游戏技能应具备独立触发条件和战术用途，而非仅调整基础参数",
     "性能问题应先通过合批和节点生命周期修复，再增加视觉复杂度",
     "载具必须作为弹珠的实际交互主体，而非装饰性发射台",
-    "偏好俯视角体素拼装车辆、可见拖尾、敌人体素原始配色和可动高质量星空",
+    "相机偏好正交投影并以20度斜俯视展示厚度，禁止透视近大远小",
+    "车辆偏好倒角车壳、透明舱体、圆柱轮胎、金属饰件和灯组组成的精品3D几何",
+    "偏好可见拖尾、敌人体素原始配色和可动高质量星空",
     "画面交付需要同时验证静态菜单态与发射后的真实游戏态"
   ],
   "scoped_preferences": {
     "gamedev": {
       "separate_rendering_and_gameplay": true,
-      "prefer_topdown_voxel_vehicles": true,
+      "require_orthographic_projection": true,
+      "preferred_camera_tilt_degrees": 20,
+      "prefer_premium_geometry_vehicles": true,
+      "reject_block_voxel_vehicles": true,
       "require_dynamic_background": true,
       "require_gameplay_screenshot_validation": true
     }

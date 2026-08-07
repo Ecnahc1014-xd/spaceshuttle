@@ -1,5 +1,5 @@
 -- Renderer3D.lua
--- 只读消费 Game / Presentation 快照，将彩色体素敌人、体素车辆、拖尾和碎片同步到 3D 场景。
+-- 只读消费 Game / Presentation 快照，将彩色体素敌人、精品几何车辆、拖尾和碎片同步到 3D 场景。
 
 local Renderer3D = {}
 
@@ -8,7 +8,13 @@ local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
 local VOXEL_GAP = 0.92
 local VOXEL_DEPTH = 0.72
-local VEHICLE_VOXEL_SIZE = 0.18
+
+local VEHICLE_SECTION_BODY = 0
+local VEHICLE_SECTION_TIRE = 1
+local VEHICLE_SECTION_METAL = 2
+local VEHICLE_SECTION_GLASS = 3
+local VEHICLE_SECTION_LIGHT = 4
+local VEHICLE_SECTION_COUNT = 5
 
 ---@type Scene
 local scene_ = nil
@@ -18,6 +24,7 @@ local modelBox_ = nil
 local voxelMaterial_ = nil
 ---@type Material
 local trailMaterial_ = nil
+local vehicleMaterialSets_ = {}
 local materialCache_ = {}
 local enemyMeshes_ = {}
 local vehicleRecords_ = {}
@@ -247,118 +254,191 @@ local function SyncEnemyMeshes(game, presentation)
     end
 end
 
-local function CellKey(x, y, z)
-    return tostring(x) .. ":" .. tostring(y) .. ":" .. tostring(z)
+local function FaceNormal(a, b, c)
+    local ux, uy, uz = b.x - a.x, b.y - a.y, b.z - a.z
+    local vx, vy, vz = c.x - a.x, c.y - a.y, c.z - a.z
+    local nx = uy * vz - uz * vy
+    local ny = uz * vx - ux * vz
+    local nz = ux * vy - uy * vx
+    local length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if length < 0.000001 then return Vector3(0, 0, -1) end
+    return Vector3(nx / length, ny / length, nz / length)
 end
 
-local function BuildVehicleCells(ballType)
+local function AddTriangle(buffer, a, b, c, expectedNormal)
+    local normal = FaceNormal(a, b, c)
+    if expectedNormal then
+        local dot = normal.x * expectedNormal.x + normal.y * expectedNormal.y
+            + normal.z * expectedNormal.z
+        if dot < 0 then
+            b, c = c, b
+            normal = FaceNormal(a, b, c)
+        end
+    end
+    buffer[#buffer + 1] = {position = a, normal = normal}
+    buffer[#buffer + 1] = {position = b, normal = normal}
+    buffer[#buffer + 1] = {position = c, normal = normal}
+end
+
+local function AddQuad(buffer, a, b, c, d, expectedNormal)
+    AddTriangle(buffer, a, b, c, expectedNormal)
+    AddTriangle(buffer, a, c, d, expectedNormal)
+end
+
+local function RoundedRing(cx, cy, z, length, width, bevel)
+    local hx, hy = length * 0.5, width * 0.5
+    bevel = math.min(bevel, hx * 0.8, hy * 0.8)
+    return {
+        Vector3(cx + hx - bevel, cy - hy, z),
+        Vector3(cx + hx, cy - hy + bevel, z),
+        Vector3(cx + hx, cy + hy - bevel, z),
+        Vector3(cx + hx - bevel, cy + hy, z),
+        Vector3(cx - hx + bevel, cy + hy, z),
+        Vector3(cx - hx, cy + hy - bevel, z),
+        Vector3(cx - hx, cy - hy + bevel, z),
+        Vector3(cx - hx + bevel, cy - hy, z),
+    }
+end
+
+local function AddFrustum(buffer, cx, cy, zNear, zFar,
+        nearLength, nearWidth, farLength, farWidth, bevel)
+    local nearRing = RoundedRing(cx, cy, zNear, nearLength, nearWidth, bevel)
+    local farRing = RoundedRing(cx, cy, zFar, farLength, farWidth, bevel)
+    local nearCenter = Vector3(cx, cy, zNear)
+    local farCenter = Vector3(cx, cy, zFar)
+    for i = 1, #nearRing do
+        local nextIndex = i % #nearRing + 1
+        AddTriangle(buffer, nearCenter, nearRing[nextIndex], nearRing[i], Vector3(0, 0, -1))
+        AddTriangle(buffer, farCenter, farRing[i], farRing[nextIndex], Vector3(0, 0, 1))
+        local midX = (nearRing[i].x + nearRing[nextIndex].x) * 0.5 - cx
+        local midY = (nearRing[i].y + nearRing[nextIndex].y) * 0.5 - cy
+        AddQuad(buffer, nearRing[i], nearRing[nextIndex], farRing[nextIndex], farRing[i],
+            Vector3(midX, midY, 0))
+    end
+end
+
+local function AddRoundedPrism(buffer, cx, cy, zNear, zFar, length, width, bevel)
+    AddFrustum(buffer, cx, cy, zNear, zFar, length, width, length, width, bevel)
+end
+
+local function AddCylinderY(buffer, cx, cy, cz, radius, width, segments)
+    local yMin, yMax = cy - width * 0.5, cy + width * 0.5
+    local minCenter = Vector3(cx, yMin, cz)
+    local maxCenter = Vector3(cx, yMax, cz)
+    for i = 0, segments - 1 do
+        local a0 = i * math.pi * 2 / segments
+        local a1 = (i + 1) * math.pi * 2 / segments
+        local x0, z0 = cx + math.cos(a0) * radius, cz + math.sin(a0) * radius
+        local x1, z1 = cx + math.cos(a1) * radius, cz + math.sin(a1) * radius
+        local p0 = Vector3(x0, yMin, z0)
+        local p1 = Vector3(x0, yMax, z0)
+        local p2 = Vector3(x1, yMax, z1)
+        local p3 = Vector3(x1, yMin, z1)
+        local expected = Vector3(math.cos((a0 + a1) * 0.5), 0, math.sin((a0 + a1) * 0.5))
+        AddQuad(buffer, p0, p1, p2, p3, expected)
+        AddTriangle(buffer, minCenter, p3, p0, Vector3(0, -1, 0))
+        AddTriangle(buffer, maxCenter, p1, p2, Vector3(0, 1, 0))
+    end
+end
+
+local function CreateGlassMaterial(rgb)
+    local material = Material:new()
+    material:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/PBR/PBRNoTextureAlpha.xml"))
+    material:SetShaderParameter("MatDiffColor", Variant(Color(rgb[1], rgb[2], rgb[3], 0.68)))
+    material:SetShaderParameter("Metallic", Variant(0.05))
+    material:SetShaderParameter("Roughness", Variant(0.08))
+    material:SetRenderOrder(180)
+    return material
+end
+
+local function GetVehicleMaterials(ballType)
+    local cached = vehicleMaterialSets_[ballType]
+    if cached then return cached end
     local palette = VEHICLE_PALETTES[ballType] or VEHICLE_PALETTES.normal
-    local cells = {}
-
-    local function SetCell(x, y, z, color)
-        local key = CellKey(x, y, z)
-        local cell = cells[key]
-        if cell then
-            cell.color = color
-        else
-            cells[key] = {x = x, y = y, z = z, color = color}
-        end
-    end
-
-    -- 车辆局部 +X 为车头。所有部件落在统一体素网格，最终合并成一个网格。
-    for x = -4, 4 do
-        for y = -2, 2 do
-            if not (math.abs(x) == 4 and math.abs(y) == 2) then
-                SetCell(x, y, 0, palette.body)
-            end
-        end
-    end
-    for x = -3, 3 do
-        for y = -2, 2 do
-            if not (math.abs(x) == 3 and math.abs(y) == 2) then
-                local color = x <= -2 and palette.cargo or palette.body
-                SetCell(x, y, -1, color)
-            end
-        end
-    end
-
-    -- 驾驶舱、顶窗与车型识别条。
-    for x = -1, 1 do
-        for y = -1, 1 do
-            SetCell(x, y, -2, palette.accent)
-        end
-    end
-    for y = -1, 1 do
-        SetCell(2, y, -2, palette.glass)
-        SetCell(-2, y, -2, palette.glass)
-    end
-    for x = -1, 1 do
-        SetCell(x, -2, -2, palette.glass)
-        SetCell(x, 2, -2, palette.glass)
-    end
-    SetCell(0, 0, -3, palette.accent)
-
-    -- 前后保险杠、车灯和货斗边框。
-    for y = -1, 1 do
-        SetCell(5, y, 0, palette.body)
-        SetCell(-5, y, 0, palette.cargo)
-    end
-    SetCell(5, -1, -1, HEADLIGHT_COLOR)
-    SetCell(5, 1, -1, HEADLIGHT_COLOR)
-    SetCell(-5, -1, -1, TAILLIGHT_COLOR)
-    SetCell(-5, 1, -1, TAILLIGHT_COLOR)
-    for y = -2, 2, 4 do
-        SetCell(-3, y, -2, palette.accent)
-        SetCell(-2, y, -2, palette.accent)
-    end
-
-    -- 四组外凸轮胎和轮毂，让俯视轮廓一眼可辨。
-    for _, wheelX in ipairs({-3, 2}) do
-        for _, wheelY in ipairs({-3, 3}) do
-            SetCell(wheelX, wheelY, 0, WHEEL_COLOR)
-            SetCell(wheelX + 1, wheelY, 0, WHEEL_COLOR)
-            SetCell(wheelX, wheelY, -1, HUB_COLOR)
-        end
-    end
-
-    return cells
+    local lightColor = BALL_COLORS[ballType] or BALL_COLORS.normal
+    cached = {
+        CreateMaterial(palette.body, 0.78, 0.22),
+        CreateMaterial(WHEEL_COLOR, 0.0, 0.88),
+        CreateMaterial(HUB_COLOR, 0.96, 0.18),
+        CreateGlassMaterial(palette.glass),
+        CreateMaterial(lightColor, 0.05, 0.20, {
+            lightColor[1] * 3.2, lightColor[2] * 3.2, lightColor[3] * 3.2,
+        }),
+    }
+    vehicleMaterialSets_[ballType] = cached
+    return cached
 end
 
 local function RebuildVehicleGeometry(geometry, ballType)
-    local cells = BuildVehicleCells(ballType)
-    local half = VEHICLE_VOXEL_SIZE * 0.5
-    geometry:Clear()
-    geometry:SetNumGeometries(1)
-    geometry:SetDynamic(false)
-    geometry:BeginGeometry(0, TRIANGLE_LIST)
+    local sections = {}
+    for i = 1, VEHICLE_SECTION_COUNT do sections[i] = {} end
+    local body = sections[VEHICLE_SECTION_BODY + 1]
+    local tire = sections[VEHICLE_SECTION_TIRE + 1]
+    local metal = sections[VEHICLE_SECTION_METAL + 1]
+    local glass = sections[VEHICLE_SECTION_GLASS + 1]
+    local light = sections[VEHICLE_SECTION_LIGHT + 1]
 
-    for _, cell in pairs(cells) do
-        local cx = cell.x * VEHICLE_VOXEL_SIZE
-        local cy = cell.y * VEHICLE_VOXEL_SIZE
-        local cz = cell.z * VEHICLE_VOXEL_SIZE
-        for _, face in ipairs(FACE_DEFS) do
-            local neighbor = face.neighbor
-            if not cells[CellKey(cell.x + neighbor[1], cell.y + neighbor[2], cell.z + neighbor[3])] then
-                local corners = {}
-                for i, corner in ipairs(face.corners) do
-                    corners[i] = Vector3(
-                        cx + corner[1] * half,
-                        cy + corner[2] * half,
-                        cz + corner[3] * half
-                    )
-                end
-                EmitQuad(geometry, corners[1], corners[2], corners[3], corners[4],
-                    face.normal, ShadeColor(cell.color, face.tint))
-            end
+    -- 局部 +X 是车头，XY 是行驶平面，负 Z 朝向镜头。几何由倒角棱台和圆柱组成。
+    AddRoundedPrism(body, 0, 0, -0.30, 0.20, 2.90, 1.30, 0.18)
+    AddFrustum(body, 0.62, 0, -0.48, -0.28, 1.22, 1.10, 1.34, 1.20, 0.14)
+    AddFrustum(body, -0.48, 0, -0.48, -0.27, 1.16, 1.12, 1.38, 1.20, 0.15)
+    AddRoundedPrism(body, -1.10, 0, -0.42, -0.27, 0.56, 1.16, 0.13)
+
+    -- 四个独立外扩轮拱，形成连续而有张力的车身肩线。
+    for _, wheelX in ipairs({-0.88, 0.86}) do
+        for _, wheelY in ipairs({-0.62, 0.62}) do
+            AddRoundedPrism(body, wheelX, wheelY, -0.35, 0.08, 0.70, 0.34, 0.12)
         end
     end
 
+    -- 倾斜的全景驾驶舱与独立天窗，斜俯视时能读出真实高度。
+    AddFrustum(glass, -0.08, 0, -0.78, -0.43, 1.02, 0.80, 1.38, 1.03, 0.12)
+    AddRoundedPrism(body, -0.12, 0, -0.805, -0.775, 0.62, 0.56, 0.10)
+
+    -- 橡胶轮胎沿 Y 轴布置，12 段圆周避免方块瓦片感。
+    for _, wheelX in ipairs({-0.88, 0.86}) do
+        AddCylinderY(tire, wheelX, -0.73, -0.02, 0.31, 0.24, 12)
+        AddCylinderY(tire, wheelX, 0.73, -0.02, 0.31, 0.24, 12)
+        AddCylinderY(metal, wheelX, -0.865, -0.02, 0.17, 0.035, 12)
+        AddCylinderY(metal, wheelX, 0.865, -0.02, 0.17, 0.035, 12)
+    end
+
+    -- 金属保险杠、中央脊线、侧裙与后扰流板。
+    AddRoundedPrism(metal, 1.49, 0, -0.22, 0.02, 0.16, 1.16, 0.05)
+    AddRoundedPrism(metal, -1.49, 0, -0.20, 0.04, 0.14, 1.12, 0.04)
+    AddRoundedPrism(metal, 0.12, 0, -0.835, -0.805, 1.04, 0.075, 0.02)
+    AddRoundedPrism(metal, -0.20, -0.67, -0.19, -0.10, 1.72, 0.075, 0.02)
+    AddRoundedPrism(metal, -0.20, 0.67, -0.19, -0.10, 1.72, 0.075, 0.02)
+    AddRoundedPrism(metal, -1.12, 0, -0.56, -0.48, 0.12, 1.22, 0.025)
+
+    -- 类型色能量灯：前灯、尾灯和车顶识别灯统一使用自发光 PBR。
+    for _, y in ipairs({-0.38, 0.38}) do
+        AddRoundedPrism(light, 1.465, y, -0.43, -0.31, 0.08, 0.27, 0.025)
+        AddRoundedPrism(light, -1.465, y, -0.37, -0.28, 0.07, 0.22, 0.02)
+    end
+    AddRoundedPrism(light, 0.08, 0, -0.855, -0.835, 0.46, 0.06, 0.015)
+
+    geometry:Clear()
+    geometry:SetNumGeometries(VEHICLE_SECTION_COUNT)
+    geometry:SetDynamic(false)
+    for sectionIndex = 0, VEHICLE_SECTION_COUNT - 1 do
+        geometry:BeginGeometry(sectionIndex, TRIANGLE_LIST)
+        for _, vertex in ipairs(sections[sectionIndex + 1]) do
+            geometry:DefineVertex(vertex.position)
+            geometry:DefineNormal(vertex.normal)
+        end
+    end
     geometry:Commit()
-    geometry:SetMaterial(voxelMaterial_)
+
+    local materials = GetVehicleMaterials(ballType)
+    for sectionIndex = 0, VEHICLE_SECTION_COUNT - 1 do
+        geometry:SetMaterial(sectionIndex, materials[sectionIndex + 1])
+    end
 end
 
 local function CreateVehicleRecord(id, marble)
-    local root = scene_:CreateChild("VoxelVehicle_" .. tostring(id))
+    local root = scene_:CreateChild("Vehicle_" .. tostring(id))
     local geometry = root:CreateComponent("CustomGeometry")
     geometry.castShadows = false
     RebuildVehicleGeometry(geometry, marble.ballType)
@@ -383,7 +463,7 @@ local function SyncVehicles(game)
             RebuildVehicleGeometry(record.geometry, marble.ballType)
         end
 
-        record.root.position = GameToWorld(marble.x, marble.y, -0.28)
+        record.root.position = GameToWorld(marble.x, marble.y, -0.08)
         local worldVx = marble.vx * WORLD_SCALE
         local worldVy = -marble.vy * WORLD_SCALE
         if worldVx * worldVx + worldVy * worldVy > 0.0001 then
@@ -391,7 +471,7 @@ local function SyncVehicles(game)
         end
         record.root.rotation = Quaternion(record.heading, Vector3(0, 0, 1))
 
-        local scaleFactor = marble.radius / 9.0
+        local scaleFactor = marble.radius / 9.0 * 0.78
         if not marble.isPrimary then scaleFactor = scaleFactor * 0.78 end
         if marble.ballType == "giant" then scaleFactor = scaleFactor * 1.12 end
         record.root.scale = Vector3(scaleFactor, scaleFactor, scaleFactor)
@@ -570,7 +650,7 @@ function Renderer3D.Init(scene)
 
     initialized_ = modelBox_ ~= nil and voxelMaterial_ ~= nil and trailMaterial_ ~= nil
     print("[Renderer3D] initialized, colored_voxels=" .. tostring(initialized_)
-        .. ", voxel_vehicles=true, world_trails=true")
+        .. ", premium_geometry_vehicles=true, world_trails=true")
     return initialized_
 end
 
@@ -592,6 +672,7 @@ function Renderer3D.Shutdown()
     enemyMeshes_ = {}
     debrisNodes_ = {}
     materialCache_ = {}
+    vehicleMaterialSets_ = {}
     scene_ = nil
     modelBox_ = nil
     voxelMaterial_ = nil
