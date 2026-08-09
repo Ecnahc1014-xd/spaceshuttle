@@ -8,6 +8,9 @@ local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
 local VOXEL_GAP = 0.92
 local VOXEL_DEPTH = 1.18
+local VEHICLE_PLANAR_RADIUS = 2.01
+local VEHICLE_COLLISION_FILL = 0.94
+local VEHICLE_TURN_SPEED = 420.0
 
 local VEHICLE_SECTION_BODY = 0
 local VEHICLE_SECTION_SIDE = 1
@@ -31,6 +34,7 @@ local enemyMeshes_ = {}
 local vehicleRecords_ = {}
 local trailRecords_ = {}
 local debrisNodes_ = {}
+local lastRenderElapsed_ = nil
 local initialized_ = false
 
 local BALL_COLORS = {
@@ -507,7 +511,31 @@ local function RebuildVehicleGeometry(geometry, ballType)
     end
 end
 
-local function CreateVehicleRecord(id, marble)
+local function MoveAngleToward(current, target, maxStep)
+    local delta = (target - current + 180) % 360 - 180
+    if math.abs(delta) <= maxStep then return target end
+    return current + (delta > 0 and maxStep or -maxStep)
+end
+
+local function GetVehicleTargetHeading(game, marble)
+    if marble.onSling and game.aiming then
+        local launchX = game.slingX - marble.x
+        local launchY = marble.y - game.slingY
+        if launchX * launchX + launchY * launchY > 0.0001 then
+            return math.deg(math.atan(launchY, launchX))
+        end
+    end
+
+    local worldVx = marble.vx * WORLD_SCALE
+    local worldVy = -marble.vy * WORLD_SCALE
+    if worldVx * worldVx + worldVy * worldVy > 0.0001 then
+        return math.deg(math.atan(worldVy, worldVx))
+    end
+    if marble.onSling then return -90 end
+    return nil
+end
+
+local function CreateVehicleRecord(id, marble, initialHeading)
     local root = scene_:CreateChild("Vehicle_" .. tostring(id))
     local geometry = root:CreateComponent("CustomGeometry")
     geometry.castShadows = false
@@ -516,17 +544,20 @@ local function CreateVehicleRecord(id, marble)
         root = root,
         geometry = geometry,
         ballType = marble.ballType,
-        heading = 0,
+        heading = initialHeading,
+        targetHeading = initialHeading,
     }
 end
 
-local function SyncVehicles(game)
+local function SyncVehicles(game, dt)
     local active = {}
     local function SyncOne(marble)
         active[marble.id] = true
+        local targetHeading = GetVehicleTargetHeading(game, marble)
         local record = vehicleRecords_[marble.id]
         if not record then
-            record = CreateVehicleRecord(marble.id, marble)
+            local initialHeading = targetHeading or -90
+            record = CreateVehicleRecord(marble.id, marble, initialHeading)
             vehicleRecords_[marble.id] = record
         elseif record.ballType ~= marble.ballType then
             record.ballType = marble.ballType
@@ -534,24 +565,18 @@ local function SyncVehicles(game)
         end
 
         record.root.position = GameToWorld(marble.x, marble.y, -0.08)
-        local worldVx = marble.vx * WORLD_SCALE
-        local worldVy = -marble.vy * WORLD_SCALE
-        if marble.onSling and game.aiming then
-            local launchX = game.slingX - marble.x
-            local launchY = marble.y - game.slingY
-            if launchX * launchX + launchY * launchY > 0.0001 then
-                record.heading = math.deg(math.atan(launchY, launchX))
-            end
-        elseif worldVx * worldVx + worldVy * worldVy > 0.0001 then
-            record.heading = math.deg(math.atan(worldVy, worldVx))
-        elseif marble.onSling then
-            record.heading = -90
-        end
+        if targetHeading then record.targetHeading = targetHeading end
+        record.heading = MoveAngleToward(
+            record.heading,
+            record.targetHeading,
+            VEHICLE_TURN_SPEED * dt)
         record.root.rotation = Quaternion(record.heading, Vector3(0, 0, 1))
 
-        local scaleFactor = marble.radius / 9.0 * 0.78
-        if not marble.isPrimary then scaleFactor = scaleFactor * 0.78 end
-        if marble.ballType == "giant" then scaleFactor = scaleFactor * 1.12 end
+        -- 规则层使用圆形碰撞体；车辆 XY 最远外轮廓必须完整落在该圆内。
+        -- marble.radius 已包含普通、加速、分裂与巨型弹的权威尺寸差异。
+        local collisionRadiusWorld = marble.radius * WORLD_SCALE
+        local scaleFactor = collisionRadiusWorld * VEHICLE_COLLISION_FILL
+            / VEHICLE_PLANAR_RADIUS
         record.root.scale = Vector3(scaleFactor, scaleFactor, scaleFactor)
     end
 
@@ -711,6 +736,7 @@ end
 
 function Renderer3D.Init(scene)
     scene_ = scene
+    lastRenderElapsed_ = nil
     modelBox_ = cache:GetResource("Model", "Models/Box.mdl")
 
     voxelMaterial_ = Material:new()
@@ -734,9 +760,19 @@ end
 
 function Renderer3D.Render(game, presentation)
     if not initialized_ then return end
+
+    local elapsed = game.elapsed or 0
+    local dt = 1 / 60
+    if lastRenderElapsed_ then
+        if elapsed >= lastRenderElapsed_ then
+            dt = math.min(elapsed - lastRenderElapsed_, 0.05)
+        end
+    end
+    lastRenderElapsed_ = elapsed
+
     SyncEnemyMeshes(game, presentation)
     SyncVehicleTrails(game, presentation)
-    SyncVehicles(game)
+    SyncVehicles(game, dt)
     SyncDebris(presentation)
 end
 
@@ -755,6 +791,7 @@ function Renderer3D.Shutdown()
     modelBox_ = nil
     voxelMaterial_ = nil
     trailMaterial_ = nil
+    lastRenderElapsed_ = nil
     initialized_ = false
 end
 
