@@ -1,6 +1,6 @@
 {
   "_comment": "跨项目用户偏好，POST-3 同步时自动更新",
-  "_last_sync": "2026-08-08",
+  "_last_sync": "2026-08-09",
   "_source_project": "燃烧的蔬菜",
   "wake_word": null,
   "persona_type": null,
@@ -8,29 +8,38 @@
   "code_preferences": {
     "gamedev_architecture": "渲染与权威玩法逻辑分离",
     "voxel_rendering": "敌方体素对象按实体合并 CustomGeometry，避免逐体素节点",
-    "vehicle_rendering": "车辆使用单 CustomGeometry 多 PBR section 的精品程序化几何，不使用方块体素瓦片"
+    "vehicle_rendering": "车辆使用单 CustomGeometry 多 PBR section 的大运式平头重卡几何，并用独立浅色侧围区分侧面"
   },
   "workflow_preferences": {
     "gamedev": "大规模 3D 开发前先建立可替换渲染边界，保持规则契约，并用菜单态与实际游戏态截图同时验证镜头和表现"
   },
-  "explicit_preferences": [],
+  "explicit_preferences": [
+    "载具车型必须采用大运式平头重卡轮廓",
+    "车辆侧边颜色要比主车漆更浅并明确区分",
+    "弹药槽和碰撞反馈必须是完整表现，不能只做文字占位"
+  ],
   "implicit_preferences": [
     "重视可维护性和后续 3D 迁移成本",
     "游戏技能应具备独立触发条件和战术用途，而非仅调整基础参数",
     "性能问题应先通过合批和节点生命周期修复，再增加视觉复杂度",
     "载具必须作为弹珠的实际交互主体，而非装饰性发射台",
-    "相机偏好正交投影并以20度斜俯视展示厚度，禁止透视近大远小",
-    "车辆偏好倒角车壳、透明舱体、圆柱轮胎、金属饰件和灯组组成的精品3D几何",
+    "相机偏好正交投影并使用足够斜俯视角展示厚度，禁止透视近大远小",
+    "车辆偏好平头高顶驾驶室、长货厢、三轴六轮、透明风挡、金属格栅和灯组组成的重卡几何",
     "偏好可见拖尾、敌人体素原始配色和可动高质量星空",
-    "画面交付需要同时验证静态菜单态与发射后的真实游戏态"
+    "画面交付需要同时验证静态菜单态与发射后的真实游戏态",
+    "敌方撞击防线时需要相机、材质、冲击波与警示文字的联合反馈"
   ],
   "scoped_preferences": {
     "gamedev": {
       "separate_rendering_and_gameplay": true,
       "require_orthographic_projection": true,
-      "preferred_camera_tilt_degrees": 20,
-      "prefer_premium_geometry_vehicles": true,
+      "preferred_camera_tilt_degrees": 30,
+      "prefer_dayun_style_heavy_trucks": true,
+      "require_lighter_vehicle_side_panels": true,
+      "reject_sports_car_or_pickup_profiles": true,
       "reject_block_voxel_vehicles": true,
+      "require_complete_ammo_slots": true,
+      "require_spatial_collision_feedback": true,
       "require_dynamic_background": true,
       "require_gameplay_screenshot_validation": true
     }

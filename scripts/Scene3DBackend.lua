@@ -12,9 +12,12 @@ local DESIGN_H = 960
 local scene_ = nil
 local cameraNode_ = nil
 local camera_ = nil
+local cameraBasePosition_ = Vector3(0, 0, 0)
 local viewport_ = nil
 local lightGroup_ = nil
 local zone_ = nil
+local dangerBandNode_ = nil
+local dangerBandMaterial_ = nil
 local skyNode_ = nil
 local starNode_ = nil
 local starFields_ = {}
@@ -48,6 +51,8 @@ CleanupFailedInit = function()
     viewport_ = nil
     lightGroup_ = nil
     zone_ = nil
+    dangerBandNode_ = nil
+    dangerBandMaterial_ = nil
     skyNode_ = nil
     starNode_ = nil
     starFields_ = {}
@@ -63,6 +68,8 @@ ReleaseScene = function()
     viewport_ = nil
     lightGroup_ = nil
     zone_ = nil
+    dangerBandNode_ = nil
+    dangerBandMaterial_ = nil
     skyNode_ = nil
     starNode_ = nil
     starFields_ = {}
@@ -226,13 +233,130 @@ local function UpdateSpaceEnvironment(elapsed)
 end
 
 local function CreateDangerBand()
-    local node = scene_:CreateChild("DangerBand")
-    node.position = Vector3(0, -8.0, 0.9)
-    node.scale = Vector3(11.0, 0.06, 0.06)
-    local model = node:CreateComponent("StaticModel")
+    dangerBandNode_ = scene_:CreateChild("DangerBand")
+    dangerBandNode_.position = Vector3(0, -8.0, 0.9)
+    dangerBandNode_.scale = Vector3(11.0, 0.06, 0.06)
+    local model = dangerBandNode_:CreateComponent("StaticModel")
     model:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
-    model:SetMaterial(CreateMaterial({0.85, 0.08, 0.08}, 0.45))
+    dangerBandMaterial_ = CreateMaterial({0.85, 0.08, 0.08}, 0.45)
+    model:SetMaterial(dangerBandMaterial_)
     model.castShadows = false
+end
+
+local SLOT_TYPES = {"normal", "ice", "speed", "giant"}
+local SLOT_NAMES = {
+    normal = "分裂", ice = "冰冻", speed = "加速", giant = "巨型",
+}
+local SLOT_COLORS = {
+    normal = {255, 184, 55}, ice = {72, 204, 255},
+    speed = {255, 75, 35}, giant = {185, 88, 255},
+}
+
+local function DrawAimTrajectory(ctx, game)
+    if not game.aiming or not game.activeBall then return end
+    local color = SLOT_COLORS[game.activeBall.ballType] or SLOT_COLORS.normal
+    for _, point in ipairs(game.aimTrajectory) do
+        local alpha = math.floor(210 * (1 - point.progress))
+        local radius = 1.8 + 3.0 * (1 - point.progress)
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, point.x, point.y, radius)
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha))
+        nvgFill(ctx)
+    end
+end
+
+local function DrawBaseImpactFeedback(ctx, game, presentation)
+    local flash = presentation.baseBarrierFlash or 0
+    if flash > 0 then
+        local alpha = math.floor(math.min(1, flash / 0.62) * 180)
+        local glow = nvgLinearGradient(ctx, 0, game.dangerY - 52, 0, game.dangerY + 42,
+            nvgRGBA(255, 36, 18, 0), nvgRGBA(255, 96, 32, alpha))
+        nvgBeginPath(ctx)
+        nvgRect(ctx, 0, game.dangerY - 52, game.width, 94)
+        nvgFillPaint(ctx, glow)
+        nvgFill(ctx)
+
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, 0, game.dangerY)
+        nvgLineTo(ctx, game.width, game.dangerY)
+        nvgStrokeColor(ctx, nvgRGBA(255, 225, 145, alpha))
+        nvgStrokeWidth(ctx, 4 + 7 * flash)
+        nvgStroke(ctx)
+    end
+
+    for _, impact in ipairs(presentation.baseImpacts or {}) do
+        local progress = 1 - impact.life / impact.maxLife
+        local alpha = math.floor(255 * (1 - progress))
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, impact.x, impact.y, impact.radius)
+        nvgStrokeColor(ctx, nvgRGBA(255, 112, 44, alpha))
+        nvgStrokeWidth(ctx, 5 * (1 - progress) + 1)
+        nvgStroke(ctx)
+        for spoke = 1, 8 do
+            local angle = impact.spin + spoke * math.pi * 0.25
+            local inner = impact.radius * 0.45
+            local outer = impact.radius * 1.15
+            nvgBeginPath(ctx)
+            nvgMoveTo(ctx, impact.x + math.cos(angle) * inner,
+                impact.y + math.sin(angle) * inner)
+            nvgLineTo(ctx, impact.x + math.cos(angle) * outer,
+                impact.y + math.sin(angle) * outer)
+            nvgStrokeColor(ctx, nvgRGBA(255, 210, 100, math.floor(alpha * 0.8)))
+            nvgStrokeWidth(ctx, 2)
+            nvgStroke(ctx)
+        end
+    end
+end
+
+local function DrawAmmoSlots(ctx, game, presentation)
+    local queueCounts = {}
+    for _, ballType in ipairs(game.ballQueue) do
+        queueCounts[ballType] = (queueCounts[ballType] or 0) + 1
+    end
+    if game.activeBall then
+        queueCounts[game.activeBall.ballType] = (queueCounts[game.activeBall.ballType] or 0) + 1
+    end
+
+    local startX, slotY, slotW, slotH, gap = 34, 884, 112, 60, 8
+    nvgFontFace(ctx, "zpix")
+    for i, ballType in ipairs(SLOT_TYPES) do
+        local x = startX + (i - 1) * (slotW + gap)
+        local color = SLOT_COLORS[ballType]
+        local selected = game.activeBall and game.activeBall.ballType == ballType
+        local flash = presentation.truckLaunchFlash[ballType] or 0
+        local lift = selected and -7 or 0
+
+        nvgBeginPath(ctx)
+        nvgRoundedRect(ctx, x, slotY + lift, slotW, slotH, 10)
+        local bg = nvgLinearGradient(ctx, x, slotY + lift, x, slotY + lift + slotH,
+            nvgRGBA(34, 39, 67, 245), nvgRGBA(12, 15, 34, 245))
+        nvgFillPaint(ctx, bg)
+        nvgFill(ctx)
+        nvgBeginPath(ctx)
+        nvgRoundedRect(ctx, x + 1, slotY + lift + 1, slotW - 2, slotH - 2, 9)
+        nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3],
+            selected and 255 or 155 + math.floor(flash * 320)))
+        nvgStrokeWidth(ctx, selected and 3 or 1.5 + flash * 7)
+        nvgStroke(ctx)
+
+        nvgBeginPath(ctx)
+        nvgRoundedRect(ctx, x + 8, slotY + lift + 9, 30, 30, 7)
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], 220))
+        nvgFill(ctx)
+        nvgFontSize(ctx, 14)
+        nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
+        nvgFillColor(ctx, nvgRGBA(18, 20, 38, 255))
+        nvgText(ctx, x + 23, slotY + lift + 24, tostring(i), nil)
+
+        nvgTextAlign(ctx, NVG_ALIGN_LEFT + NVG_ALIGN_MIDDLE)
+        nvgFontSize(ctx, 15)
+        nvgFillColor(ctx, nvgRGBA(245, 248, 255, 255))
+        nvgText(ctx, x + 45, slotY + lift + 20, SLOT_NAMES[ballType], nil)
+        nvgFontSize(ctx, 12)
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], 235))
+        nvgText(ctx, x + 45, slotY + lift + 42,
+            selected and "装填中" or ("储备 ×" .. tostring(queueCounts[ballType] or 0)), nil)
+    end
 end
 
 local function DrawOverlayBackground(ctx, width, height)
@@ -274,29 +398,6 @@ local function DrawHud(ctx, game)
     end
 end
 
-local function DrawTruckLegend(ctx, game)
-    local labels = {
-        {"分裂运输车", 116, 910, 255, 190, 80},
-        {"冰冻运输车", 226, 910, 100, 210, 255},
-        {"加速运输车", 336, 910, 255, 110, 70},
-        {"巨型运输车", 446, 910, 205, 145, 255},
-    }
-    nvgFontFace(ctx, "zpix")
-    nvgFontSize(ctx, 11)
-    nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_MIDDLE)
-    for _, label in ipairs(labels) do
-        nvgFillColor(ctx, nvgRGBA(label[4], label[5], label[6], 220))
-        nvgText(ctx, label[2], label[3], label[1], nil)
-    end
-
-    if game.activeBall then
-        nvgFontSize(ctx, 13)
-        nvgFillColor(ctx, nvgRGBA(255, 245, 190, 240))
-        nvgText(ctx, game.width * 0.5, 875,
-            "当前发射：" .. tostring(game.activeBall.ballType), nil)
-    end
-end
-
 local function DrawMenu(ctx, game)
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, 0, game.width, game.height)
@@ -310,12 +411,12 @@ local function DrawMenu(ctx, game)
     nvgText(ctx, game.width * 0.5, 185, "燃烧的蔬菜", nil)
     nvgFontSize(ctx, 23)
     nvgFillColor(ctx, nvgRGBA(255, 220, 140, 255))
-    nvgText(ctx, game.width * 0.5, 235, "正交斜俯视 · 精品几何车队", nil)
+    nvgText(ctx, game.width * 0.5, 235, "正交斜俯视 · 大运重卡车队", nil)
 
     nvgFontSize(ctx, 16)
     nvgFillColor(ctx, nvgRGBA(190, 205, 230, 230))
     nvgText(ctx, game.width * 0.5, 355, "彩色敌军方块受击后立体崩解", nil)
-    nvgText(ctx, game.width * 0.5, 385, "拖拽体素战车 · 发射 · 反弹 · 连锁", nil)
+    nvgText(ctx, game.width * 0.5, 385, "拖拽重卡瞄准 · 发射 · 反弹 · 连锁", nil)
 
     local blink = 0.5 + 0.5 * math.sin(game.elapsed * 3)
     nvgFontSize(ctx, 22)
@@ -352,14 +453,22 @@ local function RenderOverlay(game, presentation)
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgSave(vg_)
     nvgIntersectScissor(vg_, 0, 0, DESIGN_W, DESIGN_H)
+    DrawAimTrajectory(vg_, game)
+    if presentation.screenShake > 0 then
+        local amplitude = presentation.screenShake * 13
+        nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
+            math.cos(game.elapsed * 73) * amplitude * 0.65)
+    end
+    DrawBaseImpactFeedback(vg_, game, presentation)
+    nvgRestore(vg_)
+
     DrawHud(vg_, game)
-    DrawTruckLegend(vg_, game)
+    DrawAmmoSlots(vg_, game, presentation)
     if game.state == "menu" then
         DrawMenu(vg_, game)
     elseif game.state == "gameover" then
         DrawGameOver(vg_, game)
     end
-    nvgRestore(vg_)
     nvgEndFrame(vg_)
 end
 
@@ -398,14 +507,16 @@ function Backend.Init(renderHandlerName)
     CreateSpaceEnvironment()
     CreateDangerBand()
 
+    -- 正交投影保持无近大远小；30° 斜俯视配合加厚敌人体素与高顶重卡暴露侧面深度。
     cameraNode_ = scene_:CreateChild("Camera")
     local cameraDistance = 25.0
-    local cameraTilt = math.rad(20.0)
-    cameraNode_.position = Vector3(
+    local cameraTilt = math.rad(30.0)
+    cameraBasePosition_ = Vector3(
         0,
         cameraDistance * math.sin(cameraTilt),
         -cameraDistance * math.cos(cameraTilt)
     )
+    cameraNode_.position = cameraBasePosition_
     cameraNode_:LookAt(Vector3(0, 0, 0))
     camera_ = cameraNode_:CreateComponent("Camera")
     camera_.orthographic = true
@@ -437,7 +548,7 @@ function Backend.Init(renderHandlerName)
         return false
     end
     SubscribeToEvent(vg_, "NanoVGRender", renderHandlerName)
-    print("[Scene3DBackend] initialized with orthographic 20-degree camera, premium geometry vehicles and dynamic star field")
+    print("[Scene3DBackend] initialized with orthographic 30-degree camera, Dayun-style heavy trucks, four ammo slots and impact feedback")
     return true
 end
 
@@ -463,6 +574,25 @@ end
 
 function Backend.Render(gameSnapshot, presentationSnapshot)
     UpdateSpaceEnvironment(gameSnapshot.elapsed)
+    local shake = presentationSnapshot.screenShake or 0
+    if cameraNode_ then
+        cameraNode_.position = cameraBasePosition_ + Vector3(
+            math.sin(gameSnapshot.elapsed * 97) * shake * 0.10,
+            math.cos(gameSnapshot.elapsed * 79) * shake * 0.08,
+            math.sin(gameSnapshot.elapsed * 61) * shake * 0.035)
+    end
+    if dangerBandNode_ then
+        local flash = presentationSnapshot.baseBarrierFlash or 0
+        dangerBandNode_.scale = Vector3(11.0, 0.06 + flash * 0.18, 0.06 + flash * 0.12)
+        if dangerBandMaterial_ then
+            dangerBandMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(
+                math.min(1.0, 0.85 + flash * 0.5),
+                math.min(1.0, 0.08 + flash * 0.42),
+                math.min(1.0, 0.08 + flash * 0.12), 1)))
+            dangerBandMaterial_:SetShaderParameter("MatEmissiveColor", Variant(Color(
+                flash * 4.0, flash * 0.7, flash * 0.16, 1)))
+        end
+    end
     Renderer3D.Render(gameSnapshot, presentationSnapshot)
     RenderOverlay(gameSnapshot, presentationSnapshot)
 end

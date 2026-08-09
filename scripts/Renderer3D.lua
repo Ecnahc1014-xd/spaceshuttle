@@ -7,14 +7,15 @@ local WORLD_SCALE = 0.018
 local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
 local VOXEL_GAP = 0.92
-local VOXEL_DEPTH = 0.72
+local VOXEL_DEPTH = 1.18
 
 local VEHICLE_SECTION_BODY = 0
-local VEHICLE_SECTION_TIRE = 1
-local VEHICLE_SECTION_METAL = 2
-local VEHICLE_SECTION_GLASS = 3
-local VEHICLE_SECTION_LIGHT = 4
-local VEHICLE_SECTION_COUNT = 5
+local VEHICLE_SECTION_SIDE = 1
+local VEHICLE_SECTION_TIRE = 2
+local VEHICLE_SECTION_METAL = 3
+local VEHICLE_SECTION_GLASS = 4
+local VEHICLE_SECTION_LIGHT = 5
+local VEHICLE_SECTION_COUNT = 6
 
 ---@type Scene
 local scene_ = nil
@@ -41,20 +42,20 @@ local BALL_COLORS = {
 
 local VEHICLE_PALETTES = {
     normal = {
-        body = {0.98, 0.58, 0.08}, accent = {1.00, 0.92, 0.24},
-        glass = {0.12, 0.34, 0.48}, cargo = {0.58, 0.24, 0.04},
+        body = {0.84, 0.38, 0.035}, side = {1.00, 0.62, 0.13},
+        accent = {1.00, 0.92, 0.24}, glass = {0.10, 0.30, 0.42},
     },
     ice = {
-        body = {0.10, 0.66, 0.94}, accent = {0.62, 0.96, 1.00},
-        glass = {0.06, 0.20, 0.40}, cargo = {0.12, 0.44, 0.72},
+        body = {0.055, 0.48, 0.78}, side = {0.22, 0.80, 1.00},
+        accent = {0.62, 0.96, 1.00}, glass = {0.045, 0.18, 0.34},
     },
     speed = {
-        body = {0.94, 0.10, 0.025}, accent = {1.00, 0.72, 0.08},
-        glass = {0.18, 0.10, 0.18}, cargo = {0.54, 0.035, 0.02},
+        body = {0.76, 0.045, 0.015}, side = {1.00, 0.24, 0.055},
+        accent = {1.00, 0.72, 0.08}, glass = {0.16, 0.07, 0.13},
     },
     giant = {
-        body = {0.52, 0.10, 0.90}, accent = {0.92, 0.54, 1.00},
-        glass = {0.16, 0.08, 0.30}, cargo = {0.30, 0.04, 0.58},
+        body = {0.39, 0.045, 0.74}, side = {0.72, 0.25, 1.00},
+        accent = {0.92, 0.54, 1.00}, glass = {0.14, 0.055, 0.27},
     },
 }
 
@@ -220,6 +221,57 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
         end
     end
 
+    -- 敌方飞船船体并入同一个 CustomGeometry，保持每敌人单网格性能契约。
+    local hullWidth = enemy.gridW * voxelSize
+    local hullTop = -enemy.gridH * voxelSize
+    local hullBottom = hullTop - voxelSize * 0.78
+    local hullZ0 = -halfDepth * 1.45
+    local hullZ1 = halfDepth * 1.45
+    local topLeft = hullWidth * 0.10
+    local topRight = hullWidth * 0.90
+    local bottomLeft = hullWidth * 0.30
+    local bottomRight = hullWidth * 0.70
+    local hullFront = ShadeColor({0.20, 0.27, 0.38}, enemy.frozen > 0 and 1.65 or 1.0)
+    local hullSide = ShadeColor({0.12, 0.17, 0.27}, enemy.frozen > 0 and 1.55 or 1.0)
+    EmitQuad(geometry,
+        Vector3(topRight, hullTop, hullZ0), Vector3(topLeft, hullTop, hullZ0),
+        Vector3(bottomLeft, hullBottom, hullZ0), Vector3(bottomRight, hullBottom, hullZ0),
+        Vector3(0, 0, -1), hullFront)
+    EmitQuad(geometry,
+        Vector3(topLeft, hullTop, hullZ1), Vector3(topRight, hullTop, hullZ1),
+        Vector3(bottomRight, hullBottom, hullZ1), Vector3(bottomLeft, hullBottom, hullZ1),
+        Vector3(0, 0, 1), ShadeColor({0.09, 0.13, 0.22}, 1.0))
+    EmitQuad(geometry,
+        Vector3(topLeft, hullTop, hullZ0), Vector3(topLeft, hullTop, hullZ1),
+        Vector3(bottomLeft, hullBottom, hullZ1), Vector3(bottomLeft, hullBottom, hullZ0),
+        Vector3(-1, 0, 0), hullSide)
+    EmitQuad(geometry,
+        Vector3(topRight, hullTop, hullZ1), Vector3(topRight, hullTop, hullZ0),
+        Vector3(bottomRight, hullBottom, hullZ0), Vector3(bottomRight, hullBottom, hullZ1),
+        Vector3(1, 0, 0), ShadeColor({0.25, 0.34, 0.48}, 1.0))
+    EmitQuad(geometry,
+        Vector3(topLeft, hullTop, hullZ1), Vector3(topLeft, hullTop, hullZ0),
+        Vector3(topRight, hullTop, hullZ0), Vector3(topRight, hullTop, hullZ1),
+        Vector3(0, 1, 0), ShadeColor({0.34, 0.42, 0.56}, 1.0))
+    EmitQuad(geometry,
+        Vector3(bottomRight, hullBottom, hullZ0), Vector3(bottomLeft, hullBottom, hullZ0),
+        Vector3(bottomLeft, hullBottom, hullZ1), Vector3(bottomRight, hullBottom, hullZ1),
+        Vector3(0, -1, 0), ShadeColor({0.07, 0.10, 0.18}, 1.0))
+
+    -- 两个推进器喷口以高亮顶点色强化飞船落向防线的方向感。
+    for _, centerX in ipairs({hullWidth * 0.33, hullWidth * 0.67}) do
+        local engineHalfW = voxelSize * 0.17
+        local engineTop = hullBottom + voxelSize * 0.10
+        local engineBottom = hullBottom - voxelSize * 0.34
+        EmitQuad(geometry,
+            Vector3(centerX + engineHalfW, engineTop, hullZ0 - 0.002),
+            Vector3(centerX - engineHalfW, engineTop, hullZ0 - 0.002),
+            Vector3(centerX - engineHalfW * 0.22, engineBottom, hullZ0 - 0.002),
+            Vector3(centerX + engineHalfW * 0.22, engineBottom, hullZ0 - 0.002),
+            Vector3(0, 0, -1),
+            enemy.frozen > 0 and Color(0.35, 0.75, 1.0, 1) or Color(1.0, 0.36, 0.05, 1))
+    end
+
     geometry:Commit()
     geometry:SetMaterial(voxelMaterial_)
     record.signature = GetEnemySignature(enemy)
@@ -358,7 +410,8 @@ local function GetVehicleMaterials(ballType)
     local palette = VEHICLE_PALETTES[ballType] or VEHICLE_PALETTES.normal
     local lightColor = BALL_COLORS[ballType] or BALL_COLORS.normal
     cached = {
-        CreateMaterial(palette.body, 0.78, 0.22),
+        CreateMaterial(palette.body, 0.72, 0.27),
+        CreateMaterial(palette.side, 0.56, 0.34),
         CreateMaterial(WHEEL_COLOR, 0.0, 0.88),
         CreateMaterial(HUB_COLOR, 0.96, 0.18),
         CreateGlassMaterial(palette.glass),
@@ -374,50 +427,67 @@ local function RebuildVehicleGeometry(geometry, ballType)
     local sections = {}
     for i = 1, VEHICLE_SECTION_COUNT do sections[i] = {} end
     local body = sections[VEHICLE_SECTION_BODY + 1]
+    local side = sections[VEHICLE_SECTION_SIDE + 1]
     local tire = sections[VEHICLE_SECTION_TIRE + 1]
     local metal = sections[VEHICLE_SECTION_METAL + 1]
     local glass = sections[VEHICLE_SECTION_GLASS + 1]
     local light = sections[VEHICLE_SECTION_LIGHT + 1]
 
-    -- 局部 +X 是车头，XY 是行驶平面，负 Z 朝向镜头。几何由倒角棱台和圆柱组成。
-    AddRoundedPrism(body, 0, 0, -0.30, 0.20, 2.90, 1.30, 0.18)
-    AddFrustum(body, 0.62, 0, -0.48, -0.28, 1.22, 1.10, 1.34, 1.20, 0.14)
-    AddFrustum(body, -0.48, 0, -0.48, -0.27, 1.16, 1.12, 1.38, 1.20, 0.15)
-    AddRoundedPrism(body, -1.10, 0, -0.42, -0.27, 0.56, 1.16, 0.13)
+    -- 局部 +X 是车头，XY 是行驶平面，负 Z 朝向镜头。
+    -- 采用大运式平头重卡比例：高平头驾驶室、长货厢、三轴六轮、外露保险杠。
+    AddRoundedPrism(body, 0, 0, -0.28, 0.18, 3.45, 1.28, 0.12)
+    AddRoundedPrism(body, -0.62, 0, -0.76, -0.25, 1.86, 1.20, 0.10)
+    AddFrustum(body, 0.98, 0, -1.02, -0.26, 1.08, 1.16, 1.18, 1.24, 0.09)
+    AddRoundedPrism(body, 1.54, 0, -0.72, -0.24, 0.18, 1.18, 0.045)
 
-    -- 四个独立外扩轮拱，形成连续而有张力的车身肩线。
-    for _, wheelX in ipairs({-0.88, 0.86}) do
-        for _, wheelY in ipairs({-0.62, 0.62}) do
-            AddRoundedPrism(body, wheelX, wheelY, -0.35, 0.08, 0.70, 0.34, 0.12)
-        end
+    -- 浅色侧围独立成材质分区，让斜俯视下的车身侧面与主车漆清晰分层。
+    for _, sideY in ipairs({-0.625, 0.625}) do
+        AddRoundedPrism(side, -0.45, sideY, -0.61, -0.12, 2.15, 0.075, 0.022)
+        AddRoundedPrism(side, 1.02, sideY, -0.82, -0.30, 0.82, 0.075, 0.022)
+    end
+    AddRoundedPrism(side, -0.62, 0, -0.80, -0.755, 1.62, 0.96, 0.06)
+
+    -- 平头重卡的大面积前风挡和左右侧窗。
+    AddFrustum(glass, 1.00, 0, -1.055, -0.99, 0.70, 0.92, 0.82, 1.00, 0.07)
+    for _, sideY in ipairs({-0.635, 0.635}) do
+        AddRoundedPrism(glass, 1.02, sideY, -0.91, -0.56, 0.58, 0.045, 0.015)
     end
 
-    -- 倾斜的全景驾驶舱与独立天窗，斜俯视时能读出真实高度。
-    AddFrustum(glass, -0.08, 0, -0.78, -0.43, 1.02, 0.80, 1.38, 1.03, 0.12)
-    AddRoundedPrism(body, -0.12, 0, -0.805, -0.775, 0.62, 0.56, 0.10)
-
-    -- 橡胶轮胎沿 Y 轴布置，12 段圆周避免方块瓦片感。
-    for _, wheelX in ipairs({-0.88, 0.86}) do
-        AddCylinderY(tire, wheelX, -0.73, -0.02, 0.31, 0.24, 12)
-        AddCylinderY(tire, wheelX, 0.73, -0.02, 0.31, 0.24, 12)
-        AddCylinderY(metal, wheelX, -0.865, -0.02, 0.17, 0.035, 12)
-        AddCylinderY(metal, wheelX, 0.865, -0.02, 0.17, 0.035, 12)
+    -- 三轴六轮：前桥转向轮 + 后双桥，圆柱轮胎保持真实轮廓。
+    for _, wheelX in ipairs({1.03, -0.52, -1.18}) do
+        AddCylinderY(tire, wheelX, -0.73, -0.02, 0.30, 0.24, 14)
+        AddCylinderY(tire, wheelX, 0.73, -0.02, 0.30, 0.24, 14)
+        AddCylinderY(metal, wheelX, -0.865, -0.02, 0.16, 0.035, 14)
+        AddCylinderY(metal, wheelX, 0.865, -0.02, 0.16, 0.035, 14)
     end
 
-    -- 金属保险杠、中央脊线、侧裙与后扰流板。
-    AddRoundedPrism(metal, 1.49, 0, -0.22, 0.02, 0.16, 1.16, 0.05)
-    AddRoundedPrism(metal, -1.49, 0, -0.20, 0.04, 0.14, 1.12, 0.04)
-    AddRoundedPrism(metal, 0.12, 0, -0.835, -0.805, 1.04, 0.075, 0.02)
-    AddRoundedPrism(metal, -0.20, -0.67, -0.19, -0.10, 1.72, 0.075, 0.02)
-    AddRoundedPrism(metal, -0.20, 0.67, -0.19, -0.10, 1.72, 0.075, 0.02)
-    AddRoundedPrism(metal, -1.12, 0, -0.56, -0.48, 0.12, 1.22, 0.025)
-
-    -- 类型色能量灯：前灯、尾灯和车顶识别灯统一使用自发光 PBR。
-    for _, y in ipairs({-0.38, 0.38}) do
-        AddRoundedPrism(light, 1.465, y, -0.43, -0.31, 0.08, 0.27, 0.025)
-        AddRoundedPrism(light, -1.465, y, -0.37, -0.28, 0.07, 0.22, 0.02)
+    -- 重卡格栅、保险杠、货厢骨架、侧裙、后防撞梁与后视镜。
+    AddRoundedPrism(metal, 1.70, 0, -0.51, -0.15, 0.12, 1.14, 0.035)
+    for _, grilleY in ipairs({-0.34, -0.17, 0, 0.17, 0.34}) do
+        AddRoundedPrism(metal, 1.765, grilleY, -0.48, -0.25, 0.025, 0.10, 0.01)
     end
-    AddRoundedPrism(light, 0.08, 0, -0.855, -0.835, 0.46, 0.06, 0.015)
+    AddRoundedPrism(metal, -1.74, 0, -0.18, 0.04, 0.12, 1.10, 0.035)
+    AddRoundedPrism(metal, -0.62, -0.66, -0.76, -0.24, 1.88, 0.045, 0.015)
+    AddRoundedPrism(metal, -0.62, 0.66, -0.76, -0.24, 1.88, 0.045, 0.015)
+    AddRoundedPrism(metal, -1.53, 0, -0.79, -0.75, 0.045, 1.10, 0.012)
+    AddRoundedPrism(metal, 0.06, -0.69, -0.17, -0.08, 2.72, 0.055, 0.018)
+    AddRoundedPrism(metal, 0.06, 0.69, -0.17, -0.08, 2.72, 0.055, 0.018)
+    for _, mirrorY in ipairs({-0.79, 0.79}) do
+        AddRoundedPrism(metal, 1.26, mirrorY, -0.91, -0.68, 0.19, 0.11, 0.025)
+    end
+
+    -- 类型色灯组：前照灯、顶部示廓灯、尾灯与侧标灯。
+    for _, y in ipairs({-0.39, 0.39}) do
+        AddRoundedPrism(light, 1.775, y, -0.68, -0.51, 0.035, 0.25, 0.012)
+        AddRoundedPrism(light, -1.785, y, -0.36, -0.23, 0.035, 0.20, 0.01)
+    end
+    for _, y in ipairs({-0.42, 0, 0.42}) do
+        AddRoundedPrism(light, 1.16, y, -1.085, -1.055, 0.10, 0.07, 0.015)
+    end
+    for _, x in ipairs({-1.25, -0.55, 0.18}) do
+        AddRoundedPrism(light, x, -0.685, -0.54, -0.43, 0.12, 0.025, 0.008)
+        AddRoundedPrism(light, x, 0.685, -0.54, -0.43, 0.12, 0.025, 0.008)
+    end
 
     geometry:Clear()
     geometry:SetNumGeometries(VEHICLE_SECTION_COUNT)
@@ -466,8 +536,16 @@ local function SyncVehicles(game)
         record.root.position = GameToWorld(marble.x, marble.y, -0.08)
         local worldVx = marble.vx * WORLD_SCALE
         local worldVy = -marble.vy * WORLD_SCALE
-        if worldVx * worldVx + worldVy * worldVy > 0.0001 then
+        if marble.onSling and game.aiming then
+            local launchX = game.slingX - marble.x
+            local launchY = marble.y - game.slingY
+            if launchX * launchX + launchY * launchY > 0.0001 then
+                record.heading = math.deg(math.atan(launchY, launchX))
+            end
+        elseif worldVx * worldVx + worldVy * worldVy > 0.0001 then
             record.heading = math.deg(math.atan(worldVy, worldVx))
+        elseif marble.onSling then
+            record.heading = -90
         end
         record.root.rotation = Quaternion(record.heading, Vector3(0, 0, 1))
 
@@ -650,7 +728,7 @@ function Renderer3D.Init(scene)
 
     initialized_ = modelBox_ ~= nil and voxelMaterial_ ~= nil and trailMaterial_ ~= nil
     print("[Renderer3D] initialized, colored_voxels=" .. tostring(initialized_)
-        .. ", premium_geometry_vehicles=true, world_trails=true")
+        .. ", dayun_heavy_trucks=true, six_material_sections=true, world_trails=true")
     return initialized_
 end
 

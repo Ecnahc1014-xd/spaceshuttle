@@ -12,6 +12,8 @@ local floatTexts = {}
 local marbleTrails = {}
 local hitFlashes = {}
 local brickDebris = {}
+local baseImpacts = {}
+local baseBarrierFlash = 0
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,
@@ -89,6 +91,8 @@ local function HandleEvent(event)
         marbleTrails = {}
         hitFlashes = {}
         brickDebris = {}
+        baseImpacts = {}
+        baseBarrierFlash = 0
         nextDebrisId = 1
         truckLaunchFlash = {
             normal = 0,
@@ -113,8 +117,20 @@ local function HandleEvent(event)
     elseif event.type == "enemy_cleared" then
         SpawnFloatText(event.x, event.y, "击破!", {120, 255, 160}, 1.2)
     elseif event.type == "base_hit" then
-        screenShake = 0.4
-        SpawnParticles(event.x, event.y, {255, 80, 60}, 16)
+        screenShake = 0.55
+        baseBarrierFlash = 0.62
+        table.insert(baseImpacts, {
+            id = nextDebrisId,
+            x = event.x,
+            y = event.y,
+            life = 0.72,
+            maxLife = 0.72,
+            radius = 18,
+            spin = (math.random() - 0.5) * 2.4,
+        })
+        nextDebrisId = nextDebrisId + 1
+        SpawnParticles(event.x, event.y, {255, 80, 60}, 24)
+        SpawnFloatText(event.x, event.y - 34, "防线受创!", {255, 110, 80}, 1.05)
     elseif event.type == "marble_launched" then
         truckLaunchFlash[event.ballType] = 0.28
         SpawnParticles(event.x or 270, event.y or 850, {
@@ -201,6 +217,19 @@ local function UpdateBrickDebris(dt)
     end
 end
 
+local function UpdateBaseImpacts(dt)
+    baseBarrierFlash = math.max(0, baseBarrierFlash - dt)
+    for i = #baseImpacts, 1, -1 do
+        local impact = baseImpacts[i]
+        impact.life = impact.life - dt
+        impact.radius = impact.radius + 190 * dt
+        impact.spin = impact.spin + dt * 4.5
+        if impact.life <= 0 then
+            table.remove(baseImpacts, i)
+        end
+    end
+end
+
 local function UpdateTruckLaunchFlashes(dt)
     for ballType, timeLeft in pairs(truckLaunchFlash) do
         truckLaunchFlash[ballType] = math.max(0, timeLeft - dt)
@@ -232,6 +261,8 @@ function Presentation.Init()
     marbleTrails = {}
     hitFlashes = {}
     brickDebris = {}
+    baseImpacts = {}
+    baseBarrierFlash = 0
     nextDebrisId = 1
     truckLaunchFlash = {
         normal = 0,
@@ -254,6 +285,7 @@ function Presentation.Update(dt, gameSnapshot, events)
     UpdateFloatTexts(dt)
     UpdateHitFlashes(dt)
     UpdateBrickDebris(dt)
+    UpdateBaseImpacts(dt)
     UpdateTruckLaunchFlashes(dt)
     UpdateTrails(gameSnapshot)
 end
@@ -267,6 +299,8 @@ function Presentation.GetSnapshot()
         marbleTrails = marbleTrails,
         hitFlashes = hitFlashes,
         brickDebris = brickDebris,
+        baseImpacts = baseImpacts,
+        baseBarrierFlash = baseBarrierFlash,
         truckLaunchFlash = truckLaunchFlash,
         visualCatalog = VisualCatalog,
     }
