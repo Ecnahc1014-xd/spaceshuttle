@@ -20,7 +20,7 @@ local function ToGameCoordinates(eventData)
 end
 
 function Start()
-    graphics.windowTitle = "燃烧的蔬菜 - 弹珠砖块大战"
+    graphics.windowTitle = "太空飞机弹珠"
     input.mouseVisible = true
 
     if not RenderBackend.Init("HandleRender") then return end

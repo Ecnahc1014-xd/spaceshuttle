@@ -1,7 +1,7 @@
 {
   "_comment": "跨项目用户偏好，POST-3 同步时自动更新",
-  "_last_sync": "2026-08-09",
-  "_source_project": "燃烧的蔬菜",
+  "_last_sync": "2026-08-13",
+  "_source_project": "太空飞机弹珠",
   "wake_word": null,
   "persona_type": null,
   "communication_style": "简体中文",
@@ -9,16 +9,19 @@
     "gamedev_architecture": "渲染与权威玩法逻辑分离",
     "voxel_rendering": "敌方体素对象按实体合并 CustomGeometry，避免逐体素节点",
     "vehicle_rendering": "车辆使用单 CustomGeometry 多 PBR section 的大运式平头重卡几何，并用独立浅色侧围区分侧面；视觉外轮廓不得超出权威碰撞判定",
-    "vehicle_motion": "载具转向区分目标角与显示角，沿最短角路径平滑过渡"
+    "vehicle_motion": "载具转向区分目标角与显示角，沿最短角路径平滑过渡",
+    "fixed_aspect_canvas": "raw NanoVG、3D Viewport 与输入共享同一 DPR-aware CONTAIN scale/offset，非目标比例只做 letterbox"
   },
   "workflow_preferences": {
-    "gamedev": "大规模 3D 开发前先建立可替换渲染边界，保持规则契约，并用菜单态与实际游戏态截图同时验证镜头和表现"
+    "gamedev": "大规模 3D 开发前先建立可替换渲染边界，保持规则契约，并用菜单态、非目标比例 letterbox 与实际游戏态截图同时验证镜头和表现"
   },
   "explicit_preferences": [
     "载具车型必须采用大运式平头重卡轮廓",
     "车辆侧边颜色要比主车漆更浅并明确区分",
     "弹药槽和碰撞反馈必须是完整表现，不能只做文字占位",
-    "载具转向必须具有平滑过渡动画，视觉模型不得超出碰撞判定范围"
+    "载具转向必须具有平滑过渡动画，视觉模型不得超出碰撞判定范围",
+    "游戏画布必须严格保持 9:16，UI 紧贴玩法画布边界且场地边缘完整可见",
+    "酸性技术图纸 UI 使用深紫背景、淡蓝工程线与明紫强调，不使用蓝白配色"
   ],
   "implicit_preferences": [
     "重视可维护性和后续 3D 迁移成本",
@@ -28,14 +31,15 @@
     "相机偏好正交投影并使用足够斜俯视角展示厚度，禁止透视近大远小",
     "车辆偏好平头高顶驾驶室、长货厢、三轴六轮、透明风挡、金属格栅和灯组组成的重卡几何",
     "偏好可见拖尾、敌人体素原始配色和可动高质量星空",
-    "画面交付需要同时验证静态菜单态与发射后的真实游戏态",
-    "敌方撞击防线时需要相机、材质、冲击波与警示文字的联合反馈"
+    "画面交付需要同时验证静态菜单态、非目标比例 letterbox 与发射后的真实游戏态",
+    "敌方撞击防线时需要相机、材质、冲击波与警示文字的联合反馈",
+    "UI 偏好技术网格、刻度光环、工程标注、状态码和半调点阵"
   ],
   "scoped_preferences": {
     "gamedev": {
       "separate_rendering_and_gameplay": true,
       "require_orthographic_projection": true,
-      "preferred_camera_tilt_degrees": 30,
+      "preferred_camera_tilt_degrees": 38,
       "prefer_dayun_style_heavy_trucks": true,
       "require_lighter_vehicle_side_panels": true,
       "reject_sports_car_or_pickup_profiles": true,
@@ -45,7 +49,10 @@
       "require_smooth_vehicle_turning": true,
       "require_vehicle_visuals_within_collision_bounds": true,
       "require_dynamic_background": true,
-      "require_gameplay_screenshot_validation": true
+      "require_gameplay_screenshot_validation": true,
+      "require_fixed_nine_sixteen_canvas": true,
+      "require_shared_ui_viewport_input_transform": true,
+      "preferred_ui_palette": "deep-purple-pale-blue-acid"
     }
   }
 }

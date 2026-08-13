@@ -1,5 +1,5 @@
 -- Renderer.lua
--- 燃烧的蔬菜 - NanoVG 渲染器
+-- 太空飞机弹珠 - NanoVG 渲染器
 
 local Renderer = {}
 
@@ -134,35 +134,35 @@ end
 local function DrawEnemy(ctx, enemy, elapsed, visualCatalog, hitFlashes)
     local frozen = enemy.frozen > 0
     local totalW = enemy.gridW * enemy.brickSize
-    local totalH = enemy.gridH * enemy.brickSize
     local brickSize = enemy.brickSize
 
-    -- 飞船底座（蔬菜下方的几何船体）
-    local hullY = enemy.y + totalH
+    -- 飞船底座位于阵列远离玩家的一侧（屏幕上方）。
+    local hullBottom = enemy.y
     local hullH = brickSize * 0.8
+    local hullTop = hullBottom - hullH
     local hullColor = frozen and {120, 180, 220} or {90, 90, 110}
     local hullDark = frozen and {60, 120, 160} or {50, 50, 70}
 
-    -- 梯形船体
+    -- 梯形船体：窄端朝向远离玩家的上方。
     nvgBeginPath(ctx)
-    nvgMoveTo(ctx, enemy.x + totalW * 0.15, hullY)
-    nvgLineTo(ctx, enemy.x + totalW * 0.85, hullY)
-    nvgLineTo(ctx, enemy.x + totalW * 0.65, hullY + hullH)
-    nvgLineTo(ctx, enemy.x + totalW * 0.35, hullY + hullH)
+    nvgMoveTo(ctx, enemy.x + totalW * 0.35, hullTop)
+    nvgLineTo(ctx, enemy.x + totalW * 0.65, hullTop)
+    nvgLineTo(ctx, enemy.x + totalW * 0.85, hullBottom)
+    nvgLineTo(ctx, enemy.x + totalW * 0.15, hullBottom)
     nvgClosePath(ctx)
     nvgFillColor(ctx, nvgRGBA(hullColor[1], hullColor[2], hullColor[3], 255))
     nvgFill(ctx)
     nvgBeginPath(ctx)
-    nvgMoveTo(ctx, enemy.x + totalW * 0.15, hullY)
-    nvgLineTo(ctx, enemy.x + totalW * 0.85, hullY)
-    nvgLineTo(ctx, enemy.x + totalW * 0.65, hullY + hullH)
-    nvgLineTo(ctx, enemy.x + totalW * 0.35, hullY + hullH)
+    nvgMoveTo(ctx, enemy.x + totalW * 0.35, hullTop)
+    nvgLineTo(ctx, enemy.x + totalW * 0.65, hullTop)
+    nvgLineTo(ctx, enemy.x + totalW * 0.85, hullBottom)
+    nvgLineTo(ctx, enemy.x + totalW * 0.15, hullBottom)
     nvgClosePath(ctx)
     nvgStrokeColor(ctx, nvgRGBA(hullDark[1], hullDark[2], hullDark[3], 255))
     nvgStrokeWidth(ctx, 1)
     nvgStroke(ctx)
 
-    -- 推进器火焰（左右两个）
+    -- 推进器火焰从远端向屏幕上方延伸。
     if not frozen then
         local flicker = 0.7 + 0.3 * math.sin(elapsed * 20 + enemy.phase)
         local flameH = hullH * (1.0 + flicker * 0.6)
@@ -170,11 +170,11 @@ local function DrawEnemy(ctx, enemy, elapsed, visualCatalog, hitFlashes)
         local fx2 = enemy.x + totalW * 0.7
         for _, fx in ipairs({fx1, fx2}) do
             nvgBeginPath(ctx)
-            nvgMoveTo(ctx, fx - brickSize * 0.2, hullY + hullH)
-            nvgLineTo(ctx, fx + brickSize * 0.2, hullY + hullH)
-            nvgLineTo(ctx, fx, hullY + hullH + flameH)
+            nvgMoveTo(ctx, fx - brickSize * 0.2, hullTop)
+            nvgLineTo(ctx, fx + brickSize * 0.2, hullTop)
+            nvgLineTo(ctx, fx, hullTop - flameH)
             nvgClosePath(ctx)
-            nvgFillColor(ctx, nvgRGBA(255, 160 + math.floor(60 * flicker), 40, 230))
+            nvgFillColor(ctx, nvgRGBA(176, 142 + math.floor(60 * flicker), 255, 230))
             nvgFill(ctx)
         end
     end
@@ -513,9 +513,9 @@ local function DrawMenu(ctx, s, visualCatalog)
 
     nvgFontSize(ctx, 52)
     nvgFillColor(ctx, nvgRGBA(60, 10, 0, 255))
-    nvgText(ctx, s.width / 2 + 3, s.height * 0.20 + 3, "燃烧的蔬菜", nil)
+    nvgText(ctx, s.width / 2 + 3, s.height * 0.20 + 3, "太空飞机弹珠", nil)
     nvgFillColor(ctx, nvgRGBA(255, 110, 40, 255))
-    nvgText(ctx, s.width / 2, s.height * 0.20, "燃烧的蔬菜", nil)
+    nvgText(ctx, s.width / 2, s.height * 0.20, "太空飞机弹珠", nil)
 
     nvgFontSize(ctx, 24)
     nvgFillColor(ctx, nvgRGBA(255, 220, 140, 255))

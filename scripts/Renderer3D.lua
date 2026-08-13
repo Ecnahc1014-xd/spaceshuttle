@@ -272,10 +272,10 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
         end
     end
 
-    -- 敌方飞船船体并入同一个 CustomGeometry，保持每敌人单网格性能契约。
+    -- 飞行器底座固定在敌方阵列远离我方防线的一侧（局部 +Y / 屏幕上方）。
     local hullWidth = enemy.gridW * voxelSize
-    local hullTop = -enemy.gridH * voxelSize
-    local hullBottom = hullTop - voxelSize * 0.78
+    local hullBottom = 0
+    local hullTop = voxelSize * 0.78
     local hullZ0 = -halfDepth * 1.45
     local hullZ1 = halfDepth * 1.45
     local topLeft = hullWidth * 0.10
@@ -312,13 +312,13 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     -- 两个推进器喷口以高亮顶点色强化飞船落向防线的方向感。
     for _, centerX in ipairs({hullWidth * 0.33, hullWidth * 0.67}) do
         local engineHalfW = voxelSize * 0.17
-        local engineTop = hullBottom + voxelSize * 0.10
-        local engineBottom = hullBottom - voxelSize * 0.34
+        local engineNear = hullTop - voxelSize * 0.10
+        local engineFar = hullTop + voxelSize * 0.34
         EmitQuad(geometry,
-            Vector3(centerX + engineHalfW, engineTop, hullZ0 - 0.002),
-            Vector3(centerX - engineHalfW, engineTop, hullZ0 - 0.002),
-            Vector3(centerX - engineHalfW * 0.22, engineBottom, hullZ0 - 0.002),
-            Vector3(centerX + engineHalfW * 0.22, engineBottom, hullZ0 - 0.002),
+            Vector3(centerX + engineHalfW, engineNear, hullZ0 - 0.002),
+            Vector3(centerX - engineHalfW, engineNear, hullZ0 - 0.002),
+            Vector3(centerX - engineHalfW * 0.22, engineFar, hullZ0 - 0.002),
+            Vector3(centerX + engineHalfW * 0.22, engineFar, hullZ0 - 0.002),
             Vector3(0, 0, -1),
             enemy.frozen > 0 and Color(0.35, 0.75, 1.0, 1) or Color(1.0, 0.36, 0.05, 1))
     end

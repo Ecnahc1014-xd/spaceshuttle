@@ -1,5 +1,5 @@
 -- Game.lua
--- 燃烧的蔬菜核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
+-- 太空飞机弹珠核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
 
 local VeggieData = require "VeggiePixelData"
 
@@ -7,7 +7,7 @@ local Game = {}
 
 local DW = 540
 local DH = 960
-local BASE_BRICK_SIZE = 20
+local BASE_BRICK_SIZE = 16
 local SLING_X = 270
 local SLING_Y = 850
 local MAX_PULL = 150
@@ -16,20 +16,20 @@ local BASE_HP = 5
 
 local BALL_TYPES = {
     normal = {
-        radius = 9, speed = 560, damage = 1,
+        radius = 13, speed = 560, damage = 1,
         splitChance = 0.05, splitAngle = 18,
     },
     speed = {
-        radius = 8, speed = 680, damage = 1,
+        radius = 12, speed = 680, damage = 1,
         speedBoost = 1.15, maxSpeed = 1250,
         damageStep = 190, maxDamage = 3,
     },
     ice = {
-        radius = 9, speed = 520, damage = 1,
+        radius = 13, speed = 520, damage = 1,
         freezeDuration = 3.0,
     },
     giant = {
-        radius = 16, speed = 420, damage = 2,
+        radius = 21, speed = 420, damage = 2,
         pierceAfterBounce = true,
         areaRadiusCells = 3.5,
     },
@@ -86,8 +86,8 @@ local function RandomInt(minValue, maxValue)
 end
 
 local function GetBrickSize(waveNum)
-    if waveNum <= 2 then return 18 end
-    if waveNum <= 4 then return 19 end
+    if waveNum <= 2 then return 14 end
+    if waveNum <= 4 then return 15 end
     return BASE_BRICK_SIZE
 end
 
@@ -659,8 +659,8 @@ UpdateEnemies = function(dt)
         end
         enemy.y = enemy.y + enemy.vy * speedMultiplier * dt
 
-        local hullHeight = enemy.brickSize * 0.8
-        if enemy.y + height + hullHeight > DANGER_Y then
+        -- 飞行器底座位于阵列远离玩家的一侧，不参与靠近防线的底边判定。
+        if enemy.y + height > DANGER_Y then
             enemy.dead = true
             baseHp = baseHp - 1
             Emit("base_hit", {x = enemy.x + width * 0.5, y = DANGER_Y})
