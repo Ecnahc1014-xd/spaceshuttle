@@ -3,16 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.6.1
-- 进度: 3D 车辆比例与运动修正完成；车辆目标朝向与显示朝向分离，以 420°/s 沿最短角平滑追踪；所有车辆视觉 XY 外轮廓统一占各自权威圆形碰撞半径的 94%，不再叠加分裂弹或巨型弹经验倍率；其余 30° 正交斜俯视、大运重卡、敌方合并飞船、四弹药槽和撞线反馈保持不变
-- 上次交付: `Renderer3D.lua` 新增最短角 `MoveAngleToward`、独立 `targetHeading` 与基于 `game.elapsed` 的渲染步长；车辆缩放改为 `marble.radius * WORLD_SCALE * 0.94 / VEHICLE_PLANAR_RADIUS`；LSP 0 Error、官方构建成功、120 帧运行时 `lua_errors=0`，GLES 截图确认普通车辆不再侵入弹药槽
+- 版本: 0.7.0
+- 进度: 完成 38° 正交斜俯视与更紧 `orthoSize=16.4` 取景；车辆在权威碰撞圆内放大至 98% 外轮廓；敌方体素正面保留主色，侧面/背面/顶面明显变浅，并在第二个合并 `CustomGeometry` section 中生成深色棱线；HUD、弹药槽、菜单统一重做为硬边像素面板、内描边、硬阴影和状态条
+- 上次交付: `Renderer3D.lua` 增加体素面提亮和棱线 section，`Scene3DBackend.lua` 调整 38° 正交相机、`orthoSize=16.4`，完成 PixelForge 风格 HUD/菜单/四弹药槽；LSP 0 Error、官方构建成功、240 帧运行时 `lua_errors=0`，GLES 菜单态和受控游戏态截图确认无 Lua 错误
 
 ## 用户画像摘要
 - 使用简体中文沟通
 - 重视先做架构解耦，为后续 3D 开发降低迁移成本 [observed]
 
 ## 预测下一步
-- likely_next_task: 真实交互复测四类重卡的拖拽角度、连续反弹、分裂和巨型圆域，并按实机反馈微调重卡车身比例、侧围明暗、30° 倾角与防线撞击强度
+- likely_next_task: 真实交互复测 38° 正交斜视下四类重卡拖拽角度、连续反弹、分裂和巨型圆域，并检查体素深色棱线在不同敌人拓扑上的可读性与 UI 实机字号
 - 相关文件: `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`
 
 ## 恢复指令（新会话必执行）
@@ -33,11 +33,13 @@
 - 发现会话外并发修改时必须保留并合并，禁止直接覆盖
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 - 3D 后端的体素尺寸必须统一经过 `WORLD_SCALE` 映射；Renderer3D 只消费快照，碎片生命周期由 Presentation 维护
-- 3D 体素性能契约：每个敌人只允许一个 `CustomGeometry`，只在砖块存活拓扑或冻结状态改变时重建，禁止每体素创建 `Node + StaticModel`
-- 相机契约：必须使用正交投影，禁止透视近大远小；当前相机从 XY 玩法平面法线向正视方向倾斜 30°，位置按 `(0, 25*sin(30°), -25*cos(30°))` 计算，车辆仍在 XY 平面绕 Z 轴朝向速度或瞄准发射向量
+- 3D 体素性能契约：每个敌人只允许一个 `CustomGeometry` 根对象，但允许在同一对象内使用面与棱线两个 section；只在砖块存活拓扑或冻结状态改变时重建，禁止每体素创建 `Node + StaticModel`
+- 相机契约：必须使用正交投影，禁止透视近大远小；当前相机从 XY 玩法平面法线向正视方向倾斜 38°，位置按 `(0, 25*sin(38°), -25*cos(38°))` 计算，`orthoSize=16.4`，车辆仍在 XY 平面绕 Z 轴朝向速度或瞄准发射向量
 - 载具表现契约：每个 `marble.id` 对应一个大运式平头重卡 `CustomGeometry`，内部固定为主车漆/浅色侧围/轮胎/金属/玻璃/灯光 6 个 PBR section；禁止恢复球形弹珠、外部整车 MDL、固定装饰车发射台、跑车/皮卡轮廓或方块体素瓦片车辆
 - 大运重卡几何契约：必须具备平头高顶驾驶室、长货厢、三轴六轮、大面积前风挡、重卡格栅与外露保险杠；浅色侧围必须作为独立材质分区；车辆局部 +X 为车头，飞行朝向由速度计算，待发射瞄准时由发射向量计算；显示朝向必须以 420°/s 沿最短角追踪目标朝向，禁止直接跳变；规则层仍保留统一发射坐标
-- 载具碰撞比例契约：程序化车辆局部 XY 包围半径固定按 `VEHICLE_PLANAR_RADIUS` 计量，世界缩放只能由 `marble.radius * WORLD_SCALE * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS` 推导；视觉外轮廓当前占权威碰撞圆 94%，禁止按 `isPrimary`、`ballType` 再叠加经验倍率
+- 载具碰撞比例契约：程序化车辆局部 XY 包围半径固定按 `VEHICLE_PLANAR_RADIUS` 计量，世界缩放只能由 `marble.radius * WORLD_SCALE * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS` 推导；视觉外轮廓当前占权威碰撞圆 98%，禁止按 `isPrimary`、`ballType` 再叠加经验倍率
+- 体素立体表现契约：正面使用主色，背面/左右/顶面采用明显浅色因子；每个暴露面使用窄深色棱线 strip，棱线与面共用敌人单一 `CustomGeometry` 的第二 section，禁止新增逐棱节点
+- UI 视觉契约：raw NanoVG 继续使用 540×960 设计分辨率模式 A；HUD、弹药槽、菜单使用 PixelForge 硬边矩形、2px 内描边、零模糊硬阴影、深色表面和高饱和类型色，禁止恢复圆角面板
 - 四弹药槽契约：3D 后端底部必须显示分裂/冰冻/加速/巨型四个独立槽位，包含序号、中文名、装填态、储备数量和类型色，禁止退化为纯文字图例
 - 防线撞击契约：`base_hit` 必须先由 `Presentation.lua` 维护瞬时状态，再由 3D 后端消费为相机震动、防线材质脉冲、冲击波和警示文字，禁止只扣血无空间反馈
 - 顶点色体素必须使用支持 VCol 的 Technique 并绑定白色基底纹理；`NoTextureUnlit` 不保证消费顶点颜色

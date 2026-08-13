@@ -9,7 +9,7 @@ local DESIGN_CENTER_Y = 480
 local VOXEL_GAP = 0.92
 local VOXEL_DEPTH = 1.18
 local VEHICLE_PLANAR_RADIUS = 2.01
-local VEHICLE_COLLISION_FILL = 0.94
+local VEHICLE_COLLISION_FILL = 0.98
 local VEHICLE_TURN_SPEED = 420.0
 
 local VEHICLE_SECTION_BODY = 0
@@ -163,16 +163,57 @@ local function EmitQuad(geometry, v1, v2, v3, v4, normal, color)
     end
 end
 
+local function EmitEdgeStrip(buffer, a, b, normal, halfWidth, color)
+    local dx = b.x - a.x
+    local dy = b.y - a.y
+    local dz = b.z - a.z
+    local length = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if length < 0.000001 then return end
+    dx, dy, dz = dx / length, dy / length, dz / length
+    local sx = normal.y * dz - normal.z * dy
+    local sy = normal.z * dx - normal.x * dz
+    local sz = normal.x * dy - normal.y * dx
+    local sideLength = math.sqrt(sx * sx + sy * sy + sz * sz)
+    if sideLength < 0.000001 then return end
+    sx, sy, sz = sx / sideLength * halfWidth, sy / sideLength * halfWidth,
+        sz / sideLength * halfWidth
+    local offset = 0.003
+    local function OffsetPoint(point, sideSign)
+        return Vector3(
+            point.x + sx * sideSign + normal.x * offset,
+            point.y + sy * sideSign + normal.y * offset,
+            point.z + sz * sideSign + normal.z * offset)
+    end
+    local p0 = OffsetPoint(a, 1)
+    local p1 = OffsetPoint(b, 1)
+    local p2 = OffsetPoint(b, -1)
+    local p3 = OffsetPoint(a, -1)
+    local vertices = {p0, p1, p2, p0, p2, p3}
+    for _, vertex in ipairs(vertices) do
+        buffer[#buffer + 1] = {position = vertex, normal = normal, color = color}
+    end
+end
+
+local function EmitVoxelFace(geometry, edgeVertices, v1, v2, v3, v4, normal, color, edgeWidth)
+    EmitQuad(geometry, v1, v2, v3, v4, normal, color)
+    EmitEdgeStrip(edgeVertices, v1, v2, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
+    EmitEdgeStrip(edgeVertices, v2, v3, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
+    EmitEdgeStrip(edgeVertices, v3, v4, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
+    EmitEdgeStrip(edgeVertices, v4, v1, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
+end
+
 -- 体素敌人只创建一个根节点和一个 CustomGeometry。
 -- 根节点随敌人移动，网格只在砖块拓扑或冰冻状态变化时重建。
 local function RebuildEnemyMesh(record, enemy, visualCatalog)
     local geometry = record.geometry
     geometry:Clear()
-    geometry:SetNumGeometries(1)
+    geometry:SetNumGeometries(2)
     geometry:SetDynamic(false)
     geometry:BeginGeometry(0, TRIANGLE_LIST)
 
+    local edgeVertices = {}
     local alive = {}
+
     for _, brick in ipairs(enemy.bricks) do
         if brick.alive then
             alive[brick.col .. ":" .. brick.row] = brick
@@ -195,32 +236,38 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
             local hasTop = alive[brick.col .. ":" .. (brick.row - 1)] ~= nil
             local hasBottom = alive[brick.col .. ":" .. (brick.row + 1)] ~= nil
 
-            -- 正面颜色必须走支持 vertex color 的 DiffVCol technique。
-            EmitQuad(geometry, Vector3(x1, y0, z0), Vector3(x0, y0, z0),
+            -- 正面保持主色；其余外露面明显提亮，强化正交斜视下的体块转折。
+            EmitVoxelFace(geometry, edgeVertices,
+                Vector3(x1, y0, z0), Vector3(x0, y0, z0),
                 Vector3(x0, y1, z0), Vector3(x1, y1, z0),
-                Vector3(0, 0, -1), ShadeColor(rgb, 1.0))
-            EmitQuad(geometry, Vector3(x0, y0, z1), Vector3(x1, y0, z1),
+                Vector3(0, 0, -1), ShadeColor(rgb, 1.0), voxelSize * 0.035)
+            EmitVoxelFace(geometry, edgeVertices,
+                Vector3(x0, y0, z1), Vector3(x1, y0, z1),
                 Vector3(x1, y1, z1), Vector3(x0, y1, z1),
-                Vector3(0, 0, 1), ShadeColor(rgb, 0.56))
+                Vector3(0, 0, 1), ShadeColor(rgb, 1.22), voxelSize * 0.035)
             if not hasLeft then
-                EmitQuad(geometry, Vector3(x0, y0, z1), Vector3(x0, y1, z1),
+                EmitVoxelFace(geometry, edgeVertices,
+                    Vector3(x0, y0, z1), Vector3(x0, y1, z1),
                     Vector3(x0, y1, z0), Vector3(x0, y0, z0),
-                    Vector3(-1, 0, 0), ShadeColor(rgb, 0.72))
+                    Vector3(-1, 0, 0), ShadeColor(rgb, 1.16), voxelSize * 0.035)
             end
             if not hasRight then
-                EmitQuad(geometry, Vector3(x1, y0, z0), Vector3(x1, y1, z0),
+                EmitVoxelFace(geometry, edgeVertices,
+                    Vector3(x1, y0, z0), Vector3(x1, y1, z0),
                     Vector3(x1, y1, z1), Vector3(x1, y0, z1),
-                    Vector3(1, 0, 0), ShadeColor(rgb, 0.86))
+                    Vector3(1, 0, 0), ShadeColor(rgb, 1.12), voxelSize * 0.035)
             end
             if not hasTop then
-                EmitQuad(geometry, Vector3(x0, y1, z0), Vector3(x0, y1, z1),
+                EmitVoxelFace(geometry, edgeVertices,
+                    Vector3(x0, y1, z0), Vector3(x0, y1, z1),
                     Vector3(x1, y1, z1), Vector3(x1, y1, z0),
-                    Vector3(0, 1, 0), ShadeColor(rgb, 0.90))
+                    Vector3(0, 1, 0), ShadeColor(rgb, 1.28), voxelSize * 0.035)
             end
             if not hasBottom then
-                EmitQuad(geometry, Vector3(x0, y0, z1), Vector3(x0, y0, z0),
+                EmitVoxelFace(geometry, edgeVertices,
+                    Vector3(x0, y0, z1), Vector3(x0, y0, z0),
                     Vector3(x1, y0, z0), Vector3(x1, y0, z1),
-                    Vector3(0, -1, 0), ShadeColor(rgb, 0.68))
+                    Vector3(0, -1, 0), ShadeColor(rgb, 0.94), voxelSize * 0.035)
             end
         end
     end
@@ -276,8 +323,15 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
             enemy.frozen > 0 and Color(0.35, 0.75, 1.0, 1) or Color(1.0, 0.36, 0.05, 1))
     end
 
+    geometry:BeginGeometry(1, TRIANGLE_LIST)
+    for _, vertex in ipairs(edgeVertices) do
+        geometry:DefineVertex(vertex.position)
+        geometry:DefineNormal(vertex.normal)
+        geometry:DefineColor(vertex.color)
+    end
     geometry:Commit()
-    geometry:SetMaterial(voxelMaterial_)
+    geometry:SetMaterial(0, voxelMaterial_)
+    geometry:SetMaterial(1, voxelMaterial_)
     record.signature = GetEnemySignature(enemy)
 end
 

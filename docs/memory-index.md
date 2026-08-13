@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：燃烧的蔬菜
-当前版本：0.6.1
-简述：540×960 竖屏弹弓弹珠砖块游戏，采用带合并飞船船体的彩色体素敌人、大运式平头重卡弹珠、四弹药槽、双层车辆拖尾和动态深空星场；车辆平滑转向且视觉外轮廓受权威碰撞圆约束。
-最后巩固：2026-08-09
+当前版本：0.7.0
+简述：540×960 竖屏弹弓弹珠砖块游戏，采用 38° 正交斜俯视与更紧取景，彩色体素敌人拥有明显变浅侧面和深色棱线，大运式平头重卡在碰撞圆内放大，HUD/弹药槽/菜单采用 PixelForge 硬边像素面板；车辆平滑转向且视觉外轮廓受权威碰撞圆约束。
+最后巩固：2026-08-13
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -26,8 +26,8 @@
 | `scripts/Game.lua` | 引擎无关的权威规则、碰撞、波次、输入动作、领域事件与游戏快照 |
 | `scripts/Presentation.lua` | 消费领域事件，维护粒子、飘字、拖尾、闪白、震屏、波次横幅、防线脉冲与冲击波 |
 | `scripts/VisualCatalog.lua` | 当前 2D 后端的弹珠样式和蔬菜砖块颜色映射 |
-| `scripts/Renderer3D.lua` | 只读同步带飞船船体的彩色敌人体素、大运式平头重卡、双层世界空间拖尾和碎片；每敌人/车辆各一个 `CustomGeometry` |
-| `scripts/Scene3DBackend.lua` | 3D Scene/Camera/Viewport、30° 正交坐标映射、3 批动态视差星层、深空底板、四弹药槽和撞线反馈覆盖层 |
+| `scripts/Renderer3D.lua` | 只读同步带飞船船体的彩色敌人体素（面 section + 棱线 section）、大运式平头重卡、双层世界空间拖尾和碎片；每敌人/车辆各一个 `CustomGeometry` |
+| `scripts/Scene3DBackend.lua` | 3D Scene/Camera/Viewport、38° 正交坐标映射、`orthoSize=16.4`、3 批动态视差星层、深空底板、PixelForge HUD/四弹药槽/菜单和撞线反馈覆盖层 |
 | `scripts/Renderer.lua` | 无规则计算的 NanoVG 绘制器，只消费两个快照 |
 | `scripts/VeggiePixelData.lua` | 蔬菜网格、分数、速度倍率与像素数据源 |
 | `assets/model/6d5f1062-5bea-5cf8-a404-280333d4d4c8/` | 低多边形越野皮卡 MDL、LOD、diffuse/normal 纹理和材质资源 |
@@ -44,7 +44,9 @@
 - D-009: 车辆视觉锁定为大运式平头重卡，在单 `CustomGeometry` 中拆为主车漆/浅色侧围/轮胎/金属/玻璃/灯光 6 section；待发射时按发射向量转向，飞行时按速度转向（v0.6.0）。
 - D-010: 正交相机提升至 30° 斜俯视，并将敌人体素厚度增至 1.18；敌方飞船船体和推进器并入每敌人现有单网格，不增加逐部件节点（v0.6.0）。
 - D-011: `base_hit` 由 Presentation 维护防线脉冲/冲击波状态，3D 后端只读消费为相机震动、材质发光和 HUD 冲击反馈；四弹药槽直接消费 ballQueue/activeBall（v0.6.0）。
-- D-012: 车辆记录分离 `targetHeading` 与 `heading`，以 420°/s 沿最短角平滑追踪；视觉 XY 外轮廓统一按程序化模型局部半径映射到 `marble.radius` 权威碰撞圆的 94%，不再按主弹/分裂弹/巨型弹叠加经验缩放（v0.6.1）。
+- D-013: 正交相机改为 38° 斜俯视并将 `orthoSize` 收紧至 16.4；车辆仍保持正交无透视缩放，借助更紧视锥放大整体战场可读性（v0.7.0）。
+- D-014: 敌人体素面 section 保留正面主色并将背面/左右/顶部提亮；所有外露面用窄深色 strip 描边，棱线与面合并在同一敌人 `CustomGeometry` 的第二 section（v0.7.0）。
+- D-015: HUD、四弹药槽和菜单统一采用 PixelForge 硬边矩形、2px 内描边、零模糊硬阴影、深色表面、高饱和类型色和状态条，继续由 NanoVG 后端只读消费快照（v0.7.0）。
 
 ## 活跃系统契约
 | 契约 | 文件 | 状态 |
@@ -65,6 +67,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.7.0: 38° 正交斜俯视、`orthoSize=16.4`；车辆视觉外轮廓占权威碰撞圆 98%；敌方体素侧面/背面/顶面提亮并在第二 section 增加深色棱线；HUD、弹药槽和菜单采用 PixelForge 硬边像素面板。LSP 0 Error，官方构建成功，240 帧运行时 `lua_errors=0`，GLES 菜单态与受控游戏态截图通过。
 - v0.6.1: 车辆目标朝向与显示朝向分离，以 420°/s 沿最短角平滑追踪瞄准向量或飞行速度；车辆缩放改为由 `marble.radius × WORLD_SCALE` 和模型局部 XY 包围半径精确推导，外轮廓固定占权威碰撞圆 94%，移除分裂弹与巨型弹的额外经验倍率。LSP 0 Error，官方构建成功，120 帧运行时 `lua_errors=0`，GLES 截图确认普通车辆不再覆盖弹药槽。
 - v0.6.0: 待发射重卡按瞄准发射向量实时转向；正交相机从 20° 提升到 30°，敌人体素加厚并并入立体飞船船体/推进器；车辆重塑为大运式平头高顶、长货厢、三轴六轮重卡，增加浅色独立侧围和 6 PBR section；底部改为四个完整弹药槽；`base_hit` 增加 3D 相机震动、防线材质脉冲、冲击波和警示文字。LSP 0 Error，官方构建成功，GLES 菜单态和斜向瞄准游戏态截图验证通过。
 - v0.5.0: 相机保持 `orthographic=true`，从 XY 玩法平面法线向正视方向倾斜 20°，无近大远小；车辆由方块拼贴重建为单 `CustomGeometry` 五分区精品几何，包含倒角棱台车壳、透明驾驶舱、12 段圆柱轮胎与轮毂、金属饰件、自发光灯组；LSP 0 Error，官方构建成功，GLES 菜单态和受控发射游戏态截图验证通过。
@@ -79,9 +82,11 @@
 - 官方 build：成功，入口 `main.lua`，单机模式。
 - GLES 比例修复态：`screenshots/vehicle-collision-fit.png`，确认普通车辆从旧版百像素级外轮廓缩至约 18 像素碰撞直径内，不再侵入弹药槽；数值校验 speed/normal/ice/giant 四类视觉半径均为对应碰撞半径的 94%。
 - 最短角数值校验：`170° → -170°` 首步为 `+7°`，`-170° → 170°` 首步为 `-7°`，确认跨 ±180° 不会反向绕行。
-- Runtime：120 帧 `lua_errors=0`；非零 validate 退出仍来自环境自带 shader cache，GLES surfaceless 截图退出码 0。
+- GLES v0.7.0 菜单态：`screenshots/ui-3d-rework-menu-final.png`，确认三块 HUD 面板、PixelForge 硬边主菜单、开始按钮、状态化四弹药槽和 38° 文案。
+- GLES v0.7.0 受控游戏态：`screenshots/ui-3d-rework-gameplay.png`，确认游戏已启动、敌人体素侧面/底部浅色层、深色棱线 section、底部重卡和四弹药槽可见；受控入口仅用于截图，已删除并恢复 `.project/project.json` 的 `main.lua` 正式入口。
+- Runtime：正式入口 240 帧 `lua_errors=0`；受控入口 `scene_stalled=false`、`lua_errors=0`；残余 `resource_errors=2` 和 shader cache engine errors 为验证环境自带资源/字节码问题。
 
 ## 下一步
-1. 在真实交互中复测四类大运重卡的拖拽瞄准、连续反弹、分裂、追击和巨型圆域。
-2. 根据设备实机观感微调 30° 斜俯视下的重卡比例、浅色侧围、玻璃反射、拖尾长度与撞线反馈强度。
+1. 在真实交互中复测 38° 正交斜视下四类大运重卡的拖拽瞄准、连续反弹、分裂、追击和巨型圆域。
+2. 根据设备实机观感微调深色棱线宽度、体素侧面提亮因子、重卡侧围与 UI 实机字号。
 3. 保持 HUD 与规则层解耦，继续让 3D 后端只消费两个 snapshot。
