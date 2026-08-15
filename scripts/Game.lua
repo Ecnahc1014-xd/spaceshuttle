@@ -16,20 +16,20 @@ local BASE_HP = 5
 
 local BALL_TYPES = {
     normal = {
-        radius = 13, speed = 560, damage = 1,
+        radius = 20, speed = 560, damage = 1,
         splitChance = 0.05, splitAngle = 18,
     },
     speed = {
-        radius = 12, speed = 680, damage = 1,
+        radius = 18, speed = 680, damage = 1,
         speedBoost = 1.15, maxSpeed = 1250,
         damageStep = 190, maxDamage = 3,
     },
     ice = {
-        radius = 13, speed = 520, damage = 1,
+        radius = 20, speed = 520, damage = 1,
         freezeDuration = 3.0,
     },
     giant = {
-        radius = 21, speed = 420, damage = 2,
+        radius = 30, speed = 420, damage = 2,
         pierceAfterBounce = true,
         areaRadiusCells = 3.5,
     },
@@ -94,14 +94,15 @@ end
 local function GetWaveParams(waveNum)
     local count
     if waveNum <= 1 then count = 1
-    elseif waveNum == 2 then count = 2
-    elseif waveNum <= 4 then count = 2 + math.floor((waveNum - 2) / 2)
+    elseif waveNum <= 3 then count = 2
+    elseif waveNum <= 5 then count = 3
     else count = math.min(6, 3 + math.floor((waveNum - 4) / 2)) end
 
-    local speed = 22 + (waveNum - 1) * 6
+    -- 敌方砖块保留隐藏 HP：前六波只需一次命中，之后再逐步增加耐久。
+    local speed = 18 + (waveNum - 1) * 4
     local hp = 1
-    if waveNum >= 6 then hp = 2 end
-    if waveNum >= 10 then hp = 3 end
+    if waveNum >= 7 then hp = 2 end
+    if waveNum >= 12 then hp = 3 end
     return count, speed, hp
 end
 
@@ -498,7 +499,12 @@ local function LaunchMarble(dx, dy, power)
     activeBall.speed = speed
     activeBall.onSling = false
     table.insert(marbles, activeBall)
-    Emit("marble_launched", {id = activeBall.id, ballType = activeBall.ballType})
+    Emit("marble_launched", {
+        id = activeBall.id,
+        ballType = activeBall.ballType,
+        x = activeBall.x,
+        y = activeBall.y,
+    })
     activeBall = nil
 end
 
@@ -709,10 +715,10 @@ local function GetPullState(px, py)
     if distance > MAX_PULL then
         dx = dx / distance * MAX_PULL
         dy = dy / distance * MAX_PULL
-        distance = MAX_PULL
     end
     local maxDownDy = DH - SLING_Y - 20
     if dy > maxDownDy then dy = maxDownDy end
+    distance = math.sqrt(dx * dx + dy * dy)
     return dx, dy, distance
 end
 

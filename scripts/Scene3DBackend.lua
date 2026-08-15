@@ -34,6 +34,10 @@ local screenDesignWidth_ = 0
 local screenDesignHeight_ = 0
 local offsetX_ = 0
 local offsetY_ = 0
+local projectionOffsetX_ = 0
+local projectionOffsetY_ = 0
+local projectionScaleX_ = 1
+local projectionScaleY_ = 1
 local viewportLeft_ = 0
 local viewportTop_ = 0
 local viewportWidth_ = 0
@@ -278,6 +282,33 @@ local ACID = {
     muted = {125, 140, 184, 230},
 }
 
+local function WorldFromGame(x, y)
+    return Vector3((x - DESIGN_W * 0.5) * 0.018,
+        (DESIGN_H * 0.5 - y) * 0.018, 0)
+end
+
+local function UpdateProjectionMetrics()
+    if not camera_ then return end
+    -- 透视相机的投影在 XY 平面内近似线性；将设计坐标映射用于 HUD 轨迹和点击，避免触摸漂移。
+    local origin = camera_:WorldToScreenPoint(WorldFromGame(0, 0))
+    local xAxis = camera_:WorldToScreenPoint(WorldFromGame(DESIGN_W, 0))
+    local yAxis = camera_:WorldToScreenPoint(WorldFromGame(0, DESIGN_H))
+    projectionOffsetX_ = origin.x * DESIGN_W
+    projectionOffsetY_ = origin.y * DESIGN_H
+    projectionScaleX_ = (xAxis.x - origin.x)
+    projectionScaleY_ = (yAxis.y - origin.y)
+    if math.abs(projectionScaleX_) < 0.0001 then projectionScaleX_ = 1 end
+    if math.abs(projectionScaleY_) < 0.0001 then projectionScaleY_ = 1 end
+    print(string.format(
+        "[Scene3DBackend] gameplay projection offset=(%.2f, %.2f) scale=(%.4f, %.4f)",
+        projectionOffsetX_, projectionOffsetY_, projectionScaleX_, projectionScaleY_))
+end
+
+local function ProjectGamePoint(x, y)
+    return projectionOffsetX_ + x * projectionScaleX_,
+        projectionOffsetY_ + y * projectionScaleY_
+end
+
 local function DrawAcidGrid(ctx, width, height)
     nvgStrokeWidth(ctx, 1)
     nvgStrokeColor(ctx, nvgRGBA(137, 203, 255, 18))
@@ -315,39 +346,42 @@ local function DrawAimTrajectory(ctx, game)
     if not game.aiming or not game.activeBall then return end
     local color = SLOT_COLORS[game.activeBall.ballType] or SLOT_COLORS.normal
     for _, point in ipairs(game.aimTrajectory) do
+        local screenX, screenY = ProjectGamePoint(point.x, point.y)
         local alpha = math.floor(210 * (1 - point.progress))
         local radius = 1.8 + 3.0 * (1 - point.progress)
         nvgBeginPath(ctx)
-        nvgCircle(ctx, point.x, point.y, radius)
+        nvgCircle(ctx, screenX, screenY, radius)
         nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha))
         nvgFill(ctx)
     end
 end
 
 local function DrawBaseImpactFeedback(ctx, game, presentation)
+    local _, dangerScreenY = ProjectGamePoint(0, game.dangerY)
     local flash = presentation.baseBarrierFlash or 0
     if flash > 0 then
         local alpha = math.floor(math.min(1, flash / 0.62) * 180)
-        local glow = nvgLinearGradient(ctx, 0, game.dangerY - 52, 0, game.dangerY + 42,
+        local glow = nvgLinearGradient(ctx, 0, dangerScreenY - 52, 0, dangerScreenY + 42,
             nvgRGBA(103, 61, 166, 0), nvgRGBA(166, 229, 255, alpha))
         nvgBeginPath(ctx)
-        nvgRect(ctx, 0, game.dangerY - 52, game.width, 94)
+        nvgRect(ctx, 0, dangerScreenY - 52, game.width, 94)
         nvgFillPaint(ctx, glow)
         nvgFill(ctx)
 
         nvgBeginPath(ctx)
-        nvgMoveTo(ctx, 0, game.dangerY)
-        nvgLineTo(ctx, game.width, game.dangerY)
+        nvgMoveTo(ctx, 0, dangerScreenY)
+        nvgLineTo(ctx, game.width, dangerScreenY)
         nvgStrokeColor(ctx, nvgRGBA(186, 229, 255, alpha))
         nvgStrokeWidth(ctx, 4 + 7 * flash)
         nvgStroke(ctx)
     end
 
     for _, impact in ipairs(presentation.baseImpacts or {}) do
+        local screenX, screenY = ProjectGamePoint(impact.x, impact.y)
         local progress = 1 - impact.life / impact.maxLife
         local alpha = math.floor(255 * (1 - progress))
         nvgBeginPath(ctx)
-        nvgCircle(ctx, impact.x, impact.y, impact.radius)
+        nvgCircle(ctx, screenX, screenY, impact.radius * math.abs(projectionScaleX_))
         nvgStrokeColor(ctx, nvgRGBA(184, 133, 255, alpha))
         nvgStrokeWidth(ctx, 5 * (1 - progress) + 1)
         nvgStroke(ctx)
@@ -356,10 +390,12 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
             local inner = impact.radius * 0.45
             local outer = impact.radius * 1.15
             nvgBeginPath(ctx)
-            nvgMoveTo(ctx, impact.x + math.cos(angle) * inner,
-                impact.y + math.sin(angle) * inner)
-            nvgLineTo(ctx, impact.x + math.cos(angle) * outer,
-                impact.y + math.sin(angle) * outer)
+            nvgMoveTo(ctx,
+                screenX + math.cos(angle) * inner * projectionScaleX_,
+                screenY + math.sin(angle) * inner * projectionScaleY_)
+            nvgLineTo(ctx,
+                screenX + math.cos(angle) * outer * projectionScaleX_,
+                screenY + math.sin(angle) * outer * projectionScaleY_)
             nvgStrokeColor(ctx, nvgRGBA(166, 229, 255, math.floor(alpha * 0.8)))
             nvgStrokeWidth(ctx, 2)
             nvgStroke(ctx)
@@ -420,26 +456,35 @@ local function DrawAmmoSlots(ctx, game, presentation)
         queueCounts[game.activeBall.ballType] = (queueCounts[game.activeBall.ballType] or 0) + 1
     end
 
-    local slotY, slotW, slotH, gap = 889, 132, 71, 4
-    DrawPixelText(ctx, 8, slotY - 18, "// ORDNANCE ARRAY :: 04", 9, ACID.muted)
+    local slotSize = 64
+    local slotGap = 8
+    local outerPadding = 8
+    local slotY = DESIGN_H - slotSize - 8
+    local leftStart = outerPadding
+    local rightStart = DESIGN_W - outerPadding - slotSize * 2 - slotGap
+    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 6, "ORDNANCE // 04", 8, ACID.muted,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
     for i, ballType in ipairs(SLOT_TYPES) do
-        local x = (i - 1) * (slotW + gap)
+        local pairIndex = (i - 1) % 2
+        local x = (i <= 2 and leftStart or rightStart) + pairIndex * (slotSize + slotGap)
         local color = SLOT_COLORS[ballType]
         local selected = game.activeBall and game.activeBall.ballType == ballType
         local flash = presentation.truckLaunchFlash[ballType] or 0
         local fill = selected and {53, 24, 91, 255} or ACID.carbon
-        DrawTechPanel(ctx, x, slotY, slotW, slotH, fill,
+        DrawTechPanel(ctx, x, slotY, slotSize, slotSize, fill,
             {color[1], color[2], color[3], selected and 255 or 150 + math.floor(flash * 105)})
-        DrawHalo(ctx, x + 24, slotY + 27, 15, selected and 230 or 110)
-        DrawPixelText(ctx, x + 24, slotY + 19, tostring(i), 12, color,
+        DrawPixelText(ctx, x + 8, slotY + 7, string.format("%02d", i), 8, color)
+        DrawPixelText(ctx, x + slotSize - 7, slotY + 7,
+            "x" .. tostring(queueCounts[ballType] or 0), 8, color,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 23, SLOT_NAMES[ballType], 12,
+            ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43,
+            selected and "LINK" or "STBY", 7, color,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, x + 46, slotY + 12, SLOT_NAMES[ballType], 14,
-            ACID.paleBlue)
-        DrawPixelText(ctx, x + 46, slotY + 37,
-            selected and "LINK ACTIVE" or ("RESERVE " .. tostring(queueCounts[ballType] or 0)),
-            9, color)
         nvgBeginPath(ctx)
-        nvgRect(ctx, x + 8, slotY + slotH - 8, slotW - 16, selected and 4 or 2)
+        nvgRect(ctx, x + 6, slotY + slotSize - 7, slotSize - 12, selected and 3 or 1)
         nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], selected and 255 or 125))
         nvgFill(ctx)
     end
@@ -517,7 +562,7 @@ local function DrawMenu(ctx, game)
     DrawPixelText(ctx, 14, 548, "EDGE FIELD / VISIBLE", 8, ACID.muted)
     DrawPixelText(ctx, game.width - 14, 532, "UNIT SCALE / AUTH", 8, ACID.muted,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 14, 548, "CAMERA / ORTHO", 8, ACID.muted,
+    DrawPixelText(ctx, game.width - 14, 548, "CAMERA / ORTHO 46D", 8, ACID.muted,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 end
 
@@ -608,10 +653,10 @@ function Backend.Init(renderHandlerName)
     CreateSpaceEnvironment()
     CreateDangerBand()
 
-    -- 正交投影保持无近大远小；38° 斜俯视让体素侧面、车辆侧围和厚度更明确。
+    -- 保持项目的固定 9:16 玩法契约，用斜俯视正交投影呈现飞机厚度，避免透视导致敌人远近缩放和触控映射漂移。
     cameraNode_ = scene_:CreateChild("Camera")
     local cameraDistance = 25.0
-    local cameraTilt = math.rad(38.0)
+    local cameraTilt = math.rad(46.0)
     cameraBasePosition_ = Vector3(
         0,
         cameraDistance * math.sin(cameraTilt),
@@ -628,6 +673,7 @@ function Backend.Init(renderHandlerName)
         viewportLeft_ + viewportWidth_, viewportTop_ + viewportHeight_))
     renderer:SetViewport(0, viewport_)
     renderer.hdrRendering = true
+    UpdateProjectionMetrics()
 
     vg_ = nvgCreate(1)
     if not vg_ then
@@ -650,7 +696,7 @@ function Backend.Init(renderHandlerName)
         return false
     end
     SubscribeToEvent(vg_, "NanoVGRender", renderHandlerName)
-    print("[Scene3DBackend] initialized: 9:16 locked viewport, orthographic 38-degree camera, spacecraft marble UI")
+    print("[Scene3DBackend] initialized: 9:16 locked viewport, orthographic 46-degree aircraft camera, spacecraft aircraft UI")
     return true
 end
 
@@ -666,12 +712,23 @@ end
 
 function Backend.Resize()
     UpdateScreenMetrics()
+    UpdateProjectionMetrics()
+end
+
+function Backend.IsInsideGameCanvas(screenX, screenY)
+    return screenX >= viewportLeft_
+        and screenX < viewportLeft_ + viewportWidth_
+        and screenY >= viewportTop_
+        and screenY < viewportTop_ + viewportHeight_
 end
 
 function Backend.ScreenToGame(screenX, screenY)
     local logicalX = screenX / dpr_
     local logicalY = screenY / dpr_
-    return logicalX / scale_ - offsetX_, logicalY / scale_ - offsetY_
+    local canvasX = logicalX / scale_ - offsetX_
+    local canvasY = logicalY / scale_ - offsetY_
+    return (canvasX - projectionOffsetX_) / projectionScaleX_,
+        (canvasY - projectionOffsetY_) / projectionScaleY_
 end
 
 function Backend.Render(gameSnapshot, presentationSnapshot)

@@ -13,9 +13,12 @@ local function RefreshSnapshots()
     presentationSnapshot = Presentation.GetSnapshot()
 end
 
+local function GetScreenCoordinates(eventData)
+    return eventData:GetInt("X"), eventData:GetInt("Y")
+end
+
 local function ToGameCoordinates(eventData)
-    local x = eventData:GetInt("X")
-    local y = eventData:GetInt("Y")
+    local x, y = GetScreenCoordinates(eventData)
     return RenderBackend.ScreenToGame(x, y)
 end
 
@@ -71,7 +74,9 @@ end
 
 function HandleMouseDown(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
-    local x, y = ToGameCoordinates(eventData)
+    local screenX, screenY = GetScreenCoordinates(eventData)
+    if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerDown(x, y)
 end
 
@@ -87,7 +92,9 @@ function HandleMouseMove(eventType, eventData)
 end
 
 function HandleTouchBegin(eventType, eventData)
-    local x, y = ToGameCoordinates(eventData)
+    local screenX, screenY = GetScreenCoordinates(eventData)
+    if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerDown(x, y)
 end
 

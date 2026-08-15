@@ -3,17 +3,17 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.8.0
-- 进度: 游戏正式更名为“太空飞机弹珠”；UI 重做为深紫底、淡蓝工程线与明紫强调的 Laterano 酸性技术图纸风格；NanoVG 与 3D Viewport 共用固定 540×960 CONTAIN 变换，所有显示器严格保持 9:16；敌方权威砖块缩小，我方四类车辆权威碰撞半径放大且模型仍占碰撞圆 98%；敌方飞行器底座与推进器移到远离玩家的一侧
-- 上次交付: `Scene3DBackend.lua` 增加居中 9:16 `IntRect` Viewport、`orthoSize=18.0` 完整场地取景、酸性网格/刻度光环/半调点阵/HUD/四槽；`Game.lua` 同步修改敌我权威尺寸和防线判定；3D 与备用 2D 后端统一底座方向；LSP 0 Error、正式入口官方构建成功、240 帧 `lua_errors=0`，精确 9:16、横屏 letterbox 与受控游戏态 GLES 截图通过
+- 版本: 0.8.1
+- 进度: 四类权威弹珠半径再次放大为分裂/冰冻 20、加速 18、巨型 30；车辆仍按权威半径缩放并新增局部 Z 视觉中心补偿；38° 正交相机的玩法平面投影现统一驱动输入逆变换、瞄准轨迹和撞线反馈；四个弹夹缩为 64×64 正方形，分成左下两格与右下两格
+- 上次交付: `Game.lua` 放大四类权威半径、补齐发射事件实际坐标并修正最终拉力距离；`Renderer3D.lua` 校准车辆包围半径与视觉中心；`Scene3DBackend.lua` 增加相机投影标定、letterbox 输入过滤和左右分组小方形弹夹；合并保留会话外新增的敌方主题飞机与波次调整。LSP 0 Error、正式入口官方构建成功、240 帧 `lua_errors=0`；540×960 菜单和受控拖拽 GLES 截图确认车辆、轨迹与弹夹布局
 
 ## 用户画像摘要
 - 使用简体中文沟通
 - 重视先做架构解耦，为后续 3D 开发降低迁移成本 [observed]
 
 ## 预测下一步
-- likely_next_task: 真实交互复测放大后的四类权威车辆碰撞手感、连续反弹与技能范围，并在手机实机检查深紫/淡蓝酸性 UI 的字号与横向 letterbox 输入边界
-- 相关文件: `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`
+- likely_next_task: 在真实鼠标/触控交互中复测投影逆变换后的拖拽手感、放大车辆的连续反弹和四类技能碰撞范围，并在横屏 letterbox 与手机高 DPR 环境确认输入边界
+- 相关文件: `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`
 
 ## 恢复指令（新会话必执行）
 1. 读本文件 → 获取项目状态和避雷清单
@@ -40,10 +40,11 @@
 - 载具碰撞比例契约：程序化车辆局部 XY 包围半径固定按 `VEHICLE_PLANAR_RADIUS` 计量，世界缩放只能由 `marble.radius * WORLD_SCALE * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS` 推导；视觉外轮廓当前占权威碰撞圆 98%，禁止按 `isPrimary`、`ballType` 再叠加经验倍率
 - 体素立体表现契约：正面使用主色，背面/左右/顶面采用明显浅色因子；每个暴露面使用窄深色棱线 strip，棱线与面共用敌人单一 `CustomGeometry` 的第二 section，禁止新增逐棱节点
 - UI 视觉契约：raw NanoVG 固定使用 540×960 设计分辨率模式 A，色彩为深紫背景、淡蓝工程线/文字、明紫强调；必须保留技术网格、刻度光环、工程标注、状态码和半调点阵，禁止恢复蓝白配色、PixelForge 主题或圆角卡片
-- 9:16 铁律：NanoVG 与 3D `Viewport` 必须共用同一个 CONTAIN 缩放与居中偏移；非 9:16 屏幕只允许画布外 letterbox，禁止拉伸、裁切或让 3D 铺满而 UI 单独居中；输入必须使用同一 DPR/scale/offset 逆变换
-- 敌我尺寸契约：敌方权威 `brickSize` 为前两波 14、3–4 波 15、后续 16；我方权威半径为分裂 13、冰冻 13、加速 12、巨型 21，Renderer3D 必须继续由快照半径推导模型缩放，禁止仅做视觉假放大
+- 9:16 铁律：NanoVG 与 3D `Viewport` 必须共用同一个 CONTAIN 缩放与居中偏移；非 9:16 屏幕只允许画布外 letterbox，禁止拉伸、裁切或让 3D 铺满而 UI 单独居中；输入先使用同一 DPR/scale/offset 回到设计画布，再使用相机玩法平面投影参数逆变换到权威游戏坐标，画布外按下必须被过滤
+- 倾斜正交输入契约：玩法 XY 平面经 38° 相机投影后不等同于 540×960 UI 坐标；`Scene3DBackend` 必须用 `Camera:WorldToScreenPoint()` 标定投影 offset/scale，`ScreenToGame()`、瞄准轨迹和空间反馈必须共享这组参数，禁止把屏幕设计坐标直接传给 `Game.Pointer*`
+- 敌我尺寸契约：敌方权威 `brickSize` 为前两波 14、3–4 波 15、后续 16；我方权威半径为分裂 20、冰冻 20、加速 18、巨型 30，Renderer3D 必须继续由快照半径推导模型缩放，禁止仅做视觉假放大
 - 飞行器底座契约：敌方底座与推进器必须位于阵列远离玩家的一侧（设计坐标上方）；靠近防线的规则判定只使用阵列底边 `enemy.y + height`，备用 2D 与 3D 后端方向必须一致
-- 四弹药槽契约：3D 后端底部必须显示分裂/冰冻/加速/巨型四个独立槽位，包含序号、中文名、装填态、储备数量和类型色，禁止退化为纯文字图例
+- 四弹药槽契约：3D 后端底部必须显示分裂/冰冻/加速/巨型四个 64×64 小正方形槽位，前两格停靠左下、后两格停靠右下；每格保留序号、中文名、装填态、储备数量和类型色，中间必须留出弹弓/车辆可视空间，禁止恢复横向铺满底边或退化为纯文字图例
 - 防线撞击契约：`base_hit` 必须先由 `Presentation.lua` 维护瞬时状态，再由 3D 后端消费为相机震动、防线材质脉冲、冲击波和警示文字，禁止只扣血无空间反馈
 - 顶点色体素必须使用支持 VCol 的 Technique 并绑定白色基底纹理；`NoTextureUnlit` 不保证消费顶点颜色
 - 3D 星空必须位于游戏物体后、深空底板前，按层合批；禁止每颗星创建 Node。当前验证环境不可启用 FXAA，否则 ESSL shader cache 失败会吞掉整层 3D 画面

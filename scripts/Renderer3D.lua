@@ -8,8 +8,9 @@ local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
 local VOXEL_GAP = 0.92
 local VOXEL_DEPTH = 1.18
-local VEHICLE_PLANAR_RADIUS = 2.01
+local VEHICLE_PLANAR_RADIUS = 2.06
 local VEHICLE_COLLISION_FILL = 0.98
+local VEHICLE_LOCAL_CENTER_Z = -0.40
 local VEHICLE_TURN_SPEED = 420.0
 
 local VEHICLE_SECTION_BODY = 0
@@ -44,6 +45,45 @@ local BALL_COLORS = {
     giant = {0.64, 0.20, 1.00},
 }
 
+local AIRCRAFT_STYLES = {
+    tomato = {
+        body = {0.78, 0.055, 0.035}, wing = {0.98, 0.24, 0.045},
+        cockpit = {0.035, 0.18, 0.30}, metal = {0.34, 0.40, 0.52},
+        engine = {1.00, 0.24, 0.035}, wingSpan = 0.82, length = 1.55,
+        bodyWidth = 0.22, tailSpan = 0.38,
+    },
+    chili = {
+        body = {0.70, 0.025, 0.018}, wing = {1.00, 0.12, 0.025},
+        cockpit = {0.20, 0.035, 0.045}, metal = {0.42, 0.16, 0.12},
+        engine = {1.00, 0.48, 0.035}, wingSpan = 1.00, length = 1.28,
+        bodyWidth = 0.30, tailSpan = 0.62,
+    },
+    onion = {
+        body = {0.30, 0.055, 0.62}, wing = {0.68, 0.13, 0.95},
+        cockpit = {0.09, 0.23, 0.38}, metal = {0.48, 0.30, 0.68},
+        engine = {0.58, 0.18, 1.00}, wingSpan = 0.90, length = 1.42,
+        bodyWidth = 0.34, tailSpan = 0.52,
+    },
+    carrot = {
+        body = {0.88, 0.22, 0.025}, wing = {1.00, 0.48, 0.035},
+        cockpit = {0.06, 0.22, 0.28}, metal = {0.64, 0.32, 0.08},
+        engine = {1.00, 0.72, 0.08}, wingSpan = 0.72, length = 1.72,
+        bodyWidth = 0.18, tailSpan = 0.30,
+    },
+    corn = {
+        body = {0.86, 0.54, 0.035}, wing = {1.00, 0.82, 0.08},
+        cockpit = {0.12, 0.20, 0.28}, metal = {0.66, 0.48, 0.14},
+        engine = {1.00, 0.92, 0.22}, wingSpan = 1.06, length = 1.20,
+        bodyWidth = 0.32, tailSpan = 0.74,
+    },
+    eggplant = {
+        body = {0.32, 0.045, 0.58}, wing = {0.68, 0.12, 0.90},
+        cockpit = {0.12, 0.055, 0.26}, metal = {0.34, 0.22, 0.52},
+        engine = {0.82, 0.24, 1.00}, wingSpan = 1.14, length = 1.36,
+        bodyWidth = 0.40, tailSpan = 0.68,
+    },
+}
+
 local VEHICLE_PALETTES = {
     normal = {
         body = {0.84, 0.38, 0.035}, side = {1.00, 0.62, 0.13},
@@ -62,6 +102,8 @@ local VEHICLE_PALETTES = {
         accent = {0.92, 0.54, 1.00}, glass = {0.14, 0.055, 0.27},
     },
 }
+
+local aircraftMaterialSets_ = {}
 
 local WHEEL_COLOR = {0.035, 0.045, 0.065}
 local HUB_COLOR = {0.44, 0.48, 0.56}
@@ -147,7 +189,8 @@ local function GetBrickColor(enemy, brick, visualCatalog)
 end
 
 local function GetEnemySignature(enemy)
-    local parts = {enemy.frozen > 0 and "F" or "N"}
+    local parts = {enemy.veggieKey, enemy.frozen > 0 and "F" or "N"}
+    -- HP 是隐藏规则状态，不进入可见材质或几何签名。
     for _, brick in ipairs(enemy.bricks) do
         parts[#parts + 1] = brick.alive and "1" or "0"
     end
@@ -202,8 +245,7 @@ local function EmitVoxelFace(geometry, edgeVertices, v1, v2, v3, v4, normal, col
     EmitEdgeStrip(edgeVertices, v4, v1, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
 end
 
--- 体素敌人只创建一个根节点和一个 CustomGeometry。
--- 根节点随敌人移动，网格只在砖块拓扑或冰冻状态变化时重建。
+-- 敌方模型统一为单 CustomGeometry 的主题飞机：碰撞砖块仍由规则层维护，但不把方块血量或剩余砖块显示到画面。
 local function RebuildEnemyMesh(record, enemy, visualCatalog)
     local geometry = record.geometry
     geometry:Clear()
@@ -211,117 +253,135 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     geometry:SetDynamic(false)
     geometry:BeginGeometry(0, TRIANGLE_LIST)
 
+    local style = AIRCRAFT_STYLES[enemy.veggieKey] or AIRCRAFT_STYLES.tomato
+    local unit = enemy.brickSize * WORLD_SCALE * VOXEL_GAP
+    local width = enemy.gridW * unit
+    local height = enemy.gridH * unit
+    local centerX = width * 0.5
+    local depth = unit * 0.72
+    local frontZ = -depth * 1.35
+    local backZ = depth * 0.85
     local edgeVertices = {}
-    local alive = {}
 
-    for _, brick in ipairs(enemy.bricks) do
-        if brick.alive then
-            alive[brick.col .. ":" .. brick.row] = brick
+    local function EmitTriangleLocal(a, b, c, normal, color)
+        for _, vertex in ipairs({a, b, c}) do
+            geometry:DefineVertex(vertex)
+            geometry:DefineNormal(normal)
+            geometry:DefineColor(color)
         end
     end
 
-    local voxelSize = enemy.brickSize * WORLD_SCALE * VOXEL_GAP
-    local halfDepth = voxelSize * VOXEL_DEPTH * 0.5
-    for _, brick in ipairs(enemy.bricks) do
-        if brick.alive then
-            local x0 = (brick.col - 1) * voxelSize
-            local x1 = x0 + voxelSize
-            local y1 = -(brick.row - 1) * voxelSize
-            local y0 = y1 - voxelSize
-            local z0 = -halfDepth
-            local z1 = halfDepth
-            local rgb = GetBrickColor(enemy, brick, visualCatalog)
-            local hasLeft = alive[(brick.col - 1) .. ":" .. brick.row] ~= nil
-            local hasRight = alive[(brick.col + 1) .. ":" .. brick.row] ~= nil
-            local hasTop = alive[brick.col .. ":" .. (brick.row - 1)] ~= nil
-            local hasBottom = alive[brick.col .. ":" .. (brick.row + 1)] ~= nil
-
-            -- 正面保持主色；其余外露面明显提亮，强化正交斜视下的体块转折。
-            EmitVoxelFace(geometry, edgeVertices,
-                Vector3(x1, y0, z0), Vector3(x0, y0, z0),
-                Vector3(x0, y1, z0), Vector3(x1, y1, z0),
-                Vector3(0, 0, -1), ShadeColor(rgb, 1.0), voxelSize * 0.035)
-            EmitVoxelFace(geometry, edgeVertices,
-                Vector3(x0, y0, z1), Vector3(x1, y0, z1),
-                Vector3(x1, y1, z1), Vector3(x0, y1, z1),
-                Vector3(0, 0, 1), ShadeColor(rgb, 1.22), voxelSize * 0.035)
-            if not hasLeft then
-                EmitVoxelFace(geometry, edgeVertices,
-                    Vector3(x0, y0, z1), Vector3(x0, y1, z1),
-                    Vector3(x0, y1, z0), Vector3(x0, y0, z0),
-                    Vector3(-1, 0, 0), ShadeColor(rgb, 1.16), voxelSize * 0.035)
+    local function EmitPolygon(points, z0, z1, color, edgeWidth)
+        if #points < 3 then return end
+        local frontCenter = Vector3(0, 0, z0)
+        local backCenter = Vector3(0, 0, z1)
+        for _, point in ipairs(points) do
+            frontCenter.x = frontCenter.x + point[1] / #points
+            frontCenter.y = frontCenter.y + point[2] / #points
+            backCenter.x = backCenter.x + point[1] / #points
+            backCenter.y = backCenter.y + point[2] / #points
+        end
+        for i = 2, #points - 1 do
+            EmitTriangleLocal(frontCenter,
+                Vector3(points[i][1], points[i][2], z0),
+                Vector3(points[i + 1][1], points[i + 1][2], z0),
+                Vector3(0, 0, -1), ShadeColor(color, 1.0))
+            EmitTriangleLocal(backCenter,
+                Vector3(points[i + 1][1], points[i + 1][2], z1),
+                Vector3(points[i][1], points[i][2], z1),
+                Vector3(0, 0, 1), ShadeColor(color, 0.58))
+        end
+        for i = 1, #points do
+            local nextIndex = i % #points + 1
+            local a = points[i]
+            local b = points[nextIndex]
+            local sideNormal = Vector3(b[2] - a[2], a[1] - b[1], 0)
+            local sideLength = math.sqrt(sideNormal.x * sideNormal.x
+                + sideNormal.y * sideNormal.y)
+            if sideLength > 0.0001 then
+                sideNormal.x = sideNormal.x / sideLength
+                sideNormal.y = sideNormal.y / sideLength
             end
-            if not hasRight then
-                EmitVoxelFace(geometry, edgeVertices,
-                    Vector3(x1, y0, z0), Vector3(x1, y1, z0),
-                    Vector3(x1, y1, z1), Vector3(x1, y0, z1),
-                    Vector3(1, 0, 0), ShadeColor(rgb, 1.12), voxelSize * 0.035)
-            end
-            if not hasTop then
-                EmitVoxelFace(geometry, edgeVertices,
-                    Vector3(x0, y1, z0), Vector3(x0, y1, z1),
-                    Vector3(x1, y1, z1), Vector3(x1, y1, z0),
-                    Vector3(0, 1, 0), ShadeColor(rgb, 1.28), voxelSize * 0.035)
-            end
-            if not hasBottom then
-                EmitVoxelFace(geometry, edgeVertices,
-                    Vector3(x0, y0, z1), Vector3(x0, y0, z0),
-                    Vector3(x1, y0, z0), Vector3(x1, y0, z1),
-                    Vector3(0, -1, 0), ShadeColor(rgb, 0.94), voxelSize * 0.035)
+            EmitQuad(geometry,
+                Vector3(a[1], a[2], z0), Vector3(b[1], b[2], z0),
+                Vector3(b[1], b[2], z1), Vector3(a[1], a[2], z1),
+                sideNormal, ShadeColor(color, 0.78))
+            if edgeWidth and edgeWidth > 0 then
+                EmitEdgeStrip(edgeVertices,
+                    Vector3(a[1], a[2], z0), Vector3(b[1], b[2], z0),
+                    Vector3(0, 0, -1), edgeWidth,
+                    Color(0.012, 0.018, 0.038, 1))
             end
         end
     end
 
-    -- 飞行器底座固定在敌方阵列远离我方防线的一侧（局部 +Y / 屏幕上方）。
-    local hullWidth = enemy.gridW * voxelSize
-    local hullBottom = 0
-    local hullTop = voxelSize * 0.78
-    local hullZ0 = -halfDepth * 1.45
-    local hullZ1 = halfDepth * 1.45
-    local topLeft = hullWidth * 0.10
-    local topRight = hullWidth * 0.90
-    local bottomLeft = hullWidth * 0.30
-    local bottomRight = hullWidth * 0.70
-    local hullFront = ShadeColor({0.20, 0.27, 0.38}, enemy.frozen > 0 and 1.65 or 1.0)
-    local hullSide = ShadeColor({0.12, 0.17, 0.27}, enemy.frozen > 0 and 1.55 or 1.0)
-    EmitQuad(geometry,
-        Vector3(topRight, hullTop, hullZ0), Vector3(topLeft, hullTop, hullZ0),
-        Vector3(bottomLeft, hullBottom, hullZ0), Vector3(bottomRight, hullBottom, hullZ0),
-        Vector3(0, 0, -1), hullFront)
-    EmitQuad(geometry,
-        Vector3(topLeft, hullTop, hullZ1), Vector3(topRight, hullTop, hullZ1),
-        Vector3(bottomRight, hullBottom, hullZ1), Vector3(bottomLeft, hullBottom, hullZ1),
-        Vector3(0, 0, 1), ShadeColor({0.09, 0.13, 0.22}, 1.0))
-    EmitQuad(geometry,
-        Vector3(topLeft, hullTop, hullZ0), Vector3(topLeft, hullTop, hullZ1),
-        Vector3(bottomLeft, hullBottom, hullZ1), Vector3(bottomLeft, hullBottom, hullZ0),
-        Vector3(-1, 0, 0), hullSide)
-    EmitQuad(geometry,
-        Vector3(topRight, hullTop, hullZ1), Vector3(topRight, hullTop, hullZ0),
-        Vector3(bottomRight, hullBottom, hullZ0), Vector3(bottomRight, hullBottom, hullZ1),
-        Vector3(1, 0, 0), ShadeColor({0.25, 0.34, 0.48}, 1.0))
-    EmitQuad(geometry,
-        Vector3(topLeft, hullTop, hullZ1), Vector3(topLeft, hullTop, hullZ0),
-        Vector3(topRight, hullTop, hullZ0), Vector3(topRight, hullTop, hullZ1),
-        Vector3(0, 1, 0), ShadeColor({0.34, 0.42, 0.56}, 1.0))
-    EmitQuad(geometry,
-        Vector3(bottomRight, hullBottom, hullZ0), Vector3(bottomLeft, hullBottom, hullZ0),
-        Vector3(bottomLeft, hullBottom, hullZ1), Vector3(bottomRight, hullBottom, hullZ1),
-        Vector3(0, -1, 0), ShadeColor({0.07, 0.10, 0.18}, 1.0))
+    local bodyHalf = width * style.bodyWidth * 0.5
+    local wingHalf = math.min(width * 0.48, width * style.wingSpan * 0.5)
+    local tailHalf = math.min(width * 0.42, width * style.tailSpan * 0.5)
+    local noseY = -height * 0.93
+    local rearY = -height * 0.10
+    local wingY = -height * 0.48
+    local tailY = -height * 0.17
 
-    -- 两个推进器喷口以高亮顶点色强化飞船落向防线的方向感。
-    for _, centerX in ipairs({hullWidth * 0.33, hullWidth * 0.67}) do
-        local engineHalfW = voxelSize * 0.17
-        local engineNear = hullTop - voxelSize * 0.10
-        local engineFar = hullTop + voxelSize * 0.34
-        EmitQuad(geometry,
-            Vector3(centerX + engineHalfW, engineNear, hullZ0 - 0.002),
-            Vector3(centerX - engineHalfW, engineNear, hullZ0 - 0.002),
-            Vector3(centerX - engineHalfW * 0.22, engineFar, hullZ0 - 0.002),
-            Vector3(centerX + engineHalfW * 0.22, engineFar, hullZ0 - 0.002),
-            Vector3(0, 0, -1),
-            enemy.frozen > 0 and Color(0.35, 0.75, 1.0, 1) or Color(1.0, 0.36, 0.05, 1))
+    -- 尖鼻机身、横向主翼、尾翼和抬高的垂直尾鳍，六种蔬菜敌人只替换飞机涂装与翼型。
+    EmitPolygon({
+        {centerX, noseY}, {centerX + bodyHalf * 0.72, -height * 0.68},
+        {centerX + bodyHalf, rearY}, {centerX - bodyHalf, rearY},
+        {centerX - bodyHalf * 0.72, -height * 0.68},
+    }, frontZ, backZ, style.body, unit * 0.028)
+    EmitPolygon({
+        {centerX - bodyHalf * 0.45, -height * 0.63},
+        {centerX - wingHalf, wingY - unit * 0.10},
+        {centerX - wingHalf * 0.88, wingY + unit * 0.34},
+        {centerX - bodyHalf * 0.65, -height * 0.37},
+        {centerX + bodyHalf * 0.65, -height * 0.37},
+        {centerX + wingHalf * 0.88, wingY + unit * 0.34},
+        {centerX + wingHalf, wingY - unit * 0.10},
+        {centerX + bodyHalf * 0.45, -height * 0.63},
+    }, frontZ - unit * 0.06, backZ + unit * 0.06, style.wing, unit * 0.026)
+    EmitPolygon({
+        {centerX - bodyHalf * 0.52, tailY - unit * 0.18},
+        {centerX - tailHalf, tailY + unit * 0.24},
+        {centerX - tailHalf * 0.78, tailY + unit * 0.48},
+        {centerX + tailHalf * 0.78, tailY + unit * 0.48},
+        {centerX + tailHalf, tailY + unit * 0.24},
+        {centerX + bodyHalf * 0.52, tailY - unit * 0.18},
+    }, frontZ - unit * 0.04, backZ + unit * 0.04, style.wing, unit * 0.024)
+
+    -- 驾驶舱为真正的第二层凸起，斜视相机能看到其顶面和侧壁。
+    EmitPolygon({
+        {centerX, -height * 0.84}, {centerX + bodyHalf * 0.64, -height * 0.66},
+        {centerX + bodyHalf * 0.48, -height * 0.49},
+        {centerX - bodyHalf * 0.48, -height * 0.49},
+        {centerX - bodyHalf * 0.64, -height * 0.66},
+    }, frontZ - unit * 0.24, backZ + unit * 0.18, style.cockpit, unit * 0.018)
+
+    -- 远离玩家的一侧布置双发动机舱与推进火焰，明确飞机的飞行方向。
+    for _, engineX in ipairs({centerX - width * 0.27, centerX + width * 0.27}) do
+        EmitPolygon({
+            {engineX - unit * 0.18, -height * 0.15},
+            {engineX + unit * 0.18, -height * 0.15},
+            {engineX + unit * 0.15, -height * 0.02},
+            {engineX - unit * 0.15, -height * 0.02},
+        }, frontZ - unit * 0.02, backZ + unit * 0.10, style.metal, unit * 0.014)
+        if enemy.frozen <= 0 then
+            EmitPolygon({
+                {engineX - unit * 0.12, -height * 0.01},
+                {engineX + unit * 0.12, -height * 0.01},
+                {engineX + unit * 0.035, unit * 0.22},
+                {engineX - unit * 0.035, unit * 0.22},
+            }, frontZ - unit * 0.04, frontZ - unit * 0.01, style.engine, 0)
+        end
     end
+
+    -- 垂直尾鳍抬高到不同 Z 层，避免敌人看起来仍像一张平面贴图。
+    EmitPolygon({
+        {centerX - unit * 0.035, tailY + unit * 0.36},
+        {centerX + unit * 0.035, tailY + unit * 0.36},
+        {centerX + unit * 0.02, tailY - unit * 0.12},
+        {centerX, tailY - unit * 0.40},
+        {centerX - unit * 0.02, tailY - unit * 0.12},
+    }, frontZ + unit * 0.08, backZ + unit * 1.00, style.metal, unit * 0.012)
 
     geometry:BeginGeometry(1, TRIANGLE_LIST)
     for _, vertex in ipairs(edgeVertices) do
@@ -618,7 +678,6 @@ local function SyncVehicles(game, dt)
             RebuildVehicleGeometry(record.geometry, marble.ballType)
         end
 
-        record.root.position = GameToWorld(marble.x, marble.y, -0.08)
         if targetHeading then record.targetHeading = targetHeading end
         record.heading = MoveAngleToward(
             record.heading,
@@ -632,6 +691,10 @@ local function SyncVehicles(game, dt)
         local scaleFactor = collisionRadiusWorld * VEHICLE_COLLISION_FILL
             / VEHICLE_PLANAR_RADIUS
         record.root.scale = Vector3(scaleFactor, scaleFactor, scaleFactor)
+        -- 车辆几何主要位于局部负 Z；用缩放后的视觉中心补偿根节点深度，
+        -- 使屏幕投影中心继续精确对应权威 marble.x/y。
+        record.root.position = GameToWorld(
+            marble.x, marble.y, -VEHICLE_LOCAL_CENTER_Z * scaleFactor)
     end
 
     if game.activeBall then SyncOne(game.activeBall) end
@@ -806,9 +869,9 @@ function Renderer3D.Init(scene)
     trailMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
     trailMaterial_:SetCullMode(CULL_NONE)
 
-    initialized_ = modelBox_ ~= nil and voxelMaterial_ ~= nil and trailMaterial_ ~= nil
-    print("[Renderer3D] initialized, colored_voxels=" .. tostring(initialized_)
-        .. ", dayun_heavy_trucks=true, six_material_sections=true, world_trails=true")
+    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil and trailMaterial_ ~= nil
+    initialized_ = initialized
+    print("[Renderer3D] initialized, aircraft_enemies=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
     return initialized_
 end
 
