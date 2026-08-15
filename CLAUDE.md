@@ -3,17 +3,17 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.8.2
-- 进度: 六类敌方主题飞机已替代敌方蔬菜体素视觉；每敌人仍为单 `CustomGeometry`，包含尖鼻机身、主翼、尾翼、凸起驾驶舱、双发动机与尾鳍；砖块 HP 继续只在权威规则层隐藏维护，前六波为 1 HP，第 7/12 波起升为 2/3 HP；敌方波次数量和速度重新调平；相机保持 46° 斜俯视正交投影，固定 540×960 CONTAIN、输入与轨迹共用投影标定
-- 上次交付: `Renderer3D.lua` 重制六类飞机敌人；`Game.lua` 调整隐藏 HP 和前期难度；`Scene3DBackend.lua` 保持 9:16 视口与 46° 正交相机；LSP 0 Error、官方入口构建成功、240 帧 `lua_errors=0`，GLES 竖屏截图已生成
+- 版本: 0.8.4
+- 进度: 敌人已脱离蔬菜数据，改为由用户飞机参考图采样得到的独立低像素 `AircraftPixelData`；scout/striker/bomber/interceptor 的 occupied cells 同时驱动规则层逐块碰撞、隐藏 HP、备用 2D 砖块和 3D 单敌人双 section 体素网格，`alive=false` 会让对应方块真实消失；46° 正交相机、9:16 CONTAIN、UI 与载具契约保持不变
+- 上次交付: 新增 `scripts/AircraftPixelData.lua` 和 `assets/image/aircraft_reference.png`；Game/VisualCatalog/Renderer/Presentation/Renderer3D 全链路已切到 aircraftKey；3D 修正为按规则 brick pitch 居中而不是按缩小后的 voxel unit 居中；LSP 0 Error、官方构建成功、受控 GLES 游戏态截图 `aircraft_voxel_gameplay_v5.png` 通过，截图中可见完整低像素飞机方块与 3D 面/棱线层次
 
 ## 用户画像摘要
 - 使用简体中文沟通
 - 重视先做架构解耦，为后续 3D 开发降低迁移成本 [observed]
 
 ## 预测下一步
-- likely_next_task: 在真实鼠标/触控交互中复测投影逆变换后的拖拽手感、放大车辆的连续反弹和四类技能碰撞范围，并在横屏 letterbox 与手机高 DPR 环境确认输入边界
-- 相关文件: `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`
+- likely_next_task: 真实交互复测四类飞机逐块击毁后的缺口可读性、连续反弹与隐藏多 HP 波次；如需继续扩大世界，只基于 9:16 实机截图微调 `orthoSize` 或飞机采样分辨率，不改变 UI/Viewport/输入共同 CONTAIN 契约
+- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`
 
 ## 恢复指令（新会话必执行）
 1. 读本文件 → 获取项目状态和避雷清单
@@ -34,14 +34,17 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 - 3D 后端的体素尺寸必须统一经过 `WORLD_SCALE` 映射；Renderer3D 只消费快照，碎片生命周期由 Presentation 维护
 - 3D 体素性能契约：每个敌人只允许一个 `CustomGeometry` 根对象，但允许在同一对象内使用面与棱线两个 section；只在砖块存活拓扑或冻结状态改变时重建，禁止每体素创建 `Node + StaticModel`
-- 相机契约：必须使用正交投影，禁止透视近大远小；当前相机从 XY 玩法平面法线向正视方向倾斜 38°，位置按 `(0, 25*sin(38°), -25*cos(38°))` 计算，`orthoSize=18.0`，保证 540 宽场地在 9:16 视锥内完整可见；车辆仍在 XY 平面绕 Z 轴朝向速度或瞄准发射向量
+- 飞机采样权威契约：`AircraftPixelData.lua` 的 occupied cells 是规则砖块、2D 绘制、3D 体素和碎片颜色的唯一共同来源；禁止恢复 `VeggiePixelData` 敌人轮廓或用完整飞机多边形覆盖逐块缺失。3D 体素中心必须使用 `brickSize * WORLD_SCALE` 的规则 pitch，`VOXEL_GAP` 只能缩小体素本体，不能改变中心间距
+- 相机契约：必须使用正交投影，禁止透视近大远小；当前相机从 XY 玩法平面法线向正视方向倾斜 46°，位置按 `(0, 25*sin(46°), -25*cos(46°))` 计算，`orthoSize=18.0`，保证 540 宽场地在 9:16 视锥内完整可见；车辆仍在 XY 平面绕 Z 轴朝向速度或瞄准发射向量
 - 载具表现契约：每个 `marble.id` 对应一个大运式平头重卡 `CustomGeometry`，内部固定为主车漆/浅色侧围/轮胎/金属/玻璃/灯光 6 个 PBR section；禁止恢复球形弹珠、外部整车 MDL、固定装饰车发射台、跑车/皮卡轮廓或方块体素瓦片车辆
 - 大运重卡几何契约：必须具备平头高顶驾驶室、长货厢、三轴六轮、大面积前风挡、重卡格栅与外露保险杠；浅色侧围必须作为独立材质分区；车辆局部 +X 为车头，飞行朝向由速度计算，待发射瞄准时由发射向量计算；显示朝向必须以 420°/s 沿最短角追踪目标朝向，禁止直接跳变；规则层仍保留统一发射坐标
 - 载具碰撞比例契约：程序化车辆局部 XY 包围半径固定按 `VEHICLE_PLANAR_RADIUS` 计量，世界缩放只能由 `marble.radius * WORLD_SCALE * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS` 推导；视觉外轮廓当前占权威碰撞圆 98%，禁止按 `isPrimary`、`ballType` 再叠加经验倍率
 - 体素立体表现契约：正面使用主色，背面/左右/顶面采用明显浅色因子；每个暴露面使用窄深色棱线 strip，棱线与面共用敌人单一 `CustomGeometry` 的第二 section，禁止新增逐棱节点
 - UI 视觉契约：raw NanoVG 固定使用 540×960 设计分辨率模式 A，色彩为深紫背景、淡蓝工程线/文字、明紫强调；必须保留技术网格、刻度光环、工程标注、状态码和半调点阵，禁止恢复蓝白配色、PixelForge 主题或圆角卡片
 - 9:16 铁律：NanoVG 与 3D `Viewport` 必须共用同一个 CONTAIN 缩放与居中偏移；非 9:16 屏幕只允许画布外 letterbox，禁止拉伸、裁切或让 3D 铺满而 UI 单独居中；输入先使用同一 DPR/scale/offset 回到设计画布，再使用相机玩法平面投影参数逆变换到权威游戏坐标，画布外按下必须被过滤
-- 倾斜正交输入契约：玩法 XY 平面经 38° 相机投影后不等同于 540×960 UI 坐标；`Scene3DBackend` 必须用 `Camera:WorldToScreenPoint()` 标定投影 offset/scale，`ScreenToGame()`、瞄准轨迹和空间反馈必须共享这组参数，禁止把屏幕设计坐标直接传给 `Game.Pointer*`
+- 倾斜正交输入契约：玩法 XY 平面经 46° 相机投影后不等同于 540×960 UI 坐标；`Scene3DBackend` 必须用 `Camera:WorldToScreenPoint()` 标定投影 offset/scale，`ScreenToGame()`、瞄准轨迹和空间反馈必须共享这组参数，禁止把屏幕设计坐标直接传给 `Game.Pointer*`
+- UI 安全层契约：HUD、playing Dock、menu/gameover modal 必须以不透明硬边区域遮断世界层；当前 HUD 为 `y=0..76`，playing Dock 为 `y=880..960`，四槽只在 playing 态绘制；menu/gameover 从 HUD 下缘覆盖至画布底，非 playing 态禁止绘制弹夹、瞄准轨迹和基地冲击反馈；菜单刻度光环不得与 CTA 几何相交
+- 投影审查契约：判断 UI 与玩法对象是否遮挡前，必须先把权威坐标通过当前 `projectionOffset/Scale` 投影到 540×960 屏幕设计空间；禁止把 `Game.lua` 的 `y` 直接当屏幕 `y` 并据此修改危险线、弹弓或碰撞规则
 - 敌我尺寸契约：敌方权威 `brickSize` 为前两波 14、3–4 波 15、后续 16；我方权威半径为分裂 20、冰冻 20、加速 18、巨型 30，Renderer3D 必须继续由快照半径推导模型缩放，禁止仅做视觉假放大
 - 飞行器底座契约：敌方底座与推进器必须位于阵列远离玩家的一侧（设计坐标上方）；靠近防线的规则判定只使用阵列底边 `enemy.y + height`，备用 2D 与 3D 后端方向必须一致
 - 四弹药槽契约：3D 后端底部必须显示分裂/冰冻/加速/巨型四个 64×64 小正方形槽位，前两格停靠左下、后两格停靠右下；每格保留序号、中文名、装填态、储备数量和类型色，中间必须留出弹弓/车辆可视空间，禁止恢复横向铺满底边或退化为纯文字图例

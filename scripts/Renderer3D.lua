@@ -45,45 +45,6 @@ local BALL_COLORS = {
     giant = {0.64, 0.20, 1.00},
 }
 
-local AIRCRAFT_STYLES = {
-    tomato = {
-        body = {0.78, 0.055, 0.035}, wing = {0.98, 0.24, 0.045},
-        cockpit = {0.035, 0.18, 0.30}, metal = {0.34, 0.40, 0.52},
-        engine = {1.00, 0.24, 0.035}, wingSpan = 0.82, length = 1.55,
-        bodyWidth = 0.22, tailSpan = 0.38,
-    },
-    chili = {
-        body = {0.70, 0.025, 0.018}, wing = {1.00, 0.12, 0.025},
-        cockpit = {0.20, 0.035, 0.045}, metal = {0.42, 0.16, 0.12},
-        engine = {1.00, 0.48, 0.035}, wingSpan = 1.00, length = 1.28,
-        bodyWidth = 0.30, tailSpan = 0.62,
-    },
-    onion = {
-        body = {0.30, 0.055, 0.62}, wing = {0.68, 0.13, 0.95},
-        cockpit = {0.09, 0.23, 0.38}, metal = {0.48, 0.30, 0.68},
-        engine = {0.58, 0.18, 1.00}, wingSpan = 0.90, length = 1.42,
-        bodyWidth = 0.34, tailSpan = 0.52,
-    },
-    carrot = {
-        body = {0.88, 0.22, 0.025}, wing = {1.00, 0.48, 0.035},
-        cockpit = {0.06, 0.22, 0.28}, metal = {0.64, 0.32, 0.08},
-        engine = {1.00, 0.72, 0.08}, wingSpan = 0.72, length = 1.72,
-        bodyWidth = 0.18, tailSpan = 0.30,
-    },
-    corn = {
-        body = {0.86, 0.54, 0.035}, wing = {1.00, 0.82, 0.08},
-        cockpit = {0.12, 0.20, 0.28}, metal = {0.66, 0.48, 0.14},
-        engine = {1.00, 0.92, 0.22}, wingSpan = 1.06, length = 1.20,
-        bodyWidth = 0.32, tailSpan = 0.74,
-    },
-    eggplant = {
-        body = {0.32, 0.045, 0.58}, wing = {0.68, 0.12, 0.90},
-        cockpit = {0.12, 0.055, 0.26}, metal = {0.34, 0.22, 0.52},
-        engine = {0.82, 0.24, 1.00}, wingSpan = 1.14, length = 1.36,
-        bodyWidth = 0.40, tailSpan = 0.68,
-    },
-}
-
 local VEHICLE_PALETTES = {
     normal = {
         body = {0.84, 0.38, 0.035}, side = {1.00, 0.62, 0.13},
@@ -180,7 +141,7 @@ end
 
 local function GetBrickColor(enemy, brick, visualCatalog)
     if visualCatalog and visualCatalog.GetBrickStyle then
-        local style = visualCatalog.GetBrickStyle(enemy.veggieKey, brick.col, brick.row)
+        local style = visualCatalog.GetBrickStyle(enemy.aircraftKey, brick.col, brick.row)
         if style then
             return FrozenColor({style.r / 255, style.g / 255, style.b / 255}, enemy.frozen > 0)
         end
@@ -189,7 +150,7 @@ local function GetBrickColor(enemy, brick, visualCatalog)
 end
 
 local function GetEnemySignature(enemy)
-    local parts = {enemy.veggieKey, enemy.frozen > 0 and "F" or "N"}
+    local parts = {enemy.aircraftKey, enemy.frozen > 0 and "F" or "N"}
     -- HP 是隐藏规则状态，不进入可见材质或几何签名。
     for _, brick in ipairs(enemy.bricks) do
         parts[#parts + 1] = brick.alive and "1" or "0"
@@ -245,7 +206,8 @@ local function EmitVoxelFace(geometry, edgeVertices, v1, v2, v3, v4, normal, col
     EmitEdgeStrip(edgeVertices, v4, v1, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
 end
 
--- 敌方模型统一为单 CustomGeometry 的主题飞机：碰撞砖块仍由规则层维护，但不把方块血量或剩余砖块显示到画面。
+-- 敌机是由 AircraftPixelData occupied cells 逐块构成的单体素网格。
+-- 每个敌人仍只有一个 CustomGeometry；section 0 是暴露体素面，section 1 是棱线。
 local function RebuildEnemyMesh(record, enemy, visualCatalog)
     local geometry = record.geometry
     geometry:Clear()
@@ -253,135 +215,53 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     geometry:SetDynamic(false)
     geometry:BeginGeometry(0, TRIANGLE_LIST)
 
-    local style = AIRCRAFT_STYLES[enemy.veggieKey] or AIRCRAFT_STYLES.tomato
-    local unit = enemy.brickSize * WORLD_SCALE * VOXEL_GAP
-    local width = enemy.gridW * unit
-    local height = enemy.gridH * unit
-    local centerX = width * 0.5
-    local depth = unit * 0.72
-    local frontZ = -depth * 1.35
-    local backZ = depth * 0.85
+    local pitch = enemy.brickSize * WORLD_SCALE
+    local unit = pitch * VOXEL_GAP
+    local depth = unit * VOXEL_DEPTH
+    local edgeWidth = math.max(0.004, unit * 0.045)
     local edgeVertices = {}
+    local alive = {}
+    local cellColors = {}
 
-    local function EmitTriangleLocal(a, b, c, normal, color)
-        for _, vertex in ipairs({a, b, c}) do
-            geometry:DefineVertex(vertex)
-            geometry:DefineNormal(normal)
-            geometry:DefineColor(color)
+    for _, brick in ipairs(enemy.bricks) do
+        if brick.alive then
+            local key = tostring(brick.col) .. ":" .. tostring(brick.row)
+            alive[key] = brick
+            cellColors[key] = GetBrickColor(enemy, brick, visualCatalog)
         end
     end
 
-    local function EmitPolygon(points, z0, z1, color, edgeWidth)
-        if #points < 3 then return end
-        local frontCenter = Vector3(0, 0, z0)
-        local backCenter = Vector3(0, 0, z1)
-        for _, point in ipairs(points) do
-            frontCenter.x = frontCenter.x + point[1] / #points
-            frontCenter.y = frontCenter.y + point[2] / #points
-            backCenter.x = backCenter.x + point[1] / #points
-            backCenter.y = backCenter.y + point[2] / #points
-        end
-        for i = 2, #points - 1 do
-            EmitTriangleLocal(frontCenter,
-                Vector3(points[i][1], points[i][2], z0),
-                Vector3(points[i + 1][1], points[i + 1][2], z0),
-                Vector3(0, 0, -1), ShadeColor(color, 1.0))
-            EmitTriangleLocal(backCenter,
-                Vector3(points[i + 1][1], points[i + 1][2], z1),
-                Vector3(points[i][1], points[i][2], z1),
-                Vector3(0, 0, 1), ShadeColor(color, 0.58))
-        end
-        for i = 1, #points do
-            local nextIndex = i % #points + 1
-            local a = points[i]
-            local b = points[nextIndex]
-            local sideNormal = Vector3(b[2] - a[2], a[1] - b[1], 0)
-            local sideLength = math.sqrt(sideNormal.x * sideNormal.x
-                + sideNormal.y * sideNormal.y)
-            if sideLength > 0.0001 then
-                sideNormal.x = sideNormal.x / sideLength
-                sideNormal.y = sideNormal.y / sideLength
-            end
-            EmitQuad(geometry,
-                Vector3(a[1], a[2], z0), Vector3(b[1], b[2], z0),
-                Vector3(b[1], b[2], z1), Vector3(a[1], a[2], z1),
-                sideNormal, ShadeColor(color, 0.78))
-            if edgeWidth and edgeWidth > 0 then
-                EmitEdgeStrip(edgeVertices,
-                    Vector3(a[1], a[2], z0), Vector3(b[1], b[2], z0),
-                    Vector3(0, 0, -1), edgeWidth,
-                    Color(0.012, 0.018, 0.038, 1))
+    for _, brick in ipairs(enemy.bricks) do
+        if brick.alive then
+            local key = tostring(brick.col) .. ":" .. tostring(brick.row)
+            local rgb = cellColors[key]
+            local cx = (brick.col - 0.5) * pitch
+            local cy = -(brick.row - 0.5) * pitch
+            local minX, maxX = cx - unit * 0.5, cx + unit * 0.5
+            local minY, maxY = cy - unit * 0.5, cy + unit * 0.5
+            local frontZ, backZ = -depth * 0.5, depth * 0.5
+
+            for _, face in ipairs(FACE_DEFS) do
+                local neighborCol = brick.col + face.neighbor[1]
+                local neighborRow = brick.row + face.neighbor[2]
+                local neighborKey = tostring(neighborCol) .. ":" .. tostring(neighborRow)
+                local hasNeighbor = alive[neighborKey] ~= nil
+                if not hasNeighbor then
+                    local c = face.corners
+                    local vertices = {}
+                    for i, corner in ipairs(c) do
+                        local x = corner[1] < 0 and minX or maxX
+                        local y = corner[2] < 0 and minY or maxY
+                        local z = corner[3] < 0 and frontZ or backZ
+                        vertices[i] = Vector3(x, y, z)
+                    end
+                    EmitVoxelFace(geometry, edgeVertices,
+                        vertices[1], vertices[2], vertices[3], vertices[4],
+                        face.normal, ShadeColor(rgb, face.tint), edgeWidth)
+                end
             end
         end
     end
-
-    local bodyHalf = width * style.bodyWidth * 0.5
-    local wingHalf = math.min(width * 0.48, width * style.wingSpan * 0.5)
-    local tailHalf = math.min(width * 0.42, width * style.tailSpan * 0.5)
-    local noseY = -height * 0.93
-    local rearY = -height * 0.10
-    local wingY = -height * 0.48
-    local tailY = -height * 0.17
-
-    -- 尖鼻机身、横向主翼、尾翼和抬高的垂直尾鳍，六种蔬菜敌人只替换飞机涂装与翼型。
-    EmitPolygon({
-        {centerX, noseY}, {centerX + bodyHalf * 0.72, -height * 0.68},
-        {centerX + bodyHalf, rearY}, {centerX - bodyHalf, rearY},
-        {centerX - bodyHalf * 0.72, -height * 0.68},
-    }, frontZ, backZ, style.body, unit * 0.028)
-    EmitPolygon({
-        {centerX - bodyHalf * 0.45, -height * 0.63},
-        {centerX - wingHalf, wingY - unit * 0.10},
-        {centerX - wingHalf * 0.88, wingY + unit * 0.34},
-        {centerX - bodyHalf * 0.65, -height * 0.37},
-        {centerX + bodyHalf * 0.65, -height * 0.37},
-        {centerX + wingHalf * 0.88, wingY + unit * 0.34},
-        {centerX + wingHalf, wingY - unit * 0.10},
-        {centerX + bodyHalf * 0.45, -height * 0.63},
-    }, frontZ - unit * 0.06, backZ + unit * 0.06, style.wing, unit * 0.026)
-    EmitPolygon({
-        {centerX - bodyHalf * 0.52, tailY - unit * 0.18},
-        {centerX - tailHalf, tailY + unit * 0.24},
-        {centerX - tailHalf * 0.78, tailY + unit * 0.48},
-        {centerX + tailHalf * 0.78, tailY + unit * 0.48},
-        {centerX + tailHalf, tailY + unit * 0.24},
-        {centerX + bodyHalf * 0.52, tailY - unit * 0.18},
-    }, frontZ - unit * 0.04, backZ + unit * 0.04, style.wing, unit * 0.024)
-
-    -- 驾驶舱为真正的第二层凸起，斜视相机能看到其顶面和侧壁。
-    EmitPolygon({
-        {centerX, -height * 0.84}, {centerX + bodyHalf * 0.64, -height * 0.66},
-        {centerX + bodyHalf * 0.48, -height * 0.49},
-        {centerX - bodyHalf * 0.48, -height * 0.49},
-        {centerX - bodyHalf * 0.64, -height * 0.66},
-    }, frontZ - unit * 0.24, backZ + unit * 0.18, style.cockpit, unit * 0.018)
-
-    -- 远离玩家的一侧布置双发动机舱与推进火焰，明确飞机的飞行方向。
-    for _, engineX in ipairs({centerX - width * 0.27, centerX + width * 0.27}) do
-        EmitPolygon({
-            {engineX - unit * 0.18, -height * 0.15},
-            {engineX + unit * 0.18, -height * 0.15},
-            {engineX + unit * 0.15, -height * 0.02},
-            {engineX - unit * 0.15, -height * 0.02},
-        }, frontZ - unit * 0.02, backZ + unit * 0.10, style.metal, unit * 0.014)
-        if enemy.frozen <= 0 then
-            EmitPolygon({
-                {engineX - unit * 0.12, -height * 0.01},
-                {engineX + unit * 0.12, -height * 0.01},
-                {engineX + unit * 0.035, unit * 0.22},
-                {engineX - unit * 0.035, unit * 0.22},
-            }, frontZ - unit * 0.04, frontZ - unit * 0.01, style.engine, 0)
-        end
-    end
-
-    -- 垂直尾鳍抬高到不同 Z 层，避免敌人看起来仍像一张平面贴图。
-    EmitPolygon({
-        {centerX - unit * 0.035, tailY + unit * 0.36},
-        {centerX + unit * 0.035, tailY + unit * 0.36},
-        {centerX + unit * 0.02, tailY - unit * 0.12},
-        {centerX, tailY - unit * 0.40},
-        {centerX - unit * 0.02, tailY - unit * 0.12},
-    }, frontZ + unit * 0.08, backZ + unit * 1.00, style.metal, unit * 0.012)
 
     geometry:BeginGeometry(1, TRIANGLE_LIST)
     for _, vertex in ipairs(edgeVertices) do

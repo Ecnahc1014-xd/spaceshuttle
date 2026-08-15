@@ -73,7 +73,7 @@ local function SpawnBrickDebris(event, color)
             r = color.r,
             g = color.g,
             b = color.b,
-            veggieKey = event.veggieKey,
+            aircraftKey = event.aircraftKey,
             enemyId = event.enemyId,
             col = event.col,
             row = event.row,
@@ -103,7 +103,7 @@ local function HandleEvent(event)
     elseif event.type == "wave_started" then
         waveBannerTimer = 1.8
     elseif event.type == "brick_hit" then
-        local color = VisualCatalog.GetBrickStyle(event.veggieKey, event.col, event.row)
+        local color = VisualCatalog.GetBrickStyle(event.aircraftKey, event.col, event.row)
             or {r = 255, g = 240, b = 180}
         local particleColor = {color.r, color.g, color.b}
         hitFlashes[GetBrickKey(event.enemyId, event.col, event.row)] = 0.12

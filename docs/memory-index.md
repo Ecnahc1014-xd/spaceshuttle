@@ -8,13 +8,13 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.8.2
-简述：540×960 竖屏弹弓载具弹珠游戏，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；相机玩法平面投影统一驱动输入、轨迹与空间反馈；敌方为六类单网格主题飞机（机身/主翼/尾翼/驾驶舱/发动机/尾鳍），我方为随权威碰撞半径缩放的大运式重卡；砖块 HP 隐藏在规则层，前六波为 1 HP；底部四个 64×64 弹夹分成左下两格与右下两格。
+当前版本：0.8.4
+简述：540×960 竖屏弹弓载具弹珠游戏，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；相机玩法平面投影统一驱动输入、轨迹与空间反馈；敌方为由用户飞机参考图采样生成的四类单网格低像素体素飞机，我方为随权威碰撞半径缩放的大运式重卡；顶部 76px HUD、playing 态底部 80px Dock 与 menu/gameover modal 形成不透明互斥安全层，四个 64×64 弹夹只在 playing 态左右分组显示。
 最后巩固：2026-08-15
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
-- 核心玩法：四类弹珠、蔬菜像素砖块、波次、基地生命、计分。
+- 核心玩法：四类弹珠、低像素飞机逐块碰撞、波次、基地生命、计分。
 - 当前强化玩法：基础弹每次命中独立 5% 概率生成两颗完整分裂弹且可递归；加速弹反弹/命中加速、速度分档增伤并追击最近砖块；巨型弹反弹后武装直径 7 格圆域贯穿。
 - 敌方基础下落速度为原来的 25%；冰冻继续在此基础上应用 0.3 倍倍率。
 - 分层数据流：引擎事件 → `main.lua` → `Game` 更新/事件 → `Presentation` → snapshot → 渲染后端。
@@ -25,11 +25,11 @@
 | `scripts/main.lua` | 纯编排入口；转发引擎输入和 Update，连接核心、表现、后端 |
 | `scripts/Game.lua` | 引擎无关的权威规则、碰撞、波次、输入动作、领域事件与游戏快照 |
 | `scripts/Presentation.lua` | 消费领域事件，维护粒子、飘字、拖尾、闪白、震屏、波次横幅、防线脉冲与冲击波 |
-| `scripts/VisualCatalog.lua` | 当前 2D 后端的弹珠样式和蔬菜砖块颜色映射 |
-| `scripts/Renderer3D.lua` | 只读同步六类主题飞机（单 `CustomGeometry`：机身、主翼、尾翼、驾驶舱、双发动机、尾鳍）、大运式平头重卡、双层世界空间拖尾和碎片；每敌人/车辆各一个 `CustomGeometry` |
+| `scripts/VisualCatalog.lua` | 当前 2D 后端的弹珠样式和飞机采样砖块颜色映射 |
+| `scripts/AircraftPixelData.lua` | 独立低像素飞机 occupied cells、分数、速度倍率与采样 RGB 数据源 |
+| `scripts/Renderer3D.lua` | 只读同步四类采样飞机（每个 occupied cell 对应一个可破坏体素，单 `CustomGeometry` 双 section）、大运式平头重卡、双层世界空间拖尾和碎片；每敌人/车辆各一个 `CustomGeometry` |
 | `scripts/Scene3DBackend.lua` | 3D Scene/Camera/Viewport、46° 正交斜俯视与 `orthoSize=18.0`、固定 9:16 `IntRect` CONTAIN、相机投影标定、3 批动态视差星层、深空底板、深紫/淡蓝 Laterano 酸性 HUD/四弹药槽/菜单和撞线反馈覆盖层 |
 | `scripts/Renderer.lua` | 无规则计算的 NanoVG 绘制器，只消费两个快照 |
-| `scripts/VeggiePixelData.lua` | 蔬菜网格、分数、速度倍率与像素数据源 |
 | `assets/model/6d5f1062-5bea-5cf8-a404-280333d4d4c8/` | 低多边形越野皮卡 MDL、LOD、diffuse/normal 纹理和材质资源 |
 
 ## 有效决策
@@ -55,6 +55,9 @@
 - D-021: 四类权威半径提升为分裂/冰冻 20、加速 18、巨型 30；车辆局部 XY 拟合半径校准为 2.06，并用缩放后的局部 Z 视觉中心补偿保持权威坐标与屏幕模型中心一致（v0.8.1）。
 - D-022: 四弹夹统一为 64×64 小正方形，前两格停靠左下、后两格停靠右下，中间保留发射主体和轨迹空间（v0.8.1）。
 - D-023: v0.8.2 将敌方视觉统一为六类主题飞机；每敌人仍单 `CustomGeometry`，飞机由尖鼻机身、主翼、尾翼、凸起驾驶舱、双发动机与尾鳍组成；砖块 HP 只存在于 Game 规则层且不进入渲染签名，前六波为 1 HP，7/12 波起提升至 2/3 HP；相机保持 46° 正交斜俯视而非透视，固定 9:16 交互契约不变。
+- D-024: v0.8.3 将 HUD、playing Dock、menu/gameover modal 明确为不透明互斥安全层；四弹夹只在 playing 态绘制，非 playing 态不再绘制瞄准轨迹和基地冲击反馈；菜单主光环与 CTA 使用独立几何区，禁止相交。
+- D-025: UI/玩法遮挡审查必须先用当前相机 `projectionOffset/Scale` 把权威坐标投影到屏幕设计空间；46° 当前标定约为 `offset=(124.20,159.90), scale=(0.5400,0.6669)`，禁止把 `Game.y` 直接当成屏幕 y 后误改权威危险线或弹弓规则。
+- D-026: v0.8.4 敌方数据从 `VeggiePixelData` 完全迁移到独立 `AircraftPixelData`；同一 occupied-cell 清单同时驱动规则砖块、2D 砖块、3D 体素和碎片颜色。3D 中每个 alive cell 生成可见体素并剔除相邻内部面，死亡格直接从网格消失；隐藏 HP 不进入签名。体素中心使用规则 brick pitch，`VOXEL_GAP` 只缩小方块本体，禁止用缩小后的 unit 推导中心造成碰撞/显示漂移。
 
 ## 活跃系统契约
 | 契约 | 文件 | 状态 |
@@ -75,6 +78,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.8.4: 从用户参考截图中的飞机区域采样出独立 `AircraftPixelData`，建立 scout/striker/bomber/interceptor 四套低像素 occupied-cell 网格。`Game`、`VisualCatalog`、备用 2D 后端、`Presentation` 和 `Renderer3D` 全链路改用 `aircraftKey`；3D 每个 alive cell 生成一个真正可破坏体素，相邻格剔除内部面并与深色棱线合并在单敌人双 section `CustomGeometry` 中。修正 voxel gap 只缩小方块、不改变规则中心间距。LSP 0 Error、官方构建成功，受控 GLES 游戏态截图确认飞机方块完整度与场地/UI 比例可读，`lua_errors=0`。
 - v0.8.2: 敌方从蔬菜体素阵列重制为六类主题飞机，单 `CustomGeometry` 包含尖鼻机身、主翼、尾翼、凸起驾驶舱、双发动机和尾鳍；砖块 HP 隐藏维护，前六波为 1 HP，后续在第 7/12 波提升；敌方波次数量/速度重新调平；相机保持 46° 正交斜俯视，保留固定 9:16 投影和输入契约；LSP 0 Error，官方构建成功，240 帧 `lua_errors=0`，GLES 竖屏截图 `screenshots/v082_aircraft_perspective.png` 已生成。验证环境仍有音频、shader cache 和两个内置资源错误。
 - v0.8.1: 四类权威弹珠半径提升为 20/20/18/30，车辆局部拟合半径校准为 2.06 并补偿负 Z 几何视觉中心；相机玩法平面投影统一驱动 `ScreenToGame`、瞄准轨迹和撞线反馈，letterbox 外按下不再进入玩法；四弹夹改为左下两格、右下两格的 64×64 正方形。合并保留会话外新增的敌方主题飞机和波次节奏调整；LSP 0 Error、正式入口官方构建成功、240 帧 `lua_errors=0`，菜单与受控拖拽 GLES 截图通过。
 - v0.8.0: 正式更名为“太空飞机弹珠”；UI 重做为深紫/淡蓝 Laterano 酸性技术图纸风格；NanoVG 与 3D Viewport 共用固定 540×960 CONTAIN，横屏只 letterbox；`orthoSize=18.0` 保证完整场地边缘；敌方权威砖块缩为 14/15/16，我方四类权威半径放大为 13/13/12/21；敌方飞行器底座和推进器移到远离玩家的一侧。LSP 0 Error，正式入口官方构建成功，240 帧 `lua_errors=0`，三组 GLES 截图通过。
@@ -91,9 +95,9 @@
 ## 验证记录
 - Lua LSP：工作区 Error 0（`Game.lua`、`Renderer3D.lua`、`Scene3DBackend.lua`、`main.lua`）。
 - 官方 build：成功，正式入口 `main.lua`，单机模式。
-- Runtime v0.8.2：正式入口 240 帧，run/scene 阶段 PASS、`lua_errors=0`；`resource_errors=2`（内置 `Vignetting.png`、`Skybox.xml`），其余为验证环境音频/shader cache 报错。
-- GLES v0.8.2：`screenshots/v082_aircraft_perspective.png`，1080×1920 竖屏截图成功；菜单态确认 9:16、46°正交状态标注、四槽分组和深紫酸性 UI。
-- 视觉限制：当前截图在菜单态，尚未进入实际游戏态，需后续真实交互复测六类飞机、连续反弹和隐藏 HP 规则。
+- Runtime v0.8.3：正式入口 240 帧，`lua_errors=0`；验证器仍报告 2 个内置资源错误和软渲染帧耗时错误，未发现用户脚本运行时错误。
+- GLES v0.8.3：`screenshots/v083_menu_safe_zones.png` 确认不透明 modal、光环/CTA 分离且菜单态不透出弹夹和车辆；`screenshots/v083_playing_safe_dock.png` 确认危险线、弹弓车辆、瞄准轨迹位于独立 Dock 上方，四槽左右分组且中部状态区清晰。
+- 当前 46° 投影标定：`offset=(124.20,159.90)`、`scale=(0.5400,0.6669)`；此值用于解释当前截图，不应硬编码替代运行时 `WorldToScreenPoint()` 标定。
 
 ## 下一步
 1. 在真实交互中复测放大后的四类权威车辆碰撞、拖拽瞄准、连续反弹、分裂、追击和巨型圆域。

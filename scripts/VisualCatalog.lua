@@ -1,7 +1,7 @@
 -- VisualCatalog.lua
 -- 当前 2D 表现层的视觉定义。核心玩法只能使用类型键，不依赖这里的颜色或绘制参数。
 
-local VeggieData = require "VeggiePixelData"
+local AircraftData = require "AircraftPixelData"
 
 local VisualCatalog = {}
 
@@ -28,10 +28,10 @@ local BALL_STYLES = {
     },
 }
 
-local veggieStyles = {}
+local aircraftStyles = {}
 
-local function BuildVeggieStyle(veggieKey)
-    local data = VeggieData[veggieKey]
+local function BuildAircraftStyle(aircraftKey)
+    local data = AircraftData[aircraftKey]
     if not data then return nil end
 
     local style = {}
@@ -47,7 +47,7 @@ local function BuildVeggieStyle(veggieKey)
             }
         end
     end
-    veggieStyles[veggieKey] = style
+    aircraftStyles[aircraftKey] = style
     return style
 end
 
@@ -55,8 +55,8 @@ function VisualCatalog.GetBallStyle(ballType)
     return BALL_STYLES[ballType]
 end
 
-function VisualCatalog.GetBrickStyle(veggieKey, col, row)
-    local style = veggieStyles[veggieKey] or BuildVeggieStyle(veggieKey)
+function VisualCatalog.GetBrickStyle(aircraftKey, col, row)
+    local style = aircraftStyles[aircraftKey] or BuildAircraftStyle(aircraftKey)
     if not style then return nil end
     return style[tostring(col) .. ":" .. tostring(row)]
 end

@@ -10,9 +10,10 @@
     "voxel_rendering": "敌方体素对象按实体合并 CustomGeometry，避免逐体素节点",
     "vehicle_rendering": "车辆使用单 CustomGeometry 多 PBR section 的大运式平头重卡几何，并用独立浅色侧围区分侧面；视觉外轮廓不得超出权威碰撞判定",
     "vehicle_motion": "载具转向区分目标角与显示角，沿最短角路径平滑过渡；操作点、权威位置和 3D 模型投影中心必须一致",
-    "enemy_aircraft": "敌方按六类主题飞机重制，单 CustomGeometry 表现尖鼻、主翼、尾翼、驾驶舱和推进器；砖块 HP 只保留为隐藏规则状态",
+    "enemy_aircraft": "敌方使用参考图采样的独立低像素 occupied-cell 网格；同一网格驱动规则碰撞、2D/3D 表现和碎片颜色，逐块破坏后必须显示真实缺口；砖块 HP 只保留为隐藏规则状态",
     "fixed_aspect_canvas": "raw NanoVG、3D Viewport 与输入共享同一 DPR-aware CONTAIN scale/offset；倾斜相机还需统一玩法平面投影逆变换，非目标比例只做 letterbox",
-    "compact_ammo_layout": "底部弹药/状态槽使用紧凑小方形并靠左右两侧分组，中间保留玩法主体空间"
+    "compact_ammo_layout": "底部弹药/状态槽使用紧凑小方形并靠左右两侧分组，中间保留玩法主体空间",
+    "ui_safe_zones": "HUD、playing Dock 与 menu/gameover modal 使用不透明互斥安全层；按游戏状态隐藏不适用的轨迹、冲击反馈和弹药槽，菜单主视觉不得与 CTA 无意相交"
   },
   "workflow_preferences": {
     "gamedev": "大规模 3D 开发前先建立可替换渲染边界，保持规则契约，并用菜单态、非目标比例 letterbox 与实际游戏态截图同时验证镜头和表现"
@@ -25,7 +26,9 @@
     "游戏画布必须严格保持 9:16，UI 紧贴玩法画布边界且场地边缘完整可见",
     "酸性技术图纸 UI 使用深紫背景、淡蓝工程线与明紫强调，不使用蓝白配色",
     "底部四个弹药槽使用小正方形，两个靠左下、两个靠右下，中间保留玩法空间",
-    "拖拽操作位置、权威弹珠位置和车辆模型屏幕投影必须一致"
+    "拖拽操作位置、权威弹珠位置和车辆模型屏幕投影必须一致",
+    "HUD、菜单、场地、弹弓车辆和底部弹夹之间禁止非设计意图的互相遮挡",
+    "敌机必须由参考图采样出的真实独立方块构成，破坏后对应方块要可见缺失，不能用完整模型掩盖完整度"
   ],
   "implicit_preferences": [
     "重视可维护性和后续 3D 迁移成本",
@@ -56,6 +59,9 @@
       "require_gameplay_screenshot_validation": true,
       "require_fixed_nine_sixteen_canvas": true,
       "require_shared_ui_viewport_input_transform": true,
+      "require_non_overlapping_ui_safe_zones": true,
+      "require_reference_sampled_voxel_aircraft": true,
+      "require_visible_per_cell_destruction": true,
       "preferred_ui_palette": "deep-purple-pale-blue-acid"
     }
   }

@@ -179,10 +179,10 @@ local function DrawEnemy(ctx, enemy, elapsed, visualCatalog, hitFlashes)
         end
     end
 
-    -- 蔬菜砖块
+    -- 低像素飞机采样砖块
     for _, b in ipairs(enemy.bricks) do
         if b.alive then
-            local style = visualCatalog.GetBrickStyle(enemy.veggieKey, b.col, b.row)
+            local style = visualCatalog.GetBrickStyle(enemy.aircraftKey, b.col, b.row)
             if style then
                 local bx = enemy.x + (b.col - 1) * brickSize
                 local by = enemy.y + (b.row - 1) * brickSize

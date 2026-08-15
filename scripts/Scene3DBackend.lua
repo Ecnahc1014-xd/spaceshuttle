@@ -8,6 +8,10 @@ local Backend = {}
 
 local DESIGN_W = 540
 local DESIGN_H = 960
+local HUD_HEIGHT = 76
+local BOTTOM_DOCK_Y = 880
+local MENU_CONTENT_TOP = HUD_HEIGHT
+local MENU_CONTENT_BOTTOM = BOTTOM_DOCK_Y
 
 local scene_ = nil
 local cameraNode_ = nil
@@ -289,7 +293,7 @@ end
 
 local function UpdateProjectionMetrics()
     if not camera_ then return end
-    -- 透视相机的投影在 XY 平面内近似线性；将设计坐标映射用于 HUD 轨迹和点击，避免触摸漂移。
+    -- 正交相机在 XY 玩法平面内保持线性投影；标定设计坐标用于 HUD 轨迹和点击，避免触摸漂移。
     local origin = camera_:WorldToScreenPoint(WorldFromGame(0, 0))
     local xAxis = camera_:WorldToScreenPoint(WorldFromGame(DESIGN_W, 0))
     local yAxis = camera_:WorldToScreenPoint(WorldFromGame(0, DESIGN_H))
@@ -456,13 +460,29 @@ local function DrawAmmoSlots(ctx, game, presentation)
         queueCounts[game.activeBall.ballType] = (queueCounts[game.activeBall.ballType] or 0) + 1
     end
 
+    -- 独立底部 Dock 完全遮住世界层，左右各两格，中间只保留系统状态。
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y)
+    nvgFillColor(ctx, nvgRGBA(10, 4, 28, 255))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, 0, BOTTOM_DOCK_Y + 1)
+    nvgLineTo(ctx, DESIGN_W, BOTTOM_DOCK_Y + 1)
+    nvgStrokeColor(ctx, nvgRGBA(166, 229, 255, 210))
+    nvgStrokeWidth(ctx, 2)
+    nvgStroke(ctx)
+
     local slotSize = 64
     local slotGap = 8
     local outerPadding = 8
     local slotY = DESIGN_H - slotSize - 8
     local leftStart = outerPadding
     local rightStart = DESIGN_W - outerPadding - slotSize * 2 - slotGap
-    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 6, "ORDNANCE // 04", 8, ACID.muted,
+    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 8, "ORDNANCE // 04", 8, ACID.muted,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 27, "CONTROL DECK", 10, ACID.paleBlue,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 48, "SAFE / LINKED", 7, ACID.brightPurple,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     for i, ballType in ipairs(SLOT_TYPES) do
@@ -501,9 +521,9 @@ local function DrawHud(ctx, game)
     local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
     local hpColor = hpRatio > 0.35 and ACID.paleBlue or ACID.brightPurple
 
-    -- 顶部整条技术仪表直接贴住 9:16 画布边缘。
-    DrawTechPanel(ctx, 0, 0, game.width, 78, ACID.carbon, ACID.purple)
-    DrawAcidGrid(ctx, game.width, 78)
+    -- 顶部 HUD 是独立不透明安全带，世界对象经过其后时不会干扰读数。
+    DrawTechPanel(ctx, 0, 0, game.width, HUD_HEIGHT, ACID.carbon, ACID.purple)
+    DrawAcidGrid(ctx, game.width, HUD_HEIGHT)
     DrawPixelText(ctx, 10, 8, "SYS::MARBLE FLIGHT CONTROL", 9, ACID.muted)
     DrawPixelText(ctx, 10, 25, tostring(game.score), 25, ACID.paleBlue)
     DrawPixelText(ctx, 10, 55, "BEST/" .. tostring(game.highScore), 9, ACID.coldBlue)
@@ -523,20 +543,25 @@ local function DrawHud(ctx, game)
 end
 
 local function DrawMenu(ctx, game)
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
+        game.width, game.height - MENU_CONTENT_TOP)
     nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 78, game.width, 811)
-    nvgFillColor(ctx, nvgRGBA(20, 7, 49, 205))
+    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgFillColor(ctx, nvgRGBA(20, 7, 49, 255))
     nvgFill(ctx)
     DrawAcidGrid(ctx, game.width, game.height)
-    DrawHalo(ctx, game.width * 0.5, 322, 154, 140)
-    DrawHalo(ctx, game.width * 0.5, 322, 112, 90)
 
-    -- 半调点阵与工程标注形成酸性拼贴，不使用原风格的蓝白配色。
+    -- 主视觉和行动区严格分层：光环止于 414，CTA 从 448 开始。
+    DrawHalo(ctx, game.width * 0.5, 290, 124, 150)
+    DrawHalo(ctx, game.width * 0.5, 290, 92, 100)
+
+    -- 半调点阵与工程标注形成酸性拼贴，不使用蓝白配色或圆角卡片。
     nvgFillColor(ctx, nvgRGBA(166, 229, 255, 42))
     for row = 0, 8 do
         for col = 0, 12 do
             nvgBeginPath(ctx)
-            nvgCircle(ctx, 35 + col * 12, 185 + row * 12, 1.6 + (col % 3) * 0.35)
+            nvgCircle(ctx, 35 + col * 12, 174 + row * 12, 1.6 + (col % 3) * 0.35)
             nvgFill(ctx)
         end
     end
@@ -544,32 +569,46 @@ local function DrawMenu(ctx, game)
     DrawPixelText(ctx, game.width - 14, 96, "9:16 / LOCKED", 9, ACID.brightPurple,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width * 0.5, 235, "太空飞机弹珠", 39,
+    DrawPixelText(ctx, game.width * 0.5, 224, "太空飞机弹珠", 39,
         ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 286, "SPACECRAFT MARBLE", 12,
+    DrawPixelText(ctx, game.width * 0.5, 276, "SPACECRAFT MARBLE", 12,
         ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 348, "轨道计算 / 碰撞反射 / 火控链接", 13,
+    DrawPixelText(ctx, game.width * 0.5, 337, "轨道计算 / 碰撞反射 / 火控链接", 13,
         {192, 209, 244, 255}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawTechPanel(ctx, 0, 432, game.width, 72, ACID.deepPurple, ACID.paleBlue)
+    DrawTechPanel(ctx, 0, 448, game.width, 68, ACID.deepPurple, ACID.paleBlue)
     local blink = 0.5 + 0.5 * math.sin(game.elapsed * 3)
-    DrawPixelText(ctx, game.width * 0.5, 450, "点击屏幕建立链接", 20,
+    DrawPixelText(ctx, game.width * 0.5, 463, "点击屏幕建立链接", 20,
         {186, 232, 255, 180 + math.floor(75 * blink)}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 482, "INITIATE FLIGHT VECTOR", 8,
+    DrawPixelText(ctx, game.width * 0.5, 494, "INITIATE FLIGHT VECTOR", 8,
         ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, 14, 532, "COORD/Y 0890", 8, ACID.muted)
-    DrawPixelText(ctx, 14, 548, "EDGE FIELD / VISIBLE", 8, ACID.muted)
-    DrawPixelText(ctx, game.width - 14, 532, "UNIT SCALE / AUTH", 8, ACID.muted,
+    DrawPixelText(ctx, 14, 548, "COORD/Y 0890", 8, ACID.muted)
+    DrawPixelText(ctx, 14, 564, "EDGE FIELD / VISIBLE", 8, ACID.muted)
+    DrawPixelText(ctx, game.width - 14, 548, "UNIT SCALE / AUTH", 8, ACID.muted,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 14, 548, "CAMERA / ORTHO 46D", 8, ACID.muted,
+    DrawPixelText(ctx, game.width - 14, 564, "CAMERA / ORTHO 46D", 8, ACID.muted,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, 24, MENU_CONTENT_BOTTOM - 28)
+    nvgLineTo(ctx, game.width - 24, MENU_CONTENT_BOTTOM - 28)
+    nvgStrokeColor(ctx, nvgRGBA(103, 61, 166, 120))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+    DrawPixelText(ctx, game.width * 0.5, MENU_CONTENT_BOTTOM - 21,
+        "WAITING FOR PILOT INPUT // 00", 8, ACID.muted,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgRestore(ctx)
 end
 
 local function DrawGameOver(ctx, game)
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
+        game.width, game.height - MENU_CONTENT_TOP)
     nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 78, game.width, 811)
-    nvgFillColor(ctx, nvgRGBA(14, 5, 36, 232))
+    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgFillColor(ctx, nvgRGBA(14, 5, 36, 255))
     nvgFill(ctx)
     DrawAcidGrid(ctx, game.width, game.height)
     DrawHalo(ctx, game.width * 0.5, 390, 125, 180)
@@ -584,6 +623,9 @@ local function DrawGameOver(ctx, game)
     DrawTechPanel(ctx, 0, 530, game.width, 66, ACID.deepPurple, ACID.paleBlue)
     DrawPixelText(ctx, game.width * 0.5, 548, "点击重新建立链接", 18,
         ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 614, "SESSION SEALED // AWAITING RESTART", 8,
+        ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgRestore(ctx)
 end
 
 local function RenderOverlay(game, presentation)
@@ -599,18 +641,21 @@ local function RenderOverlay(game, presentation)
     nvgStrokeColor(vg_, nvgRGBA(166, 229, 255, 180))
     nvgStrokeWidth(vg_, 2)
     nvgStroke(vg_)
-    DrawAimTrajectory(vg_, game)
-    if presentation.screenShake > 0 then
-        local amplitude = presentation.screenShake * 13
-        nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
-            math.cos(game.elapsed * 73) * amplitude * 0.65)
+    if game.state == "playing" then
+        DrawAimTrajectory(vg_, game)
+        if presentation.screenShake > 0 then
+            local amplitude = presentation.screenShake * 13
+            nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
+                math.cos(game.elapsed * 73) * amplitude * 0.65)
+        end
+        DrawBaseImpactFeedback(vg_, game, presentation)
     end
-    DrawBaseImpactFeedback(vg_, game, presentation)
     nvgRestore(vg_)
 
     DrawHud(vg_, game)
-    DrawAmmoSlots(vg_, game, presentation)
-    if game.state == "menu" then
+    if game.state == "playing" then
+        DrawAmmoSlots(vg_, game, presentation)
+    elseif game.state == "menu" then
         DrawMenu(vg_, game)
     elseif game.state == "gameover" then
         DrawGameOver(vg_, game)

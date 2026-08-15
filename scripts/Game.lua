@@ -1,7 +1,7 @@
 -- Game.lua
 -- 太空飞机弹珠核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
 
-local VeggieData = require "VeggiePixelData"
+local AircraftData = require "AircraftPixelData"
 
 local Game = {}
 
@@ -169,31 +169,29 @@ local function StartGame()
     print("[Game] game started")
 end
 
-local function GetVeggieSize(veggieKey, brickSize)
-    local data = VeggieData[veggieKey]
+local function GetAircraftSize(aircraftKey, brickSize)
+    local data = AircraftData[aircraftKey]
     return data.gridW * brickSize, data.gridH * brickSize
 end
 
 local function GetAvailableTypes(waveNum)
     local keys = {}
-    local allKeys = { "tomato", "chili", "onion", "carrot", "corn", "eggplant" }
+    local allKeys = { "scout", "striker", "bomber", "interceptor" }
     local maxIndex = 1
-    if waveNum >= 2 then maxIndex = 2 end
-    if waveNum >= 3 then maxIndex = 3 end
-    if waveNum >= 5 then maxIndex = 4 end
-    if waveNum >= 7 then maxIndex = 5 end
-    if waveNum >= 9 then maxIndex = 6 end
+    if waveNum >= 3 then maxIndex = 2 end
+    if waveNum >= 6 then maxIndex = 3 end
+    if waveNum >= 9 then maxIndex = 4 end
 
     for i = 1, math.min(#allKeys, maxIndex) do
-        if VeggieData[allKeys[i]] then table.insert(keys, allKeys[i]) end
+        if AircraftData[allKeys[i]] then table.insert(keys, allKeys[i]) end
     end
     return keys
 end
 
-local function CreateEnemy(veggieKey, x, y, brickSize, brickHp, baseSpeed)
-    local data = VeggieData[veggieKey]
+local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
+    local data = AircraftData[aircraftKey]
     if not data then
-        print("[Game] ERROR: no veggie data for " .. tostring(veggieKey))
+        print("[Game] ERROR: no aircraft data for " .. tostring(aircraftKey))
         return nil
     end
 
@@ -210,7 +208,7 @@ local function CreateEnemy(veggieKey, x, y, brickSize, brickHp, baseSpeed)
 
     local enemy = {
         id = nextEnemyId,
-        veggieKey = veggieKey,
+        aircraftKey = aircraftKey,
         gridW = data.gridW,
         gridH = data.gridH,
         brickSize = brickSize,
@@ -230,7 +228,7 @@ end
 SpawnWave = function()
     local pool = GetAvailableTypes(wave)
     if #pool == 0 then
-        print("[Game] WARNING: empty veggie pool")
+        print("[Game] WARNING: empty aircraft pool")
         return
     end
 
@@ -240,14 +238,14 @@ SpawnWave = function()
     local usedX = {}
 
     for i = 1, count do
-        local veggieKey = pool[RandomInt(1, #pool)]
-        local veggieWidth, veggieHeight = GetVeggieSize(veggieKey, brickSize)
+        local aircraftKey = pool[RandomInt(1, #pool)]
+        local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
         local x, tries = margin, 0
         repeat
-            x = margin + Random() * math.max(1, DW - veggieWidth - margin * 2)
+            x = margin + Random() * math.max(1, DW - aircraftWidth - margin * 2)
             local overlap = false
             for _, usedCenterX in ipairs(usedX) do
-                if math.abs(usedCenterX - (x + veggieWidth * 0.5)) < veggieWidth * 0.9 then
+                if math.abs(usedCenterX - (x + aircraftWidth * 0.5)) < aircraftWidth * 0.9 then
                     overlap = true
                     break
                 end
@@ -255,15 +253,15 @@ SpawnWave = function()
             tries = tries + 1
             if not overlap or tries > 25 then break end
         until false
-        table.insert(usedX, x + veggieWidth * 0.5)
+        table.insert(usedX, x + aircraftWidth * 0.5)
 
-        local y = -veggieHeight * 0.3 - (i - 1) * (veggieHeight * 0.2) - RandomInt(0, 10)
-        local enemy = CreateEnemy(veggieKey, x, y, brickSize, brickHp, baseSpeed)
+        local y = -aircraftHeight * 0.3 - (i - 1) * (aircraftHeight * 0.2) - RandomInt(0, 10)
+        local enemy = CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         if enemy then table.insert(veggies, enemy) end
     end
 
     Emit("wave_started", {wave = wave})
-    print("[Game] wave " .. wave .. " spawned " .. #veggies .. " enemies")
+    print("[Game] wave " .. wave .. " spawned " .. #veggies .. " aircraft")
 end
 
 -- 碰撞区域设计：圆形弹珠对单个方形砖块。
@@ -307,7 +305,7 @@ end
 
 local function DamageBrick(enemy, brick, damage)
     brick.hp = brick.hp - (damage or 1)
-    local data = VeggieData[enemy.veggieKey]
+    local data = AircraftData[enemy.aircraftKey]
     local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
     local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
     local destroyed = brick.hp <= 0
@@ -319,7 +317,7 @@ local function DamageBrick(enemy, brick, damage)
 
     Emit("brick_hit", {
         enemyId = enemy.id,
-        veggieKey = enemy.veggieKey,
+        aircraftKey = enemy.aircraftKey,
         col = brick.col,
         row = brick.row,
         x = x, y = y,
