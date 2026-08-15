@@ -291,7 +291,7 @@ local function WorldFromGame(x, y)
         (DESIGN_H * 0.5 - y) * 0.018, 0)
 end
 
-local function UpdateProjectionMetrics()
+local function UpdateProjectionMetrics(logMetrics)
     if not camera_ then return end
     -- 正交相机在 XY 玩法平面内保持线性投影；标定设计坐标用于 HUD 轨迹和点击，避免触摸漂移。
     local origin = camera_:WorldToScreenPoint(WorldFromGame(0, 0))
@@ -303,9 +303,11 @@ local function UpdateProjectionMetrics()
     projectionScaleY_ = (yAxis.y - origin.y)
     if math.abs(projectionScaleX_) < 0.0001 then projectionScaleX_ = 1 end
     if math.abs(projectionScaleY_) < 0.0001 then projectionScaleY_ = 1 end
-    print(string.format(
-        "[Scene3DBackend] gameplay projection offset=(%.2f, %.2f) scale=(%.4f, %.4f)",
-        projectionOffsetX_, projectionOffsetY_, projectionScaleX_, projectionScaleY_))
+    if logMetrics then
+        print(string.format(
+            "[Scene3DBackend] gameplay projection offset=(%.2f, %.2f) scale=(%.4f, %.4f)",
+            projectionOffsetX_, projectionOffsetY_, projectionScaleX_, projectionScaleY_))
+    end
 end
 
 local function ProjectGamePoint(x, y)
@@ -718,7 +720,7 @@ function Backend.Init(renderHandlerName)
         viewportLeft_ + viewportWidth_, viewportTop_ + viewportHeight_))
     renderer:SetViewport(0, viewport_)
     renderer.hdrRendering = true
-    UpdateProjectionMetrics()
+    UpdateProjectionMetrics(true)
 
     vg_ = nvgCreate(1)
     if not vg_ then
@@ -757,7 +759,7 @@ end
 
 function Backend.Resize()
     UpdateScreenMetrics()
-    UpdateProjectionMetrics()
+    UpdateProjectionMetrics(true)
 end
 
 function Backend.IsInsideGameCanvas(screenX, screenY)
@@ -784,6 +786,8 @@ function Backend.Render(gameSnapshot, presentationSnapshot)
             math.sin(gameSnapshot.elapsed * 97) * shake * 0.10,
             math.cos(gameSnapshot.elapsed * 79) * shake * 0.08,
             math.sin(gameSnapshot.elapsed * 61) * shake * 0.035)
+        -- 车辆由当前相机投影，NanoVG 轨迹与输入也必须消费同一投影。
+        UpdateProjectionMetrics(false)
     end
     if dangerBandNode_ then
         local flash = presentationSnapshot.baseBarrierFlash or 0

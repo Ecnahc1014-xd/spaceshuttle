@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.8.5 | 2026-08-15 | 修复 46° 正交视角下车辆与瞄准轨迹错位：轨迹从当前车辆中心起步，采样延长为 140×8，并按权威半径显示墙边反弹；相机震屏位移后刷新当前投影标定，使 3D、NanoVG 与输入继续共用同一映射。修复飞机二维 occupied cells 将自身误判为 Z 邻居导致正反面被剔除的问题，恢复实体体素块面并保留 XY 内部面剔除。巨型车继续由权威半径形成普通车 1.5× 且不越碰撞圆；LSP 0 Error、官方构建成功、240 帧 `lua_errors=0`、受控 normal/giant GLES 截图通过 |
 | v0.8.4 | 2026-08-15 | 敌人改为独立 `AircraftPixelData` 低像素采样：scout/striker/bomber/interceptor 的 occupied cells 同时驱动规则层逐块碰撞、隐藏 HP、2D 逐砖绘制、3D 单敌人双 section CustomGeometry 体素网格与碎片配色；相邻体素剔除内部面，`alive=false` 直接从飞机上消失；修正 3D 局部网格中心与规则坐标一致；保留 46° 正交、9:16 CONTAIN 和前六波 1 HP；LSP 0 Error、官方构建成功、受控 GLES 游戏态截图 `lua_errors=0` 通过 |
 | v0.8.2 | 2026-08-15 | 敌方从蔬菜体素阵列重制为六类主题飞机，每敌人单 `CustomGeometry` 包含尖鼻机身、主翼、尾翼、凸起驾驶舱、双发动机与尾鳍；砖块 HP 隐藏在规则层，前六波 1 HP，第 7/12 波升为 2/3 HP；敌方波次数量和速度重新调平；相机保持 46° 正交斜俯视、固定 9:16 投影和输入契约；LSP 0 Error、官方构建成功、240 帧 `lua_errors=0`，GLES 竖屏截图已生成；验证环境仍有 2 个内置资源和 shader cache 错误 |
 | v0.8.0 | 2026-08-13 | 正式更名为“太空飞机弹珠”；HUD、菜单和四弹药槽重做为深紫/淡蓝 Laterano 酸性技术图纸风格；NanoVG 与 3D Viewport 共用固定 540×960 CONTAIN，横屏只 letterbox；`orthoSize=18.0` 确保完整场地边缘；敌方权威砖块缩为 14/15/16，我方四类权威半径放大为 13/13/12/21；敌方底座与推进器移到远离玩家的一侧；LSP 0 Error、正式入口官方构建成功、240 帧 `lua_errors=0`，精确 9:16、横屏 letterbox 与受控游戏态 GLES 截图通过 |

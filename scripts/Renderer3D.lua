@@ -242,10 +242,15 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
             local frontZ, backZ = -depth * 0.5, depth * 0.5
 
             for _, face in ipairs(FACE_DEFS) do
-                local neighborCol = brick.col + face.neighbor[1]
-                local neighborRow = brick.row + face.neighbor[2]
-                local neighborKey = tostring(neighborCol) .. ":" .. tostring(neighborRow)
-                local hasNeighbor = alive[neighborKey] ~= nil
+                -- 飞机是二维 occupied cells 向 Z 轴挤出的单层体素：
+                -- 只有 XY 侧面存在二维邻居，前后 Z 面必须始终生成。
+                local hasNeighbor = false
+                if face.neighbor[1] ~= 0 or face.neighbor[2] ~= 0 then
+                    local neighborCol = brick.col + face.neighbor[1]
+                    local neighborRow = brick.row + face.neighbor[2]
+                    local neighborKey = tostring(neighborCol) .. ":" .. tostring(neighborRow)
+                    hasNeighbor = alive[neighborKey] ~= nil
+                end
                 if not hasNeighbor then
                     local c = face.corners
                     local vertices = {}

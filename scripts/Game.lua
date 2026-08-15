@@ -734,9 +734,11 @@ local function BuildAimTrajectory()
     local vx = -dx / distance * speed
     local vy = -dy / distance * speed
     local x, y = activeBall.x, activeBall.y
-    local stepDistance = 14
+    local stepDistance = 8
+    local sampleCount = 140
+    table.insert(points, {x = x, y = y, progress = 0})
 
-    for i = 1, 50 do
+    for i = 1, sampleCount do
         local velocityLength = math.sqrt(vx * vx + vy * vy)
         if velocityLength < 0.001 then break end
         x = x + vx / velocityLength * stepDistance
@@ -753,7 +755,7 @@ local function BuildAimTrajectory()
             vy = math.abs(vy)
         end
         if y - activeBall.radius > DH then break end
-        table.insert(points, {x = x, y = y, progress = i / 50})
+        table.insert(points, {x = x, y = y, progress = i / sampleCount})
     end
     return points
 end
