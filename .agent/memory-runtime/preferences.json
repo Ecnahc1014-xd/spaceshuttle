@@ -43,7 +43,7 @@
     "gamedev": {
       "separate_rendering_and_gameplay": true,
       "require_orthographic_projection": true,
-      "preferred_camera_tilt_degrees": 38,
+      "preferred_camera_tilt_degrees": 46,
       "prefer_dayun_style_heavy_trucks": true,
       "require_lighter_vehicle_side_panels": true,
       "reject_sports_car_or_pickup_profiles": true,
