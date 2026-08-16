@@ -3,17 +3,17 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.8.5
-- 进度: 46° 正交相机下的车辆、NanoVG 轨迹与输入现已在每帧相机位移后共享同一 `WorldToScreenPoint` 投影标定；瞄准轨迹从权威车辆中心起步并延长为 140×8 的连续预测；敌机二维 occupied cells 的 XY 内部面继续剔除，但前后 Z 端面固定生成，完整飞机恢复实体块面；巨型车继续由权威半径 30 对普通半径 20 自动形成 1.5× 缩放且外轮廓留在碰撞圆内
-- 上次交付: 修复轨迹起点遗漏、短采样与震屏投影缓存失效，修复敌机 Z 面将自身误判为邻居的问题；LSP 0 Error、正式入口官方构建成功、240 帧 `lua_errors=0`，受控 GLES 截图 `fix_controlled_aim.png` 与 `fix_controlled_giant.png` 确认车辆/轨迹对齐、真实墙边反弹、实体体素飞机及巨型车 1.5× 尺寸
+- 版本: 0.9.0
+- 进度: 太空飞机弹珠已实装肉鸽幸存者化最小完整循环——基地生命 100、敌机以编队整体下移且每个方块独立越线销毁扣血、XP/三选一升级暂停、局内强化池、持续收紧波次、P/Esc 暂停；敌方像素飞机重制为经典蟹形入侵者/箭头战斗机/圆盘飞碟/截击机剪影；世界反弹边缘渲染到 3D 背景层与 2D 设计空间边框；巨型车拖尾宽度锚定权威碰撞半径不再宽于本体；加速弹成长、追击和伤害均被削弱
+- 上次交付: 实装幸存者循环并削弱加速弹、重制老版像素飞机敌人、世界边界渲染、巨型拖尾校准、HP=100 与逐块越线扣血；LSP 0 Error、正式入口官方构建成功（本环境无 headless 运行器，受控 GLES 截图需用户在预览中确认）
 
 ## 用户画像摘要
 - 使用简体中文沟通
 - 重视先做架构解耦，为后续 3D 开发降低迁移成本 [observed]
 
 ## 预测下一步
-- likely_next_task: 在真实触摸交互和防线撞击震屏状态下复测拖拽、发射、连续墙面反弹与输入逆投影；若继续调视觉，只基于实机截图调整轨迹密度或相机反馈，不改变权威半径、体素拓扑和 9:16 共同投影契约
-- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`
+- likely_next_task: 在真实触摸交互中复测升级三选一点击命中、暂停恢复与逐块越线扣血节奏；若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或升级卡片排版，不改变权威 HP、逐块扣血、XP 曲线和 9:16 共同投影契约
+- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`
 
 ## 恢复指令（新会话必执行）
 1. 读本文件 → 获取项目状态和避雷清单
@@ -50,6 +50,13 @@
 - 飞行器底座契约：敌方底座与推进器必须位于阵列远离玩家的一侧（设计坐标上方）；靠近防线的规则判定只使用阵列底边 `enemy.y + height`，备用 2D 与 3D 后端方向必须一致
 - 四弹药槽契约：3D 后端底部必须显示分裂/冰冻/加速/巨型四个 64×64 小正方形槽位，前两格停靠左下、后两格停靠右下；每格保留序号、中文名、装填态、储备数量和类型色，中间必须留出弹弓/车辆可视空间，禁止恢复横向铺满底边或退化为纯文字图例
 - 防线撞击契约：`base_hit` 必须先由 `Presentation.lua` 维护瞬时状态，再由 3D 后端消费为相机震动、防线材质脉冲、冲击波和警示文字，禁止只扣血无空间反馈
+- 幸存者核心契约：基地生命 `BASE_HP=100`，敌方以编队整体下移（`enemy.y += vy`），每个 alive 方块越过 `DANGER_Y` 时独立 `brick.alive=false` 并对 `baseHp` 扣 `BRICK_BASE_DAMAGE`（受升级 `BALL_TUNING.brickDmg` 影响，最低 1）；`Game.lua` 用 `gameState="levelup"`/`"paused"` 暂停玩法，升级由 `Game.PickUpgrade(i)` 恢复 `playing`，禁止在规则层直接调用渲染或输入 API
+- 经验与升级契约：击碎方块获 `XP_PER_BRICK`、清整支飞船获 `XP_PER_CLEAR`（+连击加成），跨级累计 `pendingLevelUps` 并冻结经验；升级池 `UPGRADE_POOL` 的 `apply()` 只修改 `BALL_TUNING`/`baseHp` 等规则变量，必须通过 `Game.GetSnapshot().upgradeChoices` 暴露给 UI 三选一，禁止硬编码升级效果到渲染层
+- 波次节奏契约：幸存者持续涌出，间隔随波次从 `WAVE_INTERVAL` 收紧到 `WAVE_INTERVAL_MIN`，并受 `MAX_CONCURRENT` 同屏上限约束；禁止恢复"清场才出下一波"的离散波次
+- 世界边界契约：左/右/上三边反弹边缘必须渲染到 3D 背景层（`CreateWorldEdges`）并与 2D 设计空间边框一致；`Game.lua` 世界边界规则（0、DW、0 顶部）是权威碰撞来源，禁止把边界只当视觉
+- 拖尾比例契约：拖尾宽度必须锚定权威碰撞半径（`marble.radius * WORLD_SCALE`），巨型车拖尾不得宽于车辆本体；车辆视觉仍由 `marble.radius * WORLD_SCALE * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS` 推导
+- 像素敌人契约：敌方 occupied cells 参考经典太空飞机弹幕像素剪影（蟹形入侵者/箭头战机/圆盘飞碟/截击机），继续由 `AircraftPixelData.lua` 单一来源驱动规则、2D、3D 与碎片；禁止恢复战斗机写实轮廓或蔬菜阵列
+- 加速弹削弱契约：加速弹 `speedBoost` 收紧到 1.06、`maxSpeed` 900、`damageStep` 320、`maxDamage` 2，且自动追击受 `redirectThrottle=0.45s` 节流；禁止恢复 1.15/1250/3 的强成长与无节流黏着
 - 顶点色体素必须使用支持 VCol 的 Technique 并绑定白色基底纹理；`NoTextureUnlit` 不保证消费顶点颜色
 - 3D 星空必须位于游戏物体后、深空底板前，按层合批；禁止每颗星创建 Node。当前验证环境不可启用 FXAA，否则 ESSL shader cache 失败会吞掉整层 3D 画面
 - headless 运行时可出现自带 shader cache engine error；判断脚本需关注 `lua_errors=0`，同时确认资源错误不包含用户车辆/体素路径并结合 GLES 截图

@@ -12,7 +12,16 @@ local SLING_X = 270
 local SLING_Y = 850
 local MAX_PULL = 150
 local DANGER_Y = 900
-local BASE_HP = 5
+local BASE_HP = 100
+
+-- 幸存者化参数
+local BRICK_BASE_DAMAGE = 3        -- 每个方块越过目标线时对基地造成的伤害
+local XP_PER_BRICK = 1             -- 击碎一个方块获得的经验
+local XP_PER_CLEAR = 8             -- 清掉整支飞船的额外经验
+local BASE_XP_TO_NEXT = 12         -- 第一级所需经验
+local WAVE_INTERVAL = 7.0          -- 持续刷新波次的间隔（秒）
+local WAVE_INTERVAL_MIN = 2.8      -- 后期最快刷新间隔
+local MAX_CONCURRENT = 14          -- 同屏飞船数量上限，避免无限叠加
 
 local BALL_TYPES = {
     normal = {
@@ -20,9 +29,10 @@ local BALL_TYPES = {
         splitChance = 0.05, splitAngle = 18,
     },
     speed = {
-        radius = 18, speed = 680, damage = 1,
-        speedBoost = 1.15, maxSpeed = 1250,
-        damageStep = 190, maxDamage = 3,
+        radius = 18, speed = 660, damage = 1,
+        speedBoost = 1.06, maxSpeed = 900,
+        damageStep = 320, maxDamage = 2,
+        redirectThrottle = 0.45,    -- 自动追击的节流（秒），削弱其持续黏着
     },
     ice = {
         radius = 20, speed = 520, damage = 1,
@@ -36,6 +46,17 @@ local BALL_TYPES = {
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
 
+-- 局内可调规则（受升级影响），初始值。必须在使用它的升级闭包之前声明。
+local BALL_TUNING = {
+    damageBonus = 0,
+    giantArea = 0,
+    splitBonus = 0,
+    speedMul = 1.0,
+    iceBonus = 0,
+    brickDmg = BRICK_BASE_DAMAGE,
+    xpMul = 1.0,
+}
+
 local gameState = "menu"
 local score = 0
 local highScore = 0
@@ -43,6 +64,36 @@ local baseHp = BASE_HP
 local wave = 1
 local elapsed = 0
 local waveCooldown = 0
+
+-- 幸存者成长状态
+local playerLevel = 1
+local xp = 0
+local xpToNext = BASE_XP_TO_NEXT
+local pendingLevelUps = 0          -- 待处理的升级次数（暂停选强化）
+local upgradeChoices = nil         -- 当前可选的三选一强化
+local upgradePicks = {}            -- 已选强化的累计效果
+local clearStreak = 0              -- 连续清空飞船的连击（经验加成）
+
+-- 幸存者升级强化池：每个强化可被重复选择，效果线性叠加。
+-- apply() 修改 Game 内部的本作用域变量（已在上方声明）。
+local UPGRADE_POOL = {
+    { id = "damage", name = "穿甲弹头", desc = "所有弹珠伤害 +1",
+      apply = function() BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1 end },
+    { id = "giant", name = "重型化", desc = "巨型弹珠贯穿范围 +1 格",
+      apply = function() BALL_TUNING.giantArea = BALL_TUNING.giantArea + 1.0 end },
+    { id = "split", name = "裂变核", desc = "基础弹分裂概率 +3%",
+      apply = function() BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.03 end },
+    { id = "speed", name = "疾速引擎", desc = "弹珠飞行速度 +8%",
+      apply = function() BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.08 end },
+    { id = "ice", name = "深寒涂层", desc = "冰冻时长 +1.2 秒",
+      apply = function() BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
+    { id = "repair", name = "前线维修", desc = "立即恢复 25 点基地生命",
+      apply = function() baseHp = math.min(BASE_HP, baseHp + 25) end },
+    { id = "armor", name = "装甲强化", desc = "越线方块伤害 -1（最低 1）",
+      apply = function() BALL_TUNING.brickDmg = math.max(1, BALL_TUNING.brickDmg - 1) end },
+    { id = "xp", name = "数据回收", desc = "经验获取 +20%",
+      apply = function() BALL_TUNING.xpMul = BALL_TUNING.xpMul + 0.2 end },
+}
 
 local veggies = {}
 local marbles = {}
@@ -64,6 +115,8 @@ local UpdateMarbles
 local UpdateEnemies
 local UpdateReload
 local UpdateWaveLogic
+local GainXp
+local RollUpgradeChoices
 
 local function Emit(eventType, data)
     data = data or {}
@@ -158,6 +211,21 @@ ResetGame = function()
     waveCooldown = 0.5
     nextEnemyId = 1
     nextMarbleId = 1
+    -- 幸存者成长状态复位
+    playerLevel = 1
+    xp = 0
+    xpToNext = BASE_XP_TO_NEXT
+    pendingLevelUps = 0
+    upgradeChoices = nil
+    upgradePicks = {}
+    clearStreak = 0
+    BALL_TUNING.damageBonus = 0
+    BALL_TUNING.giantArea = 0
+    BALL_TUNING.splitBonus = 0
+    BALL_TUNING.speedMul = 1.0
+    BALL_TUNING.iceBonus = 0
+    BALL_TUNING.brickDmg = BRICK_BASE_DAMAGE
+    BALL_TUNING.xpMul = 1.0
     LoadBalls()
     Emit("game_reset")
 end
@@ -313,6 +381,7 @@ local function DamageBrick(enemy, brick, damage)
     if destroyed then
         brick.alive = false
         score = score + data.score
+        GainXp(XP_PER_BRICK)
     end
 
     Emit("brick_hit", {
@@ -331,6 +400,65 @@ local function IsEnemyCleared(enemy)
         if brick.alive then return false end
     end
     return true
+end
+
+-- 幸存者升级：获得经验，跨级时累计待处理的升级选择。
+local function GainXp(amount)
+    if pendingLevelUps > 0 then return end   -- 升级选择期间冻结经验累计
+    xp = xp + amount * BALL_TUNING.xpMul
+    while xp >= xpToNext do
+        xp = xp - xpToNext
+        playerLevel = playerLevel + 1
+        xpToNext = math.floor(BASE_XP_TO_NEXT * (1 + (playerLevel - 1) * 0.35))
+        pendingLevelUps = pendingLevelUps + 1
+    end
+    if pendingLevelUps > 0 then
+        gameState = "levelup"
+        RollUpgradeChoices()
+        Emit("level_up", {level = playerLevel})
+        print("[Game] level up -> " .. playerLevel .. ", waiting for upgrade pick")
+    end
+end
+
+local function RollUpgradeChoices()
+    local pool = {}
+    for _, u in ipairs(UPGRADE_POOL) do table.insert(pool, u) end
+    upgradeChoices = {}
+    for _ = 1, 3 do
+        if #pool == 0 then break end
+        local idx = RandomInt(1, #pool)
+        table.insert(upgradeChoices, pool[idx])
+        table.remove(pool, idx)
+    end
+end
+
+-- 由外部 UI 调用：选择第 index（1-based）项强化，恢复 playing。
+function Game.PickUpgrade(index)
+    if gameState ~= "levelup" or not upgradeChoices then return end
+    local choice = upgradeChoices[index]
+    if choice then
+        choice.apply()
+        table.insert(upgradePicks, choice.id)
+        Emit("upgrade_picked", {id = choice.id, name = choice.name})
+        print("[Game] upgrade picked: " .. choice.name)
+    end
+    pendingLevelUps = pendingLevelUps - 1
+    upgradeChoices = nil
+    if pendingLevelUps > 0 then
+        RollUpgradeChoices()
+        Emit("level_up", {level = playerLevel})
+    else
+        gameState = "playing"
+    end
+end
+
+function Game.GetUpgradeChoices()
+    if gameState ~= "levelup" then return nil end
+    local list = {}
+    for _, c in ipairs(upgradeChoices) do
+        table.insert(list, {id = c.id, name = c.name, desc = c.desc})
+    end
+    return list
 end
 
 local function RotateVelocity(vx, vy, degrees)
@@ -363,7 +491,7 @@ end
 
 local function TrySplitNormal(marble, originBrick, pendingMarbles)
     local def = BALL_TYPES.normal
-    if Random() >= def.splitChance then return end
+    if Random() >= def.splitChance + BALL_TUNING.splitBonus then return end
 
     table.insert(pendingMarbles,
         CreateSplitMarble(marble, -def.splitAngle, originBrick))
@@ -403,7 +531,8 @@ local function BoostSpeedMarble(marble)
     local def = BALL_TYPES.speed
     if marble.ballType ~= "speed" then return end
 
-    marble.speed = math.min(def.maxSpeed, marble.speed * def.speedBoost)
+    local effMax = def.maxSpeed * BALL_TUNING.speedMul
+    marble.speed = math.min(effMax, marble.speed * def.speedBoost)
     local velocityLength = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
     if velocityLength > 0.001 then
         marble.vx = marble.vx / velocityLength * marble.speed
@@ -412,14 +541,17 @@ local function BoostSpeedMarble(marble)
 end
 
 local function GetMarbleDamage(marble, def)
-    if marble.ballType ~= "speed" then return def.damage end
+    if marble.ballType ~= "speed" then return def.damage + BALL_TUNING.damageBonus end
     local bonus = math.floor(math.max(0, marble.speed - def.speed) / def.damageStep)
-    return math.min(def.maxDamage, def.damage + bonus)
+    return math.min(def.maxDamage, def.damage + bonus + BALL_TUNING.damageBonus)
 end
 
 local function RedirectSpeedMarble(marble, originEnemy, originBrick)
+    -- 削弱：受 redirectThrottle 节流，避免每次命中都黏着追踪。
     local target = FindNearestBrick(originEnemy, originBrick, marble.x, marble.y)
     if not target then return end
+    if (marble.redirectCooldown or 0) > 0 then return end
+    marble.redirectCooldown = BALL_TYPES.speed.redirectThrottle
 
     local dx = target.x - marble.x
     local dy = target.y - marble.y
@@ -457,7 +589,7 @@ end
 local function DamageGiantArea(originEnemy, originBrick, damage, frameHitBricks)
     local centerX = originEnemy.x + (originBrick.col - 0.5) * originEnemy.brickSize
     local centerY = originEnemy.y + (originBrick.row - 0.5) * originEnemy.brickSize
-    local radius = originEnemy.brickSize * BALL_TYPES.giant.areaRadiusCells
+    local radius = originEnemy.brickSize * (BALL_TYPES.giant.areaRadiusCells + BALL_TUNING.giantArea)
     local radiusSq = radius * radius
     local hitCount = 0
 
@@ -534,6 +666,10 @@ UpdateMarbles = function(dt)
         for _ = 1, steps do
             if not marble.alive then break end
 
+            if marble.redirectCooldown and marble.redirectCooldown > 0 then
+                marble.redirectCooldown = marble.redirectCooldown - subDt
+            end
+
             marble.x = marble.x + marble.vx * subDt
             marble.y = marble.y + marble.vy * subDt
 
@@ -598,7 +734,7 @@ UpdateMarbles = function(dt)
                                     frameHitBricks[brick] = true
                                     DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
                                 end
-                                if def.freezeDuration then enemy.frozen = def.freezeDuration end
+                                if def.freezeDuration then enemy.frozen = def.freezeDuration + BALL_TUNING.iceBonus end
 
                                 if marble.ballType == "normal" then
                                     TrySplitNormal(marble, brick, pendingMarbles)
@@ -642,6 +778,7 @@ end
 
 UpdateEnemies = function(dt)
     for i = #veggies, 1, -1 do
+        if gameState == "gameover" then break end
         local enemy = veggies[i]
         local width = enemy.gridW * enemy.brickSize
         local height = enemy.gridH * enemy.brickSize
@@ -663,27 +800,45 @@ UpdateEnemies = function(dt)
         end
         enemy.y = enemy.y + enemy.vy * speedMultiplier * dt
 
-        -- 飞行器底座位于阵列远离玩家的一侧，不参与靠近防线的底边判定。
-        if enemy.y + height > DANGER_Y then
-            enemy.dead = true
-            baseHp = baseHp - 1
-            Emit("base_hit", {x = enemy.x + width * 0.5, y = DANGER_Y})
-            if baseHp <= 0 then
-                baseHp = 0
-                gameState = "gameover"
-                if score > highScore then highScore = score end
-                Emit("game_over", {score = score, highScore = highScore, wave = wave})
-                print("[Game] game over, score=" .. score .. ", wave=" .. wave)
+        -- 每个方块独立判定越线：越过目标线的方块立即销毁并对基地造成伤害。
+        -- 飞行器以编队整体下移，单个方块越线即视为该块突破防线。
+        for _, brick in ipairs(enemy.bricks) do
+            if brick.alive then
+                local brickBottom = enemy.y + brick.row * enemy.brickSize
+                if brickBottom > DANGER_Y then
+                    brick.alive = false
+                    baseHp = baseHp - BALL_TUNING.brickDmg
+                    local bx = enemy.x + (brick.col - 0.5) * enemy.brickSize
+                    Emit("base_hit", {x = bx, y = DANGER_Y, brick = true})
+                    if baseHp <= 0 then
+                        baseHp = 0
+                        enemy.dead = true
+                        break
+                    end
+                end
             end
+        end
+
+        if baseHp <= 0 then
+            gameState = "gameover"
+            if score > highScore then highScore = score end
+            Emit("game_over", {score = score, highScore = highScore, wave = wave})
+            print("[Game] game over, score=" .. score .. ", wave=" .. wave)
+            break
         end
 
         if not enemy.dead and IsEnemyCleared(enemy) then
             enemy.dead = true
             score = score + 50
+            clearStreak = clearStreak + 1
+            -- 连续清空的连击经验加成，鼓励连续压制。
+            local bonus = math.min(clearStreak - 1, 5)
+            GainXp(XP_PER_CLEAR + bonus)
             Emit("enemy_cleared", {
                 enemyId = enemy.id,
                 x = enemy.x + width * 0.5,
                 y = enemy.y + height * 0.5,
+                streak = clearStreak,
             })
         end
 
@@ -696,14 +851,18 @@ UpdateReload = function()
 end
 
 UpdateWaveLogic = function(dt)
-    if gameState == "playing" and #veggies == 0 then
-        waveCooldown = waveCooldown - dt
-        if waveCooldown <= 0 then
-            wave = wave + 1
-            SpawnWave()
-            waveCooldown = 1.5
-        end
+    -- 幸存者节奏：按波次推进持续涌出，间隔随波次收紧，受同屏上限约束。
+    if gameState ~= "playing" or pendingLevelUps > 0 then return end
+
+    waveCooldown = waveCooldown - dt
+    if waveCooldown > 0 then return end
+
+    local interval = math.max(WAVE_INTERVAL_MIN, WAVE_INTERVAL - (wave - 1) * 0.35)
+    if #veggies < MAX_CONCURRENT then
+        wave = wave + 1
+        SpawnWave()
     end
+    waveCooldown = interval
 end
 
 local function GetPullState(px, py)
@@ -781,7 +940,13 @@ function Game.Update(dt)
         UpdateEnemies(dt)
         UpdateReload()
         UpdateWaveLogic(dt)
+    elseif gameState == "paused" then
+        -- 暂停态冻结所有玩法推进，仅保留 elapsed 累加用于 UI 动画。
     end
+end
+
+function Game.IsLevelUp()
+    return gameState == "levelup"
 end
 
 function Game.PointerDown(px, py)
@@ -822,6 +987,24 @@ function Game.HandleAction(action, pressed)
     end
 end
 
+function Game.Pause()
+    if gameState == "playing" then
+        gameState = "paused"
+        Emit("game_paused")
+    end
+end
+
+function Game.Resume()
+    if gameState == "paused" then
+        gameState = "playing"
+        Emit("game_resumed")
+    end
+end
+
+function Game.IsPaused()
+    return gameState == "paused"
+end
+
 function Game.DrainEvents()
     local events = pendingEvents
     pendingEvents = {}
@@ -837,6 +1020,14 @@ function Game.GetSnapshot()
         maxBaseHp = BASE_HP,
         wave = wave,
         elapsed = elapsed,
+        playerLevel = playerLevel,
+        xp = xp,
+        xpToNext = xpToNext,
+        pendingLevelUps = pendingLevelUps,
+        upgradePicks = upgradePicks,
+        clearStreak = clearStreak,
+        brickDmg = BALL_TUNING.brickDmg,
+        upgradeChoices = (gameState == "levelup" and upgradeChoices) or nil,
         veggies = veggies,
         marbles = marbles,
         aiming = aiming,

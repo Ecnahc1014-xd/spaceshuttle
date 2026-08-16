@@ -266,6 +266,37 @@ local function CreateDangerBand()
     model.castShadows = false
 end
 
+-- 世界反弹边缘：左右上三边作为可见的边界框，渲染在背景层之后、玩法物体之前。
+local function CreateWorldEdges()
+    local edgeNode = scene_:CreateChild("WorldEdges")
+    edgeNode.position = Vector3(0, 0, 1.45)
+    local material = CreateUnlitMaterial({0.14, 0.30, 0.52})
+    material:SetShaderParameter("MatDiffColor", Variant(Color(0.16, 0.36, 0.62, 1)))
+
+    -- 设计坐标 540x960；边界世界坐标由 WorldFromGame 标定。
+    local leftX = (0 - DESIGN_W * 0.5) * 0.018
+    local rightX = (DESIGN_W - DESIGN_W * 0.5) * 0.018
+    local topY = (DESIGN_H * 0.5 - 0) * 0.018
+    local bottomY = (DESIGN_H * 0.5 - DESIGN_H) * 0.018
+    local fieldW = rightX - leftX
+    local fieldH = topY - bottomY
+    local thickness = 0.05
+
+    local function AddEdge(cx, cy, sx, sy)
+        local node = edgeNode:CreateChild("Edge")
+        node.position = Vector3(cx, cy, 0)
+        node.scale = Vector3(sx, sy, 0.05)
+        local model = node:CreateComponent("StaticModel")
+        model:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
+        model:SetMaterial(material)
+        model.castShadows = false
+    end
+
+    AddEdge(leftX + thickness * 0.5, 0, thickness, fieldH)
+    AddEdge(rightX - thickness * 0.5, 0, thickness, fieldH)
+    AddEdge(0, topY - thickness * 0.5, fieldW, thickness)
+end
+
 local SLOT_TYPES = {"normal", "ice", "speed", "giant"}
 local SLOT_NAMES = {
     normal = "分裂", ice = "冰冻", speed = "加速", giant = "巨型",
@@ -542,6 +573,13 @@ local function DrawHud(ctx, game)
         string.format("%02d / %02d", game.baseHp, game.maxBaseHp), 17, hpColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelBar(ctx, game.width - 170, 57, 158, 11, hpRatio, hpColor)
+
+    -- 等级与经验条
+    local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
+    DrawPixelText(ctx, game.width * 0.5, 64,
+        string.format("LV %02d", game.playerLevel), 9, ACID.brightPurple,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelBar(ctx, game.width * 0.5 - 60, 74, 120, 4, xpRatio, ACID.paleBlue)
 end
 
 local function DrawMenu(ctx, game)
@@ -630,6 +668,82 @@ local function DrawGameOver(ctx, game)
     nvgRestore(ctx)
 end
 
+local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
+    local x = cx - cardW * 0.5
+    local y = cy - cardH * 0.5
+    local color = SLOT_COLORS[choice.id] or ACID.brightPurple
+    DrawTechPanel(ctx, x, y, cardW, cardH, ACID.deepPurple, color)
+    DrawPixelText(ctx, x + cardW * 0.5, y + 16, string.format("0%d", index), 10, color,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, x + cardW * 0.5, y + 42, choice.name, 19, ACID.paleBlue,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 44,
+        "点击装备", 9, ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    local desc = choice.desc
+    local fontSize = 11
+    local lines = {}
+    local chunk = 9
+    local start = 1
+    while start <= #desc do
+        lines[#lines + 1] = desc:sub(start, start + chunk - 1)
+        start = start + chunk
+    end
+    local descY = y + 80
+    for _, line in ipairs(lines) do
+        DrawPixelText(ctx, x + cardW * 0.5, descY, line, fontSize, {192, 209, 244, 255},
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        descY = descY + fontSize + 5
+    end
+end
+
+local function DrawLevelUp(ctx, game)
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
+        game.width, game.height - MENU_CONTENT_TOP)
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgFillColor(ctx, nvgRGBA(16, 6, 42, 250))
+    nvgFill(ctx)
+    DrawAcidGrid(ctx, game.width, game.height)
+    DrawHalo(ctx, game.width * 0.5, 250, 128, 170)
+    DrawPixelText(ctx, game.width * 0.5, 168, "升级 // 选择强化", 30,
+        ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 218, string.format("LEVEL %02d", game.playerLevel),
+        13, ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    local choices = game.upgradeChoices
+    if choices and #choices > 0 then
+        local cardW = 144
+        local cardH = 188
+        local gap = 18
+        local totalW = #choices * cardW + (#choices - 1) * gap
+        local startX = game.width * 0.5 - totalW * 0.5 + cardW * 0.5
+        local cy = 470
+        for i, choice in ipairs(choices) do
+            DrawUpgradeCard(ctx, i, choice, startX + (i - 1) * (cardW + gap), cy, cardW, cardH)
+        end
+    end
+    DrawPixelText(ctx, game.width * 0.5, 600, "FIRE VECTOR PAUSED // AWAITING PICK", 9,
+        ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgRestore(ctx)
+end
+
+local function DrawPaused(ctx, game)
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
+        game.width, game.height - MENU_CONTENT_TOP)
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgFillColor(ctx, nvgRGBA(8, 3, 22, 180))
+    nvgFill(ctx)
+    DrawHalo(ctx, game.width * 0.5, 470, 120, 160)
+    DrawPixelText(ctx, game.width * 0.5, 430, "暂停", 34, ACID.paleBlue,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 482, "SYSTEM HALTED // PRESS P TO RESUME", 9,
+        ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgRestore(ctx)
+end
+
 local function RenderOverlay(game, presentation)
     if not vg_ then return end
     nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
@@ -642,6 +756,15 @@ local function RenderOverlay(game, presentation)
     nvgRect(vg_, 0, 0, DESIGN_W, DESIGN_H)
     nvgStrokeColor(vg_, nvgRGBA(166, 229, 255, 180))
     nvgStrokeWidth(vg_, 2)
+    nvgStroke(vg_)
+    -- 反弹边缘在 2D 设计空间同步勾勒，与 3D 背景边界框保持一致。
+    nvgBeginPath(vg_)
+    nvgMoveTo(vg_, 0, 0)
+    nvgLineTo(vg_, 0, DESIGN_H)
+    nvgLineTo(vg_, DESIGN_W, DESIGN_H)
+    nvgLineTo(vg_, DESIGN_W, 0)
+    nvgStrokeColor(vg_, nvgRGBA(94, 169, 228, 150))
+    nvgStrokeWidth(vg_, 3)
     nvgStroke(vg_)
     if game.state == "playing" then
         DrawAimTrajectory(vg_, game)
@@ -661,6 +784,10 @@ local function RenderOverlay(game, presentation)
         DrawMenu(vg_, game)
     elseif game.state == "gameover" then
         DrawGameOver(vg_, game)
+    elseif game.state == "levelup" then
+        DrawLevelUp(vg_, game)
+    elseif game.state == "paused" then
+        DrawPaused(vg_, game)
     end
     nvgEndFrame(vg_)
 end
@@ -698,6 +825,7 @@ function Backend.Init(renderHandlerName)
     end
 
     CreateSpaceEnvironment()
+    CreateWorldEdges()
     CreateDangerBand()
 
     -- 保持项目的固定 9:16 玩法契约，用斜俯视正交投影呈现飞机厚度，避免透视导致敌人远近缩放和触控映射漂移。

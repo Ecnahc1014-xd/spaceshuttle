@@ -623,8 +623,9 @@ local function RebuildTrailGeometry(record, marble, trail)
     geometry:SetNumGeometries(2)
     geometry:SetDynamic(true)
     local rgb = BALL_COLORS[marble.ballType] or BALL_COLORS.normal
-    local baseWidth = (marble.ballType == "giant" and 0.19 or 0.115)
-        * math.max(0.72, marble.radius / 9.0)
+    -- 拖尾宽度锚定到权威碰撞半径，使巨型车的拖尾不再宽于车辆本体。
+    local collisionRadiusWorld = marble.radius * WORLD_SCALE
+    local baseWidth = (marble.ballType == "giant" and 0.55 or 0.5) * collisionRadiusWorld
 
     local function EmitLayer(index, widthScale, core)
         geometry:BeginGeometry(index, TRIANGLE_LIST)

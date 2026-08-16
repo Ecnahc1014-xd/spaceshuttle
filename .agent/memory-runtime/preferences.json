@@ -13,7 +13,8 @@
     "enemy_aircraft": "敌方使用参考图采样的独立低像素 occupied-cell 网格；同一网格驱动规则碰撞、2D/3D 表现和碎片颜色，逐块破坏后必须显示真实缺口；二维邻接只剔除 XY 内部侧面，前后 Z 端面必须保留；砖块 HP 只保留为隐藏规则状态",
     "fixed_aspect_canvas": "raw NanoVG、3D Viewport 与输入共享同一 DPR-aware CONTAIN scale/offset；倾斜相机还需统一玩法平面投影逆变换，非目标比例只做 letterbox",
     "compact_ammo_layout": "底部弹药/状态槽使用紧凑小方形并靠左右两侧分组，中间保留玩法主体空间",
-    "ui_safe_zones": "HUD、playing Dock 与 menu/gameover modal 使用不透明互斥安全层；按游戏状态隐藏不适用的轨迹、冲击反馈和弹药槽，菜单主视觉不得与 CTA 无意相交"
+    "ui_safe_zones": "HUD、playing Dock 与 menu/gameover modal 使用不透明互斥安全层；按游戏状态隐藏不适用的轨迹、冲击反馈和弹药槽，菜单主视觉不得与 CTA 无意相交",
+    "survivor_loop": "肉鸽幸存者结构：基地生命高（100）、敌方编队推进且单块越线独立扣血、XP/升级三选一与局内强化池；升级效果只改规则变量并通过快照暴露给 UI；波次持续涌出并随进度收紧、受同屏上限约束；过高的加速技能要明确削弱"
   },
   "workflow_preferences": {
     "gamedev": "大规模 3D 开发前先建立可替换渲染边界，保持规则契约，并用菜单态、非目标比例 letterbox 与实际游戏态截图同时验证镜头和表现"
@@ -28,7 +29,9 @@
     "底部四个弹药槽使用小正方形，两个靠左下、两个靠右下，中间保留玩法空间",
     "拖拽操作位置、权威弹珠位置和车辆模型屏幕投影必须一致",
     "HUD、菜单、场地、弹弓车辆和底部弹夹之间禁止非设计意图的互相遮挡",
-    "敌机必须由参考图采样出的真实独立方块构成，破坏后对应方块要可见缺失，不能用完整模型掩盖完整度"
+    "敌机必须由参考图采样出的真实独立方块构成，破坏后对应方块要可见缺失，不能用完整模型掩盖完整度",
+    "游戏应设计为有持续压力与成长的肉鸽幸存者结构：高基地生命、敌人编队推进且单块越线独立扣血、XP/升级三选一与局内强化",
+    "过强的加速技能要明确削弱成长、追击和伤害，不得无脑滚雪球"
   ],
   "implicit_preferences": [
     "重视可维护性和后续 3D 迁移成本",
@@ -40,7 +43,8 @@
     "偏好可见拖尾、敌人体素原始配色和可动高质量星空",
     "画面交付需要同时验证静态菜单态、非目标比例 letterbox 与发射后的真实游戏态",
     "敌方撞击防线时需要相机、材质、冲击波与警示文字的联合反馈",
-    "UI 偏好技术网格、刻度光环、工程标注、状态码和半调点阵"
+    "UI 偏好技术网格、刻度光环、工程标注、状态码和半调点阵",
+    "把玩法质量与系统设计度 1:1 超过组合参考（如三维弹珠+肉鸽打砖块+太空飞机）作为交付标准"
   ],
   "scoped_preferences": {
     "gamedev": {
@@ -62,7 +66,12 @@
       "require_non_overlapping_ui_safe_zones": true,
       "require_reference_sampled_voxel_aircraft": true,
       "require_visible_per_cell_destruction": true,
-      "preferred_ui_palette": "deep-purple-pale-blue-acid"
+      "preferred_ui_palette": "deep-purple-pale-blue-acid",
+      "prefer_survivor_roguelike_loop": true,
+      "require_high_base_hp_with_per_cell_breach_damage": true,
+      "require_xp_levelup_three_choice_upgrades": true,
+      "require_continuous_tightening_wave_cadence": true,
+      "require_weakened_overpowered_speed_marble": true
     }
   }
 }

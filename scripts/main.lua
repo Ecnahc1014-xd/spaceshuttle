@@ -22,6 +22,25 @@ local function ToGameCoordinates(eventData)
     return RenderBackend.ScreenToGame(x, y)
 end
 
+-- 升级面板点击命中：玩家在三选一卡片内点击即装备该强化。
+local function TryPickUpgradeAt(gameX, gameY)
+    local snapshot = Game.GetSnapshot()
+    local choices = snapshot.upgradeChoices
+    if not choices or #choices == 0 then return false end
+    local cardW, cardH, gap = 144, 188, 18
+    local totalW = #choices * cardW + (#choices - 1) * gap
+    local startX = snapshot.width * 0.5 - totalW * 0.5 + cardW * 0.5
+    local cy = 470
+    for i = 1, #choices do
+        local cx = startX + (i - 1) * (cardW + gap)
+        if math.abs(gameX - cx) <= cardW * 0.5 and math.abs(gameY - cy) <= cardH * 0.5 then
+            Game.PickUpgrade(i)
+            return true
+        end
+    end
+    return false
+end
+
 function Start()
     graphics.windowTitle = "太空飞机弹珠"
     input.mouseVisible = true
@@ -77,6 +96,10 @@ function HandleMouseDown(eventType, eventData)
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
+    if Game.IsLevelUp() then
+        TryPickUpgradeAt(x, y)
+        return
+    end
     Game.PointerDown(x, y)
 end
 
@@ -95,6 +118,10 @@ function HandleTouchBegin(eventType, eventData)
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
+    if Game.IsLevelUp() then
+        TryPickUpgradeAt(x, y)
+        return
+    end
     Game.PointerDown(x, y)
 end
 
@@ -112,6 +139,12 @@ function HandleKeyDown(eventType, eventData)
     local key = eventData:GetInt("Key")
     if key == KEY_SPACE or key == KEY_RETURN then
         Game.HandleAction("start", true)
+    elseif key == KEY_P or key == KEY_ESCAPE then
+        if Game.IsPaused() then
+            Game.Resume()
+        elseif not Game.IsLevelUp() then
+            Game.Pause()
+        end
     end
 end
 
