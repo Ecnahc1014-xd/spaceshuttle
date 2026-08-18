@@ -23,25 +23,56 @@ local WAVE_INTERVAL = 7.0          -- 持续刷新波次的间隔（秒）
 local WAVE_INTERVAL_MIN = 2.8      -- 后期最快刷新间隔
 local MAX_CONCURRENT = 14          -- 同屏飞船数量上限，避免无限叠加
 
+-- 数值平衡表（WO-01/P1）：局内不可变数值集中管理，便于调参与离线模拟。
+-- 旧常量名仍作为本表的初始化来源，保持向后可读别名。
+local BALANCE = {
+    baseHp = BASE_HP,
+    brickBaseDamage = BRICK_BASE_DAMAGE,
+    xpPerBrick = XP_PER_BRICK,
+    xpPerClear = XP_PER_CLEAR,
+    baseXpToNext = BASE_XP_TO_NEXT,
+    xpToNextGrowth = 1.18,          -- WO-02/P1：每级经验阈值指数乘子（替代原线性的 *0.35）
+    waveInterval = WAVE_INTERVAL,
+    waveIntervalMin = WAVE_INTERVAL_MIN,
+    waveTightenStep = 0.35,         -- WO-03/P1：波次间隔随波次收紧步长（原写死 0.35）
+    maxConcurrent = MAX_CONCURRENT,
+    clearStreakBonusCap = 5,        -- WO-03/P1：连击经验加成封顶（原写死 5）
+    -- 以下为批次2（P6 WO-12）预留字段，当前 UpdateWaveLogic 尚未使用
+    phaseLength = 5,
+    phaseTightenBonus = 0.6,
+    breatherEvery = 10,
+    breatherRelax = 1.5,
+    safeGap = 1.2,
+    -- 蓄力发射（WO-08/P7）：拖拽距离映射到初速比例，由规则层暴露供输入层消费。
+    maxPull = MAX_PULL,
+    powerMin = 0.35,   -- 最小蓄力初速比例（轻拖也有基础射程）
+    powerMax = 1.0,    -- 满蓄力初速比例
+}
+
 local BALL_TYPES = {
     normal = {
         radius = 20, speed = 560, damage = 1,
-        splitChance = 0.05, splitAngle = 18,
+        splitChance = 0.05, splitAngle = 18, splitSpread = 18,
+        bounceElasticity = 1.0,    -- WO-05/P4：反弹弹性，1.0 为标准
     },
     speed = {
         radius = 18, speed = 660, damage = 1,
         speedBoost = 1.06, maxSpeed = 900,
         damageStep = 320, maxDamage = 2,
         redirectThrottle = 0.45,    -- 自动追击的节流（秒），削弱其持续黏着
+        redirectMinSpeed = 120,     -- WO-05/P4：低于此速度不触发追击，消除低速抖动
+        bounceElasticity = 1.0,    -- 加速弹更"滑"
     },
     ice = {
         radius = 20, speed = 520, damage = 1,
         freezeDuration = 3.0,
+        bounceElasticity = 1.0,
     },
     giant = {
         radius = 30, speed = 420, damage = 2,
         pierceAfterBounce = true,
         areaRadiusCells = 3.5,
+        bounceElasticity = 0.92,   -- WO-05/P4：巨型弹更"沉"
     },
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
@@ -214,7 +245,7 @@ ResetGame = function()
     -- 幸存者成长状态复位
     playerLevel = 1
     xp = 0
-    xpToNext = BASE_XP_TO_NEXT
+    xpToNext = BALANCE.baseXpToNext
     pendingLevelUps = 0
     upgradeChoices = nil
     upgradePicks = {}
@@ -409,7 +440,7 @@ local function GainXp(amount)
     while xp >= xpToNext do
         xp = xp - xpToNext
         playerLevel = playerLevel + 1
-        xpToNext = math.floor(BASE_XP_TO_NEXT * (1 + (playerLevel - 1) * 0.35))
+        xpToNext = math.floor(BALANCE.baseXpToNext * BALANCE.xpToNextGrowth ^ (playerLevel - 1))
         pendingLevelUps = pendingLevelUps + 1
     end
     if pendingLevelUps > 0 then
@@ -493,10 +524,11 @@ local function TrySplitNormal(marble, originBrick, pendingMarbles)
     local def = BALL_TYPES.normal
     if Random() >= def.splitChance + BALL_TUNING.splitBonus then return end
 
+    -- WO-06/P4：分裂弹继承母弹速度向量，沿 ±splitSpread 扩散，避免高速重叠。
     table.insert(pendingMarbles,
-        CreateSplitMarble(marble, -def.splitAngle, originBrick))
+        CreateSplitMarble(marble, -def.splitSpread, originBrick))
     table.insert(pendingMarbles,
-        CreateSplitMarble(marble, def.splitAngle, originBrick))
+        CreateSplitMarble(marble, def.splitSpread, originBrick))
     Emit("normal_split", {
         x = marble.x, y = marble.y,
         generation = marble.generation + 1,
@@ -548,6 +580,8 @@ end
 
 local function RedirectSpeedMarble(marble, originEnemy, originBrick)
     -- 削弱：受 redirectThrottle 节流，避免每次命中都黏着追踪。
+    -- WO-05/P4：低于 redirectMinSpeed 不追击，消除低速段轨迹抖动。
+    if marble.speed < (BALL_TYPES.speed.redirectMinSpeed or 0) then return end
     local target = FindNearestBrick(originEnemy, originBrick, marble.x, marble.y)
     if not target then return end
     if (marble.redirectCooldown or 0) > 0 then return end
@@ -623,7 +657,10 @@ local function LaunchMarble(dx, dy, power)
     if length < 1 then return end
 
     local def = BALL_TYPES[activeBall.ballType]
-    local speed = def.speed * (0.7 + 0.3 * power)
+    -- WO-08/P7：power 为归一化蓄力 (0..1)，映射到 [powerMin, powerMax] 初速比例。
+    local powerRatio = math.max(0, math.min(1, power or 0))
+    local speedScale = BALANCE.powerMin + (BALANCE.powerMax - BALANCE.powerMin) * powerRatio
+    local speed = def.speed * speedScale
     activeBall.vx = -dx / length * speed
     activeBall.vy = -dy / length * speed
     activeBall.speed = speed
@@ -673,22 +710,24 @@ UpdateMarbles = function(dt)
             marble.x = marble.x + marble.vx * subDt
             marble.y = marble.y + marble.vy * subDt
 
+            -- WO-05/P4：反弹弹性由 ballType 决定（巨型更沉、加速更滑），默认 1.0。
+            local elastic = def.bounceElasticity or 1.0
             if marble.x - marble.radius < 0 then
                 marble.x = marble.radius
-                marble.vx = math.abs(marble.vx)
+                marble.vx = math.abs(marble.vx) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
             elseif marble.x + marble.radius > DW then
                 marble.x = DW - marble.radius
-                marble.vx = -math.abs(marble.vx)
+                marble.vx = -math.abs(marble.vx) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
             end
             if marble.y - marble.radius < 0 then
                 marble.y = marble.radius
-                marble.vy = math.abs(marble.vy)
+                marble.vy = math.abs(marble.vy) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
@@ -728,8 +767,12 @@ UpdateMarbles = function(dt)
                                 end
 
                                 if marble.giantPiercing then
+                                    -- WO-07/P4：巨型弹每次有效反弹只武装一次贯穿。本次圆范围伤害结算后
+                                    -- 立即解除武装，继续直线飞行，下次反弹由 ArmGiantPiercing 重新武装一次。
                                     DamageGiantArea(enemy, brick,
                                         GetMarbleDamage(marble, def), frameHitBricks)
+                                    marble.giantPiercing = false
+                                    Emit("giant_pierce_consumed", {x = marble.x, y = marble.y})
                                 else
                                     frameHitBricks[brick] = true
                                     DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
@@ -832,7 +875,7 @@ UpdateEnemies = function(dt)
             score = score + 50
             clearStreak = clearStreak + 1
             -- 连续清空的连击经验加成，鼓励连续压制。
-            local bonus = math.min(clearStreak - 1, 5)
+            local bonus = math.min(clearStreak - 1, BALANCE.clearStreakBonusCap)
             GainXp(XP_PER_CLEAR + bonus)
             Emit("enemy_cleared", {
                 enemyId = enemy.id,
@@ -857,8 +900,8 @@ UpdateWaveLogic = function(dt)
     waveCooldown = waveCooldown - dt
     if waveCooldown > 0 then return end
 
-    local interval = math.max(WAVE_INTERVAL_MIN, WAVE_INTERVAL - (wave - 1) * 0.35)
-    if #veggies < MAX_CONCURRENT then
+    local interval = math.max(BALANCE.waveIntervalMin, BALANCE.waveInterval - (wave - 1) * BALANCE.waveTightenStep)
+    if #veggies < BALANCE.maxConcurrent then
         wave = wave + 1
         SpawnWave()
     end
@@ -889,7 +932,9 @@ local function BuildAimTrajectory()
     if distance < 5 then return points end
 
     local def = BALL_TYPES[activeBall.ballType]
-    local speed = def.speed * (0.7 + 0.3 * math.min(1, distance / MAX_PULL))
+    -- WO-08/P7：预测线初速比例与 LaunchMarble 共用 BALANCE 曲线，保证预测一致。
+    local powerRatio = math.max(0, math.min(1, distance / BALANCE.maxPull))
+    local speed = def.speed * (BALANCE.powerMin + (BALANCE.powerMax - BALANCE.powerMin) * powerRatio)
     local vx = -dx / distance * speed
     local vy = -dy / distance * speed
     local x, y = activeBall.x, activeBall.y
@@ -974,7 +1019,7 @@ function Game.PointerUp(px, py)
     local dx, dy, distance = GetPullState(px, py)
     aiming = false
     if distance > 15 then
-        LaunchMarble(dx, dy, distance / MAX_PULL)
+        LaunchMarble(dx, dy, distance / BALANCE.maxPull)
     elseif activeBall then
         activeBall.x = SLING_X
         activeBall.y = SLING_Y

@@ -280,9 +280,15 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     record.signature = GetEnemySignature(enemy)
 end
 
+-- WO-04/P9：单帧体素重建预算护栏。极端同屏 + 批量冻结切换时，
+-- 限制每帧实际重建数量，超额脏记录顺延到下一帧（signature 仍不同会被再次命中）。
+-- 触发条件维持「仅拓扑或冻结态改变」（GetEnemySignature），预算只限频次不放松语义。
+local REBUILD_BUDGET = 4
+
 local function SyncEnemyMeshes(game, presentation)
     local active = {}
     local visualCatalog = presentation.visualCatalog
+    local dirty = {}
     for _, enemy in ipairs(game.veggies) do
         if not enemy.dead then
             active[enemy.id] = true
@@ -293,12 +299,19 @@ local function SyncEnemyMeshes(game, presentation)
                 geometry.castShadows = false
                 record = {root = root, geometry = geometry, signature = ""}
                 enemyMeshes_[enemy.id] = record
-                RebuildEnemyMesh(record, enemy, visualCatalog)
+                dirty[#dirty + 1] = {record = record, enemy = enemy}
             elseif record.signature ~= GetEnemySignature(enemy) then
-                RebuildEnemyMesh(record, enemy, visualCatalog)
+                dirty[#dirty + 1] = {record = record, enemy = enemy}
             end
             record.root.position = GameToWorld(enemy.x, enemy.y, 0)
         end
+    end
+
+    for i = 1, math.min(REBUILD_BUDGET, #dirty) do
+        RebuildEnemyMesh(dirty[i].record, dirty[i].enemy, visualCatalog)
+    end
+    if #dirty > REBUILD_BUDGET then
+        print("[Renderer3D] rebuild budget hit: " .. #dirty .. " dirty, " .. REBUILD_BUDGET .. " rebuilt this frame (deferred)")
     end
 
     for id, record in pairs(enemyMeshes_) do
