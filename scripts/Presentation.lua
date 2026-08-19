@@ -7,6 +7,7 @@ local Presentation = {}
 
 local screenShake = 0
 local waveBannerTimer = 0
+local hitStop = 0    -- P12：命中顿帧（hitstop），由大命中事件触发，期间主循环对玩法 dt 打折
 local particles = {}
 local floatTexts = {}
 local marbleTrails = {}
@@ -22,6 +23,27 @@ local truckLaunchFlash = {
 }
 local nextDebrisId = 1
 
+-- WO-16/P9：高频视觉对象（粒子/碎片/飘字）对象池，避免每帧 table 分配触发 GC 抖动。
+-- 失效对象回收进空闲表，再次生成时优先复用其 table，只覆盖字段。
+local particlePool = {}
+local debrisPool = {}
+local floatPool = {}
+
+-- WO-14/P2：领域事件 → 瞬时反馈的声明式映射。新增反馈只需在此登记处理函数，
+-- HandleEvent 遍历命中事件触发对应反馈，所有反馈只写 Presentation 瞬时状态，不触达规则层。
+local FEEDBACK_MAP = {
+    wave_started = {"waveBanner"},
+    brick_hit = {"brickSpark"},
+    enemy_cleared = {"clearBanner"},
+    base_hit = {"baseShake"},
+    marble_launched = {"launchFlash"},
+    normal_split = {"splitSpark"},
+    speed_dash = {"dashSpark"},
+    giant_pierce_armed = {"pierceArmed"},
+    giant_area_hit = {"giantBurst"},
+    game_reset = {"fullReset"},
+}
+
 local function GetBrickKey(enemyId, col, row)
     return tostring(enemyId) .. ":" .. tostring(col) .. ":" .. tostring(row)
 end
@@ -31,24 +53,26 @@ local function SpawnParticles(x, y, color, count)
     for _ = 1, count do
         local angle = math.random() * math.pi * 2
         local speed = 60 + math.random() * 160
-        table.insert(particles, {
-            x = x, y = y,
-            vx = math.cos(angle) * speed,
-            vy = math.sin(angle) * speed - 50,
-            life = 0.4 + math.random() * 0.3, maxLife = 0.7,
-            r = color[1], g = color[2], b = color[3],
-            size = 3 + math.random() * 3,
-        })
+        local p = table.remove(particlePool) or {}
+        p.x = x; p.y = y
+        p.vx = math.cos(angle) * speed
+        p.vy = math.sin(angle) * speed - 50
+        p.life = 0.4 + math.random() * 0.3
+        p.maxLife = 0.7
+        p.r = color[1]; p.g = color[2]; p.b = color[3]
+        p.size = 3 + math.random() * 3
+        particles[#particles + 1] = p
     end
 end
 
 local function SpawnFloatText(x, y, text, color, sizeMul)
-    table.insert(floatTexts, {
-        x = x, y = y, vy = -40,
-        life = 0.9, maxLife = 0.9, text = text,
-        color = color or {255, 255, 255},
-        size = (sizeMul or 1) * 20,
-    })
+    local f = table.remove(floatPool) or {}
+    f.x = x; f.y = y; f.vy = -40
+    f.life = 0.9; f.maxLife = 0.9
+    f.text = text
+    f.color = color or {255, 255, 255}
+    f.size = (sizeMul or 1) * 20
+    floatTexts[#floatTexts + 1] = f
 end
 
 local function SpawnBrickDebris(event, color)
@@ -56,36 +80,42 @@ local function SpawnBrickDebris(event, color)
     for i = 1, count do
         local angle = math.pi * 2 * (i - 1) / count + (math.random() - 0.5) * 0.35
         local speed = 45 + math.random() * 95
-        table.insert(brickDebris, {
-            id = nextDebrisId,
-            x = event.x,
-            y = event.y,
-            vx = math.cos(angle) * speed,
-            vy = math.sin(angle) * speed - 75 - math.random() * 35,
-            z = (math.random() - 0.5) * 12,
-            vz = (math.random() - 0.5) * 28,
-            rotation = math.random() * math.pi * 2,
-            angularVelocity = (math.random() - 0.5) * 12,
-            scale = 0.9 + math.random() * 0.25,
-            shrinkRate = 1.1 + math.random() * 0.5,
-            age = 0,
-            lifetime = 0.65 + math.random() * 0.3,
-            r = color.r,
-            g = color.g,
-            b = color.b,
-            aircraftKey = event.aircraftKey,
-            enemyId = event.enemyId,
-            col = event.col,
-            row = event.row,
-        })
+        local d = table.remove(debrisPool) or {}
+        d.id = nextDebrisId
+        d.x = event.x
+        d.y = event.y
+        d.vx = math.cos(angle) * speed
+        d.vy = math.sin(angle) * speed - 75 - math.random() * 35
+        d.z = (math.random() - 0.5) * 12
+        d.vz = (math.random() - 0.5) * 28
+        d.rotation = math.random() * math.pi * 2
+        d.angularVelocity = (math.random() - 0.5) * 12
+        d.scale = 0.9 + math.random() * 0.25
+        d.shrinkRate = 1.1 + math.random() * 0.5
+        d.age = 0
+        d.lifetime = 0.65 + math.random() * 0.3
+        d.r = color.r
+        d.g = color.g
+        d.b = color.b
+        d.aircraftKey = event.aircraftKey
+        d.enemyId = event.enemyId
+        d.col = event.col
+        d.row = event.row
+        brickDebris[#brickDebris + 1] = d
         nextDebrisId = nextDebrisId + 1
     end
 end
 
-local function HandleEvent(event)
-    if event.type == "game_reset" then
+-- WO-14/P2：每个反馈名对应一个只写 Presentation 瞬时状态的处理函数。
+-- HandleEvent 按 FEEDBACK_MAP 分派，新增反馈只需补充映射 + 处理函数。
+local FEEDBACK_HANDLERS = {
+    fullReset = function(event)
         screenShake = 0
         waveBannerTimer = 0
+        -- WO-16/P9：重置时把存活对象回收进对象池，保持池规模稳定。
+        for _, p in ipairs(particles) do particlePool[#particlePool + 1] = p end
+        for _, f in ipairs(floatTexts) do floatPool[#floatPool + 1] = f end
+        for _, d in ipairs(brickDebris) do debrisPool[#debrisPool + 1] = d end
         particles = {}
         floatTexts = {}
         marbleTrails = {}
@@ -100,9 +130,11 @@ local function HandleEvent(event)
             speed = 0,
             giant = 0,
         }
-    elseif event.type == "wave_started" then
+    end,
+    waveBanner = function(event)
         waveBannerTimer = 1.8
-    elseif event.type == "brick_hit" then
+    end,
+    brickSpark = function(event)
         local color = VisualCatalog.GetBrickStyle(event.aircraftKey, event.col, event.row)
             or {r = 255, g = 240, b = 180}
         local particleColor = {color.r, color.g, color.b}
@@ -114,10 +146,15 @@ local function HandleEvent(event)
         else
             SpawnParticles(event.x, event.y, {255, 240, 180}, 4)
         end
-    elseif event.type == "enemy_cleared" then
+    end,
+    clearBanner = function(event)
         SpawnFloatText(event.x, event.y, "击破!", {120, 255, 160}, 1.2)
-    elseif event.type == "base_hit" then
+    end,
+    -- WO-15/P2：防线四位一体（震屏 + 危险带脉冲 + 冲击波 + 警示文字）由 base_hit 单点触发。
+    baseShake = function(event)
         screenShake = 0.55
+        -- P12：防线受创触发短促命中顿帧，强化冲击重量感（主循环据此对玩法 dt 打折）。
+        hitStop = math.max(hitStop, 0.06)
         baseBarrierFlash = 0.62
         table.insert(baseImpacts, {
             id = nextDebrisId,
@@ -131,35 +168,55 @@ local function HandleEvent(event)
         nextDebrisId = nextDebrisId + 1
         SpawnParticles(event.x, event.y, {255, 80, 60}, 24)
         SpawnFloatText(event.x, event.y - 34, "防线受创!", {255, 110, 80}, 1.05)
-    elseif event.type == "marble_launched" then
+    end,
+    launchFlash = function(event)
         truckLaunchFlash[event.ballType] = 0.28
         SpawnParticles(event.x or 270, event.y or 850, {
             event.ballType == "ice" and 150 or 255,
             event.ballType == "giant" and 170 or 220,
             event.ballType == "speed" and 80 or 160,
         }, 8)
-    elseif event.type == "marble_removed" then
-        marbleTrails[event.id] = nil
-    elseif event.type == "normal_split" then
+    end,
+    splitSpark = function(event)
         SpawnParticles(event.x, event.y, {255, 230, 140}, 16)
         SpawnFloatText(event.x, event.y - 18,
             "分裂 G" .. event.generation, {255, 235, 150}, 0.8)
-    elseif event.type == "speed_dash" then
+    end,
+    dashSpark = function(event)
         screenShake = math.max(screenShake, 0.08)
         SpawnParticles(event.x, event.y, {255, 160, 70}, 10)
         SpawnParticles(event.targetX, event.targetY, {255, 210, 80}, 8)
         SpawnFloatText(event.x, event.y - 18,
             "追击 x" .. event.damage, {255, 170, 80}, 0.8)
-    elseif event.type == "giant_pierce_armed" then
+    end,
+    pierceArmed = function(event)
         screenShake = math.max(screenShake, 0.16)
         SpawnParticles(event.x, event.y, {205, 145, 255}, 16)
         SpawnFloatText(event.x, event.y - 22, "贯穿就绪!", {225, 170, 255}, 0.9)
-    elseif event.type == "giant_area_hit" then
+    end,
+    giantBurst = function(event)
         screenShake = math.max(screenShake, 0.22)
         SpawnParticles(event.x, event.y, {205, 145, 255},
             math.min(32, 12 + event.hitCount))
         SpawnFloatText(event.x, event.y - 28,
             "圆域 x" .. event.hitCount, {235, 190, 255}, 1.0)
+    end,
+    -- marble_removed 虽未进 FEEDBACK_MAP，仍作为直接处理器保留（只清轨迹引用）。
+    marbleRemoved = function(event)
+        marbleTrails[event.id] = nil
+    end,
+}
+
+local function HandleEvent(event)
+    -- WO-15/P2：未登记事件直派到同名处理器（如 marble_removed），保持向后兼容。
+    local names = FEEDBACK_MAP[event.type]
+    if names then
+        for _, name in ipairs(names) do
+            local handler = FEEDBACK_HANDLERS[name]
+            if handler then handler(event) end
+        end
+    elseif FEEDBACK_HANDLERS[event.type] then
+        FEEDBACK_HANDLERS[event.type](event)
     end
 end
 
@@ -168,7 +225,10 @@ local function UpdateParticles(dt)
         local p = particles[i]
         p.life = p.life - dt
         if p.life <= 0 then
-            table.remove(particles, i)
+            -- WO-16/P9：回收进对象池，避免每次重新分配 table。
+            particles[i] = particles[#particles]
+            particles[#particles] = nil
+            particlePool[#particlePool + 1] = p
         else
             p.x = p.x + p.vx * dt
             p.y = p.y + p.vy * dt
@@ -183,7 +243,9 @@ local function UpdateFloatTexts(dt)
         local f = floatTexts[i]
         f.life = f.life - dt
         if f.life <= 0 then
-            table.remove(floatTexts, i)
+            floatTexts[i] = floatTexts[#floatTexts]
+            floatTexts[#floatTexts] = nil
+            floatPool[#floatPool + 1] = f
         else
             f.y = f.y + f.vy * dt
             f.vy = f.vy * 0.96
@@ -212,7 +274,9 @@ local function UpdateBrickDebris(dt)
         debris.rotation = debris.rotation + debris.angularVelocity * dt
         debris.scale = math.max(0, debris.scale - debris.shrinkRate * dt)
         if debris.age >= debris.lifetime or debris.scale <= 0 then
-            table.remove(brickDebris, i)
+            brickDebris[i] = brickDebris[#brickDebris]
+            brickDebris[#brickDebris] = nil
+            debrisPool[#debrisPool + 1] = debris
         end
     end
 end
@@ -264,6 +328,10 @@ function Presentation.Init()
     baseImpacts = {}
     baseBarrierFlash = 0
     nextDebrisId = 1
+    -- WO-16/P9：对象池在重开时清空回收对象，避免旧局残留引用（id 已随 nextDebrisId 重置）。
+    particlePool = {}
+    debrisPool = {}
+    floatPool = {}
     truckLaunchFlash = {
         normal = 0,
         ice = 0,
@@ -276,6 +344,7 @@ end
 function Presentation.Update(dt, gameSnapshot, events)
     if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
     if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
+    if hitStop > 0 then hitStop = math.max(0, hitStop - dt) end
 
     for _, event in ipairs(events) do
         HandleEvent(event)
@@ -293,6 +362,7 @@ end
 function Presentation.GetSnapshot()
     return {
         screenShake = screenShake,
+        hitStop = hitStop,    -- P12：主循环读取，对玩法 dt 打折实现顿帧
         waveBannerTimer = waveBannerTimer,
         particles = particles,
         floatTexts = floatTexts,

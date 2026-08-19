@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.9.0
-简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；相机玩法平面投影统一驱动输入、轨迹与空间反馈；敌方为由经典像素太空飞机剪影生成的四类单网格低像素体素飞机，我方为随权威碰撞半径缩放的大运式重卡；基地生命 100、敌机编队整体下移且方块独立越线扣血、XP/三选一升级与局内强化池；顶部 76px HUD（含等级/经验条）、playing 态底部 80px Dock 与 menu/gameover/levelup/paused modal 形成不透明互斥安全层，四个 64×64 弹夹只在 playing 态左右分组显示。
-最后巩固：2026-08-16
+当前版本：0.9.1
+简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；相机玩法平面投影统一驱动输入、轨迹与空间反馈；敌方为由经典像素太空飞机剪影生成的四类单网格低像素体素飞机，我方为随权威碰撞半径缩放的大运式重卡；基地生命 100、敌机编队整体下移且方块独立越线扣血、XP/三选一升级与局内强化池；顶部 76px HUD（含等级/经验条）、playing 态底部 80px Dock 与 menu/gameover/levelup/paused modal 形成不透明互斥安全层，四个 64×64 弹夹只在 playing 态左右分组显示；已追加冻结顶点色高光、视觉对象池、FEEDBACK_MAP 反馈、防线四位一体、词条系统、五异常反应、Boss 阶段机、命中顿帧与相机推近。
+最后巩固：2026-08-19
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -58,6 +58,12 @@
 - D-024: v0.8.3 将 HUD、playing Dock、menu/gameover modal 明确为不透明互斥安全层；四弹夹只在 playing 态绘制，非 playing 态不再绘制瞄准轨迹和基地冲击反馈；菜单主光环与 CTA 使用独立几何区，禁止相交。
 - D-025: UI/玩法遮挡审查必须先用当前相机 `projectionOffset/Scale` 把权威坐标投影到屏幕设计空间；46° 当前标定约为 `offset=(124.20,159.90), scale=(0.5400,0.6669)`，禁止把 `Game.y` 直接当成屏幕 y 后误改权威危险线或弹弓规则。
 - D-026: v0.8.4 敌方数据从 `VeggiePixelData` 完全迁移到独立 `AircraftPixelData`；同一 occupied-cell 清单同时驱动规则砖块、2D 砖块、3D 体素和碎片颜色。3D 中每个 alive cell 生成可见体素并剔除相邻内部面，死亡格直接从网格消失；隐藏 HP 不进入签名。体素中心使用规则 brick pitch，`VOXEL_GAP` 只缩小方块本体，禁止用缩小后的 unit 推导中心造成碰撞/显示漂移。
+- D-033: v0.9.1 冻结表现：渲染层只读 `enemy.freezeRatio`（Game 快照 0..1），按量化档位（×8）进签名触发顶点色冷白偏移与正面霜冻白高光；禁止每帧衰减重建（WO-13/P2）。
+- D-034: v0.9.1 高频视觉对象（粒子/碎片/飘字）从 `particlePool/debrisPool/floatPool` 复用 table，`Game.GetSnapshot()` 复用常驻 `snapshotBuffer_`；`RemoveNode` 显式 `Dispose()`；FXAA 仅探测且默认关闭（WO-16/P9）。
+- D-035: v0.9.1 `Presentation.FEEDBACK_MAP` 声明式事件→反馈分派；防线四位一体（震屏+危险带脉冲+冲击波+警示文字）由 `base_hit` 单点触发；`Backend.RefreshProjection/GetProjection` 封装投影刷新（WO-14/15/P2）。
+- D-036: v0.9.1 词条系统 `BALL_WORDS`（pierce/chain/momentum/lifesteal/heavy）经 `CreateMarble(words)` 注入行为标记，`activeWords` 由专属升级写入、新弹珠自动携带；五异常反应（burn/shock/corrode/freeze/volatile，冻结+灼烧=融穿、寿终 volatile=邻格引爆）仅规则层结算 DoT/反应（P11）。
+- D-037: v0.9.1 Boss 阶段机：每 10 波 `SpawnWave` 生成单支高血量 Boss，`bossPhase` 按存活砖块比例切换，`phase 2` 置 `vulnerable` 受 1.5x 伤害；仅规则层，视觉消费 `boss_spawn`/`boss_phase`（P11）。
+- D-038: v0.9.1 命中顿帧 `hitStop` 由大命中触发、main.lua 对玩法 dt 打折（×0.15）；防线受创时 `camera_.orthoSize=18.0 - flash*1.6` 瞬时推近仍保持正交；词条图标 HUD 展示（P12）。
 - D-027: v0.8.5 瞄准轨迹首点固定为当前 `activeBall.x/y`，采样提升为 140×8，并按权威半径预测左右/顶部反弹；46° 相机每帧震屏位移后无日志刷新玩法平面投影，使车辆、NanoVG 与输入共享当前相机标定。飞机 occupied cells 仅使用 XY 二维邻接剔除内部侧面，每个存活格的前后 Z 端面始终生成。
 - D-028: v0.9.0 实装肉鸽幸存者最小完整循环——`BASE_HP=100`，敌方编队整体下移、每个存活方块越过 `DANGER_Y` 独立销毁并扣 `BRICK_BASE_DAMAGE`（受升级影响），`Game` 用 `levelup`/`paused` 状态暂停玩法；XP（击碎方块 +1、清整支飞船 +8 与连击）跨级累计升级并冻结经验，三选一强化池 `UPGRADE_POOL` 的 `apply()` 只改规则变量；持续收紧波次并受 `MAX_CONCURRENT` 同屏上限约束；世界反弹边缘渲染到 3D 背景层与 2D 设计空间边框；巨型车拖尾宽度锚定权威半径不再宽于本体；加速弹成长/追击/伤害削弱；敌方 occupied cells 重制为经典蟹形入侵者/箭头战机/圆盘飞碟/截击机像素剪影。
 

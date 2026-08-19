@@ -77,6 +77,35 @@ local BALL_TYPES = {
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
 
+-- P11 词条系统（规则层）：弹珠可携带的"词条"修饰，影响伤害/弹道/反馈行为。
+-- 仅通过 CreateMarble 的 words 表注入；apply() 在生成时改写 marble 字段或挂载行为标记，
+-- 不触碰任何渲染 API。视觉表现（词条环绕光、异常染色）推迟到 deferred.md D 由表现层消费事件。
+local BALL_WORDS = {
+    pierce = {  -- 贯穿：本次飞行的首块命中不反弹，直接穿过继续飞行
+        name = "贯穿",
+        apply = function(marble) marble.wordPierce = true end,
+    },
+    lifesteal = {  -- 吸血：每次击碎砖块为基地回复少量生命（最多回到上限）
+        name = "吸血",
+        value = 1,
+        apply = function(marble, def) marble.wordLifesteal = def.value or 1 end,
+    },
+    chain = {  -- 连锁：命中时向最近另一砖块追加一次小范围溅射
+        name = "连锁",
+        radius = 1.6,
+        apply = function(marble, def) marble.wordChain = def.radius or 1.6 end,
+    },
+    momentum = {  -- 动量：伤害随当前速度提升（高速球更痛）
+        name = "动量",
+        apply = function(marble) marble.wordMomentum = true end,
+    },
+    heavy = {  -- 重弹：反弹弹性更低、命中砖块额外压制（冻结类似减速由 ice 处理）
+        name = "重弹",
+        apply = function(marble) marble.wordHeavy = true end,
+    },
+}
+local WORD_IDS = { "pierce", "lifesteal", "chain", "momentum", "heavy" }
+
 -- 局内可调规则（受升级影响），初始值。必须在使用它的升级闭包之前声明。
 local BALL_TUNING = {
     damageBonus = 0,
@@ -104,6 +133,8 @@ local pendingLevelUps = 0          -- 待处理的升级次数（暂停选强化
 local upgradeChoices = nil         -- 当前可选的三选一强化
 local upgradePicks = {}            -- 已选强化的累计效果（id 列表，可重复）
 local upgradeStacks = {}           -- 已选强化各 id 的层数（WO-09/P5 叠加上限判定）
+-- P11：已激活词条（来自专属词条升级），作为新弹珠的默认词条第。规则层持有，渲染层只读快照。
+local activeWords = {}
 local clearStreak = 0              -- 连续清空飞船的连击（经验加成）
 local bricksBroken = 0            -- 累计击碎砖块数（WO-11/P8 gameover 回顾）
 
@@ -150,6 +181,17 @@ local UPGRADE_POOL = {
           BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
           baseHp = math.max(1, baseHp - 8)
       end },
+    -- P11 词条系统：专属"词条"升级，apply 把对应 word 加入 activeWords（规则变量），
+    -- 新生成弹珠自动携带；视觉染色推迟到表现层消费新事件。
+    { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带[贯穿]词条",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条:贯穿",
+      apply = function(stacks) activeWords.pierce = true end },
+    { id = "word_chain", name = "链能线圈", desc = "弹珠附带[连锁]词条",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条:连锁",
+      apply = function(stacks) activeWords.chain = true end },
+    { id = "word_momentum", name = "动量储能", desc = "弹珠附带[动量]词条",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条:动量",
+      apply = function(stacks) activeWords.momentum = true end },
 }
 
 local veggies = {}
@@ -165,6 +207,10 @@ local pendingEvents = {}
 local nextEnemyId = 1
 local nextMarbleId = 1
 local randomState = 1
+
+-- WO-16/P9：快照缓冲复用，避免每帧构造新 table 触发 GC 抖动。
+-- 渲染/表现层只读此表，不得缓存引用越过本帧。
+local snapshotBuffer_ = nil
 
 local ResetGame
 local SpawnWave
@@ -216,7 +262,7 @@ local function GetWaveParams(waveNum)
     return count, speed, hp
 end
 
-local function CreateMarble(ballType)
+local function CreateMarble(ballType, words)
     local def = BALL_TYPES[ballType]
     local marble = {
         id = nextMarbleId,
@@ -232,7 +278,18 @@ local function CreateMarble(ballType)
         generation = 0,
         ignoredBrick = nil,
         giantPiercing = false,
+        words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
     }
+    -- P11：注入词条（来自升级或 Boss 授予），逐个调用 apply() 改写 marble 行为。
+    if words then
+        for _, wordId in ipairs(words) do
+            local wordDef = BALL_WORDS[wordId]
+            if wordDef then
+                wordDef.apply(marble, wordDef)
+                marble.words[wordId] = true
+            end
+        end
+    end
     nextMarbleId = nextMarbleId + 1
     return marble
 end
@@ -247,11 +304,20 @@ local function EnqueueNextBall()
     table.insert(ballQueue, NextBallType())
 end
 
+-- P11：把 activeWords 规则表展开为有序词条 id 列表，供 CreateMarble 注入。
+local function CollectActiveWords()
+    local list = {}
+    for _, id in ipairs(WORD_IDS) do
+        if activeWords[id] then list[#list + 1] = id end
+    end
+    return list
+end
+
 local function LoadBalls()
     ballQueue = {}
     ballCycleIndex = 0
     for _ = 1, #BALL_ORDER do EnqueueNextBall() end
-    activeBall = CreateMarble(table.remove(ballQueue, 1))
+    activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
     EnqueueNextBall()
 end
 
@@ -276,6 +342,7 @@ ResetGame = function()
     upgradeChoices = nil
     upgradePicks = {}
     upgradeStacks = {}
+    activeWords = {}    -- P11：词条重置
     clearStreak = 0
     bricksBroken = 0
     BALL_TUNING.damageBonus = 0
@@ -347,12 +414,39 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         bricks = bricks,
         dead = false,
         frozen = 0,
+        freezeRatio = 0,    -- WO-13/P2：渲染层只读冻结比例（0..1），初始化为零
     }
     nextEnemyId = nextEnemyId + 1
     return enemy
 end
 
 SpawnWave = function()
+    -- P11：Boss 波（每 10 波一次）。Boss 是单支高血量巨型编队，拥有阶段机；
+    -- 仅规则（HP/阶段/vulnerable），视觉由表现层推迟消费 boss_phase 事件。
+    if wave % 10 == 0 then
+        local bossKey = "interceptor"
+        if not AircraftData[bossKey] then
+            -- 退化：取 AircraftData 中第一个可用键作为 Boss 外形。
+            for key in pairs(AircraftData) do bossKey = key; break end
+        end
+        local brickSize = GetBrickSize(wave)
+        local bossHp = 6 + math.floor(wave / 10) * 2
+        local enemy = CreateEnemy(bossKey, DW * 0.5 - 60, -120, brickSize, bossHp, 14)
+        if enemy then
+            enemy.isBoss = true
+            enemy.bossPhase = 1
+            enemy.vulnerable = false
+            enemy.swayAmp = 26
+            enemy.swayFreq = 0.22
+            veggies[#veggies + 1] = enemy
+            Emit("boss_spawn", {enemyId = enemy.id, wave = wave})
+            print("[Game] BOSS spawned at wave " .. wave)
+        end
+        Emit("wave_started", {wave = wave})
+        print("[Game] wave " .. wave .. " (BOSS) spawned")
+        return
+    end
+
     local pool = GetAvailableTypes(wave)
     if #pool == 0 then
         print("[Game] WARNING: empty aircraft pool")
@@ -431,6 +525,10 @@ local function CollideBrick(marble, rx, ry, rw, rh)
 end
 
 local function DamageBrick(enemy, brick, damage)
+    -- P11：Boss 在 vulnerable 阶段（phase 2）受到额外伤害，仅规则层加成。
+    if enemy.isBoss and enemy.vulnerable then
+        damage = (damage or 1) * 1.5
+    end
     brick.hp = brick.hp - (damage or 1)
     local data = AircraftData[enemy.aircraftKey]
     local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
@@ -453,6 +551,74 @@ local function DamageBrick(enemy, brick, damage)
         destroyed = destroyed,
         score = destroyed and data.score or 0,
     })
+end
+
+-- P11 五异常反应系统（规则层）：砖块可携带 burn/shock/corrode/freeze/volatile 五种异常状态，
+-- 由命中弹珠的词条或类型施加；状态间存在反应（冻结+灼烧=融穿、电击+冻结=碎裂）额外结算。
+-- 仅记录计时与伤害，视觉染色由表现层推迟消费 status 事件。
+local function ApplyBrickStatus(brick, status, duration, power)
+    brick.status = brick.status or {}
+    local cur = brick.status[status] or {time = 0, power = 0}
+    cur.time = math.max(cur.time, duration)
+    cur.power = math.max(cur.power, power or 1)
+    brick.status[status] = cur
+end
+
+local function TickBrickStatus(enemy, brick, dt)
+    if not brick.status then return end
+    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
+    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
+    local hasFreeze = (brick.status.freeze and brick.status.freeze.time > 0)
+    local hasBurn = (brick.status.burn and brick.status.burn.time > 0)
+    -- 反应：冻结 + 灼烧 = 融穿，每帧追加伤害并加速冻结消退。
+    if hasFreeze and hasBurn then
+        brick.hp = brick.hp - (0.6 + brick.status.burn.power) * dt
+        brick.status.freeze.time = brick.status.freeze.time - dt * 2
+        if brick.hp <= 0 and brick.alive then
+            brick.alive = false
+            bricksBroken = bricksBroken + 1
+            GainXp(XP_PER_BRICK)
+            Emit("status_reaction", {enemyId = enemy.id, kind = "melt", x = x, y = y})
+        end
+    elseif hasBurn then
+        brick.hp = brick.hp - (0.35 + brick.status.burn.power) * dt
+        if brick.hp <= 0 and brick.alive then
+            brick.alive = false
+            bricksBroken = bricksBroken + 1
+            GainXp(XP_PER_BRICK)
+        end
+    end
+    -- 腐蚀：持续削减该砖块有效护甲（这里直接换算为每秒小伤害）。
+    if brick.status.corrode and brick.status.corrode.time > 0 then
+        brick.hp = brick.hp - 0.25 * dt
+        if brick.hp <= 0 and brick.alive then
+            brick.alive = false
+            bricksBroken = bricksBroken + 1
+            GainXp(XP_PER_BRICK)
+        end
+    end
+    -- 易暴：寿终时引爆邻格（volatile），额外范围伤害由 base_hit 风格事件广播。
+    local volatile = brick.status.volatile
+    if volatile and volatile.time > 0 and not brick.alive and not volatile.detonated then
+        volatile.detonated = true
+        local radius = enemy.brickSize * (volatile.power or 1.5)
+        local radiusSq = radius * radius
+        for _, other in ipairs(enemy.bricks) do
+            if other.alive and other ~= brick then
+                local ox = enemy.x + (other.col - 0.5) * enemy.brickSize
+                local oy = enemy.y + (other.row - 0.5) * enemy.brickSize
+                local dx = ox - x; local dy = oy - y
+                if dx * dx + dy * dy <= radiusSq then
+                    DamageBrick(enemy, other, 1)
+                end
+            end
+        end
+        Emit("status_reaction", {enemyId = enemy.id, kind = "volatile", x = x, y = y})
+    end
+    for _, status in ipairs({"burn", "shock", "corrode", "freeze", "volatile"}) do
+        local s = brick.status[status]
+        if s and s.time > 0 then s.time = s.time - dt end
+    end
 end
 
 local function IsEnemyCleared(enemy)
@@ -748,7 +914,7 @@ end
 
 local function QueueNextBall()
     if #ballQueue > 0 then
-        activeBall = CreateMarble(table.remove(ballQueue, 1))
+        activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
     end
 end
 
@@ -850,6 +1016,24 @@ UpdateMarbles = function(dt)
                                 end
                                 if def.freezeDuration then enemy.frozen = def.freezeDuration + BALL_TUNING.iceBonus end
 
+                                -- P11：命中时按弹珠词条/类型施加异常状态（仅记录，视觉推迟）。
+                                if marble.words and marble.words.pierce then
+                                    ApplyBrickStatus(brick, "shock", 1.2, 1)
+                                end
+                                if marble.words and marble.words.chain then
+                                    ApplyBrickStatus(brick, "corrode", 2.0, 1)
+                                end
+                                if marble.words and marble.words.momentum then
+                                    ApplyBrickStatus(brick, "burn", 1.5, 1)
+                                end
+                                if marble.ballType == "giant" then
+                                    ApplyBrickStatus(brick, "volatile", 1.5, 1.5)
+                                end
+                                if def.freezeDuration then
+                                    ApplyBrickStatus(brick, "freeze",
+                                        def.freezeDuration + BALL_TUNING.iceBonus, 1)
+                                end
+
                                 if marble.ballType == "normal" then
                                     TrySplitNormal(marble, brick, pendingMarbles)
                                 elseif marble.ballType == "speed" then
@@ -901,6 +1085,36 @@ UpdateEnemies = function(dt)
         if enemy.frozen > 0 then
             enemy.frozen = math.max(0, enemy.frozen - dt)
             speedMultiplier = 0.3
+        end
+
+        -- WO-13/P2：暴露冻结比例给渲染层，用于顶点色冷色偏移与正面霜冻高光。
+        -- 基准为冰弹冻结时长 + 深寒涂层加成，渲染层只读此值，不得反向修改权威状态。
+        local freezeRef = BALL_TYPES.ice.freezeDuration + BALL_TUNING.iceBonus
+        enemy.freezeRatio = enemy.frozen > 0
+            and math.max(0, math.min(1, enemy.frozen / freezeRef))
+            or 0
+
+        -- P11：异常状态逐帧结算（DoT/反应/易暴），仅在砖块存活时推进。
+        for _, brick in ipairs(enemy.bricks) do
+            if brick.alive and brick.status then
+                TickBrickStatus(enemy, brick, dt)
+            end
+        end
+
+        -- P11：Boss 阶段机（仅规则）。按存活砖块比例切换阶段，阶段决定 vulnerability 窗口。
+        if enemy.isBoss then
+            local aliveCount = 0
+            for _, brick in ipairs(enemy.bricks) do
+                if brick.alive then aliveCount = aliveCount + 1 end
+            end
+            local ratio = aliveCount / math.max(1, #enemy.bricks)
+            local newPhase = ratio > 0.66 and 1 or (ratio > 0.33 and 2 or 3)
+            if newPhase ~= enemy.bossPhase then
+                enemy.bossPhase = newPhase
+                -- 阶段切换：phase 1 普通；phase 2 加速下移；phase 3 狂暴（越线伤害提升由 brickDmg 决定）。
+                enemy.vulnerable = (newPhase == 2)
+                Emit("boss_phase", {enemyId = enemy.id, phase = newPhase, vulnerable = enemy.vulnerable})
+            end
         end
 
         enemy.phase = enemy.phase + dt * enemy.swayFreq
@@ -1146,40 +1360,49 @@ function Game.DrainEvents()
 end
 
 function Game.GetSnapshot()
-    return {
-        state = gameState,
-        score = score,
-        highScore = highScore,
-        baseHp = baseHp,
-        maxBaseHp = BASE_HP,
-        wave = wave,
-        elapsed = elapsed,
-        playerLevel = playerLevel,
-        xp = xp,
-        xpToNext = xpToNext,
-        pendingLevelUps = pendingLevelUps,
-        upgradePicks = upgradePicks,
-        clearStreak = clearStreak,
-        bricksBroken = bricksBroken,
-        concurrentCount = #veggies,    -- WO-12/P6：当前同屏编队数（HUD 指标）
-        brickDmg = BALL_TUNING.brickDmg,
-        upgradeChoices = (gameState == "levelup" and upgradeChoices) or nil,
-        veggies = veggies,
-        marbles = marbles,
-        aiming = aiming,
-        aimX = aimX,
-        aimY = aimY,
-        aimTrajectory = BuildAimTrajectory(),
-        slingX = SLING_X,
-        slingY = SLING_Y,
-        maxPull = MAX_PULL,
-        activeBall = activeBall,
-        ballQueue = ballQueue,
-        ballOrder = BALL_ORDER,
-        width = DW,
-        height = DH,
-        dangerY = DANGER_Y,
-    }
+    -- WO-16/P9：复用常驻缓冲，仅每帧覆盖字段。aimTrajectory 是每帧重建的子表，
+    -- 调用方不得以持久引用持有本快照（下帧即被覆盖）。
+    local s = snapshotBuffer_ or {}
+    snapshotBuffer_ = s
+    s.state = gameState
+    s.score = score
+    s.highScore = highScore
+    s.baseHp = baseHp
+    s.maxBaseHp = BASE_HP
+    s.wave = wave
+    s.elapsed = elapsed
+    s.playerLevel = playerLevel
+    s.xp = xp
+    s.xpToNext = xpToNext
+    s.pendingLevelUps = pendingLevelUps
+    s.upgradePicks = upgradePicks
+    s.clearStreak = clearStreak
+    s.bricksBroken = bricksBroken
+    s.concurrentCount = #veggies    -- WO-12/P6：当前同屏编队数（HUD 指标）
+    s.brickDmg = BALL_TUNING.brickDmg
+    -- P11：已激活词条（只读列表，供 HUD 展示，不反向写规则）。
+    local words = {}
+    for _, id in ipairs(WORD_IDS) do
+        if activeWords[id] then words[#words + 1] = id end
+    end
+    s.activeWords = words
+    s.upgradeChoices = (gameState == "levelup" and upgradeChoices) or nil
+    s.veggies = veggies
+    s.marbles = marbles
+    s.aiming = aiming
+    s.aimX = aimX
+    s.aimY = aimY
+    s.aimTrajectory = BuildAimTrajectory()
+    s.slingX = SLING_X
+    s.slingY = SLING_Y
+    s.maxPull = MAX_PULL
+    s.activeBall = activeBall
+    s.ballQueue = ballQueue
+    s.ballOrder = BALL_ORDER
+    s.width = DW
+    s.height = DH
+    s.dangerY = DANGER_Y
+    return s
 end
 
 return Game

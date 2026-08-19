@@ -4,16 +4,28 @@
 
 ## 当前状态
 - 版本: 0.9.0
-- 进度: 太空飞机弹珠已实装肉鸽幸存者化最小完整循环——基地生命 100、敌机以编队整体下移且每个方块独立越线销毁扣血、XP/三选一升级暂停、局内强化池、持续收紧波次、P/Esc 暂停；敌方像素飞机重制为经典蟹形入侵者/箭头战斗机/圆盘飞碟/截击机剪影；世界反弹边缘渲染到 3D 背景层与 2D 设计空间边框；巨型车拖尾宽度锚定权威碰撞半径不再宽于本体；加速弹成长、追击和伤害均被削弱
-- 上次交付: 实装幸存者循环并削弱加速弹、重制老版像素飞机敌人、世界边界渲染、巨型拖尾校准、HP=100 与逐块越线扣血；LSP 0 Error、正式入口官方构建成功（本环境无 headless 运行器，受控 GLES 截图需用户在预览中确认）
+- 进度: 太空飞机弹珠已实装肉鸽幸存者化最小完整循环——基地生命 100、敌机以编队整体下移且每个方块独立越线销毁扣血、XP/三选一升级暂停、局内强化池、持续收紧波次、P/Esc 暂停；敌方像素飞机重制为经典蟹形入侵者/箭头战斗机/圆盘飞碟/截击机剪影；世界反弹边缘渲染到 3D 背景层与 2D 设计空间边框；巨型车拖尾宽度锚定权威碰撞半径不再宽于本体；加速弹成长、追击和伤害均被削弱。已追加 WO-13/16/14/15 与 P11/P12：冻结顶点色偏移+正面霜冻高光、粒子/碎片/飘字对象池+快照缓冲复用+Dispose 审计+FXAA 探测关闭、FEEDBACK_MAP 反馈映射、防线四位一体、RefreshProjection 封装、词条系统(贯穿/连锁/动量)、五异常反应(冻结+灼烧=融穿/易暴/腐蚀)、Boss 阶段机(每10波 vulnerable 窗口)、命中顿帧(hitStop 对玩法 dt 打折)、相机推近(orthoSize 下沉)、词条图标 HUD 展示
+- 上次交付: 实施 WO-13/16/14/15 + P11/P12；LSP 0 Error、正式入口官方构建成功、契约守门通过（grep 验证 Game 无渲染 API、渲染层无规则写、FXAA 仅探测且默认关闭）；词条图标 assets/Icons/*.png 已生成并接入 HUD
 
 ## 用户画像摘要
 - 使用简体中文沟通
 - 重视先做架构解耦，为后续 3D 开发降低迁移成本 [observed]
+- 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: 在真实触摸交互中复测升级三选一点击命中、暂停恢复与逐块越线扣血节奏；若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或升级卡片排版，不改变权威 HP、逐块扣血、XP 曲线和 9:16 共同投影契约
-- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`
+- likely_next_task: 在真实触摸交互中复测升级三选一点击命中、暂停恢复与逐块越线扣血节奏；Boss 波(每10波)与词条/异常反应的实机手感；若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或升级卡片排版，不改变权威 HP、逐块扣血、XP 曲线和 9:16 共同投影契约
+- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
+
+## 本批次新增避雷（WO-13/16/14/15/P11/P12）
+- 冻结表现契约：渲染层只读 `enemy.freezeRatio`（Game 快照，0..1），按此做顶点色冷色抬升与正面霜冻白高光；签名按 `freezeRatio*8` 量化档位触发重建，禁止每帧衰减都重建
+- 对象池契约：高频视觉(粒子/碎片/飘字)从 `particlePool/debrisPool/floatPool` 复用 table，禁止每帧 table.insert 新表；`Game.GetSnapshot()` 复用常驻 `snapshotBuffer_`，调用方不得跨帧持有引用
+- FXAA 契约：本环境不可启用 FXAA（ESSL shader cache 失败吞 3D 层），`ProbeFxaa()` 仅探测渲染路径是否声明 fxaa 命令，默认 `fxaaAvailable_=false` 且绝不强制启用
+- 反馈映射契约：`Presentation.FEEDBACK_MAP` 是事件→反馈的声明式表，新增反馈只登记映射+处理函数，所有处理只写 Presentation 瞬时状态，不触达规则层
+- 词条契约：`BALL_WORDS`(pierce/chain/momentum/lifesteal/heavy) 仅通过 `CreateMarble(words)` 注入行为标记；`activeWords` 由专属升级 apply 写入，新弹珠自动携带；视觉染色推迟到表现层消费 word 事件
+- 五异常契约：砖块 `status` 表记录 burn/shock/corrode/freeze/volatile，仅规则层结算 DoT/反应/易暴，视觉染色由表现层推迟消费 `status_reaction` 事件；冻结+灼烧=融穿、寿终 volatile=邻格引爆
+- Boss 契约：每 10 波 `SpawnWave` 生成单支高血量 Boss(`interceptor` 外形)，`bossPhase` 按存活砖块比例 1/2/3 切换，`phase 2` 置 `vulnerable` 受 1.5x 伤害；仅规则层，视觉消费 `boss_spawn`/`boss_phase` 事件
+- 顿帧契约：`Presentation.hitStop` 由大命中(base_hit/pierce/giant)触发，main.lua 对 `Game.Update` 的 dt 打折(×0.15)但表现层用真实 dt 推进震屏/闪光衰减
+- 相机推近契约：防线受创时 `camera_.orthoSize = 18.0 - baseBarrierFlash*1.6`，仍正交投影仅瞬时缩放，flash 归零自动复原，绝不变透视
 
 ## 恢复指令（新会话必执行）
 1. 读本文件 → 获取项目状态和避雷清单

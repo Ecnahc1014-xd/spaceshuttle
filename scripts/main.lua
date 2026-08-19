@@ -77,8 +77,12 @@ end
 ---@param eventData UpdateEventData
 function HandleUpdate(eventType, eventData)
     local dt = math.min(eventData:GetFloat("TimeStep"), 0.05)
-    Game.Update(dt)
     local snapshot = Game.GetSnapshot()
+    -- P12：命中顿帧——大命中期间对玩法 dt 打折，但表现层仍用真实 dt 推进震屏/闪光衰减。
+    local hitStop = Presentation.GetSnapshot().hitStop or 0
+    local gameDt = dt
+    if hitStop > 0 then gameDt = dt * 0.15 end
+    Game.Update(gameDt)
     Presentation.Update(dt, snapshot, Game.DrainEvents())
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()

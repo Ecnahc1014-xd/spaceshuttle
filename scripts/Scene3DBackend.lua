@@ -25,6 +25,8 @@ local dangerBandMaterial_ = nil
 local skyNode_ = nil
 local starNode_ = nil
 local starFields_ = {}
+-- P11：词条图标纹理（程序化生成于 assets/Icons），激活时于 HUD 左下展示。
+local wordIconTex_ = {}
 local CleanupFailedInit
 local ReleaseScene
 local vg_ = nil
@@ -46,6 +48,32 @@ local viewportLeft_ = 0
 local viewportTop_ = 0
 local viewportWidth_ = 0
 local viewportHeight_ = 0
+
+-- WO-16/P9：FXAA 探测标志。当前验证环境不可启用 FXAA（ESSL shader cache 失败会吞掉整层 3D），
+-- 故默认 fxaaAvailable=false；仅当渲染路径真实存在 FXAA 命令且启用不报错时才置真。
+local fxaaAvailable_ = false
+
+-- WO-16/P9：FXAA 能力探测。尝试在渲染路径中定位 FXAA 后处理命令，
+-- 任何异常或缺失都判定不可用，保持关闭以保全 3D 画面（绝不强制启用）。
+local function ProbeFxaa()
+    local ok, renderPath = pcall(function() return renderer:GetRenderPath() end)
+    if not ok or not renderPath then
+        fxaaAvailable_ = false
+        return
+    end
+    local hasFxaa = false
+    local ok2, commands = pcall(function() return renderPath:GetCommands() end)
+    if ok2 and commands then
+        for _, cmd in ipairs(commands) do
+            if cmd and cmd.tag and string.lower(cmd.tag) == "fxaa" then
+                hasFxaa = true
+                break
+            end
+        end
+    end
+    fxaaAvailable_ = hasFxaa
+    print("[Scene3DBackend] FXAA probe -> available=" .. tostring(fxaaAvailable_))
+end
 
 CleanupFailedInit = function()
     if vg_ then
@@ -582,6 +610,27 @@ local function DrawHud(ctx, game)
         string.format("LV %02d", game.playerLevel), 9, ACID.brightPurple,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelBar(ctx, game.width * 0.5 - 60, 74, 120, 4, xpRatio, ACID.paleBlue)
+
+    -- P11：激活词条图标条（HUD 左下），只读快照 activeWords，不反向写规则。
+    local words = game.activeWords or {}
+    local iconSize = 26
+    for i, wordId in ipairs(words) do
+        local tex = wordIconTex_[wordId]
+        local ix = 10 + (i - 1) * (iconSize + 6)
+        local iy = HUD_HEIGHT - iconSize - 6
+        if tex then
+            nvgBeginPath(ctx)
+            nvgRect(ctx, ix, iy, iconSize, iconSize)
+            nvgFillPaint(ctx, nvgImagePattern(ctx, ix, iy, iconSize, iconSize, 0, tex, 1))
+            nvgFill(ctx)
+        else
+            nvgBeginPath(ctx)
+            nvgRect(ctx, ix, iy, iconSize, iconSize)
+            nvgStrokeColor(ctx, nvgRGBA(184, 133, 255, 200))
+            nvgStrokeWidth(ctx, 1)
+            nvgStroke(ctx)
+        end
+    end
 end
 
 local function DrawMenu(ctx, game)
@@ -881,6 +930,7 @@ function Backend.Init(renderHandlerName)
     renderer:SetViewport(0, viewport_)
     renderer.hdrRendering = true
     UpdateProjectionMetrics(true)
+    ProbeFxaa()    -- WO-16/P9：FXAA 探测（本环境应判定不可用并保持关闭，保全 3D 画面）
 
     vg_ = nvgCreate(1)
     if not vg_ then
@@ -895,6 +945,21 @@ function Backend.Init(renderHandlerName)
         vg_ = nil
         CleanupFailedInit()
         return false
+    end
+
+    -- P11：加载词条图标（程序化 PNG，路径相对 assets 根），失败不阻断主流程。
+    local wordIconNames = {
+        pierce = "Icons/word_pierce.png",
+        chain = "Icons/word_chain.png",
+        momentum = "Icons/word_momentum.png",
+    }
+    for id, filePath in pairs(wordIconNames) do
+        local tex = nvgCreateImage(vg_, filePath, 0)
+        if tex and tex ~= 0 then
+            wordIconTex_[id] = tex
+        else
+            print("[Scene3DBackend] WARN: missing word icon " .. filePath)
+        end
     end
 
     if not Renderer3D.Init(scene_) then
@@ -922,6 +987,17 @@ function Backend.Resize()
     UpdateProjectionMetrics(true)
 end
 
+-- WO-15/P2：封装投影刷新。相机震屏位移后必须由后端统一刷新当前投影 offset/scale，
+-- 使 NanoVG 轨迹、瞄准输入与空间反馈共享同一组参数，禁止各自重算或把屏幕坐标直传规则层。
+function Backend.RefreshProjection()
+    UpdateProjectionMetrics(false)
+end
+
+-- WO-15/P2：投影参数只读暴露，供表现层在不重算的前提下复用（如主调用已刷新）。
+function Backend.GetProjection()
+    return projectionOffsetX_, projectionOffsetY_, projectionScaleX_, projectionScaleY_
+end
+
 function Backend.IsInsideGameCanvas(screenX, screenY)
     return screenX >= viewportLeft_
         and screenX < viewportLeft_ + viewportWidth_
@@ -946,6 +1022,12 @@ function Backend.Render(gameSnapshot, presentationSnapshot)
             math.sin(gameSnapshot.elapsed * 97) * shake * 0.10,
             math.cos(gameSnapshot.elapsed * 79) * shake * 0.08,
             math.sin(gameSnapshot.elapsed * 61) * shake * 0.035)
+        -- P12：防线受创时的相机推近（orthoSize 下沉），与四位一体反馈同步。
+        -- 仍正交投影，仅瞬时缩放视野，不引入透视近大远小。
+        if camera_ then
+            local pushIn = (presentationSnapshot.baseBarrierFlash or 0) * 1.6
+            camera_.orthoSize = 18.0 - pushIn
+        end
         -- 车辆由当前相机投影，NanoVG 轨迹与输入也必须消费同一投影。
         UpdateProjectionMetrics(false)
     end

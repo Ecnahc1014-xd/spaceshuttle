@@ -126,8 +126,18 @@ local function CreateMaterial(rgb, metallic, roughness, emissive)
     return material
 end
 
+-- WO-16/P9：Dispose 审计。所有由本渲染层创建的 Object 子类（Node/Component）
+-- 在移除时必须显式 Dispose 立即释放，避免拖到 GC。RemoveNode 仅移除并释放根节点；
+-- 子组件随节点销毁链统一释放，但 CustomGeometry/StaticModel 等需显式 Dispose。
 local function RemoveNode(node)
-    if node then node:Remove() end
+    if not node then return end
+    node:Remove()
+    node:Dispose()
+end
+
+-- 显式释放单个模型组件（碎片 StaticModel / 敌人 CustomGeometry）。
+local function DisposeComponent(component)
+    if component then component:Dispose() end
 end
 
 local function FrozenColor(rgb, frozen)
@@ -150,8 +160,10 @@ local function GetBrickColor(enemy, brick, visualCatalog)
 end
 
 local function GetEnemySignature(enemy)
-    local parts = {enemy.aircraftKey, enemy.frozen > 0 and "F" or "N"}
-    -- HP 是隐藏规则状态，不进入可见材质或几何签名。
+    -- WO-13/P2：冻结按比例量化进签名，使冷色偏移/霜冻高光随冻结态变化触发重建，
+    -- 但量化档位足够粗（以避免每次帧级冻结衰减都重建）。HP 仍不进入签名。
+    local freezeBucket = math.floor((enemy.freezeRatio or 0) * 8 + 0.5)
+    local parts = {enemy.aircraftKey, "F" .. tostring(freezeBucket)}
     for _, brick in ipairs(enemy.bricks) do
         parts[#parts + 1] = brick.alive and "1" or "0"
     end
@@ -223,6 +235,10 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     local alive = {}
     local cellColors = {}
 
+    -- WO-13/P2：冻结顶点色偏移 + 正面霜冻高光。freezeRatio 来自 Game 快照（0..1），
+    -- 渲染层只读，按此比例把基础色向冷白方向抬升，并在朝向镜头的正面叠加霜冻白。
+    local freezeRatio = enemy.freezeRatio or 0
+
     for _, brick in ipairs(enemy.bricks) do
         if brick.alive then
             local key = tostring(brick.col) .. ":" .. tostring(brick.row)
@@ -260,9 +276,27 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
                         local z = corner[3] < 0 and frontZ or backZ
                         vertices[i] = Vector3(x, y, z)
                     end
+                    -- 基础色按面朝向因子着色（正面更亮、背面更暗）。
+                    local color = ShadeColor(rgb, face.tint)
+                    -- 冻结色偏移：整体向冷白抬升，幅度随 freezeRatio。
+                    if freezeRatio > 0 then
+                        color = Color(
+                            math.min(1.0, color.r + freezeRatio * 0.30),
+                            math.min(1.0, color.g + freezeRatio * 0.16),
+                            math.min(1.0, color.b + freezeRatio * 0.10),
+                            1.0)
+                        -- 朝向镜头的正面（+Z）追加霜冻白高光，强化"被冰封"立体感。
+                        if face.neighbor[3] == 1 then
+                            color = Color(
+                                math.min(1.0, color.r + freezeRatio * 0.42),
+                                math.min(1.0, color.g + freezeRatio * 0.42),
+                                math.min(1.0, color.b + freezeRatio * 0.38),
+                                1.0)
+                        end
+                    end
                     EmitVoxelFace(geometry, edgeVertices,
                         vertices[1], vertices[2], vertices[3], vertices[4],
-                        face.normal, ShadeColor(rgb, face.tint), edgeWidth)
+                        face.normal, color, edgeWidth)
                 end
             end
         end
