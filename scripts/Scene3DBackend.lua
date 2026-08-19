@@ -564,8 +564,10 @@ local function DrawHud(ctx, game)
     DrawHalo(ctx, game.width * 0.5, 38, 29, 190)
     DrawPixelText(ctx, game.width * 0.5, 22, string.format("WAVE %02d", game.wave), 14,
         ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 48, "VECTOR LOCK", 8, ACID.paleBlue,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- WO-11/P8：节奏指标（读 P6 快照），置于 HUD 安全带内不干扰读数。
+    DrawPixelText(ctx, game.width * 0.5, 48,
+        string.format("X%d  COMBO %d", game.concurrentCount or 0, game.clearStreak or 0),
+        8, ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     DrawPixelText(ctx, game.width - 12, 8, "BASE INTEGRITY", 9, ACID.muted,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -660,6 +662,20 @@ local function DrawGameOver(ctx, game)
         string.format("SCORE %d  /  BEST %d  /  WAVE %02d",
             game.score, game.highScore, game.wave), 13, ACID.paleBlue,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- WO-11/P8：结算回顾面板（只读快照统计，强化幸存者正反馈）。
+    DrawTechPanel(ctx, 24, 446, game.width - 48, 76, ACID.deepPurple, ACID.paleBlue)
+    DrawPixelText(ctx, 40, 458, string.format("到达波次 %02d", game.wave), 12, ACID.paleBlue,
+        NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, 40, 478, string.format("等级 LV %02d", game.playerLevel), 12, ACID.brightPurple,
+        NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, 40, 498, string.format("击碎砖块 %d", game.bricksBroken or 0), 12, ACID.coldBlue,
+        NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 40, 458, string.format("强化 %d 次", #(game.upgradePicks or {})), 12,
+        ACID.paleBlue, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 40, 478, string.format("连击 %d", game.clearStreak or 0), 12,
+        ACID.brightPurple, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 40, 498, string.format("存活 %.0fs", game.elapsed or 0), 12,
+        ACID.coldBlue, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawTechPanel(ctx, 0, 530, game.width, 66, ACID.deepPurple, ACID.paleBlue)
     DrawPixelText(ctx, game.width * 0.5, 548, "点击重新建立链接", 18,
         ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -677,8 +693,24 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, x + cardW * 0.5, y + 42, choice.name, 19, ACID.paleBlue,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- WO-11/P8：稀有度角标 + 叠层标记（只读快照，不计算规则）。
+    local rarityTag = choice.rarity == "rare" and "RARE" or (choice.rarity == "epic" and "EPIC" or "")
+    if rarityTag ~= "" then
+        DrawPixelText(ctx, x + cardW - 8, y + 16, rarityTag, 8, ACID.brightPurple,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    end
+    local stacks = choice.stacks or 0
+    if stacks > 0 then
+        DrawPixelText(ctx, x + 8, y + 16, string.format("Lv%d/%d", stacks, choice.maxStacks or 0), 8,
+            ACID.coldBlue, NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
+    end
+    -- WO-10/P5：delta 预览（当前→升级后数值差）。
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 60,
+        choice.value or "", 11, choice.tradeoff and ACID.brightPurple or ACID.paleBlue,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 44,
-        "点击装备", 9, ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        choice.tradeoff and "取舍强化" or "点击装备", 9, ACID.muted,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     local desc = choice.desc
     local fontSize = 11
     local lines = {}

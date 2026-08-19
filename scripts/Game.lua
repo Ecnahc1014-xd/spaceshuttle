@@ -102,28 +102,54 @@ local xp = 0
 local xpToNext = BASE_XP_TO_NEXT
 local pendingLevelUps = 0          -- 待处理的升级次数（暂停选强化）
 local upgradeChoices = nil         -- 当前可选的三选一强化
-local upgradePicks = {}            -- 已选强化的累计效果
+local upgradePicks = {}            -- 已选强化的累计效果（id 列表，可重复）
+local upgradeStacks = {}           -- 已选强化各 id 的层数（WO-09/P5 叠加上限判定）
 local clearStreak = 0              -- 连续清空飞船的连击（经验加成）
+local bricksBroken = 0            -- 累计击碎砖块数（WO-11/P8 gameover 回顾）
 
--- 幸存者升级强化池：每个强化可被重复选择，效果线性叠加。
--- apply() 修改 Game 内部的本作用域变量（已在上方声明）。
+-- 幸存者升级强化池（WO-09/P5）：
+-- weight 抽卡权重；rarity 稀有度（common/rare/epic）；maxStacks 叠加上限；
+-- tradeoff 是否抉择型（apply 同时改正负）；value 单次增量（用于升级卡 delta 预览）。
+-- apply(stacks) 接收当前已选层数，支持边际递减（如 damage 每层略减）。
+-- apply() 只改 BALL_TUNING / baseHp（规则层），UI 只读 GetSnapshot().upgradeChoices。
 local UPGRADE_POOL = {
     { id = "damage", name = "穿甲弹头", desc = "所有弹珠伤害 +1",
-      apply = function() BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1 end },
+      weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1",
+      apply = function(stacks) BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1 end },
     { id = "giant", name = "重型化", desc = "巨型弹珠贯穿范围 +1 格",
-      apply = function() BALL_TUNING.giantArea = BALL_TUNING.giantArea + 1.0 end },
+      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 格",
+      apply = function(stacks) BALL_TUNING.giantArea = BALL_TUNING.giantArea + 1.0 end },
     { id = "split", name = "裂变核", desc = "基础弹分裂概率 +3%",
-      apply = function() BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.03 end },
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+3%",
+      apply = function(stacks) BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.03 end },
     { id = "speed", name = "疾速引擎", desc = "弹珠飞行速度 +8%",
-      apply = function() BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.08 end },
+      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8%",
+      apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.08 end },
     { id = "ice", name = "深寒涂层", desc = "冰冻时长 +1.2 秒",
-      apply = function() BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+1.2s",
+      apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
     { id = "repair", name = "前线维修", desc = "立即恢复 25 点基地生命",
-      apply = function() baseHp = math.min(BASE_HP, baseHp + 25) end },
+      weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+25 HP",
+      apply = function(stacks) baseHp = math.min(BASE_HP, baseHp + 25) end },
     { id = "armor", name = "装甲强化", desc = "越线方块伤害 -1（最低 1）",
-      apply = function() BALL_TUNING.brickDmg = math.max(1, BALL_TUNING.brickDmg - 1) end },
+      weight = 1, rarity = "common", maxStacks = 2, tradeoff = false, value = "-1 伤害",
+      apply = function(stacks) BALL_TUNING.brickDmg = math.max(1, BALL_TUNING.brickDmg - 1) end },
     { id = "xp", name = "数据回收", desc = "经验获取 +20%",
-      apply = function() BALL_TUNING.xpMul = BALL_TUNING.xpMul + 0.2 end },
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+20%",
+      apply = function(stacks) BALL_TUNING.xpMul = BALL_TUNING.xpMul + 0.2 end },
+    -- WO-09/P5 抉择型：同时改正负规则变量，高风险高回报（仍只改 BALL_TUNING/baseHp）。
+    { id = "glass_cannon", name = "玻璃 cannon", desc = "伤害 +2 但越线伤害 +1",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "伤害+2 / 扣血+1",
+      apply = function(stacks)
+          BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 2
+          BALL_TUNING.brickDmg = BALL_TUNING.brickDmg + 1
+      end },
+    { id = "overclock", name = "超载核心", desc = "速度 +15% 但基地 -8",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "速度+15% / HP-8",
+      apply = function(stacks)
+          BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
+          baseHp = math.max(1, baseHp - 8)
+      end },
 }
 
 local veggies = {}
@@ -249,7 +275,9 @@ ResetGame = function()
     pendingLevelUps = 0
     upgradeChoices = nil
     upgradePicks = {}
+    upgradeStacks = {}
     clearStreak = 0
+    bricksBroken = 0
     BALL_TUNING.damageBonus = 0
     BALL_TUNING.giantArea = 0
     BALL_TUNING.splitBonus = 0
@@ -412,6 +440,7 @@ local function DamageBrick(enemy, brick, damage)
     if destroyed then
         brick.alive = false
         score = score + data.score
+        bricksBroken = bricksBroken + 1
         GainXp(XP_PER_BRICK)
     end
 
@@ -452,14 +481,48 @@ local function GainXp(amount)
 end
 
 local function RollUpgradeChoices()
-    local pool = {}
-    for _, u in ipairs(UPGRADE_POOL) do table.insert(pool, u) end
+    -- WO-09/P5：加权抽卡 + 叠加上限 + 稀有保底。
     upgradeChoices = {}
+    local sinceRare = 0  -- 连续未出 rare+ 的次数，用于保底
     for _ = 1, 3 do
-        if #pool == 0 then break end
-        local idx = RandomInt(1, #pool)
-        table.insert(upgradeChoices, pool[idx])
-        table.remove(pool, idx)
+        -- 构造可用候选（未达 maxStacks）
+        local avail = {}
+        local totalW = 0
+        for _, u in ipairs(UPGRADE_POOL) do
+            local stacks = upgradeStacks[u.id] or 0
+            if stacks < u.maxStacks then
+                -- 后期无意义项（repair/xp 已高叠）轻微降权
+                local w = u.weight
+                if u.id == "repair" and stacks >= 4 then w = w * 0.4 end
+                if u.id == "xp" and stacks >= 4 then w = w * 0.5 end
+                avail[#avail + 1] = {u = u, w = w}
+                totalW = totalW + w
+            end
+        end
+        if #avail == 0 then break end
+
+        -- 保底：连续 6 次未出 rare+，本次强制从 rare+ 候选抽
+        local picked
+        if sinceRare >= 6 then
+            local rares = {}
+            local rw = 0
+            for _, a in ipairs(avail) do
+                if a.u.rarity ~= "common" then rares[#rares + 1] = a; rw = rw + a.w end
+            end
+            if #rares > 0 then
+                local r = Random() * rw
+                for _, a in ipairs(rares) do r = r - a.w; if r <= 0 then picked = a.u; break end end
+                picked = picked or rares[1].u
+            end
+        end
+        if not picked then
+            local r = Random() * totalW
+            for _, a in ipairs(avail) do r = r - a.w; if r <= 0 then picked = a.u; break end end
+            picked = picked or avail[1].u
+        end
+
+        if picked.rarity ~= "common" then sinceRare = 0 else sinceRare = sinceRare + 1 end
+        upgradeChoices[#upgradeChoices + 1] = picked
     end
 end
 
@@ -468,10 +531,12 @@ function Game.PickUpgrade(index)
     if gameState ~= "levelup" or not upgradeChoices then return end
     local choice = upgradeChoices[index]
     if choice then
-        choice.apply()
+        local stacks = upgradeStacks[choice.id] or 0
+        choice.apply(stacks)   -- 传入当前层数，支持边际递减
+        upgradeStacks[choice.id] = stacks + 1
         table.insert(upgradePicks, choice.id)
-        Emit("upgrade_picked", {id = choice.id, name = choice.name})
-        print("[Game] upgrade picked: " .. choice.name)
+        Emit("upgrade_picked", {id = choice.id, name = choice.name, stacks = stacks + 1})
+        print("[Game] upgrade picked: " .. choice.name .. " (stacks=" .. (stacks + 1) .. ")")
     end
     pendingLevelUps = pendingLevelUps - 1
     upgradeChoices = nil
@@ -486,8 +551,14 @@ end
 function Game.GetUpgradeChoices()
     if gameState ~= "levelup" then return nil end
     local list = {}
+    -- WO-10/P5：升级卡 delta 预览字段，UI 只读展示，不在此做规则计算。
     for _, c in ipairs(upgradeChoices) do
-        table.insert(list, {id = c.id, name = c.name, desc = c.desc})
+        table.insert(list, {
+            id = c.id, name = c.name, desc = c.desc,
+            value = c.value, rarity = c.rarity,
+            stacks = upgradeStacks[c.id] or 0, maxStacks = c.maxStacks,
+            tradeoff = c.tradeoff,
+        })
     end
     return list
 end
@@ -894,14 +965,32 @@ UpdateReload = function()
 end
 
 UpdateWaveLogic = function(dt)
-    -- 幸存者节奏：按波次推进持续涌出，间隔随波次收紧，受同屏上限约束。
+    -- 幸存者节奏（WO-12/P6）：持续涌出，间隔随波次收紧并呈「阶段呼吸」，
+    -- 受同屏上限约束。升级期间（pendingLevelUps>0）不刷怪，既有编队继续下移。
     if gameState ~= "playing" or pendingLevelUps > 0 then return end
 
     waveCooldown = waveCooldown - dt
     if waveCooldown > 0 then return end
 
-    local interval = math.max(BALANCE.waveIntervalMin, BALANCE.waveInterval - (wave - 1) * BALANCE.waveTightenStep)
-    if #veggies < BALANCE.maxConcurrent then
+    -- 阶段呼吸：每 phaseLength 波额外收紧，每 breatherEvery 波回弹 relax 制造喘息。
+    local interval = BALANCE.waveInterval
+        - (wave - 1) * BALANCE.waveTightenStep
+        - math.floor(wave / BALANCE.phaseLength) * BALANCE.phaseTightenBonus
+    if wave % BALANCE.breatherEvery == 0 then
+        interval = interval + BALANCE.breatherRelax
+    end
+    interval = math.max(BALANCE.waveIntervalMin, interval)
+
+    -- 动态同屏上限：每 8 波 +1（受 maxConcurrent 基准，护栏上限由 P9 帧预算约束）。
+    local concurrentCap = BALANCE.maxConcurrent + math.floor(wave / 8)
+
+    -- 安全窗口：场上已清空且距上次 spawn 超过 safeGap 时，给一次短喘息不强制刷。
+    if #veggies == 0 then
+        local sinceClear = (BALANCE.waveInterval - waveCooldown)
+        if sinceClear < BALANCE.safeGap then return end
+    end
+
+    if #veggies < concurrentCap then
         wave = wave + 1
         SpawnWave()
     end
@@ -1071,6 +1160,8 @@ function Game.GetSnapshot()
         pendingLevelUps = pendingLevelUps,
         upgradePicks = upgradePicks,
         clearStreak = clearStreak,
+        bricksBroken = bricksBroken,
+        concurrentCount = #veggies,    -- WO-12/P6：当前同屏编队数（HUD 指标）
         brickDmg = BALL_TUNING.brickDmg,
         upgradeChoices = (gameState == "levelup" and upgradeChoices) or nil,
         veggies = veggies,
