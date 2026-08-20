@@ -363,7 +363,7 @@ function Presentation.GetSnapshot()
     return {
         screenShake = screenShake,
         hitStop = hitStop,    -- P12：主循环读取，对玩法 dt 打折实现顿帧
-        waveBannerTimer = waveBannerTimer,
+        waveBannerTimer = waveBannerTimer,    -- A2：波次横幅入场计时（秒，1.8 起递减）
         particles = particles,
         floatTexts = floatTexts,
         marbleTrails = marbleTrails,

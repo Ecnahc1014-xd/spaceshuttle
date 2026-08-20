@@ -5,6 +5,16 @@
 
 local M = {}
 
+-- A3 敌方行为分化：每类飞机的体感性格（仅规则参数，渲染层只读快照消费）。
+-- swayAmp/swayFreq 控制横摆；descentMul 在统一下落速度上的额外偏置（>1 更压迫）；
+-- phaseBias/agility 控制节奏与反应质感；accent 为该型主强调色（表现层复用，不表达 HP）。
+M.behavior = {
+    scout =       { swayAmp = 20, swayFreq = 0.45, descentMul = 0.92, agility = 0.6, accent = {120, 124, 150} },
+    striker =     { swayAmp = 12, swayFreq = 0.85, descentMul = 1.18, agility = 1.0, accent = {150, 78, 54} },
+    bomber =      { swayAmp = 28, swayFreq = 0.30, descentMul = 0.78, agility = 0.4, accent = {150, 86, 60} },
+    interceptor = { swayAmp = 16, swayFreq = 1.05, descentMul = 1.30, agility = 1.4, accent = {150, 84, 60} },
+}
+
 -- scout：经典蟹形入侵者（12×9）
 M.scout = {
     hp = 1,

@@ -86,6 +86,8 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.9.2: A 组纯代码打磨（用户要求先做可感知度提升，音频/美术等需生成 MCP 的 B 组与需用户放宽酸性 UI 契约的 C 组暂缓）。A3 敌人行为分化：`AircraftPixelData.behavior` 增加 scout/striker/bomber/interceptor 的 swayAmp/swayFreq/descentMul/agility/accent，`Game.CreateEnemy` 消费并加随机抖动。A1/A2 四模态 EaseOutCubic 淡入（`ModalIntro`/`nvgGlobalAlpha`）+ 波次横幅 `DrawWaveBanner` 顶部滑入淡出。A4 `DrawMarbleTrails` 按 `SLOT_COLORS[ballType]` 投影四色拖尾。A5 `DrawWaveThemeTint` 酸性风格内按波次色相旋转低 alpha 背景氛围。A6 `FindBoss`/`DrawBossPhaseBar` 阶段条 + 危险带 Boss 波常驻紫色警示。LSP 0 Error、官方构建成功、契约守门通过（Game 无渲染 API、表现层无 Game 写回、FXAA 仅探测默认关闭）。提交 2c2a37c。
+- v0.9.1: WO-13/16/14/15 + P11/P12 实装。冻结顶点色偏移+正面霜冻高光、粒子/碎片/飘字对象池+快照缓冲复用+Dispose 审计+FXAA 探测关闭、FEEDBACK_MAP 反馈映射、防线四位一体、RefreshProjection 封装、词条系统(贯穿/连锁/动量)、五异常反应(冻结+灼烧=融穿/易暴/腐蚀)、Boss 阶段机(每10波 vulnerable 窗口)、命中顿帧(hitStop 对玩法 dt 打折)、相机推近(orthoSize 下沉)、词条图标 HUD 展示。LSP 0 Error、官方构建成功、契约守门通过。提交 cfe55e7 + 记忆 6927a72。
 - v0.9.0: 肉鸽幸存者化最小完整循环实装。基地生命改 100；敌方编队整体下移、每个存活方块独立越线销毁并扣 `BRICK_BASE_DAMAGE`；XP（方块+1/清机+8 与连击）跨级累计并冻结，三选一强化池 `UPGRADE_POOL`（穿甲/重型/裂变/疾速/深寒/维修/装甲/数据回收）只改规则变量；持续涌出波次随波次收紧并受 `MAX_CONCURRENT` 上限约束；P/Esc 暂停、`levelup` 暂停选强化并暴露 `upgradeChoices` 给 UI；世界反弹边缘渲染到 3D 背景层与 2D 设计空间边框；巨型车拖尾宽度锚定权威半径不再宽于本体；加速弹 `speedBoost` 1.06/`maxSpeed` 900/`maxDamage` 2 且追击节流 0.45s；敌方 occupied cells 重制为经典蟹形入侵者/箭头战机/圆盘飞碟/截击机像素剪影。LSP 0 Error、正式入口官方构建成功（本环境无 headless 运行器，受控 GLES 截图需用户在预览中确认）。
 - v0.8.5: 修复瞄准轨迹遗漏车辆中心首点、短距离采样和墙边折返点可读性，改为 140 个 8 单位采样；相机震屏位移后即时刷新 `WorldToScreenPoint` 标定，使 3D 车辆、NanoVG 轨迹与输入逆映射继续共享当前投影。修复二维飞机 occupied-cell 邻接误用于 Z 方向，恢复每块正反端面，同时保留 XY 内部面剔除。巨型车继续由半径 30 对普通半径 20 形成安全的 1.5×。LSP 0 Error、正式入口官方构建成功、240 帧 `lua_errors=0`；受控截图 `fix_controlled_aim.png` 与 `fix_controlled_giant.png` 通过。
 - v0.8.4: 从用户参考截图中的飞机区域采样出独立 `AircraftPixelData`，建立 scout/striker/bomber/interceptor 四套低像素 occupied-cell 网格。`Game`、`VisualCatalog`、备用 2D 后端、`Presentation` 和 `Renderer3D` 全链路改用 `aircraftKey`；3D 每个 alive cell 生成一个真正可破坏体素，相邻格剔除内部面并与深色棱线合并在单敌人双 section `CustomGeometry` 中。修正 voxel gap 只缩小方块、不改变规则中心间距。LSP 0 Error、官方构建成功，受控 GLES 游戏态截图确认飞机方块完整度与场地/UI 比例可读，`lua_errors=0`。
@@ -103,12 +105,14 @@
 - v0.2.0: 分离核心玩法、表现状态、视觉目录、NanoVG 后端和应用编排。
 
 ## 验证记录
-- Lua LSP v0.9.0：工作区 Error 0（9 个 Lua 文件，含临时验证脚本删除后）。
-- 官方 build v0.9.0：成功，正式入口 `main.lua`，单机模式。
-- Runtime v0.9.0：本环境无 headless 运行器（`run-lua-validate`/`run-lua-headless` 不可用），改为 LSP 0 Error + 官方构建成功 + 受控规则脚本逻辑自审作为验证栏；实机 GLES 截图需用户在预览中确认升级面板、逐块越线与世界边界表现。
+- Lua LSP v0.9.2：工作区 Error 0（8 个 Lua 文件）。
+- 官方 build v0.9.2：成功，正式入口 `main.lua`，单机模式。
+- Runtime v0.9.2：本环境无 headless 运行器（`run-lua-validate`/`run-lua-headless` 不可用），改以 LSP 0 Error + 官方构建成功 + 契约 grep 守门作为验证栏；实机 GLES 截图需用户在预览中确认模态缓动、波次横幅、拖尾异色、主题渐变与 Boss 阶段条表现。
 - 当前 46° 投影由运行时 `WorldToScreenPoint()` 标定，并在相机震屏位移后刷新；禁止硬编码旧 offset/scale。
 
 ## 下一步
-1. 在真实触摸交互中复测升级三选一点击命中、P/Esc 暂停恢复与逐块越线扣血节奏。
-2. 若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或升级卡片排版，不改权威 HP、逐块扣血、XP 曲线与 9:16 共同投影契约。
-3. 保持 HUD 与规则层解耦，继续让 3D 后端只消费两个 snapshot 与 `Game.GetSnapshot().upgradeChoices`。
+1. B 组（需生成 MCP 就绪）：音效 SFX/BGM、角色与图标美术资源、更多 enemy/accent 调色与粒子密度——这些需 text_to_sound_effect/text_to_music/生成图像类 MCP，当前会话不可用，须待工具就绪再批量推进。
+2. C 组（需用户决策）：是否放宽酸性 UI 契约以追求“原神级”美观（圆角卡片/柔和渐变/明亮配色）、是否强制开启 FXAA/后效——当前受合同约束与验证环境 ESSL shader cache 限制，不得单方面放宽。
+3. 在真实触摸交互中复测升级三选一点击命中、P/Esc 暂停恢复与逐块越线扣血节奏；Boss 波（每 10 波）与词条/异常反应的实机手感。
+4. 若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或升级卡片排版，不改权威 HP、逐块扣血、XP 曲线与 9:16 共同投影契约。
+5. 保持 HUD 与规则层解耦，继续让 3D 后端只消费两个 snapshot 与 `Game.GetSnapshot().upgradeChoices`。

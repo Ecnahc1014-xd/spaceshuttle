@@ -53,6 +53,11 @@ local viewportHeight_ = 0
 -- 故默认 fxaaAvailable=false；仅当渲染路径真实存在 FXAA 命令且启用不报错时才置真。
 local fxaaAvailable_ = false
 
+-- A1/A2：模态与波次横幅的入场动画计时。记录当前玩法 state 的进入时刻，
+-- 渲染时据此计算淡入/滑入进度，避免硬切（不破坏酸性风格，纯透明度/位移 easing）。
+local uiState_ = nil
+local uiStateEnter_ = 0
+
 -- WO-16/P9：FXAA 能力探测。尝试在渲染路径中定位 FXAA 后处理命令，
 -- 任何异常或缺失都判定不可用，保持关闭以保全 3D 画面（绝不强制启用）。
 local function ProbeFxaa()
@@ -512,6 +517,25 @@ local function DrawPixelBar(ctx, x, y, width, height, value, color)
     end
 end
 
+-- A1/A2：缓动与模态入场计时。
+local function EaseOutCubic(t)
+    t = math.max(0, math.min(1, t))
+    return 1 - (1 - t) * (1 - t) * (1 - t)
+end
+
+local function UpdateUiState(game)
+    if game.state ~= uiState_ then
+        uiState_ = game.state
+        uiStateEnter_ = game.elapsed
+    end
+end
+
+-- 模态入场进度（0..1），0.28s 缓入。返回 alpha 与可选滑动偏移。
+local function ModalIntro(game)
+    local t = (game.elapsed - uiStateEnter_) / 0.28
+    return EaseOutCubic(t)
+end
+
 local function DrawAmmoSlots(ctx, game, presentation)
     local queueCounts = {}
     for _, ballType in ipairs(game.ballQueue) do
@@ -578,6 +602,59 @@ local function DrawOverlayBackground(ctx, width, height)
     nvgFill(ctx)
 end
 
+local function DrawWaveThemeTint(ctx, width, height, game)
+    -- A5：背景主题色随波次缓慢轮转（酸性风格内，仅边缘渐变为冷/暖色相位移），
+    -- 让长局不单调。色调由 wave 驱动，不破坏深紫基调与工程线美学。
+    local phase = (game.wave or 1) * 0.18
+    local r = math.floor(40 + 22 * math.sin(phase))
+    local b = math.floor(90 + 26 * math.cos(phase * 0.7))
+    local g = math.floor(30 + 14 * math.sin(phase * 1.3 + 1.2))
+    local glow = nvgLinearGradient(ctx, 0, 0, 0, height,
+        nvgRGBA(r, g, b, 16), nvgRGBA(10, 4, 28, 0))
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, 0, width, height)
+    nvgFillPaint(ctx, glow)
+    nvgFill(ctx)
+end
+
+local function FindBoss(game)
+    for _, enemy in ipairs(game.veggies or {}) do
+        if enemy.isBoss then return enemy end
+    end
+    return nil
+end
+
+local function DrawBossPhaseBar(ctx, game, boss)
+    -- A6：Boss 阶段条。纯规则字段驱动（bossPhase 1/2/3，vulnerable 时高亮），
+    -- 渲染层只读消费，不触达规则层。酸性风格：分段硬边指示 + 易伤脉冲。
+    local cx = game.width * 0.5
+    local barW = 220
+    local x0 = cx - barW * 0.5
+    local y = 84
+    DrawPixelText(ctx, cx, y - 14, "BOSS // PHASE LOCK", 9, ACID.brightPurple,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    local segments = 3
+    local segW = barW / segments
+    for s = 1, segments do
+        local filled = s <= (boss.bossPhase or 1)
+        local vul = (boss.bossPhase == 2)
+        local col = filled and (vul and {235, 190, 255} or {166, 229, 255}) or {81, 105, 158}
+        DrawTechPanel(ctx, x0 + (s - 1) * segW + 2, y, segW - 4, 12,
+            filled and {40, 18, 70, 255} or {16, 12, 35, 255}, col)
+        if filled then
+            DrawPixelText(ctx, x0 + (s - 1) * segW + segW * 0.5, y + 1, tostring(s), 9,
+                col, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
+    end
+    if boss.bossPhase == 2 then
+        local pulse = 0.5 + 0.5 * math.sin(game.elapsed * 6)
+        DrawPixelText(ctx, cx, y + 16,
+            string.format("VULNERABLE x1.5  (%.0f%%)", (boss.bossPhase or 1) / segments * 100),
+            9, {235, 190, 255, 150 + math.floor(105 * pulse)},
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+end
+
 local function DrawHud(ctx, game)
     local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
     local hpColor = hpRatio > 0.35 and ACID.paleBlue or ACID.brightPurple
@@ -611,6 +688,10 @@ local function DrawHud(ctx, game)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelBar(ctx, game.width * 0.5 - 60, 74, 120, 4, xpRatio, ACID.paleBlue)
 
+    -- A6：存在 Boss 时显示阶段条（读快照 isBoss/bossPhase，不写规则）。
+    local boss = FindBoss(game)
+    if boss then DrawBossPhaseBar(ctx, game, boss) end
+
     -- P11：激活词条图标条（HUD 左下），只读快照 activeWords，不反向写规则。
     local words = game.activeWords or {}
     local iconSize = 26
@@ -637,6 +718,7 @@ local function DrawMenu(ctx, game)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
+    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：菜单缓入
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     nvgFillColor(ctx, nvgRGBA(20, 7, 49, 255))
@@ -697,6 +779,7 @@ local function DrawGameOver(ctx, game)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
+    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：结算缓入
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     nvgFillColor(ctx, nvgRGBA(14, 5, 36, 255))
@@ -781,6 +864,7 @@ local function DrawLevelUp(ctx, game)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
+    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：升级面板缓入
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     nvgFillColor(ctx, nvgRGBA(16, 6, 42, 250))
@@ -813,6 +897,7 @@ local function DrawPaused(ctx, game)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
+    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：暂停缓入
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     nvgFillColor(ctx, nvgRGBA(8, 3, 22, 180))
@@ -825,11 +910,53 @@ local function DrawPaused(ctx, game)
     nvgRestore(ctx)
 end
 
+local function DrawWaveBanner(ctx, game, presentation)
+    -- A2：波次横幅。waveBannerTimer 由 Presentation 维护（1.8 起递减），
+    -- 入场用 ease 从上方滑入，生命周期尾部淡出；不破坏酸性风格，仅位移+透明度。
+    local t = presentation.waveBannerTimer or 0
+    if t <= 0 then return end
+    local life = 1.8
+    local age = life - t
+    local slide = EaseOutCubic(math.min(1, age / 0.35))
+    local yOff = (1 - slide) * -40
+    local alpha = math.min(1, t / 0.4)
+    nvgSave(ctx)
+    nvgGlobalAlpha(ctx, alpha)
+    local cx = game.width * 0.5
+    DrawTechPanel(ctx, cx - 120, 150 + yOff, 240, 46, {20, 7, 49, 250}, {166, 229, 255, 255})
+    DrawPixelText(ctx, cx, 160 + yOff, string.format("WAVE %02d INCOMING", game.wave), 14,
+        ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgRestore(ctx)
+end
+
+local function DrawMarbleTrails(ctx, game, presentation)
+    -- A4：弹珠拖尾。按 ballType 用不同强调色绘制渐隐拖尾，强化四弹辨识度。
+    for _, marble in ipairs(game.marbles) do
+        local trail = presentation.marbleTrails[marble.id]
+        if trail and #trail > 1 then
+            local color = SLOT_COLORS[marble.ballType] or SLOT_COLORS.normal
+            local n = #trail
+            for i = 1, n - 1 do
+                local px, py = ProjectGamePoint(trail[i].x, trail[i].y)
+                local nx, ny = ProjectGamePoint(trail[i + 1].x, trail[i + 1].y)
+                local a = (i / n) * 150
+                nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
+                nvgStrokeWidth(ctx, 2 + (i / n) * 3)
+                nvgBeginPath(ctx)
+                nvgMoveTo(ctx, px, py)
+                nvgLineTo(ctx, nx, ny)
+                nvgStroke(ctx)
+            end
+        end
+    end
+end
+
 local function RenderOverlay(game, presentation)
     if not vg_ then return end
     nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
     nvgScale(vg_, scale_, scale_)
     DrawOverlayBackground(vg_, screenDesignWidth_, screenDesignHeight_)
+    DrawWaveThemeTint(vg_, screenDesignWidth_, screenDesignHeight_, game)    -- A5：波次主题色
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgSave(vg_)
     nvgIntersectScissor(vg_, 0, 0, DESIGN_W, DESIGN_H)
@@ -848,6 +975,7 @@ local function RenderOverlay(game, presentation)
     nvgStrokeWidth(vg_, 3)
     nvgStroke(vg_)
     if game.state == "playing" then
+        DrawMarbleTrails(vg_, game, presentation)    -- A4：弹珠拖尾
         DrawAimTrajectory(vg_, game)
         if presentation.screenShake > 0 then
             local amplitude = presentation.screenShake * 13
@@ -855,6 +983,7 @@ local function RenderOverlay(game, presentation)
                 math.cos(game.elapsed * 73) * amplitude * 0.65)
         end
         DrawBaseImpactFeedback(vg_, game, presentation)
+        DrawWaveBanner(vg_, game, presentation)    -- A2：波次横幅
     end
     nvgRestore(vg_)
 
@@ -1033,14 +1162,23 @@ function Backend.Render(gameSnapshot, presentationSnapshot)
     end
     if dangerBandNode_ then
         local flash = presentationSnapshot.baseBarrierFlash or 0
+        -- A6：Boss 波期间危险带常驻染成紫色警示，与普通波区分。
+        local bossActive = false
+        for _, enemy in ipairs(gameSnapshot.veggies or {}) do
+            if enemy.isBoss then bossActive = true; break end
+        end
+        local baseR, baseG, baseB = 0.39, 0.19, 0.67
+        if bossActive then baseR, baseG, baseB = 0.62, 0.20, 0.74 end
         dangerBandNode_.scale = Vector3(11.0, 0.06 + flash * 0.18, 0.06 + flash * 0.12)
         if dangerBandMaterial_ then
             dangerBandMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(
-                math.min(1.0, 0.39 + flash * 0.20),
-                math.min(1.0, 0.19 + flash * 0.48),
-                math.min(1.0, 0.67 + flash * 0.33), 1)))
+                math.min(1.0, baseR + flash * 0.20),
+                math.min(1.0, baseG + flash * 0.48),
+                math.min(1.0, baseB + flash * 0.33), 1)))
             dangerBandMaterial_:SetShaderParameter("MatEmissiveColor", Variant(Color(
-                flash * 1.7, flash * 3.1, flash * 4.0, 1)))
+                flash * 1.7 + (bossActive and 1.2 or 0),
+                flash * 3.1 + (bossActive and 0.6 or 0),
+                flash * 4.0 + (bossActive and 2.4 or 0), 1)))
         end
     end
     Renderer3D.Render(gameSnapshot, presentationSnapshot)

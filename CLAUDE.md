@@ -3,9 +3,9 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.9.0
-- 进度: 太空飞机弹珠已实装肉鸽幸存者化最小完整循环——基地生命 100、敌机以编队整体下移且每个方块独立越线销毁扣血、XP/三选一升级暂停、局内强化池、持续收紧波次、P/Esc 暂停；敌方像素飞机重制为经典蟹形入侵者/箭头战斗机/圆盘飞碟/截击机剪影；世界反弹边缘渲染到 3D 背景层与 2D 设计空间边框；巨型车拖尾宽度锚定权威碰撞半径不再宽于本体；加速弹成长、追击和伤害均被削弱。已追加 WO-13/16/14/15 与 P11/P12：冻结顶点色偏移+正面霜冻高光、粒子/碎片/飘字对象池+快照缓冲复用+Dispose 审计+FXAA 探测关闭、FEEDBACK_MAP 反馈映射、防线四位一体、RefreshProjection 封装、词条系统(贯穿/连锁/动量)、五异常反应(冻结+灼烧=融穿/易暴/腐蚀)、Boss 阶段机(每10波 vulnerable 窗口)、命中顿帧(hitStop 对玩法 dt 打折)、相机推近(orthoSize 下沉)、词条图标 HUD 展示
-- 上次交付: 实施 WO-13/16/14/15 + P11/P12；LSP 0 Error、正式入口官方构建成功、契约守门通过（grep 验证 Game 无渲染 API、渲染层无规则写、FXAA 仅探测且默认关闭）；词条图标 assets/Icons/*.png 已生成并接入 HUD
+- 版本: 0.9.2
+- 进度: 太空飞机弹珠已完成肉鸽幸存者化最小完整循环（0.9.0）+ WO-13/16/14/15/P11/P12 规则与表现层（0.9.1）+ A 组纯代码打磨（0.9.2）。A 组已交付：敌人行为分化（4 类 aircraft 各自 sway/descent 曲线）、四模态淡入缓动 + 波次横幅滑入、弹珠拖尾 4 色差异、背景随波次主题色渐变、Boss 视觉（阶段条 + 危险带变色 + spawn 横幅）。仍属"规则系统已在、可感知度提升"阶段；音频/BGM、角色/图标美术、元进度与叙事尚未实装（B 组需生成 MCP、C 组需用户放宽酸性 UI 契约/FXAA 决策）。
+- 上次交付: v0.9.2 A 组纯代码打磨；LSP 0 Error、正式入口官方构建成功、契约守门通过（grep 验证 Game 无渲染 API、表现层无 Game 写回、FXAA 仅探测默认关闭）；提交 2c2a37c
 
 ## 用户画像摘要
 - 使用简体中文沟通
@@ -26,6 +26,11 @@
 - Boss 契约：每 10 波 `SpawnWave` 生成单支高血量 Boss(`interceptor` 外形)，`bossPhase` 按存活砖块比例 1/2/3 切换，`phase 2` 置 `vulnerable` 受 1.5x 伤害；仅规则层，视觉消费 `boss_spawn`/`boss_phase` 事件
 - 顿帧契约：`Presentation.hitStop` 由大命中(base_hit/pierce/giant)触发，main.lua 对 `Game.Update` 的 dt 打折(×0.15)但表现层用真实 dt 推进震屏/闪光衰减
 - 相机推近契约：防线受创时 `camera_.orthoSize = 18.0 - baseBarrierFlash*1.6`，仍正交投影仅瞬时缩放，flash 归零自动复原，绝不变透视
+- 敌人行为分化契约：四类 aircraft 的摆动/下移差异只能由 `AircraftPixelData.behavior[aircraftKey]` 单一来源驱动（swayAmp/swayFreq/descentMul/agility/accent），`Game.CreateEnemy` 仅消费该表并叠加随机抖动，禁止把行为数值硬编码进 Game 其他分支或渲染层
+- 模态缓动契约：四模态（menu/gameover/levelup/paused）淡入由 `ModalIntro(game)`（EaseOutCubic，0.28s）经 `nvgGlobalAlpha` 控制，波次横幅 `DrawWaveBanner` 由 `presentation.waveBannerTimer` 驱动滑入淡出；仅表现层瞬时状态，不得写规则层
+- 拖尾异色契约：`DrawMarbleTrails` 颜色取自 `SLOT_COLORS[marble.ballType]`（与四弹药槽一致），宽度锚定权威碰撞半径，禁止按 ballType 额外叠加经验倍率或改用非槽位色
+- 波次主题渐变契约：`DrawWaveThemeTint` 在酸性风格内按 `game.wave` 做色相旋转叠加，alpha 极低（≤16）仅作背景氛围，禁止覆盖 HUD/玩法对象的硬边不透明安全层
+- Boss 视觉契约：阶段条 `DrawBossPhaseBar` 与危险带变色只在 Boss 波（扫描 `veggies[].isBoss`）触发，危险带常驻紫色警示；全部消费 `bossPhase/vulnerable` 快照字段，禁止渲染层改写 bossPhase 或规则变量
 
 ## 恢复指令（新会话必执行）
 1. 读本文件 → 获取项目状态和避雷清单

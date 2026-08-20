@@ -389,6 +389,13 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         return nil
     end
 
+    -- A3：行为分化——读取该型性格参数，使不同飞机横摆/节奏/下压感各异。
+    local beh = AircraftData.behavior and AircraftData.behavior[aircraftKey]
+        or { swayAmp = 18, swayFreq = 0.4, descentMul = 1.0, agility = 0.8 }
+    local swayAmp = beh.swayAmp + Random() * beh.swayAmp * 0.3
+    local swayFreq = beh.swayFreq * (0.85 + Random() * 0.3)
+    local descent = beh.descentMul
+
     local bricks = {}
     for entry in (data.data .. ";"):gmatch("(.-);") do
         local col, row = entry:match("(%d+),(%d+),%d+,%d+,%d+")
@@ -407,9 +414,10 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         gridH = data.gridH,
         brickSize = brickSize,
         x = x, y = y, baseX = x,
-        vy = baseSpeed * data.speedMul * 0.25,
-        swayAmp = 10 + Random() * 14,
-        swayFreq = 0.3 + Random() * 0.25,
+        vy = baseSpeed * data.speedMul * 0.25 * descent,
+        swayAmp = swayAmp,
+        swayFreq = swayFreq,
+        agility = beh.agility,    -- A3：节奏/反应质感标记（渲染层可读）
         phase = Random() * math.pi * 2,
         bricks = bricks,
         dead = false,
