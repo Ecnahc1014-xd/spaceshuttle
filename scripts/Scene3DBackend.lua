@@ -8,8 +8,8 @@ local Backend = {}
 
 local DESIGN_W = 540
 local DESIGN_H = 960
-local HUD_HEIGHT = 76
-local BOTTOM_DOCK_Y = 880
+local HUD_HEIGHT = 92
+local BOTTOM_DOCK_Y = 866
 local MENU_CONTENT_TOP = HUD_HEIGHT
 local MENU_CONTENT_BOTTOM = BOTTOM_DOCK_Y
 
@@ -350,6 +350,14 @@ local ACID = {
     muted = {125, 140, 184, 230},
 }
 
+local UI_BLUE = {28, 62, 224, 255}
+local UI_BLUE_DARK = {7, 18, 92, 255}
+local UI_WHITE = {245, 248, 255, 255}
+local UI_COLD = {201, 222, 255, 255}
+local UI_GOLD = {201, 168, 76, 255}
+local UI_INK = {9, 12, 38, 255}
+local UI_BLACK = {3, 6, 24, 255}
+
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
         (DESIGN_H * 0.5 - y) * 0.018, 0)
@@ -505,6 +513,41 @@ local function DrawPixelText(ctx, x, y, text, size, color, align)
     nvgText(ctx, x, y, text, nil)
 end
 
+local function DrawBluePanel(ctx, x, y, width, height, fill, border, radius)
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, x, y, width, height, radius or 8)
+    nvgFillColor(ctx, nvgRGBA(fill[1], fill[2], fill[3], fill[4] or 255))
+    nvgFill(ctx)
+    nvgStrokeColor(ctx, nvgRGBA(border[1], border[2], border[3], border[4] or 255))
+    nvgStrokeWidth(ctx, 2)
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, x + 1, y + 1, width - 2, height - 2, radius or 8)
+    nvgStroke(ctx)
+end
+
+local function DrawSegmentedRule(ctx, x, y, width, segments, color, activeCount)
+    local gap = 5
+    local segmentWidth = (width - gap * (segments - 1)) / segments
+    for i = 1, segments do
+        nvgBeginPath(ctx)
+        nvgRect(ctx, x + (i - 1) * (segmentWidth + gap), y, segmentWidth, 4)
+        local active = not activeCount or i <= activeCount
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], active and 255 or 55))
+        nvgFill(ctx)
+    end
+end
+
+local function DrawDotMatrix(ctx, x, y, columns, rows, spacing, color, radius)
+    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    for row = 0, rows - 1 do
+        for col = 0, columns - 1 do
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, x + col * spacing, y + row * spacing, radius or 1.4)
+            nvgFill(ctx)
+        end
+    end
+end
+
 local function DrawPixelBar(ctx, x, y, width, height, value, color)
     DrawTechPanel(ctx, x, y, width, height,
         {10, 4, 28, 255}, {81, 105, 158, 255})
@@ -538,55 +581,50 @@ end
 
 local function DrawAmmoSlots(ctx, game, presentation)
     local queueCounts = {}
-    for _, ballType in ipairs(game.ballQueue) do
+    for _, ballType in ipairs(game.ballQueue or {}) do
         queueCounts[ballType] = (queueCounts[ballType] or 0) + 1
     end
     if game.activeBall then
         queueCounts[game.activeBall.ballType] = (queueCounts[game.activeBall.ballType] or 0) + 1
     end
 
-    -- 独立底部 Dock 完全遮住世界层，左右各两格，中间只保留系统状态。
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y)
-    nvgFillColor(ctx, nvgRGBA(10, 4, 28, 255))
+    nvgFillColor(ctx, nvgRGBA(UI_INK[1], UI_INK[2], UI_INK[3], 255))
     nvgFill(ctx)
     nvgBeginPath(ctx)
-    nvgMoveTo(ctx, 0, BOTTOM_DOCK_Y + 1)
-    nvgLineTo(ctx, DESIGN_W, BOTTOM_DOCK_Y + 1)
-    nvgStrokeColor(ctx, nvgRGBA(166, 229, 255, 210))
+    nvgMoveTo(ctx, 0, BOTTOM_DOCK_Y)
+    nvgLineTo(ctx, DESIGN_W, BOTTOM_DOCK_Y)
+    nvgStrokeColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 230))
     nvgStrokeWidth(ctx, 2)
     nvgStroke(ctx)
 
-    local slotSize = 64
-    local slotGap = 8
-    local outerPadding = 8
-    local slotY = DESIGN_H - slotSize - 8
-    local leftStart = outerPadding
-    local rightStart = DESIGN_W - outerPadding - slotSize * 2 - slotGap
-    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 8, "ORDNANCE // 04", 8, ACID.muted,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 27, "CONTROL DECK", 10, ACID.paleBlue,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, DESIGN_W * 0.5, slotY + 48, "SAFE / LINKED", 7, ACID.brightPurple,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, 12, BOTTOM_DOCK_Y + 10, "ORDNANCE / FIRE CONTROL", 9, UI_COLD)
+    DrawPixelText(ctx, DESIGN_W - 12, BOTTOM_DOCK_Y + 10,
+        "SLOT LINK // ACTIVE", 8, UI_GOLD, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
+    local slotSize = 62
+    local slotGap = 8
+    local slotY = BOTTOM_DOCK_Y + 28
+    local leftStart = 10
+    local rightStart = DESIGN_W - 10 - slotSize * 2 - slotGap
     for i, ballType in ipairs(SLOT_TYPES) do
         local pairIndex = (i - 1) % 2
         local x = (i <= 2 and leftStart or rightStart) + pairIndex * (slotSize + slotGap)
         local color = SLOT_COLORS[ballType]
         local selected = game.activeBall and game.activeBall.ballType == ballType
         local flash = presentation.truckLaunchFlash[ballType] or 0
-        local fill = selected and {53, 24, 91, 255} or ACID.carbon
-        DrawTechPanel(ctx, x, slotY, slotSize, slotSize, fill,
-            {color[1], color[2], color[3], selected and 255 or 150 + math.floor(flash * 105)})
-        DrawPixelText(ctx, x + 8, slotY + 7, string.format("%02d", i), 8, color)
-        DrawPixelText(ctx, x + slotSize - 7, slotY + 7,
+        local fill = selected and {23, 37, 112, 255} or {11, 16, 54, 255}
+        local border = selected and UI_GOLD or {color[1], color[2], color[3], 220}
+        DrawTechPanel(ctx, x, slotY, slotSize, slotSize, fill, border)
+        DrawPixelText(ctx, x + 7, slotY + 6, string.format("%02d", i), 8, color)
+        DrawPixelText(ctx, x + slotSize - 7, slotY + 6,
             "x" .. tostring(queueCounts[ballType] or 0), 8, color,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 23, SLOT_NAMES[ballType], 12,
-            ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 22, SLOT_NAMES[ballType], 12,
+            UI_WHITE, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43,
-            selected and "LINK" or "STBY", 7, color,
+            selected and "READY" or "STANDBY", 7, selected and UI_GOLD or UI_COLD,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         nvgBeginPath(ctx)
         nvgRect(ctx, x + 6, slotY + slotSize - 7, slotSize - 12, selected and 3 or 1)
@@ -595,10 +633,17 @@ local function DrawAmmoSlots(ctx, game, presentation)
     end
 end
 
+local function DrawFullFrameBackground(ctx, width, height)
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, 0, width, height)
+    nvgFillColor(ctx, nvgRGBA(UI_BLACK[1], UI_BLACK[2], UI_BLACK[3], 255))
+    nvgFill(ctx)
+end
+
 local function DrawOverlayBackground(ctx, width, height)
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, 0, width, height)
-    nvgFillColor(ctx, nvgRGBA(10, 4, 28, 72))
+    nvgFillColor(ctx, nvgRGBA(10, 4, 28, 255))
     nvgFill(ctx)
 end
 
@@ -657,121 +702,125 @@ end
 
 local function DrawHud(ctx, game)
     local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
-    local hpColor = hpRatio > 0.35 and ACID.paleBlue or ACID.brightPurple
+    local hpColor = hpRatio > 0.35 and UI_COLD or UI_GOLD
 
-    -- 顶部 HUD 是独立不透明安全带，世界对象经过其后时不会干扰读数。
-    DrawTechPanel(ctx, 0, 0, game.width, HUD_HEIGHT, ACID.carbon, ACID.purple)
-    DrawAcidGrid(ctx, game.width, HUD_HEIGHT)
-    DrawPixelText(ctx, 10, 8, "SYS::MARBLE FLIGHT CONTROL", 9, ACID.muted)
-    DrawPixelText(ctx, 10, 25, tostring(game.score), 25, ACID.paleBlue)
-    DrawPixelText(ctx, 10, 55, "BEST/" .. tostring(game.highScore), 9, ACID.coldBlue)
+    -- 重构后的战术仪表盘：左侧分数，中部波次，右侧基地状态，底部统一经验进度。
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, 0, game.width, HUD_HEIGHT)
+    nvgFillColor(ctx, nvgRGBA(UI_INK[1], UI_INK[2], UI_INK[3], 255))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, 0, HUD_HEIGHT - 1)
+    nvgLineTo(ctx, game.width, HUD_HEIGHT - 1)
+    nvgStrokeColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 220))
+    nvgStrokeWidth(ctx, 2)
+    nvgStroke(ctx)
 
-    DrawHalo(ctx, game.width * 0.5, 38, 29, 190)
-    DrawPixelText(ctx, game.width * 0.5, 22, string.format("WAVE %02d", game.wave), 14,
-        ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    -- WO-11/P8：节奏指标（读 P6 快照），置于 HUD 安全带内不干扰读数。
-    DrawPixelText(ctx, game.width * 0.5, 48,
-        string.format("X%d  COMBO %d", game.concurrentCount or 0, game.clearStreak or 0),
-        8, ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, 12, 9, "FLIGHT CONTROL", 8, UI_COLD)
+    DrawPixelText(ctx, 12, 25, string.format("%06d", game.score), 23, UI_WHITE)
+    DrawPixelText(ctx, 12, 57, "BEST " .. string.format("%06d", game.highScore), 8, ACID.muted)
 
-    DrawPixelText(ctx, game.width - 12, 8, "BASE INTEGRITY", 9, ACID.muted,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 12, 25,
-        string.format("%02d / %02d", game.baseHp, game.maxBaseHp), 17, hpColor,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelBar(ctx, game.width - 170, 57, 158, 11, hpRatio, hpColor)
-
-    -- 等级与经验条
-    local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
-    DrawPixelText(ctx, game.width * 0.5, 64,
-        string.format("LV %02d", game.playerLevel), 9, ACID.brightPurple,
+    local centerX = game.width * 0.5
+    DrawPixelText(ctx, centerX, 8, "WAVE", 8, UI_GOLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, centerX, 22, string.format("%02d", game.wave), 25, UI_WHITE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelBar(ctx, game.width * 0.5 - 60, 74, 120, 4, xpRatio, ACID.paleBlue)
+    DrawPixelText(ctx, centerX, 53,
+        string.format("HOSTILES %02d  //  COMBO %02d", game.concurrentCount or 0, game.clearStreak or 0),
+        7, UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    -- A6：存在 Boss 时显示阶段条（读快照 isBoss/bossPhase，不写规则）。
-    local boss = FindBoss(game)
-    if boss then DrawBossPhaseBar(ctx, game, boss) end
+    DrawPixelText(ctx, game.width - 12, 9, "BASE INTEGRITY", 8, UI_COLD,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 12, 24,
+        string.format("%03d / %03d", game.baseHp, game.maxBaseHp), 19, hpColor,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 12, 52, "CORE STATUS / " .. (hpRatio > 0.35 and "STABLE" or "CRITICAL"),
+        7, hpColor, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelBar(ctx, game.width - 164, 66, 152, 8, hpRatio, hpColor)
 
-    -- P11：激活词条图标条（HUD 左下），只读快照 activeWords，不反向写规则。
+    local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
+    DrawPixelText(ctx, 12, 76, string.format("LV %02d", game.playerLevel), 7, UI_GOLD)
+    DrawPixelBar(ctx, 52, 78, 220, 5, xpRatio, UI_BLUE)
+    DrawPixelText(ctx, 282, 76, string.format("XP %d/%d", game.xp or 0, game.xpToNext or 0), 7, ACID.muted)
+
     local words = game.activeWords or {}
-    local iconSize = 26
+    local iconSize = 24
+    local iconX = game.width - 12 - #words * (iconSize + 5)
+    local iconY = 64
     for i, wordId in ipairs(words) do
         local tex = wordIconTex_[wordId]
-        local ix = 10 + (i - 1) * (iconSize + 6)
-        local iy = HUD_HEIGHT - iconSize - 6
+        local ix = iconX + (i - 1) * (iconSize + 5)
         if tex then
             nvgBeginPath(ctx)
-            nvgRect(ctx, ix, iy, iconSize, iconSize)
-            nvgFillPaint(ctx, nvgImagePattern(ctx, ix, iy, iconSize, iconSize, 0, tex, 1))
+            nvgRect(ctx, ix, iconY, iconSize, iconSize)
+            nvgFillPaint(ctx, nvgImagePattern(ctx, ix, iconY, iconSize, iconSize, 0, tex, 1))
             nvgFill(ctx)
         else
-            nvgBeginPath(ctx)
-            nvgRect(ctx, ix, iy, iconSize, iconSize)
-            nvgStrokeColor(ctx, nvgRGBA(184, 133, 255, 200))
-            nvgStrokeWidth(ctx, 1)
-            nvgStroke(ctx)
+            DrawTechPanel(ctx, ix, iconY, iconSize, iconSize, UI_BLUE_DARK, UI_COLD)
         end
     end
+
+    local boss = FindBoss(game)
+    if boss then DrawBossPhaseBar(ctx, game, boss) end
 end
 
 local function DrawMenu(ctx, game)
     nvgSave(ctx)
-    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
-        game.width, game.height - MENU_CONTENT_TOP)
-    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：菜单缓入
+    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgGlobalAlpha(ctx, ModalIntro(game))
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    nvgFillColor(ctx, nvgRGBA(20, 7, 49, 255))
+    nvgFillColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 255))
     nvgFill(ctx)
-    DrawAcidGrid(ctx, game.width, game.height)
-
-    -- 主视觉和行动区严格分层：光环止于 414，CTA 从 448 开始。
-    DrawHalo(ctx, game.width * 0.5, 290, 124, 150)
-    DrawHalo(ctx, game.width * 0.5, 290, 92, 100)
-
-    -- 半调点阵与工程标注形成酸性拼贴，不使用蓝白配色或圆角卡片。
-    nvgFillColor(ctx, nvgRGBA(166, 229, 255, 42))
-    for row = 0, 8 do
-        for col = 0, 12 do
-            nvgBeginPath(ctx)
-            nvgCircle(ctx, 35 + col * 12, 174 + row * 12, 1.6 + (col % 3) * 0.35)
-            nvgFill(ctx)
-        end
-    end
-    DrawPixelText(ctx, 14, 96, "[ NAVIGATION PROTOCOL :: ACTIVE ]", 9, ACID.paleBlue)
-    DrawPixelText(ctx, game.width - 14, 96, "9:16 / LOCKED", 9, ACID.brightPurple,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-
-    DrawPixelText(ctx, game.width * 0.5, 224, "太空飞机弹珠", 39,
-        ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 276, "SPACECRAFT MARBLE", 12,
-        ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 337, "轨道计算 / 碰撞反射 / 火控链接", 13,
-        {192, 209, 244, 255}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    DrawTechPanel(ctx, 0, 448, game.width, 68, ACID.deepPurple, ACID.paleBlue)
-    local blink = 0.5 + 0.5 * math.sin(game.elapsed * 3)
-    DrawPixelText(ctx, game.width * 0.5, 463, "点击屏幕建立链接", 20,
-        {186, 232, 255, 180 + math.floor(75 * blink)}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 494, "INITIATE FLIGHT VECTOR", 8,
-        ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    DrawPixelText(ctx, 14, 548, "COORD/Y 0890", 8, ACID.muted)
-    DrawPixelText(ctx, 14, 564, "EDGE FIELD / VISIBLE", 8, ACID.muted)
-    DrawPixelText(ctx, game.width - 14, 548, "UNIT SCALE / AUTH", 8, ACID.muted,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 14, 564, "CAMERA / ORTHO 46D", 8, ACID.muted,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     nvgBeginPath(ctx)
-    nvgMoveTo(ctx, 24, MENU_CONTENT_BOTTOM - 28)
-    nvgLineTo(ctx, game.width - 24, MENU_CONTENT_BOTTOM - 28)
-    nvgStrokeColor(ctx, nvgRGBA(103, 61, 166, 120))
-    nvgStrokeWidth(ctx, 1)
-    nvgStroke(ctx)
-    DrawPixelText(ctx, game.width * 0.5, MENU_CONTENT_BOTTOM - 21,
-        "WAITING FOR PILOT INPUT // 00", 8, ACID.muted,
+    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, 10)
+    nvgFillColor(ctx, nvgRGBA(UI_BLUE[1], UI_BLUE[2], UI_BLUE[3], 255))
+    nvgFill(ctx)
+    DrawDotMatrix(ctx, 34, 142, 11, 8, 13, {28, 62, 224, 26}, 1.5)
+    DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
+
+    DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
+    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.9.2", 8, UI_BLUE,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
+
+    DrawHalo(ctx, game.width * 0.5, 270, 116, 150)
+    DrawHalo(ctx, game.width * 0.5, 270, 84, 95)
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, game.width * 0.5, 270, 7)
+    nvgFillColor(ctx, nvgRGBA(UI_GOLD[1], UI_GOLD[2], UI_GOLD[3], 255))
+    nvgFill(ctx)
+    DrawPixelText(ctx, game.width * 0.5, 215, "太空飞机弹珠", 35, UI_BLUE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 320, "SPACECRAFT MARBLE", 11, UI_BLUE,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 348, "轨道计算  /  碰撞反射  /  火控链接", 12, UI_INK,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    DrawBluePanel(ctx, 30, 414, game.width - 60, 92, UI_BLUE, UI_BLUE, 7)
+    DrawPixelText(ctx, 52, 432, "PILOT LINK", 9, UI_WHITE)
+    DrawPixelText(ctx, 52, 457, "点击屏幕开始飞行", 19, UI_WHITE)
+    DrawPixelText(ctx, 52, 484, "INITIATE FLIGHT VECTOR", 8, UI_COLD)
+    DrawPixelText(ctx, game.width - 52, 447, "01", 30, UI_GOLD,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 52, 484, "READY", 8, UI_WHITE,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    DrawPixelText(ctx, 30, 550, "MISSION PARAMETERS", 8, UI_BLUE)
+    DrawBluePanel(ctx, 30, 568, game.width - 60, 106, {236, 240, 255, 255}, {184, 198, 240, 255}, 6)
+    DrawPixelText(ctx, 48, 586, "BASE CORE", 8, UI_BLUE)
+    DrawPixelText(ctx, 48, 608, "100", 24, UI_INK)
+    DrawPixelText(ctx, 108, 615, "INTEGRITY", 8, UI_BLUE)
+    DrawPixelText(ctx, 290, 586, "ORDNANCE", 8, UI_BLUE)
+    DrawPixelText(ctx, 290, 608, "04", 24, UI_INK)
+    DrawPixelText(ctx, 350, 615, "LOADOUTS", 8, UI_BLUE)
+    DrawSegmentedRule(ctx, 48, 650, game.width - 96, 12, UI_BLUE)
+
+    DrawPixelText(ctx, 30, 716, "TOUCH / MOUSE  :  AIM + RELEASE", 8, UI_BLUE)
+    DrawPixelText(ctx, 30, 739, "P / ESC          :  PAUSE", 8, UI_BLUE)
+    DrawPixelText(ctx, game.width - 30, 786, "SYSTEM LINKED", 8, UI_GOLD,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawSegmentedRule(ctx, 30, 812, game.width - 60, 4, UI_GOLD)
     nvgRestore(ctx)
 end
 
@@ -816,80 +865,96 @@ local function DrawGameOver(ctx, game)
     nvgRestore(ctx)
 end
 
+local function GetUpgradeCardLayout(game)
+    local cardW = 156
+    local cardH = 214
+    local gap = 8
+    local totalW = 3 * cardW + 2 * gap
+    local startX = game.width * 0.5 - totalW * 0.5 + cardW * 0.5
+    local cy = 478
+    return cardW, cardH, gap, startX, cy
+end
+
 local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local x = cx - cardW * 0.5
     local y = cy - cardH * 0.5
-    local color = SLOT_COLORS[choice.id] or ACID.brightPurple
-    DrawTechPanel(ctx, x, y, cardW, cardH, ACID.deepPurple, color)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 16, string.format("0%d", index), 10, color,
+    local cardColor = (choice.rarity == "rare" or choice.rarity == "epic") and UI_GOLD or UI_BLUE
+    local titleColor = UI_INK
+    DrawBluePanel(ctx, x, y, cardW, cardH, UI_WHITE, cardColor, 8)
+
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x, y, cardW, 8)
+    nvgFillColor(ctx, nvgRGBA(cardColor[1], cardColor[2], cardColor[3], 255))
+    nvgFill(ctx)
+    DrawPixelText(ctx, x + 12, y + 20, string.format("0%d", index), 10, cardColor)
+    local rarityTag = choice.rarity == "rare" and "RARE" or (choice.rarity == "epic" and "EPIC" or "STANDARD")
+    DrawPixelText(ctx, x + cardW - 12, y + 21, rarityTag, 7, cardColor,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    DrawPixelText(ctx, x + cardW * 0.5, y + 50, choice.name or "强化协议", 16, titleColor,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 42, choice.name, 19, ACID.paleBlue,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    -- WO-11/P8：稀有度角标 + 叠层标记（只读快照，不计算规则）。
-    local rarityTag = choice.rarity == "rare" and "RARE" or (choice.rarity == "epic" and "EPIC" or "")
-    if rarityTag ~= "" then
-        DrawPixelText(ctx, x + cardW - 8, y + 16, rarityTag, 8, ACID.brightPurple,
-            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    end
-    local stacks = choice.stacks or 0
-    if stacks > 0 then
-        DrawPixelText(ctx, x + 8, y + 16, string.format("Lv%d/%d", stacks, choice.maxStacks or 0), 8,
-            ACID.coldBlue, NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
-    end
-    -- WO-10/P5：delta 预览（当前→升级后数值差）。
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 60,
-        choice.value or "", 11, choice.tradeoff and ACID.brightPurple or ACID.paleBlue,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 44,
-        choice.tradeoff and "取舍强化" or "点击装备", 9, ACID.muted,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    local desc = choice.desc
-    local fontSize = 11
+    DrawSegmentedRule(ctx, x + 18, y + 78, cardW - 36, 5, cardColor)
+
+    local desc = choice.desc or "提升当前火控系统性能"
     local lines = {}
-    local chunk = 9
+    local chunk = 8
     local start = 1
-    while start <= #desc do
+    while start <= #desc and #lines < 3 do
         lines[#lines + 1] = desc:sub(start, start + chunk - 1)
         start = start + chunk
     end
-    local descY = y + 80
-    for _, line in ipairs(lines) do
-        DrawPixelText(ctx, x + cardW * 0.5, descY, line, fontSize, {192, 209, 244, 255},
+    for lineIndex, line in ipairs(lines) do
+        DrawPixelText(ctx, x + cardW * 0.5, y + 94 + (lineIndex - 1) * 16, line, 9, UI_BLUE,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        descY = descY + fontSize + 5
     end
+
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 58, choice.value or "强化", 13, cardColor,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 38,
+        choice.tradeoff and "HIGH RISK / HIGH GAIN" or "EQUIP PROTOCOL", 7, UI_BLUE,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
 local function DrawLevelUp(ctx, game)
     nvgSave(ctx)
-    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
-        game.width, game.height - MENU_CONTENT_TOP)
-    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：升级面板缓入
+    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgGlobalAlpha(ctx, ModalIntro(game))
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    nvgFillColor(ctx, nvgRGBA(16, 6, 42, 250))
+    nvgFillColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 255))
     nvgFill(ctx)
-    DrawAcidGrid(ctx, game.width, game.height)
-    DrawHalo(ctx, game.width * 0.5, 250, 128, 170)
-    DrawPixelText(ctx, game.width * 0.5, 168, "升级 // 选择强化", 30,
-        ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 218, string.format("LEVEL %02d", game.playerLevel),
-        13, ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawDotMatrix(ctx, 28, 152, 10, 7, 14, {28, 62, 224, 24}, 1.3)
+    DrawDotMatrix(ctx, 414, 700, 8, 8, 14, {28, 62, 224, 28}, 1.3)
 
-    local choices = game.upgradeChoices
-    if choices and #choices > 0 then
-        local cardW = 144
-        local cardH = 188
-        local gap = 18
-        local totalW = #choices * cardW + (#choices - 1) * gap
-        local startX = game.width * 0.5 - totalW * 0.5 + cardW * 0.5
-        local cy = 470
+    DrawPixelText(ctx, 24, 112, "SANCTUARY / UPGRADE RITE", 8, UI_BLUE)
+    DrawPixelText(ctx, game.width - 24, 112, "PAUSED / SELECT ONE", 8, UI_GOLD,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
+    DrawPixelText(ctx, game.width * 0.5, 176, "升级 // 选择强化", 29, UI_BLUE,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 218,
+        string.format("LEVEL %02d  /  CHOOSE ONE PROTOCOL", game.playerLevel), 9, UI_INK,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    local choices = game.upgradeChoices or {}
+    local cardW, cardH, gap, startX, cy = GetUpgradeCardLayout(game)
+    if #choices > 0 then
         for i, choice in ipairs(choices) do
-            DrawUpgradeCard(ctx, i, choice, startX + (i - 1) * (cardW + gap), cy, cardW, cardH)
+            DrawUpgradeCard(ctx, i, choice,
+                startX + (i - 1) * (cardW + gap), cy, cardW, cardH)
         end
+    else
+        DrawBluePanel(ctx, 30, 365, game.width - 60, 100, UI_BLUE_DARK, UI_BLUE, 8)
+        DrawPixelText(ctx, game.width * 0.5, 395, "NO PROTOCOLS AVAILABLE", 12, UI_WHITE,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, game.width * 0.5, 423, "WAITING FOR RULE TABLE", 8, UI_COLD,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
-    DrawPixelText(ctx, game.width * 0.5, 600, "FIRE VECTOR PAUSED // AWAITING PICK", 9,
-        ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    DrawPixelText(ctx, 24, 758, "CHOOSE ONE  /  GAMEPLAY PAUSED", 8, UI_BLUE)
+    DrawPixelText(ctx, game.width - 24, 758, "TAP A CARD TO EQUIP", 8, UI_GOLD,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawSegmentedRule(ctx, 24, 782, game.width - 48, 4, UI_GOLD)
     nvgRestore(ctx)
 end
 
@@ -955,7 +1020,7 @@ local function RenderOverlay(game, presentation)
     if not vg_ then return end
     nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
     nvgScale(vg_, scale_, scale_)
-    DrawOverlayBackground(vg_, screenDesignWidth_, screenDesignHeight_)
+    DrawFullFrameBackground(vg_, screenDesignWidth_, screenDesignHeight_)
     DrawWaveThemeTint(vg_, screenDesignWidth_, screenDesignHeight_, game)    -- A5：波次主题色
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgSave(vg_)
