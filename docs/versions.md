@@ -3,7 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
-| v0.9.4 | 2026-09-01 | 修复 3D 渲染失灵根因：NanoVG 从整屏不透明背景改为仅填充 CONTAIN 画布外 letterbox，保护 3D Viewport；修复 main.lua 更新前快照滞后，升级点击改用 `ScreenToUi`、玩法瞄准继续使用 `ScreenToGame`，跨画布释放不再残留瞄准状态；Game.Update 在升级/游戏结束切换后立即中断同帧玩法推进，新增 `deferredXp` 保全升级触发同帧后续经验；全页面统一 Astroon 深蓝紫渐变、紫色 surface、蓝/青强调、白字与金色焦点，清理旧蓝白/深紫混搭。LSP 0 Error、官方 build 成功、GLES 菜单态截图确认 3D 场景初始化与蓝紫 UI；战斗态截图受当前沙箱运行器落盘限制未完成，需预览复测 |
+| v0.9.5 | 2026-09-01 | 修复升级界面卡死：`RollUpgradeChoices` 改为给前置声明的局部变量赋值，避免 `local function` 遮蔽导致 `upgradeChoices` 为空；抽卡候选不足时增加唯一候选兜底，保证升级态始终有可点击选项。LSP 0 Error、官方 build 成功、升级契约检查通过；用户截图中的 `NO PROTOCOLS AVAILABLE` 已定位并修复 |
 | v0.8.5 | 2026-08-15 | 修复 46° 正交视角下车辆与瞄准轨迹错位：轨迹从当前车辆中心起步，采样延长为 140×8，并按权威半径显示墙边反弹；相机震屏位移后刷新当前投影标定，使 3D、NanoVG 与输入继续共用同一映射。修复飞机二维 occupied cells 将自身误判为 Z 邻居导致正反面被剔除的问题，恢复实体体素块面并保留 XY 内部面剔除。巨型车继续由权威半径形成普通车 1.5× 且不越碰撞圆；LSP 0 Error、官方构建成功、240 帧 `lua_errors=0`、受控 normal/giant GLES 截图通过 |
 | v0.8.4 | 2026-08-15 | 敌人改为独立 `AircraftPixelData` 低像素采样：scout/striker/bomber/interceptor 的 occupied cells 同时驱动规则层逐块碰撞、隐藏 HP、2D 逐砖绘制、3D 单敌人双 section CustomGeometry 体素网格与碎片配色；相邻体素剔除内部面，`alive=false` 直接从飞机上消失；修正 3D 局部网格中心与规则坐标一致；保留 46° 正交、9:16 CONTAIN 和前六波 1 HP；LSP 0 Error、官方构建成功、受控 GLES 游戏态截图 `lua_errors=0` 通过 |
 | v0.8.2 | 2026-08-15 | 敌方从蔬菜体素阵列重制为六类主题飞机，每敌人单 `CustomGeometry` 包含尖鼻机身、主翼、尾翼、凸起驾驶舱、双发动机与尾鳍；砖块 HP 隐藏在规则层，前六波 1 HP，第 7/12 波升为 2/3 HP；敌方波次数量和速度重新调平；相机保持 46° 正交斜俯视、固定 9:16 投影和输入契约；LSP 0 Error、官方构建成功、240 帧 `lua_errors=0`，GLES 竖屏截图已生成；验证环境仍有 2 个内置资源和 shader cache 错误 |

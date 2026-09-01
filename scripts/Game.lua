@@ -659,18 +659,16 @@ local function GainXp(amount)
     end
 end
 
-local function RollUpgradeChoices()
+RollUpgradeChoices = function()
     -- WO-09/P5：加权抽卡 + 叠加上限 + 稀有保底。
     upgradeChoices = {}
-    local sinceRare = 0  -- 连续未出 rare+ 的次数，用于保底
+    local sinceRare = 0
     for _ = 1, 3 do
-        -- 构造可用候选（未达 maxStacks）
         local avail = {}
         local totalW = 0
         for _, u in ipairs(UPGRADE_POOL) do
             local stacks = upgradeStacks[u.id] or 0
             if stacks < u.maxStacks then
-                -- 后期无意义项（repair/xp 已高叠）轻微降权
                 local w = u.weight
                 if u.id == "repair" and stacks >= 4 then w = w * 0.4 end
                 if u.id == "xp" and stacks >= 4 then w = w * 0.5 end
@@ -680,28 +678,54 @@ local function RollUpgradeChoices()
         end
         if #avail == 0 then break end
 
-        -- 保底：连续 6 次未出 rare+，本次强制从 rare+ 候选抽
         local picked
         if sinceRare >= 6 then
             local rares = {}
-            local rw = 0
-            for _, a in ipairs(avail) do
-                if a.u.rarity ~= "common" then rares[#rares + 1] = a; rw = rw + a.w end
+            local rareWeight = 0
+            for _, candidate in ipairs(avail) do
+                if candidate.u.rarity ~= "common" then
+                    rares[#rares + 1] = candidate
+                    rareWeight = rareWeight + candidate.w
+                end
             end
             if #rares > 0 then
-                local r = Random() * rw
-                for _, a in ipairs(rares) do r = r - a.w; if r <= 0 then picked = a.u; break end end
+                local roll = Random() * rareWeight
+                for _, candidate in ipairs(rares) do
+                    roll = roll - candidate.w
+                    if roll <= 0 then picked = candidate.u; break end
+                end
                 picked = picked or rares[1].u
             end
         end
         if not picked then
-            local r = Random() * totalW
-            for _, a in ipairs(avail) do r = r - a.w; if r <= 0 then picked = a.u; break end end
+            local roll = Random() * totalW
+            for _, candidate in ipairs(avail) do
+                roll = roll - candidate.w
+                if roll <= 0 then picked = candidate.u; break end
+            end
             picked = picked or avail[1].u
         end
 
-        if picked.rarity ~= "common" then sinceRare = 0 else sinceRare = sinceRare + 1 end
+        if picked.rarity ~= "common" then
+            sinceRare = 0
+        else
+            sinceRare = sinceRare + 1
+        end
         upgradeChoices[#upgradeChoices + 1] = picked
+    end
+
+    -- 抽卡候选不足时仍必须提供可点击的完整三选一，禁止进入不可恢复的空升级态。
+    if #upgradeChoices < 3 then
+        for _, u in ipairs(UPGRADE_POOL) do
+            if #upgradeChoices >= 3 then break end
+            local duplicate = false
+            for _, picked in ipairs(upgradeChoices) do
+                if picked.id == u.id then duplicate = true; break end
+            end
+            if not duplicate and (upgradeStacks[u.id] or 0) < u.maxStacks then
+                upgradeChoices[#upgradeChoices + 1] = u
+            end
+        end
     end
 end
 
