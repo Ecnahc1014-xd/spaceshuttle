@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.9.7
-简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；相机玩法平面投影统一驱动输入、轨迹与空间反馈；敌方为由经典像素太空飞机剪影生成的四类单网格低像素体素飞机，我方为随权威碰撞半径缩放的大运式重卡；基地生命 100、敌机编队整体下移且方块独立越线扣血、XP/三选一升级与局内强化池；顶部 92px 战术仪表盘、中央战场、底部 94px 火控舱形成三段式 playing 层级；全页面统一 Astroon 深蓝紫渐变、紫色 surface、蓝/青强调、白色文字与金色焦点；已修复 3D 合成覆盖、主循环快照滞后、UI/玩法坐标混用、升级卡死、升级同帧推进、XP 丢失，以及预瞄线/2D拖尾/3D拖尾与车辆根节点之间的投影和深度错位。
+当前版本：0.10.0
+简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；敌方为由 AircraftPixelData occupied cells 生成的箱体化飞机，alive 方块使用官方木箱材质，命中后作为独立箱体取消碰撞、旋转飞散；飞机 SpawnWave 使用二维 AABB 不重叠候选布局；我方为放大后的大运式重卡；产品当前不绘制预瞄线和任何弹珠尾迹；Astroon 蓝紫 HUD/模态保持可见。
 最后巩固：2026-09-01
 
 ## 项目概况
@@ -24,10 +24,10 @@
 |------|------|
 | `scripts/main.lua` | 纯编排入口；转发引擎输入和 Update，连接核心、表现、后端 |
 | `scripts/Game.lua` | 引擎无关的权威规则、碰撞、波次、输入动作、领域事件与游戏快照 |
-| `scripts/Presentation.lua` | 消费领域事件，维护粒子、飘字、拖尾、闪白、震屏、波次横幅、防线脉冲与冲击波 |
+| `scripts/Presentation.lua` | 消费领域事件，维护粒子、飘字、撞飞箱体、闪白、震屏、波次横幅、防线脉冲与冲击波 |
 | `scripts/VisualCatalog.lua` | 当前 2D 后端的弹珠样式和飞机采样砖块颜色映射 |
 | `scripts/AircraftPixelData.lua` | 独立低像素飞机 occupied cells、分数、速度倍率与采样 RGB 数据源 |
-| `scripts/Renderer3D.lua` | 只读同步四类采样飞机（每个 occupied cell 对应一个可破坏体素，单 `CustomGeometry` 双 section）、大运式平头重卡、双层世界空间拖尾和碎片；每敌人/车辆各一个 `CustomGeometry` |
+| `scripts/Renderer3D.lua` | 只读同步四类采样飞机（每个 occupied cell 对应一个可破坏体素，单 `CustomGeometry` 双 section）、官方木箱材质、放大大运式平头重卡、撞飞独立箱体；每敌人/车辆各一个 `CustomGeometry` |
 | `scripts/Scene3DBackend.lua` | 3D Scene/Camera/Viewport、46° 正交斜俯视与 `orthoSize=18.0`、固定 9:16 `IntRect` CONTAIN、相机投影标定、3 批动态视差星层、深空底板、深紫/淡蓝 Laterano 酸性 HUD/四弹药槽/菜单和撞线反馈覆盖层 |
 | `scripts/Renderer.lua` | 无规则计算的 NanoVG 绘制器，只消费两个快照 |
 | `assets/model/6d5f1062-5bea-5cf8-a404-280333d4d4c8/` | 低多边形越野皮卡 MDL、LOD、diffuse/normal 纹理和材质资源 |
@@ -114,9 +114,11 @@
 
 - D-043: 预瞄线和拖尾对不上的根因不是玩法轨迹，而是 3D 车辆根节点、3D 拖尾、2D 拖尾和 NanoVG 预瞄使用了不同的 Z/投影锚点。3D 车辆根节点继续使用 `GetVehicleAnchorWorld(marble)` 的局部中心补偿；2D 预瞄通过 `Renderer3D.GetVehicleAnchor()` 复用实际车辆根锚点；2D/3D 拖尾通过 `GetTrailAnchor()` 和统一 `TRAIL_DEPTH_OFFSET` 复用拖尾锚点；3D 拖尾首点与当前车辆一致；投影标定保留 `WorldToScreenPoint()` 的运行时原点/轴增量。
 
-- D-044: 依据战斗态截图，预瞄线首点和拖尾首点必须与当前实际渲染车辆根节点共享锚点，而不是只使用规则 XY 的理论投影。`Renderer3D.GetVehicleAnchor()` 优先读取 `vehicleRecords_[marble.id].root.position`，对预测路径点只叠加规则 XY 世界增量；`GetTrailAnchor()` 在同一车辆锚点上叠加单次 `TRAIL_DEPTH_OFFSET`；3D 拖尾顶点不再重复添加深度偏移。
-
-## 验证记录
+- D-045: 新需求废弃旧预瞄/拖尾产品方向：Game 不再生成 `aimTrajectory`，2D Renderer、Scene3DBackend 和 Renderer3D 均不绘制预瞄线/弹珠尾迹；拖拽输入仍保留为发射控制。
+- D-046: 敌方命中采用“箱体脱离”规则：`EjectBrick` 将砖块标记 `alive=false,ejected=true`，事件携带随机平面速度、角速度和生命周期；Presentation 更新飞散箱体，Renderer3D 用独立 Box 节点表现旋转，未 ejected 方块才可碰撞。
+- D-047: 敌方箱体网格继续由 occupied cells 驱动，但视觉本体 gap 收紧为 0.82，前后端面保留；使用官方木箱材质 UUID `uuid://C6Zh4Wb78SYH1lDk3QOBw_NQ`，不可用时回退顶点色材质。
+- D-048: SpawnWave 改用含间距的二维 AABB 候选检查，失败时确定性向上错层，不接受重叠候选；车辆显示缩放在权威半径推导基础上放大 1.12。
+- v0.10.0: 废弃预瞄线与全部弹珠尾迹；3D 车辆按权威半径放大 1.12，敌方体素 gap 收紧并接入官方木箱材质；规则层新增 `EjectBrick`，命中方块立即取消碰撞并通过 `brick_ejected` 事件随机旋转飞散，表现层/3D 后端维护独立箱体生命周期；SpawnWave 改为二维 AABB 严格候选布局。官方 build 成功；当前沙箱 validate/GLES 未落盘报告或截图，需预览确认。
 - Lua LSP v0.9.4：`Game.lua`、`main.lua`、`Scene3DBackend.lua`、`Presentation.lua`、`Renderer3D.lua` 均 Error 0。
 - 官方 build v0.9.4：成功，正式入口 `main.lua`，单机模式。
 - GLES 菜单态 v0.9.4：`screenshots/ui_logic_final.png` 成功生成，确认蓝紫主题和 540×960 画布；日志确认 3D 场景、Renderer3D、PBRLitSolid、LitSolid、Skybox、NanoVGFill 均初始化成功。菜单态不生成敌机/重卡，因此不作为战斗态对象可见性证据。
@@ -124,8 +126,4 @@
 - 逻辑验证：当前沙箱 headless/部分截图进程可能被外层直接终止且无日志文件，不能仅凭 exit code 判定；以 LSP 0 Error、官方 build 成功和可落盘 GLES 菜单截图作为已完成证据。
 - 当前 46° 投影由运行时 `WorldToScreenPoint()` 标定，并在相机震屏位移后刷新；禁止硬编码旧 offset/scale。
 
-## 下一步
-1. 在预览中点击开始，确认战斗态 3D 飞机/重卡可见、拖尾与 HUD 不覆盖 3D；真实触摸测试升级卡命中、暂停恢复。
-2. 继续基于实机截图调 playing 战场密度、飞机色彩和车辆/拖尾对比，不修改权威 HP、逐块扣血、XP 曲线和 9:16 共同投影契约。
-3. B 组（需生成 MCP 就绪）：音效 SFX/BGM、角色与图标美术、元进度与叙事内容。
-4. 保持 HUD 与规则层解耦，继续让 3D 后端只消费两个 snapshot 与 `Game.GetSnapshot().upgradeChoices`。
+- 下一步改为：在预览中点击开始，重点确认 UI 仍可见、敌方箱体材质、车辆体量、命中后箱体旋转飞散、飞机无重叠，以及暂停/升级触摸命中。预瞄线和尾迹不再回归。

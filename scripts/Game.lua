@@ -405,6 +405,7 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
             table.insert(bricks, {
                 col = tonumber(col), row = tonumber(row),
                 hp = brickHp, maxHp = brickHp, alive = true,
+                ejected = false,
             })
         end
     end
@@ -436,7 +437,6 @@ SpawnWave = function()
     if wave % 10 == 0 then
         local bossKey = "interceptor"
         if not AircraftData[bossKey] then
-            -- 退化：取 AircraftData 中第一个可用键作为 Boss 外形。
             for key in pairs(AircraftData) do bossKey = key; break end
         end
         local brickSize = GetBrickSize(wave)
@@ -466,27 +466,46 @@ SpawnWave = function()
     local count, baseSpeed, brickHp = GetWaveParams(wave)
     local brickSize = GetBrickSize(wave)
     local margin = 20
-    local usedX = {}
+    local placed = {}
+    local gap = 8
+    local maxYStep = 7
+
+    local function Overlaps(candidateX, candidateY, candidateW, candidateH)
+        for _, item in ipairs(placed) do
+            if candidateX < item.x + item.w + gap
+                and candidateX + candidateW + gap > item.x
+                and candidateY < item.y + item.h + gap
+                and candidateY + candidateH + gap > item.y then
+                return true
+            end
+        end
+        return false
+    end
 
     for i = 1, count do
         local aircraftKey = pool[RandomInt(1, #pool)]
         local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
-        local x, tries = margin, 0
-        repeat
-            x = margin + Random() * math.max(1, DW - aircraftWidth - margin * 2)
-            local overlap = false
-            for _, usedCenterX in ipairs(usedX) do
-                if math.abs(usedCenterX - (x + aircraftWidth * 0.5)) < aircraftWidth * 0.9 then
-                    overlap = true
-                    break
-                end
+        local x, y = margin, -aircraftHeight * 0.3
+        local found = false
+        for _ = 1, 80 do
+            local candidateX = margin + Random() * math.max(1, DW - aircraftWidth - margin * 2)
+            local candidateY = -aircraftHeight * 0.3 - (i - 1) * maxYStep - RandomInt(0, 10)
+            if not Overlaps(candidateX, candidateY, aircraftWidth, aircraftHeight) then
+                x, y, found = candidateX, candidateY, true
+                break
             end
-            tries = tries + 1
-            if not overlap or tries > 25 then break end
-        until false
-        table.insert(usedX, x + aircraftWidth * 0.5)
-
-        local y = -aircraftHeight * 0.3 - (i - 1) * (aircraftHeight * 0.2) - RandomInt(0, 10)
+        end
+        if not found then
+            -- 确定性纵向 fallback：继续向上错层，绝不接受与已放置飞机重叠的位置。
+            y = -aircraftHeight * 0.3 - (i - 1) * (aircraftHeight + gap)
+            local guard = 0
+            while Overlaps(x, y, aircraftWidth, aircraftHeight) do
+                y = y - aircraftHeight - gap
+                guard = guard + 1
+                if guard > count then break end
+            end
+        end
+        placed[#placed + 1] = {x = x, y = y, w = aircraftWidth, h = aircraftHeight}
         local enemy = CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         if enemy then table.insert(veggies, enemy) end
     end
@@ -534,33 +553,45 @@ local function CollideBrick(marble, rx, ry, rw, rh)
     return true
 end
 
+local function EjectBrick(enemy, brick)
+    if brick.ejected or not brick.alive then return false end
+    local data = AircraftData[enemy.aircraftKey]
+    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
+    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
+    brick.alive = false
+    brick.ejected = true
+    score = score + data.score
+    bricksBroken = bricksBroken + 1
+    GainXp(XP_PER_BRICK)
+
+    local angle = Random() * math.pi * 2
+    local speed = 90 + Random() * 150
+    Emit("brick_hit", {
+        enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
+        col = brick.col, row = brick.row, x = x, y = y,
+        destroyed = true, score = data.score,
+    })
+    Emit("brick_ejected", {
+        enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
+        col = brick.col, row = brick.row, x = x, y = y,
+        vx = math.cos(angle) * speed,
+        vy = math.sin(angle) * speed - 80,
+        rotation = Random() * math.pi * 2,
+        angularVelocity = (Random() * 2 - 1) * 13,
+        lifetime = 1.15 + Random() * 0.55,
+        brickSize = enemy.brickSize,
+    })
+    return true
+end
+
 local function DamageBrick(enemy, brick, damage)
-    -- P11：Boss 在 vulnerable 阶段（phase 2）受到额外伤害，仅规则层加成。
+    if brick.ejected or not brick.alive then return end
+    -- 命中即脱离编队：该方块立刻失去规则碰撞，作为独立箱体飞散。
     if enemy.isBoss and enemy.vulnerable then
         damage = (damage or 1) * 1.5
     end
     brick.hp = brick.hp - (damage or 1)
-    local data = AircraftData[enemy.aircraftKey]
-    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
-    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
-    local destroyed = brick.hp <= 0
-
-    if destroyed then
-        brick.alive = false
-        score = score + data.score
-        bricksBroken = bricksBroken + 1
-        GainXp(XP_PER_BRICK)
-    end
-
-    Emit("brick_hit", {
-        enemyId = enemy.id,
-        aircraftKey = enemy.aircraftKey,
-        col = brick.col,
-        row = brick.row,
-        x = x, y = y,
-        destroyed = destroyed,
-        score = destroyed and data.score or 0,
-    })
+    EjectBrick(enemy, brick)
 end
 
 -- P11 五异常反应系统（规则层）：砖块可携带 burn/shock/corrode/freeze/volatile 五种异常状态，
@@ -585,26 +616,20 @@ local function TickBrickStatus(enemy, brick, dt)
         brick.hp = brick.hp - (0.6 + brick.status.burn.power) * dt
         brick.status.freeze.time = brick.status.freeze.time - dt * 2
         if brick.hp <= 0 and brick.alive then
-            brick.alive = false
-            bricksBroken = bricksBroken + 1
-            GainXp(XP_PER_BRICK)
+            EjectBrick(enemy, brick)
             Emit("status_reaction", {enemyId = enemy.id, kind = "melt", x = x, y = y})
         end
     elseif hasBurn then
         brick.hp = brick.hp - (0.35 + brick.status.burn.power) * dt
         if brick.hp <= 0 and brick.alive then
-            brick.alive = false
-            bricksBroken = bricksBroken + 1
-            GainXp(XP_PER_BRICK)
+            EjectBrick(enemy, brick)
         end
     end
     -- 腐蚀：持续削减该砖块有效护甲（这里直接换算为每秒小伤害）。
     if brick.status.corrode and brick.status.corrode.time > 0 then
         brick.hp = brick.hp - 0.25 * dt
         if brick.hp <= 0 and brick.alive then
-            brick.alive = false
-            bricksBroken = bricksBroken + 1
-            GainXp(XP_PER_BRICK)
+            EjectBrick(enemy, brick)
         end
     end
     -- 易暴：寿终时引爆邻格（volatile），额外范围伤害由 base_hit 风格事件广播。
@@ -818,10 +843,11 @@ end
 local function FindNearestBrick(originEnemy, originBrick, originX, originY)
     local nearest = nil
     local nearestDistanceSq = math.huge
+    -- 碰撞区只遍历仍在编队中的 alive 方块；ejected 方块不会再次命中。
     for _, enemy in ipairs(veggies) do
         if not enemy.dead then
             for _, brick in ipairs(enemy.bricks) do
-                if brick.alive and not (enemy == originEnemy and brick == originBrick) then
+                if brick.alive and not brick.ejected and not (enemy == originEnemy and brick == originBrick) then
                     local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
                     local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
                     local dx = x - originX
@@ -909,7 +935,7 @@ local function DamageGiantArea(originEnemy, originBrick, damage, frameHitBricks)
     for _, enemy in ipairs(veggies) do
         if not enemy.dead then
             for _, brick in ipairs(enemy.bricks) do
-                if brick.alive and not frameHitBricks[brick] then
+                if brick.alive and not brick.ejected and not frameHitBricks[brick] then
                     local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
                     local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
                     local dx = x - centerX
@@ -1023,7 +1049,7 @@ UpdateMarbles = function(dt)
                                 enemy.brickSize - 2, enemy.brickSize - 2) then
                                 marble.ignoredBrick = nil
                             end
-                        elseif brick.alive and not frameHitBricks[brick] then
+                        elseif brick.alive and not brick.ejected and not frameHitBricks[brick] then
                             local rx = enemy.x + (brick.col - 1) * enemy.brickSize + 1
                             local ry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
                             local rw = enemy.brickSize - 2
@@ -1267,48 +1293,6 @@ local function GetPullState(px, py)
     return dx, dy, distance
 end
 
-local function BuildAimTrajectory()
-    local points = {}
-    if not aiming or not activeBall then return points end
-
-    local dx = activeBall.x - SLING_X
-    local dy = activeBall.y - SLING_Y
-    local distance = math.sqrt(dx * dx + dy * dy)
-    if distance < 5 then return points end
-
-    local def = BALL_TYPES[activeBall.ballType]
-    -- WO-08/P7：预测线初速比例与 LaunchMarble 共用 BALANCE 曲线，保证预测一致。
-    local powerRatio = math.max(0, math.min(1, distance / BALANCE.maxPull))
-    local speed = def.speed * (BALANCE.powerMin + (BALANCE.powerMax - BALANCE.powerMin) * powerRatio)
-    local vx = -dx / distance * speed
-    local vy = -dy / distance * speed
-    local x, y = activeBall.x, activeBall.y
-    local stepDistance = 8
-    local sampleCount = 140
-    table.insert(points, {x = x, y = y, progress = 0})
-
-    for i = 1, sampleCount do
-        local velocityLength = math.sqrt(vx * vx + vy * vy)
-        if velocityLength < 0.001 then break end
-        x = x + vx / velocityLength * stepDistance
-        y = y + vy / velocityLength * stepDistance
-        if x - activeBall.radius < 0 then
-            x = activeBall.radius
-            vx = math.abs(vx)
-        elseif x + activeBall.radius > DW then
-            x = DW - activeBall.radius
-            vx = -math.abs(vx)
-        end
-        if y - activeBall.radius < 0 then
-            y = activeBall.radius
-            vy = math.abs(vy)
-        end
-        if y - activeBall.radius > DH then break end
-        table.insert(points, {x = x, y = y, progress = i / sampleCount})
-    end
-    return points
-end
-
 function Game.Init(config)
     config = config or {}
     DW = config.width or DW
@@ -1405,8 +1389,7 @@ function Game.DrainEvents()
 end
 
 function Game.GetSnapshot()
-    -- WO-16/P9：复用常驻缓冲，仅每帧覆盖字段。aimTrajectory 是每帧重建的子表，
-    -- 调用方不得以持久引用持有本快照（下帧即被覆盖）。
+    -- WO-16/P9：复用常驻缓冲，仅每帧覆盖字段。瞄准状态只供拖拽发射，不再生成预瞄轨迹。
     local s = snapshotBuffer_ or {}
     snapshotBuffer_ = s
     s.state = gameState
@@ -1437,7 +1420,6 @@ function Game.GetSnapshot()
     s.aiming = aiming
     s.aimX = aimX
     s.aimY = aimY
-    s.aimTrajectory = BuildAimTrajectory()
     s.slingX = SLING_X
     s.slingY = SLING_Y
     s.maxPull = MAX_PULL

@@ -395,19 +395,6 @@ local function ProjectGamePoint(x, y)
         projectionOffsetY_ + y * projectionScaleY_
 end
 
-local function ProjectVehiclePoint(x, y, marble)
-    local anchor = Renderer3D.GetVehicleAnchor(x, y, marble)
-    local screenPoint = camera_:WorldToScreenPoint(anchor)
-    return projectionOffsetX_ + (screenPoint.x - projectionOriginNdcX_) * DESIGN_W,
-        projectionOffsetY_ + (screenPoint.y - projectionOriginNdcY_) * DESIGN_H
-end
-
-local function ProjectTrailPoint(x, y, marble)
-    local anchor = Renderer3D.GetTrailAnchor(x, y, marble)
-    local screenPoint = camera_:WorldToScreenPoint(anchor)
-    return projectionOffsetX_ + (screenPoint.x - projectionOriginNdcX_) * DESIGN_W,
-        projectionOffsetY_ + (screenPoint.y - projectionOriginNdcY_) * DESIGN_H
-end
 local function DrawAcidGrid(ctx, width, height)
     nvgStrokeWidth(ctx, 1)
     nvgStrokeColor(ctx, nvgRGBA(137, 203, 255, 18))
@@ -438,20 +425,6 @@ local function DrawHalo(ctx, cx, cy, radius, alpha)
         nvgMoveTo(ctx, cx + math.cos(radians) * inner, cy + math.sin(radians) * inner)
         nvgLineTo(ctx, cx + math.cos(radians) * radius, cy + math.sin(radians) * radius)
         nvgStroke(ctx)
-    end
-end
-
-local function DrawAimTrajectory(ctx, game)
-    if not game.aiming or not game.activeBall then return end
-    local color = SLOT_COLORS[game.activeBall.ballType] or SLOT_COLORS.normal
-    for _, point in ipairs(game.aimTrajectory) do
-        local screenX, screenY = ProjectVehiclePoint(point.x, point.y, game.activeBall)
-        local alpha = math.floor(210 * (1 - point.progress))
-        local radius = 1.8 + 3.0 * (1 - point.progress)
-        nvgBeginPath(ctx)
-        nvgCircle(ctx, screenX, screenY, radius)
-        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha))
-        nvgFill(ctx)
     end
 end
 
@@ -1021,43 +994,19 @@ local function DrawWaveBanner(ctx, game, presentation)
     nvgRestore(ctx)
 end
 
-local function DrawMarbleTrails(ctx, game, presentation)
-    -- A4：弹珠拖尾。按 ballType 用不同强调色绘制渐隐拖尾，强化四弹辨识度。
-    for _, marble in ipairs(game.marbles) do
-        local trail = presentation.marbleTrails[marble.id]
-        if trail and #trail > 1 then
-            local color = SLOT_COLORS[marble.ballType] or SLOT_COLORS.normal
-            local n = #trail
-            for i = 1, n - 1 do
-                local px, py = ProjectTrailPoint(trail[i].x, trail[i].y, marble)
-                local nx, ny = ProjectTrailPoint(trail[i + 1].x, trail[i + 1].y, marble)
-                local a = (i / n) * 150
-                nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
-                nvgStrokeWidth(ctx, 2 + (i / n) * 3)
-                nvgBeginPath(ctx)
-                nvgMoveTo(ctx, px, py)
-                nvgLineTo(ctx, nx, ny)
-                nvgStroke(ctx)
-            end
-        end
-    end
-end
-
 local function RenderOverlay(game, presentation)
     if not vg_ then return end
     nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
     nvgScale(vg_, scale_, scale_)
     DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
-    DrawWaveThemeTint(vg_, screenDesignWidth_, screenDesignHeight_, game)    -- A5：波次主题色
+    DrawWaveThemeTint(vg_, screenDesignWidth_, screenDesignHeight_, game)
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgSave(vg_)
-    nvgIntersectScissor(vg_, 0, 0, DESIGN_W, DESIGN_H)
     nvgBeginPath(vg_)
     nvgRect(vg_, 0, 0, DESIGN_W, DESIGN_H)
     nvgStrokeColor(vg_, nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 180))
     nvgStrokeWidth(vg_, 2)
     nvgStroke(vg_)
-    -- 反弹边缘在 2D 设计空间同步勾勒，与 3D 背景边界框保持一致。
     nvgBeginPath(vg_)
     nvgMoveTo(vg_, 0, 0)
     nvgLineTo(vg_, 0, DESIGN_H)
@@ -1067,15 +1016,13 @@ local function RenderOverlay(game, presentation)
     nvgStrokeWidth(vg_, 3)
     nvgStroke(vg_)
     if game.state == "playing" then
-        DrawMarbleTrails(vg_, game, presentation)    -- A4：弹珠拖尾
-        DrawAimTrajectory(vg_, game)
         if presentation.screenShake > 0 then
             local amplitude = presentation.screenShake * 13
             nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
                 math.cos(game.elapsed * 73) * amplitude * 0.65)
         end
         DrawBaseImpactFeedback(vg_, game, presentation)
-        DrawWaveBanner(vg_, game, presentation)    -- A2：波次横幅
+        DrawWaveBanner(vg_, game, presentation)
     end
     nvgRestore(vg_)
 

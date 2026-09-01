@@ -3,9 +3,9 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.9.7
-- 进度: 太空飞机弹珠已完成肉鸽幸存者化最小完整循环（0.9.0）+ WO-13/16/14/15/P11/P12 规则与表现层（0.9.1）+ A 组纯代码打磨（0.9.2）+ UI 结构重构（0.9.3）+ 3D 合成/主循环/蓝紫主题修复（0.9.4）+ 升级卡死修复（0.9.5）+ 预瞄线/拖尾投影统一（0.9.6）+ 车辆真实锚点统一（0.9.7）。依据战斗态截图，3D 车辆根节点、2D 预瞄、2D 拖尾、3D 拖尾现在都通过 Renderer3D 的同源车辆锚点计算；车辆根节点保留模型局部中心补偿，拖尾深度由 `TRAIL_DEPTH_OFFSET` 单一来源控制；相机投影保留运行时 `WorldToScreenPoint()` 标定原点和轴增量，禁止独立经验 offset。
-- 上次交付: v0.9.7 预瞄线/拖尾真实车辆锚点修复；Renderer3D 与 Scene3DBackend LSP 0 Error、正式入口官方构建成功、投影契约检查通过；用户提供战斗态截图已用于定位，自动战斗态截图探针受沙箱落盘限制未完成，需预览复测首点、拖尾和车辆中心
+- 版本: 0.10.0
+- 进度: 太空飞机弹珠完成新一轮战斗表现调整：移除预瞄线与全部弹珠尾迹；3D 车辆视觉放大并继续受权威半径约束；敌方 occupied cells 缩小为箱体视觉并接入官方木箱材质；命中方块立即脱离编队、取消规则碰撞，沿随机向量旋转飞散；SpawnWave 使用二维 AABB 候选检查和确定性纵向 fallback 防止飞机重叠；NanoVG Overlay 恢复完整 HUD/模态绘制。
+- 上次交付: v0.10.0 新玩法表现与碰撞规则；官方构建成功，LSP/运行器在当前沙箱未落盘报告，需预览确认战斗态撞飞和 UI
 
 ## 用户画像摘要
 - 使用简体中文沟通
@@ -28,9 +28,11 @@
 - 相机推近契约：防线受创时 `camera_.orthoSize = 18.0 - baseBarrierFlash*1.6`，仍正交投影仅瞬时缩放，flash 归零自动复原，绝不变透视
 - 敌人行为分化契约：四类 aircraft 的摆动/下移差异只能由 `AircraftPixelData.behavior[aircraftKey]` 单一来源驱动（swayAmp/swayFreq/descentMul/agility/accent），`Game.CreateEnemy` 仅消费该表并叠加随机抖动，禁止把行为数值硬编码进 Game 其他分支或渲染层
 - 模态缓动契约：四模态（menu/gameover/levelup/paused）淡入由 `ModalIntro(game)`（EaseOutCubic，0.28s）经 `nvgGlobalAlpha` 控制，波次横幅 `DrawWaveBanner` 由 `presentation.waveBannerTimer` 驱动滑入淡出；仅表现层瞬时状态，不得写规则层
-- 拖尾异色契约：`DrawMarbleTrails` 颜色取自 `SLOT_COLORS[marble.ballType]`（与四弹药槽一致），宽度锚定权威碰撞半径，禁止按 ballType 额外叠加经验倍率或改用非槽位色
-- 波次主题渐变契约：`DrawWaveThemeTint` 在酸性风格内按 `game.wave` 做色相旋转叠加，alpha 极低（≤16）仅作背景氛围，禁止覆盖 HUD/玩法对象的硬边不透明安全层
-- Boss 视觉契约：阶段条 `DrawBossPhaseBar` 与危险带变色只在 Boss 波（扫描 `veggies[].isBoss`）触发，危险带常驻紫色警示；全部消费 `bossPhase/vulnerable` 快照字段，禁止渲染层改写 bossPhase 或规则变量
+- 预瞄轨迹与尾迹契约：产品当前不绘制预瞄线、2D 弹珠尾迹或 3D 车辆尾迹；拖拽瞄准仍只负责发射输入，不向渲染快照生成轨迹。
+- 敌方箱体契约：alive occupied cells 仍来自 AircraftPixelData 并保持单敌人 CustomGeometry；`VOXEL_GAP` 只缩小视觉箱体，中心 pitch 继续等于 `brickSize * WORLD_SCALE`；面使用官方木箱材质，缺失时才回退顶点色材质。
+- 撞飞箱体契约：命中方块通过 `ejected=true` 立即退出规则碰撞和编队主体，`brick_ejected` 事件带随机速度、角速度和生命周期；Presentation 维护飞散状态，Renderer3D 以独立箱体节点消费，未撞方块继续使用 AABB 碰撞。
+- 飞机布局契约：SpawnWave 对飞机完整二维 AABB（含间距）进行候选检查，失败时仅向更高层确定性错位，禁止接受重叠候选。
+- 车辆尺寸契约：车辆显示缩放继续从 `marble.radius` 推导，在局部包围半径约束内放大 12%，禁止按球种硬编码额外尺寸。
 
 ## 恢复指令（新会话必执行）
 1. 读本文件 → 获取项目状态和避雷清单
@@ -55,7 +57,8 @@
 - 发现会话外并发修改时必须保留并合并，禁止直接覆盖
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 - 3D 后端的体素尺寸必须统一经过 `WORLD_SCALE` 映射；Renderer3D 只消费快照，碎片生命周期由 Presentation 维护
-- 3D 体素性能契约：每个敌人只允许一个 `CustomGeometry` 根对象，但允许在同一对象内使用面与棱线两个 section；只在砖块存活拓扑或冻结状态改变时重建，禁止每体素创建 `Node + StaticModel`
+- 3D 后端的体素性能契约：每个敌人只允许一个 `CustomGeometry` 根对象，允许面与棱线两个 section；撞飞箱体属于低频瞬时对象，独立节点随 Presentation 生命周期回收。
+- 车辆视觉比例：`VEHICLE_PLANAR_RADIUS` 作为局部包围半径基准，世界缩放由 `marble.radius * WORLD_SCALE` 推导；当前显示放大系数固定 1.12，不能突破权威碰撞圆。
 - 飞机采样权威契约：`AircraftPixelData.lua` 的 occupied cells 是规则砖块、2D 绘制、3D 体素和碎片颜色的唯一共同来源；禁止恢复 `VeggiePixelData` 敌人轮廓或用完整飞机多边形覆盖逐块缺失。3D 体素中心必须使用 `brickSize * WORLD_SCALE` 的规则 pitch，`VOXEL_GAP` 只能缩小体素本体，不能改变中心间距；occupied cells 只有二维 XY 邻接，XY 内部侧面可剔除，但每个 alive cell 的前后 Z 端面必须生成，禁止再把自身误判为 Z 邻居
 - 相机契约：必须使用正交投影，禁止透视近大远小；当前相机从 XY 玩法平面法线向正视方向倾斜 46°，位置按 `(0, 25*sin(46°), -25*cos(46°))` 计算，`orthoSize=18.0`，保证 540 宽场地在 9:16 视锥内完整可见；车辆仍在 XY 平面绕 Z 轴朝向速度或瞄准发射向量
 - 载具表现契约：每个 `marble.id` 对应一个大运式平头重卡 `CustomGeometry`，内部固定为主车漆/浅色侧围/轮胎/金属/玻璃/灯光 6 个 PBR section；禁止恢复球形弹珠、外部整车 MDL、固定装饰车发射台、跑车/皮卡轮廓或方块体素瓦片车辆

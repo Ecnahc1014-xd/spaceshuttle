@@ -10,9 +10,9 @@ local waveBannerTimer = 0
 local hitStop = 0    -- P12：命中顿帧（hitstop），由大命中事件触发，期间主循环对玩法 dt 打折
 local particles = {}
 local floatTexts = {}
-local marbleTrails = {}
 local hitFlashes = {}
 local brickDebris = {}
+local ejectedBoxes = {}
 local baseImpacts = {}
 local baseBarrierFlash = 0
 local truckLaunchFlash = {
@@ -22,6 +22,7 @@ local truckLaunchFlash = {
     giant = 0,
 }
 local nextDebrisId = 1
+local SpawnEjectedBox
 
 -- WO-16/P9：高频视觉对象（粒子/碎片/飘字）对象池，避免每帧 table 分配触发 GC 抖动。
 -- 失效对象回收进空闲表，再次生成时优先复用其 table，只覆盖字段。
@@ -34,6 +35,7 @@ local floatPool = {}
 local FEEDBACK_MAP = {
     wave_started = {"waveBanner"},
     brick_hit = {"brickSpark"},
+    brick_ejected = {"brickEjected"},
     enemy_cleared = {"clearBanner"},
     base_hit = {"baseShake"},
     marble_launched = {"launchFlash"},
@@ -118,9 +120,9 @@ local FEEDBACK_HANDLERS = {
         for _, d in ipairs(brickDebris) do debrisPool[#debrisPool + 1] = d end
         particles = {}
         floatTexts = {}
-        marbleTrails = {}
         hitFlashes = {}
         brickDebris = {}
+        ejectedBoxes = {}
         baseImpacts = {}
         baseBarrierFlash = 0
         nextDebrisId = 1
@@ -141,11 +143,13 @@ local FEEDBACK_HANDLERS = {
         hitFlashes[GetBrickKey(event.enemyId, event.col, event.row)] = 0.12
         if event.destroyed then
             SpawnParticles(event.x, event.y, particleColor, 10)
-            SpawnBrickDebris(event, color)
             SpawnFloatText(event.x, event.y - 4, "+" .. event.score, {255, 240, 180}, 0.8)
         else
             SpawnParticles(event.x, event.y, {255, 240, 180}, 4)
         end
+    end,
+    brickEjected = function(event)
+        SpawnEjectedBox(event)
     end,
     clearBanner = function(event)
         SpawnFloatText(event.x, event.y, "击破!", {120, 255, 160}, 1.2)
@@ -201,10 +205,7 @@ local FEEDBACK_HANDLERS = {
         SpawnFloatText(event.x, event.y - 28,
             "圆域 x" .. event.hitCount, {235, 190, 255}, 1.0)
     end,
-    -- marble_removed 虽未进 FEEDBACK_MAP，仍作为直接处理器保留（只清轨迹引用）。
-    marbleRemoved = function(event)
-        marbleTrails[event.id] = nil
-    end,
+    -- marble_removed 无需维护拖尾状态。
 }
 
 local function HandleEvent(event)
@@ -261,6 +262,46 @@ local function UpdateHitFlashes(dt)
     end
 end
 
+SpawnEjectedBox = function(event)
+    local box = {
+        id = event.enemyId * 10000 + event.col * 100 + event.row,
+        x = event.x,
+        y = event.y,
+        vx = event.vx,
+        vy = event.vy,
+        z = -2.0,
+        vz = 5 + math.random() * 5,
+        rotation = event.rotation,
+        angularVelocity = event.angularVelocity,
+        age = 0,
+        lifetime = event.lifetime,
+        size = event.brickSize,
+        aircraftKey = event.aircraftKey,
+        col = event.col,
+        row = event.row,
+    }
+    ejectedBoxes[#ejectedBoxes + 1] = box
+end
+
+-- WO-17：被命中的敌方方块从编队脱离，持续旋转并沿规则层给出的随机向量飞散。
+local function UpdateEjectedBoxes(dt)
+    for i = #ejectedBoxes, 1, -1 do
+        local box = ejectedBoxes[i]
+        box.age = box.age + dt
+        box.x = box.x + box.vx * dt
+        box.y = box.y + box.vy * dt
+        box.z = box.z + box.vz * dt
+        box.vy = box.vy + 260 * dt
+        box.vx = box.vx * (1 - math.min(0.75, dt * 1.5))
+        box.vz = box.vz * (1 - math.min(0.75, dt * 1.5))
+        box.rotation = box.rotation + box.angularVelocity * dt
+        if box.age >= box.lifetime then
+            ejectedBoxes[i] = ejectedBoxes[#ejectedBoxes]
+            ejectedBoxes[#ejectedBoxes] = nil
+        end
+    end
+end
+
 local function UpdateBrickDebris(dt)
     for i = #brickDebris, 1, -1 do
         local debris = brickDebris[i]
@@ -300,31 +341,14 @@ local function UpdateTruckLaunchFlashes(dt)
     end
 end
 
-local function UpdateTrails(gameSnapshot)
-    local activeIds = {}
-    for _, marble in ipairs(gameSnapshot.marbles) do
-        activeIds[marble.id] = true
-        local trail = marbleTrails[marble.id]
-        if not trail then
-            trail = {}
-            marbleTrails[marble.id] = trail
-        end
-        table.insert(trail, 1, {x = marble.x, y = marble.y})
-        if #trail > 10 then table.remove(trail) end
-    end
-    for id in pairs(marbleTrails) do
-        if not activeIds[id] then marbleTrails[id] = nil end
-    end
-end
-
 function Presentation.Init()
     screenShake = 0
     waveBannerTimer = 0
     particles = {}
     floatTexts = {}
-    marbleTrails = {}
     hitFlashes = {}
     brickDebris = {}
+    ejectedBoxes = {}
     baseImpacts = {}
     baseBarrierFlash = 0
     nextDebrisId = 1
@@ -354,9 +378,9 @@ function Presentation.Update(dt, gameSnapshot, events)
     UpdateFloatTexts(dt)
     UpdateHitFlashes(dt)
     UpdateBrickDebris(dt)
+    UpdateEjectedBoxes(dt)
     UpdateBaseImpacts(dt)
     UpdateTruckLaunchFlashes(dt)
-    UpdateTrails(gameSnapshot)
 end
 
 function Presentation.GetSnapshot()
@@ -366,10 +390,10 @@ function Presentation.GetSnapshot()
         waveBannerTimer = waveBannerTimer,    -- A2：波次横幅入场计时（秒，1.8 起递减）
         particles = particles,
         floatTexts = floatTexts,
-        marbleTrails = marbleTrails,
         hitFlashes = hitFlashes,
         brickDebris = brickDebris,
         baseImpacts = baseImpacts,
+        ejectedBoxes = ejectedBoxes,
         baseBarrierFlash = baseBarrierFlash,
         truckLaunchFlash = truckLaunchFlash,
         visualCatalog = VisualCatalog,

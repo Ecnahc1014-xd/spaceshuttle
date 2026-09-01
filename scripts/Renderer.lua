@@ -266,22 +266,10 @@ end
 -- 弹珠
 ----------------------------------------------------------------------
 
-local function DrawMarble(ctx, marble, visualCatalog, trail)
+local function DrawMarble(ctx, marble, visualCatalog)
     local def = visualCatalog.GetBallStyle(marble.ballType)
     if not def then return end
     local r = marble.radius
-
-    for i, point in ipairs(trail or {}) do
-        local t = 1 - (i / #trail)
-        local alpha = math.floor(80 * t)
-        local radius = r * (0.4 + 0.6 * t)
-        nvgBeginPath(ctx)
-        nvgCircle(ctx, point.x, point.y, radius)
-        nvgFillColor(ctx, nvgRGBA(def.trail[1], def.trail[2], def.trail[3], alpha))
-        nvgFill(ctx)
-    end
-
-    -- 外发光
     local glow = nvgRadialGradient(ctx, marble.x, marble.y, r * 0.5, r * 2.2,
         nvgRGBA(def.glow[1], def.glow[2], def.glow[3], 130),
         nvgRGBA(def.glow[1], def.glow[2], def.glow[3], 0))
@@ -383,23 +371,6 @@ local function DrawBallSlot(ctx, x, y, ballType, visualCatalog, scale)
     nvgStrokeColor(ctx, nvgRGBA(def.stroke[1], def.stroke[2], def.stroke[3], 255))
     nvgStrokeWidth(ctx, 1)
     nvgStroke(ctx)
-end
-
-----------------------------------------------------------------------
--- 瞄准轨迹
-----------------------------------------------------------------------
-
-local function DrawAimTrajectory(ctx, points, visualCatalog, activeType)
-    local def = visualCatalog.GetBallStyle(activeType)
-    if not def then return end
-    for _, point in ipairs(points) do
-        local alpha = math.floor(180 * (1 - point.progress))
-        local radius = 3 * (1 - point.progress) + 1.5
-        nvgBeginPath(ctx)
-        nvgCircle(ctx, point.x, point.y, radius)
-        nvgFillColor(ctx, nvgRGBA(def.trail[1], def.trail[2], def.trail[3], alpha))
-        nvgFill(ctx)
-    end
 end
 
 ----------------------------------------------------------------------
@@ -646,14 +617,10 @@ function Renderer.Render(ctx, game, presentation)
     end
 
     if game.activeBall then
-        DrawMarble(ctx, game.activeBall, visualCatalog, nil)
+        DrawMarble(ctx, game.activeBall, visualCatalog)
     end
     for _, marble in ipairs(game.marbles) do
-        DrawMarble(ctx, marble, visualCatalog, presentation.marbleTrails[marble.id])
-    end
-
-    if game.aiming and game.activeBall then
-        DrawAimTrajectory(ctx, game.aimTrajectory, visualCatalog, game.activeBall.ballType)
+        DrawMarble(ctx, marble, visualCatalog)
     end
 
     DrawParticles(ctx, presentation.particles)

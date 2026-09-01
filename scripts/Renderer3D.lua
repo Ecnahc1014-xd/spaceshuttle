@@ -1,19 +1,17 @@
 -- Renderer3D.lua
--- 只读消费 Game / Presentation 快照，将彩色体素敌人、精品几何车辆、拖尾和碎片同步到 3D 场景。
+-- 只读消费 Game / Presentation 快照，将箱体敌人、精品几何车辆和碎片同步到 3D 场景。
 
 local Renderer3D = {}
 
 local WORLD_SCALE = 0.018
 local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
-local VOXEL_GAP = 0.92
+local VOXEL_GAP = 0.82
 local VOXEL_DEPTH = 1.18
-local VEHICLE_PLANAR_RADIUS = 2.06
+local VEHICLE_PLANAR_RADIUS = 1.84
 local VEHICLE_COLLISION_FILL = 0.98
 local VEHICLE_LOCAL_CENTER_Z = -0.40
-local TRAIL_DEPTH_OFFSET = -0.08
 local VEHICLE_TURN_SPEED = 420.0
-
 local VEHICLE_SECTION_BODY = 0
 local VEHICLE_SECTION_SIDE = 1
 local VEHICLE_SECTION_TIRE = 2
@@ -29,13 +27,13 @@ local modelBox_ = nil
 ---@type Material
 local voxelMaterial_ = nil
 ---@type Material
-local trailMaterial_ = nil
+local crateMaterial_ = nil
 local vehicleMaterialSets_ = {}
 local materialCache_ = {}
 local enemyMeshes_ = {}
 local vehicleRecords_ = {}
-local trailRecords_ = {}
 local debrisNodes_ = {}
+local ejectedBoxNodes_ = {}
 local lastRenderElapsed_ = nil
 local initialized_ = false
 
@@ -173,10 +171,15 @@ end
 
 local function EmitQuad(geometry, v1, v2, v3, v4, normal, color)
     local vertices = {v1, v2, v3, v1, v3, v4}
-    for _, vertex in ipairs(vertices) do
+    local uvs = {
+        Vector2(0, 1), Vector2(0, 0), Vector2(1, 0),
+        Vector2(0, 1), Vector2(1, 0), Vector2(1, 1),
+    }
+    for i, vertex in ipairs(vertices) do
         geometry:DefineVertex(vertex)
         geometry:DefineNormal(normal)
         geometry:DefineColor(color)
+        geometry:DefineTexCoord(uvs[i])
     end
 end
 
@@ -310,7 +313,7 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
         geometry:DefineColor(vertex.color)
     end
     geometry:Commit()
-    geometry:SetMaterial(0, voxelMaterial_)
+    geometry:SetMaterial(0, crateMaterial_)
     geometry:SetMaterial(1, voxelMaterial_)
     record.signature = GetEnemySignature(enemy)
 end
@@ -597,7 +600,6 @@ local function CreateVehicleRecord(id, marble, initialHeading)
 end
 
 local GetVehicleAnchorWorld
-local GetTrailAnchorWorld
 
 local function SyncVehicles(game, dt)
     local active = {}
@@ -624,8 +626,10 @@ local function SyncVehicles(game, dt)
         -- 规则层使用圆形碰撞体；车辆 XY 最远外轮廓必须完整落在该圆内。
         -- marble.radius 已包含普通、加速、分裂与巨型弹的权威尺寸差异。
         local collisionRadiusWorld = marble.radius * WORLD_SCALE
-        local scaleFactor = collisionRadiusWorld * VEHICLE_COLLISION_FILL
+        local vehicleScale = collisionRadiusWorld * VEHICLE_COLLISION_FILL
             / VEHICLE_PLANAR_RADIUS
+        -- 视觉车体在权威碰撞圆内放大约 12%，不改变规则半径或输入坐标。
+        local scaleFactor = vehicleScale * 1.12
         record.root.scale = Vector3(scaleFactor, scaleFactor, scaleFactor)
         -- 车辆几何主要位于局部负 Z；用缩放后的视觉中心补偿根节点深度，
         -- 使屏幕投影中心继续精确对应权威 marble.x/y。
@@ -645,125 +649,12 @@ end
 
 local function GetVehicleScale(marble)
     local collisionRadiusWorld = marble.radius * WORLD_SCALE
-    return collisionRadiusWorld * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS
+    return collisionRadiusWorld * VEHICLE_COLLISION_FILL * 1.12 / VEHICLE_PLANAR_RADIUS
 end
 
 GetVehicleAnchorWorld = function(marble)
     local scaleFactor = GetVehicleScale(marble)
     return GameToWorld(marble.x, marble.y, -VEHICLE_LOCAL_CENTER_Z * scaleFactor)
-end
-
-GetTrailAnchorWorld = function(marble)
-    local anchor = GetVehicleAnchorWorld(marble)
-    anchor.z = anchor.z + TRAIL_DEPTH_OFFSET
-    return anchor
-end
-
-local function TrailPoint(x, y, marble)
-    local anchor = GetVehicleAnchorWorld({x = x, y = y, radius = marble.radius})
-    return {x = anchor.x, y = anchor.y, z = anchor.z}
-end
-
-local function DefineTrailVertex(geometry, point, z, color)
-    geometry:DefineVertex(Vector3(point.x, point.y, point.z + z))
-    geometry:DefineNormal(Vector3(0, 0, -1))
-    geometry:DefineColor(color)
-end
-
-local function RebuildTrailGeometry(record, marble, trail)
-    local points = {TrailPoint(marble.x, marble.y, marble)}
-    for _, point in ipairs(trail or {}) do
-        local converted = TrailPoint(point.x, point.y, marble)
-        local previous = points[#points]
-        local dx = converted.x - previous.x
-        local dy = converted.y - previous.y
-        if dx * dx + dy * dy > 0.00002 then
-            points[#points + 1] = converted
-        end
-    end
-
-    local geometry = record.geometry
-    geometry:Clear()
-    if #points < 2 then return end
-
-    geometry:SetNumGeometries(2)
-    geometry:SetDynamic(true)
-    local rgb = BALL_COLORS[marble.ballType] or BALL_COLORS.normal
-    -- 拖尾宽度锚定到权威碰撞半径，使巨型车的拖尾不再宽于车辆本体。
-    local collisionRadiusWorld = marble.radius * WORLD_SCALE
-    local baseWidth = (marble.ballType == "giant" and 0.55 or 0.5) * collisionRadiusWorld
-
-    local function EmitLayer(index, widthScale, core)
-        geometry:BeginGeometry(index, TRIANGLE_LIST)
-        for i = 1, #points - 1 do
-            local p0 = points[i]
-            local p1 = points[i + 1]
-            local dx = p1.x - p0.x
-            local dy = p1.y - p0.y
-            local length = math.sqrt(dx * dx + dy * dy)
-            if length > 0.0001 then
-                local nx = -dy / length
-                local ny = dx / length
-                local t0 = (i - 1) / (#points - 1)
-                local t1 = i / (#points - 1)
-                local w0 = baseWidth * widthScale * (1.0 - t0 * 0.78)
-                local w1 = baseWidth * widthScale * (1.0 - t1 * 0.78)
-                local brightness0 = 0.12 + 0.88 * (1.0 - t0)
-                local brightness1 = 0.12 + 0.88 * (1.0 - t1)
-                local function MakeColor(brightness)
-                    if core then
-                        return Color(
-                            math.min(1.0, rgb[1] * brightness + 0.34 * brightness),
-                            math.min(1.0, rgb[2] * brightness + 0.34 * brightness),
-                            math.min(1.0, rgb[3] * brightness + 0.34 * brightness), 1)
-                    end
-                    return Color(rgb[1] * brightness, rgb[2] * brightness,
-                        rgb[3] * brightness, 1)
-                end
-                local a = {x = p0.x + nx * w0, y = p0.y + ny * w0}
-                local b = {x = p0.x - nx * w0, y = p0.y - ny * w0}
-                local c = {x = p1.x - nx * w1, y = p1.y - ny * w1}
-                local d = {x = p1.x + nx * w1, y = p1.y + ny * w1}
-                local c0 = MakeColor(brightness0)
-                local c1 = MakeColor(brightness1)
-                DefineTrailVertex(geometry, a, TRAIL_DEPTH_OFFSET, c0)
-                DefineTrailVertex(geometry, b, TRAIL_DEPTH_OFFSET, c0)
-                DefineTrailVertex(geometry, c, TRAIL_DEPTH_OFFSET, c1)
-                DefineTrailVertex(geometry, a, TRAIL_DEPTH_OFFSET, c0)
-                DefineTrailVertex(geometry, c, TRAIL_DEPTH_OFFSET, c1)
-                DefineTrailVertex(geometry, d, TRAIL_DEPTH_OFFSET, c1)
-            end
-        end
-    end
-
-    EmitLayer(0, 1.0, false)
-    EmitLayer(1, 0.34, true)
-    geometry:Commit()
-    geometry:SetMaterial(0, trailMaterial_)
-    geometry:SetMaterial(1, trailMaterial_)
-end
-
-local function SyncVehicleTrails(game, presentation)
-    local active = {}
-    for _, marble in ipairs(game.marbles) do
-        active[marble.id] = true
-        local record = trailRecords_[marble.id]
-        if not record then
-            local root = scene_:CreateChild("VehicleTrail_" .. tostring(marble.id))
-            local geometry = root:CreateComponent("CustomGeometry")
-            geometry.castShadows = false
-            record = {root = root, geometry = geometry}
-            trailRecords_[marble.id] = record
-        end
-        RebuildTrailGeometry(record, marble, presentation.marbleTrails[marble.id])
-    end
-
-    for id, record in pairs(trailRecords_) do
-        if not active[id] then
-            RemoveNode(record.root)
-            trailRecords_[id] = nil
-        end
-    end
 end
 
 local function SyncDebris(presentation)
@@ -793,6 +684,32 @@ local function SyncDebris(presentation)
     end
 end
 
+local function SyncEjectedBoxes(presentation)
+    local active = {}
+    for _, box in ipairs(presentation.ejectedBoxes or {}) do
+        active[box.id] = true
+        local node = ejectedBoxNodes_[box.id]
+        if not node then
+            node = scene_:CreateChild("EjectedCrate_" .. tostring(box.id))
+            local model = node:CreateComponent("StaticModel")
+            model:SetModel(modelBox_)
+            model:SetMaterial(crateMaterial_)
+            model.castShadows = false
+            ejectedBoxNodes_[box.id] = node
+        end
+        node.position = GameToWorld(box.x, box.y, box.z * 0.01)
+        local size = math.max(0.01, box.size * WORLD_SCALE * 0.78)
+        node.scale = Vector3(size, size, size)
+        node.rotation = Quaternion(math.deg(box.rotation), Vector3(0, 0, 1))
+    end
+    for id, node in pairs(ejectedBoxNodes_) do
+        if not active[id] then
+            RemoveNode(node)
+            ejectedBoxNodes_[id] = nil
+        end
+    end
+end
+
 local function CreateWhiteTexture()
     local image = Image()
     image:SetSize(1, 1, 4)
@@ -814,16 +731,17 @@ function Renderer3D.Init(scene)
     voxelMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
     voxelMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
 
-    trailMaterial_ = Material:new()
-    trailMaterial_:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
-    trailMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
-    trailMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
-    trailMaterial_:SetCullMode(CULL_NONE)
+    crateMaterial_ = cache:GetResource("Material", "uuid://C6Zh4Wb78SYH1lDk3QOBw_NQ")
+    if not crateMaterial_ then
+        crateMaterial_ = voxelMaterial_
+        print("[Renderer3D] crate material unavailable, using colored fallback")
+    else
+        print("[Renderer3D] crate material loaded from official wood crate asset")
+    end
 
-    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil and trailMaterial_ ~= nil
+    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil and crateMaterial_ ~= nil
     initialized_ = initialized
-    print("[Renderer3D] initialized, aircraft_enemies=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
+    print("[Renderer3D] initialized, aircraft_crates=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
     return initialized_
 end
 
@@ -835,10 +753,6 @@ function Renderer3D.GetVehicleAnchor(x, y, marble)
         return record.root.position + (targetBase - currentBase)
     end
     return GetVehicleAnchorWorld({x = x, y = y, radius = marble.radius})
-end
-
-function Renderer3D.GetTrailAnchor(x, y, marble)
-    return Renderer3D.GetVehicleAnchor(x, y, marble) + Vector3(0, 0, TRAIL_DEPTH_OFFSET)
 end
 
 function Renderer3D.Render(game, presentation)
@@ -854,26 +768,26 @@ function Renderer3D.Render(game, presentation)
     lastRenderElapsed_ = elapsed
 
     SyncEnemyMeshes(game, presentation)
-    SyncVehicleTrails(game, presentation)
     SyncVehicles(game, dt)
     SyncDebris(presentation)
+    SyncEjectedBoxes(presentation)
 end
 
 function Renderer3D.Shutdown()
     for _, record in pairs(vehicleRecords_) do RemoveNode(record.root) end
-    for _, record in pairs(trailRecords_) do RemoveNode(record.root) end
     for _, record in pairs(enemyMeshes_) do RemoveNode(record.root) end
     for _, node in pairs(debrisNodes_) do RemoveNode(node) end
+    for _, node in pairs(ejectedBoxNodes_) do RemoveNode(node) end
     vehicleRecords_ = {}
-    trailRecords_ = {}
     enemyMeshes_ = {}
     debrisNodes_ = {}
+    ejectedBoxNodes_ = {}
     materialCache_ = {}
     vehicleMaterialSets_ = {}
     scene_ = nil
     modelBox_ = nil
     voxelMaterial_ = nil
-    trailMaterial_ = nil
+    crateMaterial_ = nil
     lastRenderElapsed_ = nil
     initialized_ = false
 end
