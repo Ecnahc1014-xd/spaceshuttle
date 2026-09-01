@@ -42,6 +42,8 @@ local offsetX_ = 0
 local offsetY_ = 0
 local projectionOffsetX_ = 0
 local projectionOffsetY_ = 0
+local projectionOriginNdcX_ = 0
+local projectionOriginNdcY_ = 0
 local projectionScaleX_ = 1
 local projectionScaleY_ = 1
 local viewportLeft_ = 0
@@ -373,6 +375,8 @@ local function UpdateProjectionMetrics(logMetrics)
     local origin = camera_:WorldToScreenPoint(WorldFromGame(0, 0))
     local xAxis = camera_:WorldToScreenPoint(WorldFromGame(DESIGN_W, 0))
     local yAxis = camera_:WorldToScreenPoint(WorldFromGame(0, DESIGN_H))
+    projectionOriginNdcX_ = origin.x
+    projectionOriginNdcY_ = origin.y
     projectionOffsetX_ = origin.x * DESIGN_W
     projectionOffsetY_ = origin.y * DESIGN_H
     projectionScaleX_ = (xAxis.x - origin.x)
@@ -391,6 +395,19 @@ local function ProjectGamePoint(x, y)
         projectionOffsetY_ + y * projectionScaleY_
 end
 
+local function ProjectVehiclePoint(x, y, marble)
+    local anchor = Renderer3D.GetVehicleAnchor(x, y, marble)
+    local screenPoint = camera_:WorldToScreenPoint(anchor)
+    return projectionOffsetX_ + (screenPoint.x - projectionOriginNdcX_) * DESIGN_W,
+        projectionOffsetY_ + (screenPoint.y - projectionOriginNdcY_) * DESIGN_H
+end
+
+local function ProjectTrailPoint(x, y, marble)
+    local anchor = Renderer3D.GetTrailAnchor(x, y, marble)
+    local screenPoint = camera_:WorldToScreenPoint(anchor)
+    return projectionOffsetX_ + (screenPoint.x - projectionOriginNdcX_) * DESIGN_W,
+        projectionOffsetY_ + (screenPoint.y - projectionOriginNdcY_) * DESIGN_H
+end
 local function DrawAcidGrid(ctx, width, height)
     nvgStrokeWidth(ctx, 1)
     nvgStrokeColor(ctx, nvgRGBA(137, 203, 255, 18))
@@ -428,7 +445,7 @@ local function DrawAimTrajectory(ctx, game)
     if not game.aiming or not game.activeBall then return end
     local color = SLOT_COLORS[game.activeBall.ballType] or SLOT_COLORS.normal
     for _, point in ipairs(game.aimTrajectory) do
-        local screenX, screenY = ProjectGamePoint(point.x, point.y)
+        local screenX, screenY = ProjectVehiclePoint(point.x, point.y, game.activeBall)
         local alpha = math.floor(210 * (1 - point.progress))
         local radius = 1.8 + 3.0 * (1 - point.progress)
         nvgBeginPath(ctx)
@@ -1012,8 +1029,8 @@ local function DrawMarbleTrails(ctx, game, presentation)
             local color = SLOT_COLORS[marble.ballType] or SLOT_COLORS.normal
             local n = #trail
             for i = 1, n - 1 do
-                local px, py = ProjectGamePoint(trail[i].x, trail[i].y)
-                local nx, ny = ProjectGamePoint(trail[i + 1].x, trail[i + 1].y)
+                local px, py = ProjectTrailPoint(trail[i].x, trail[i].y, marble)
+                local nx, ny = ProjectTrailPoint(trail[i + 1].x, trail[i + 1].y, marble)
                 local a = (i / n) * 150
                 nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
                 nvgStrokeWidth(ctx, 2 + (i / n) * 3)

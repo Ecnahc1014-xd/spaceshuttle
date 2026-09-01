@@ -3,9 +3,9 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.9.5
-- 进度: 太空飞机弹珠已完成肉鸽幸存者化最小完整循环（0.9.0）+ WO-13/16/14/15/P11/P12 规则与表现层（0.9.1）+ A 组纯代码打磨（0.9.2）+ UI 结构重构（0.9.3）+ 3D 合成/主循环/蓝紫主题修复（0.9.4）。本次修复 3D 消失根因：NanoVG 不再以整屏不透明背景覆盖 3D Viewport，只填充画布外 letterbox；修复 `main.lua` 更新前快照滞后、升级点击误用 3D 玩法逆投影、拖出画布释放导致瞄准状态残留；修复升级触发同帧后续 XP 丢失；menu/playing/levelup/paused/gameover 统一 Astroon 深蓝紫渐变、紫色 surface、蓝/青强调、白色文字、金色焦点。
-- 上次交付: v0.9.5 升级状态卡死修复；修复 `RollUpgradeChoices` 局部函数遮蔽前置声明导致 `upgradeChoices` 为空的问题，增加升级池候选不足时的三卡兜底；LSP 0 Error、官方入口构建成功、升级契约检查通过。截图中的 `NO PROTOCOLS AVAILABLE` 已定位为真实逻辑 bug，不再视为普通 UI 空状态
+- 版本: 0.9.7
+- 进度: 太空飞机弹珠已完成肉鸽幸存者化最小完整循环（0.9.0）+ WO-13/16/14/15/P11/P12 规则与表现层（0.9.1）+ A 组纯代码打磨（0.9.2）+ UI 结构重构（0.9.3）+ 3D 合成/主循环/蓝紫主题修复（0.9.4）+ 升级卡死修复（0.9.5）+ 预瞄线/拖尾投影统一（0.9.6）+ 车辆真实锚点统一（0.9.7）。依据战斗态截图，3D 车辆根节点、2D 预瞄、2D 拖尾、3D 拖尾现在都通过 Renderer3D 的同源车辆锚点计算；车辆根节点保留模型局部中心补偿，拖尾深度由 `TRAIL_DEPTH_OFFSET` 单一来源控制；相机投影保留运行时 `WorldToScreenPoint()` 标定原点和轴增量，禁止独立经验 offset。
+- 上次交付: v0.9.7 预瞄线/拖尾真实车辆锚点修复；Renderer3D 与 Scene3DBackend LSP 0 Error、正式入口官方构建成功、投影契约检查通过；用户提供战斗态截图已用于定位，自动战斗态截图探针受沙箱落盘限制未完成，需预览复测首点、拖尾和车辆中心
 
 ## 用户画像摘要
 - 使用简体中文沟通
@@ -64,6 +64,7 @@
 - 体素立体表现契约：正面使用主色，背面/左右/顶面采用明显浅色因子；每个暴露面使用窄深色棱线 strip，棱线与面共用敌人单一 `CustomGeometry` 的第二 section，禁止新增逐棱节点
 - UI 视觉契约：raw NanoVG 固定使用 540×960 设计分辨率模式 A；v0.9.4 全部页面统一 Astroon 深蓝紫渐变与紫色 surface，使用蓝/青交互强调、白色文字、金色焦点；playing HUD 保留顶部战术仪表盘、底部两侧四弹药槽火控舱和中央战场安全空间；禁止恢复无层级文字堆叠、整屏不透明 NanoVG 覆盖 3D Viewport、页面间蓝白/深紫混搭或升级卡消失
 - UI 投影契约：NanoVG 与 3D `Viewport` 继续共用 540×960 CONTAIN 缩放、居中偏移和 DPR；NanoVG 只能填充画布外 letterbox，设计画布内部必须保持 3D 可见；升级卡视觉布局与 `main.lua:TryPickUpgradeAt` 命中布局必须共享 cardW=156/cardH=214/gap=8/cy=478，且升级命中使用 `ScreenToUi` 而非 `ScreenToGame`
+- 投影对齐契约：3D 车辆根节点使用 `GetVehicleAnchorWorld(marble)`；NanoVG 预瞄线使用 `Renderer3D.GetVehicleAnchor()`；2D/3D 拖尾使用 `GetTrailAnchor()`/`TRAIL_DEPTH_OFFSET`；禁止让预瞄/拖尾回退到独立经验 offset 或另一套简化线性投影
 - 9:16 铁律：NanoVG 与 3D `Viewport` 必须共用同一个 CONTAIN 缩放与居中偏移；非 9:16 屏幕只允许画布外 letterbox，禁止拉伸、裁切或让 3D 铺满而 UI 单独居中；输入先使用同一 DPR/scale/offset 回到设计画布，再使用相机玩法平面投影参数逆变换到权威游戏坐标，画布外按下必须被过滤
 - 倾斜正交输入契约：玩法 XY 平面经 46° 相机投影后不等同于 540×960 UI 坐标；`Scene3DBackend` 必须用 `Camera:WorldToScreenPoint()` 标定投影 offset/scale，且每次相机震屏位移后必须无日志刷新；`ScreenToGame()`、瞄准轨迹和空间反馈共享这组当前参数，禁止把屏幕设计坐标直接传给 `Game.Pointer*`
 - 瞄准轨迹契约：轨迹首点必须是当前 `activeBall.x/y`，确保车辆中心与轨迹起点重合；当前使用 8 单位步长、140 次采样并按权威半径处理左右/顶部反弹，禁止恢复缺首点的短 50 点预测

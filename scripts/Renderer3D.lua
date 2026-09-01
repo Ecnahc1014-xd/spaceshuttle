@@ -11,6 +11,7 @@ local VOXEL_DEPTH = 1.18
 local VEHICLE_PLANAR_RADIUS = 2.06
 local VEHICLE_COLLISION_FILL = 0.98
 local VEHICLE_LOCAL_CENTER_Z = -0.40
+local TRAIL_DEPTH_OFFSET = -0.08
 local VEHICLE_TURN_SPEED = 420.0
 
 local VEHICLE_SECTION_BODY = 0
@@ -595,6 +596,9 @@ local function CreateVehicleRecord(id, marble, initialHeading)
     }
 end
 
+local GetVehicleAnchorWorld
+local GetTrailAnchorWorld
+
 local function SyncVehicles(game, dt)
     local active = {}
     local function SyncOne(marble)
@@ -625,8 +629,7 @@ local function SyncVehicles(game, dt)
         record.root.scale = Vector3(scaleFactor, scaleFactor, scaleFactor)
         -- 车辆几何主要位于局部负 Z；用缩放后的视觉中心补偿根节点深度，
         -- 使屏幕投影中心继续精确对应权威 marble.x/y。
-        record.root.position = GameToWorld(
-            marble.x, marble.y, -VEHICLE_LOCAL_CENTER_Z * scaleFactor)
+        record.root.position = GetVehicleAnchorWorld(marble)
     end
 
     if game.activeBall then SyncOne(game.activeBall) end
@@ -640,21 +643,37 @@ local function SyncVehicles(game, dt)
     end
 end
 
-local function TrailPoint(x, y)
-    local p = GameToWorld(x, y, -0.08)
-    return {x = p.x, y = p.y}
+local function GetVehicleScale(marble)
+    local collisionRadiusWorld = marble.radius * WORLD_SCALE
+    return collisionRadiusWorld * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS
+end
+
+GetVehicleAnchorWorld = function(marble)
+    local scaleFactor = GetVehicleScale(marble)
+    return GameToWorld(marble.x, marble.y, -VEHICLE_LOCAL_CENTER_Z * scaleFactor)
+end
+
+GetTrailAnchorWorld = function(marble)
+    local anchor = GetVehicleAnchorWorld(marble)
+    anchor.z = anchor.z + TRAIL_DEPTH_OFFSET
+    return anchor
+end
+
+local function TrailPoint(x, y, marble)
+    local anchor = GetVehicleAnchorWorld({x = x, y = y, radius = marble.radius})
+    return {x = anchor.x, y = anchor.y, z = anchor.z}
 end
 
 local function DefineTrailVertex(geometry, point, z, color)
-    geometry:DefineVertex(Vector3(point.x, point.y, z))
+    geometry:DefineVertex(Vector3(point.x, point.y, point.z + z))
     geometry:DefineNormal(Vector3(0, 0, -1))
     geometry:DefineColor(color)
 end
 
 local function RebuildTrailGeometry(record, marble, trail)
-    local points = {TrailPoint(marble.x, marble.y)}
+    local points = {TrailPoint(marble.x, marble.y, marble)}
     for _, point in ipairs(trail or {}) do
-        local converted = TrailPoint(point.x, point.y)
+        local converted = TrailPoint(point.x, point.y, marble)
         local previous = points[#points]
         local dx = converted.x - previous.x
         local dy = converted.y - previous.y
@@ -707,12 +726,12 @@ local function RebuildTrailGeometry(record, marble, trail)
                 local d = {x = p1.x + nx * w1, y = p1.y + ny * w1}
                 local c0 = MakeColor(brightness0)
                 local c1 = MakeColor(brightness1)
-                DefineTrailVertex(geometry, a, -0.08, c0)
-                DefineTrailVertex(geometry, b, -0.08, c0)
-                DefineTrailVertex(geometry, c, -0.08, c1)
-                DefineTrailVertex(geometry, a, -0.08, c0)
-                DefineTrailVertex(geometry, c, -0.08, c1)
-                DefineTrailVertex(geometry, d, -0.08, c1)
+                DefineTrailVertex(geometry, a, TRAIL_DEPTH_OFFSET, c0)
+                DefineTrailVertex(geometry, b, TRAIL_DEPTH_OFFSET, c0)
+                DefineTrailVertex(geometry, c, TRAIL_DEPTH_OFFSET, c1)
+                DefineTrailVertex(geometry, a, TRAIL_DEPTH_OFFSET, c0)
+                DefineTrailVertex(geometry, c, TRAIL_DEPTH_OFFSET, c1)
+                DefineTrailVertex(geometry, d, TRAIL_DEPTH_OFFSET, c1)
             end
         end
     end
@@ -806,6 +825,20 @@ function Renderer3D.Init(scene)
     initialized_ = initialized
     print("[Renderer3D] initialized, aircraft_enemies=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
     return initialized_
+end
+
+function Renderer3D.GetVehicleAnchor(x, y, marble)
+    local record = vehicleRecords_[marble.id]
+    if record and record.root then
+        local currentBase = GameToWorld(marble.x, marble.y, 0)
+        local targetBase = GameToWorld(x, y, 0)
+        return record.root.position + (targetBase - currentBase)
+    end
+    return GetVehicleAnchorWorld({x = x, y = y, radius = marble.radius})
+end
+
+function Renderer3D.GetTrailAnchor(x, y, marble)
+    return Renderer3D.GetVehicleAnchor(x, y, marble) + Vector3(0, 0, TRAIL_DEPTH_OFFSET)
 end
 
 function Renderer3D.Render(game, presentation)
