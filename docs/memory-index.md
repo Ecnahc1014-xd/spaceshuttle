@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.9.3
-简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；相机玩法平面投影统一驱动输入、轨迹与空间反馈；敌方为由经典像素太空飞机剪影生成的四类单网格低像素体素飞机，我方为随权威碰撞半径缩放的大运式重卡；基地生命 100、敌机编队整体下移且方块独立越线扣血、XP/三选一升级与局内强化池；顶部 92px 战术仪表盘、中央战场、底部 94px 火控舱形成三段式 playing 层级；首页/升级模态采用 Laterano 蓝白高对比主视觉、冷白留白、克莱因蓝主块、少量金色焦点与半调点阵；已追加冻结顶点色高光、视觉对象池、FEEDBACK_MAP 反馈、防线四位一体、词条系统、五异常反应、Boss 阶段机、命中顿帧与相机推近。
-最后巩固：2026-08-20
+当前版本：0.9.4
+简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；相机玩法平面投影统一驱动输入、轨迹与空间反馈；敌方为由经典像素太空飞机剪影生成的四类单网格低像素体素飞机，我方为随权威碰撞半径缩放的大运式重卡；基地生命 100、敌机编队整体下移且方块独立越线扣血、XP/三选一升级与局内强化池；顶部 92px 战术仪表盘、中央战场、底部 94px 火控舱形成三段式 playing 层级；全页面统一 Astroon 深蓝紫渐变、紫色 surface、蓝/青强调、白色文字与金色焦点；修复 NanoVG 整屏不透明背景覆盖 3D Viewport、更新前快照滞后、升级点击误用玩法逆投影、拖出画布释放和升级同帧 XP 丢失。
+最后巩固：2026-09-01
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -69,6 +69,10 @@
 
 - D-039: v0.9.3 UI 结构重构：实机截图暴露的视觉问题按信息架构解决，不再追加孤立装饰。playing 态固定为顶部 92px 战术仪表盘、中央战场、底部 94px 火控舱；首页与升级模态改用 Laterano 蓝白高对比主视觉，冷白背景承载克莱因蓝主块，金色仅作焦点；升级卡统一 156×214、gap=8、cy=478，`main.lua` 点击命中同步同一几何参数；玩法规则、3D 投影和 9:16 CONTAIN 不变。
 
+- D-040: 3D 消失根因是 NanoVG 渲染事件位于 3D Viewport 之后，旧 `DrawFullFrameBackground` 用整屏不透明填充覆盖设计画布；修复为 `DrawLetterboxBackground`，只填充 CONTAIN 画布外区域，`Backend.Render` 保持 `Renderer3D.Render` → `RenderOverlay` 顺序。
+- D-041: 主循环必须在 `Game.Update` 后重新获取快照，再把同一更新后快照传给 `Presentation.Update` 和渲染；升级触发后 `Game.Update` 立即状态中断；升级同帧新增 XP 使用 `deferredXp` 原值缓冲，最后一张升级卡后只结算一次倍率。
+- D-042: UI 统一 Astroon 蓝紫主题，不允许首页蓝白、升级白卡、结算深紫、暂停黑 overlay 混搭；token 为深蓝紫渐变、紫色 surface、蓝/青强调、白字、金色焦点。升级点击使用 `ScreenToUi`，玩法瞄准使用 `ScreenToGame`。
+
 ## 活跃系统契约
 | 契约 | 文件 | 状态 |
 |------|------|------|
@@ -88,6 +92,8 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.9.4: 修复 3D 渲染失灵根因：NanoVG 从整屏不透明背景改为仅填充 CONTAIN 画布外 letterbox，保护 3D Viewport；`Backend.Render` 保持 `Renderer3D.Render` → `RenderOverlay`；修复主循环更新前快照滞后、升级点击使用错误玩法逆投影、跨画布释放残留瞄准状态、升级/游戏结束同帧继续推进以及升级同帧 XP 丢失；新增 `deferredXp` 原值缓冲；全页面统一 Astroon 深蓝紫渐变、紫色 surface、蓝/青强调、白字与金色焦点。LSP 0 Error、官方 build 成功、菜单态 GLES 截图成功；战斗态探针受沙箱落盘限制未完成，代码级确认渲染顺序和 Viewport 合成。
+- v0.9.3: 按实机截图反馈重构 UI 信息架构：playing 态改为顶部 92px 战术仪表盘、中央战场、底部 94px 火控舱；修复画布外大块黑边；首页改为 Laterano 蓝白高对比视觉，增加主 CTA、任务参数块、半调点阵与分段规则线；升级模态改为可读的三张 156×214 蓝白强化卡，点击命中同步 `main.lua` 的 cardW/cardH/gap/cy；保持玩法规则、46° 正交投影和 540×960 9:16 CONTAIN 不变。LSP 0 Error、官方 build 成功、GLES 首页截图确认，运行时 `lua_errors=0`，环境资源错误与 llvmpipe 帧尖峰已记录。
 - v0.9.2: A 组纯代码打磨（用户要求先做可感知度提升，音频/美术等需生成 MCP 的 B 组与需用户放宽酸性 UI 契约的 C 组暂缓）。A3 敌人行为分化：`AircraftPixelData.behavior` 增加 scout/striker/bomber/interceptor 的 swayAmp/swayFreq/descentMul/agility/accent，`Game.CreateEnemy` 消费并加随机抖动。A1/A2 四模态 EaseOutCubic 淡入（`ModalIntro`/`nvgGlobalAlpha`）+ 波次横幅 `DrawWaveBanner` 顶部滑入淡出。A4 `DrawMarbleTrails` 按 `SLOT_COLORS[ballType]` 投影四色拖尾。A5 `DrawWaveThemeTint` 酸性风格内按波次色相旋转低 alpha 背景氛围。A6 `FindBoss`/`DrawBossPhaseBar` 阶段条 + 危险带 Boss 波常驻紫色警示。LSP 0 Error、官方构建成功、契约守门通过（Game 无渲染 API、表现层无 Game 写回、FXAA 仅探测默认关闭）。提交 2c2a37c。
 - v0.9.1: WO-13/16/14/15 + P11/P12 实装。冻结顶点色偏移+正面霜冻高光、粒子/碎片/飘字对象池+快照缓冲复用+Dispose 审计+FXAA 探测关闭、FEEDBACK_MAP 反馈映射、防线四位一体、RefreshProjection 封装、词条系统(贯穿/连锁/动量)、五异常反应(冻结+灼烧=融穿/易暴/腐蚀)、Boss 阶段机(每10波 vulnerable 窗口)、命中顿帧(hitStop 对玩法 dt 打折)、相机推近(orthoSize 下沉)、词条图标 HUD 展示。LSP 0 Error、官方构建成功、契约守门通过。提交 cfe55e7 + 记忆 6927a72。
 - v0.9.0: 肉鸽幸存者化最小完整循环实装。基地生命改 100；敌方编队整体下移、每个存活方块独立越线销毁并扣 `BRICK_BASE_DAMAGE`；XP（方块+1/清机+8 与连击）跨级累计并冻结，三选一强化池 `UPGRADE_POOL`（穿甲/重型/裂变/疾速/深寒/维修/装甲/数据回收）只改规则变量；持续涌出波次随波次收紧并受 `MAX_CONCURRENT` 上限约束；P/Esc 暂停、`levelup` 暂停选强化并暴露 `upgradeChoices` 给 UI；世界反弹边缘渲染到 3D 背景层与 2D 设计空间边框；巨型车拖尾宽度锚定权威半径不再宽于本体；加速弹 `speedBoost` 1.06/`maxSpeed` 900/`maxDamage` 2 且追击节流 0.45s；敌方 occupied cells 重制为经典蟹形入侵者/箭头战机/圆盘飞碟/截击机像素剪影。LSP 0 Error、正式入口官方构建成功（本环境无 headless 运行器，受控 GLES 截图需用户在预览中确认）。
@@ -107,13 +113,15 @@
 - v0.2.0: 分离核心玩法、表现状态、视觉目录、NanoVG 后端和应用编排。
 
 ## 验证记录
-- Lua LSP v0.9.3：工作区 Error 0（8 个 Lua 文件）。
-- 官方 build v0.9.3：成功，正式入口 `main.lua`，单机模式。
-- GLES v0.9.3：`screenshots/ui_refactor_final.png` 首页截图确认画布外背景填充、顶部/中央/底部信息层级与蓝白首页 CTA；运行报告 `lua_errors=0`、场景初始化 PASS；验证环境仍报告自带 `Editor/Textures/Engine/Vignetting.png`、`Textures/Skybox.xml` 缺失和 llvmpipe 帧时间尖峰，非用户 Lua 错误。升级模态已完成静态布局与命中区同步，需在预览中真实触发 `levelup` 后确认卡片点击。
+- Lua LSP v0.9.4：`Game.lua`、`main.lua`、`Scene3DBackend.lua`、`Presentation.lua`、`Renderer3D.lua` 均 Error 0。
+- 官方 build v0.9.4：成功，正式入口 `main.lua`，单机模式。
+- GLES 菜单态 v0.9.4：`screenshots/ui_logic_final.png` 成功生成，确认蓝紫主题和 540×960 画布；日志确认 3D 场景、Renderer3D、PBRLitSolid、LitSolid、Skybox、NanoVGFill 均初始化成功。菜单态不生成敌机/重卡，因此不作为战斗态对象可见性证据。
+- GLES 战斗态探针：当前沙箱中自动战斗态入口运行未落盘日志/截图，未将其标记为通过；代码级确认 `Renderer3D.Render` 先于 `RenderOverlay`，NanoVG 只填充 letterbox。需在预览中点击开始后确认飞机/重卡。
+- 逻辑验证：当前沙箱 headless/部分截图进程可能被外层直接终止且无日志文件，不能仅凭 exit code 判定；以 LSP 0 Error、官方 build 成功和可落盘 GLES 菜单截图作为已完成证据。
 - 当前 46° 投影由运行时 `WorldToScreenPoint()` 标定，并在相机震屏位移后刷新；禁止硬编码旧 offset/scale。
 
 ## 下一步
-1. 在预览中真实触发升级三选一，确认三张卡的视觉可读性、触摸命中和选择后恢复 playing。
+1. 在预览中点击开始，确认战斗态 3D 飞机/重卡可见、拖尾与 HUD 不覆盖 3D；真实触摸测试升级卡命中、暂停恢复。
 2. 继续基于实机截图调 playing 战场密度、飞机色彩和车辆/拖尾对比，不修改权威 HP、逐块扣血、XP 曲线和 9:16 共同投影契约。
 3. B 组（需生成 MCP 就绪）：音效 SFX/BGM、角色与图标美术、元进度与叙事内容。
 4. 保持 HUD 与规则层解耦，继续让 3D 后端只消费两个 snapshot 与 `Game.GetSnapshot().upgradeChoices`。

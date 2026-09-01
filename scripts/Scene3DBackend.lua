@@ -340,23 +340,27 @@ local SLOT_COLORS = {
 }
 
 local ACID = {
-    void = {10, 4, 28, 255},
-    deepPurple = {32, 12, 68, 250},
-    purple = {103, 61, 166, 255},
-    brightPurple = {184, 133, 255, 255},
-    paleBlue = {166, 229, 255, 255},
-    coldBlue = {94, 169, 228, 255},
-    carbon = {16, 12, 35, 255},
-    muted = {125, 140, 184, 230},
+    void = {26, 17, 64, 255},
+    deepPurple = {42, 31, 94, 250},
+    purple = {100, 76, 194, 255},
+    brightPurple = {168, 85, 247, 255},
+    paleBlue = {61, 214, 232, 255},
+    coldBlue = {74, 139, 245, 255},
+    carbon = {42, 31, 94, 255},
+    muted = {255, 255, 255, 85},
 }
 
-local UI_BLUE = {28, 62, 224, 255}
-local UI_BLUE_DARK = {7, 18, 92, 255}
-local UI_WHITE = {245, 248, 255, 255}
-local UI_COLD = {201, 222, 255, 255}
-local UI_GOLD = {201, 168, 76, 255}
-local UI_INK = {9, 12, 38, 255}
-local UI_BLACK = {3, 6, 24, 255}
+-- Astroon 蓝紫宇宙主题：深蓝紫背景、紫色分层表面、蓝/青强调、白色文字、金色唯一主 CTA。
+local UI_BLUE = {74, 139, 245, 255}
+local UI_CYAN = {61, 214, 232, 255}
+local UI_BLUE_DARK = {42, 31, 94, 255}
+local UI_SURFACE = {61, 42, 138, 255}
+local UI_WHITE = {255, 255, 255, 255}
+local UI_COLD = {255, 255, 255, 170}
+local UI_MUTED = {255, 255, 255, 85}
+local UI_GOLD = {255, 213, 79, 255}
+local UI_INK = {26, 17, 64, 255}
+local UI_BLACK = {12, 8, 32, 255}
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -513,6 +517,15 @@ local function DrawPixelText(ctx, x, y, text, size, color, align)
     nvgText(ctx, x, y, text, nil)
 end
 
+local function DrawAstroonBackdrop(ctx, x, y, width, height)
+    local gradient = nvgLinearGradient(ctx, x, y, x, y + height,
+        nvgRGBA(26, 17, 64, 255), nvgRGBA(45, 27, 105, 255))
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x, y, width, height)
+    nvgFillPaint(ctx, gradient)
+    nvgFill(ctx)
+end
+
 local function DrawBluePanel(ctx, x, y, width, height, fill, border, radius)
     nvgBeginPath(ctx)
     nvgRoundedRect(ctx, x, y, width, height, radius or 8)
@@ -633,18 +646,21 @@ local function DrawAmmoSlots(ctx, game, presentation)
     end
 end
 
-local function DrawFullFrameBackground(ctx, width, height)
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, width, height)
+local function DrawLetterboxBackground(ctx, width, height)
+    -- NanoVG 位于 3D Viewport 之后：只填充设计画布外的 letterbox，绝不能覆盖画布内部。
     nvgFillColor(ctx, nvgRGBA(UI_BLACK[1], UI_BLACK[2], UI_BLACK[3], 255))
-    nvgFill(ctx)
-end
-
-local function DrawOverlayBackground(ctx, width, height)
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, width, height)
-    nvgFillColor(ctx, nvgRGBA(10, 4, 28, 255))
-    nvgFill(ctx)
+    if offsetY_ > 0 then
+        nvgBeginPath(ctx)
+        nvgRect(ctx, 0, 0, width, offsetY_)
+        nvgRect(ctx, 0, offsetY_ + DESIGN_H, width, math.max(0, height - offsetY_ - DESIGN_H))
+        nvgFill(ctx)
+    end
+    if offsetX_ > 0 then
+        nvgBeginPath(ctx)
+        nvgRect(ctx, 0, offsetY_, offsetX_, DESIGN_H)
+        nvgRect(ctx, offsetX_ + DESIGN_W, offsetY_, math.max(0, width - offsetX_ - DESIGN_W), DESIGN_H)
+        nvgFill(ctx)
+    end
 end
 
 local function DrawWaveThemeTint(ctx, width, height, game)
@@ -655,7 +671,7 @@ local function DrawWaveThemeTint(ctx, width, height, game)
     local b = math.floor(90 + 26 * math.cos(phase * 0.7))
     local g = math.floor(30 + 14 * math.sin(phase * 1.3 + 1.2))
     local glow = nvgLinearGradient(ctx, 0, 0, 0, height,
-        nvgRGBA(r, g, b, 16), nvgRGBA(10, 4, 28, 0))
+        nvgRGBA(r, g, b, 16), nvgRGBA(UI_BLUE_DARK[1], UI_BLUE_DARK[2], UI_BLUE_DARK[3], 0))
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, 0, width, height)
     nvgFillPaint(ctx, glow)
@@ -769,14 +785,9 @@ local function DrawMenu(ctx, game)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    nvgFillColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 255))
-    nvgFill(ctx)
-
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, 10)
-    nvgFillColor(ctx, nvgRGBA(UI_BLUE[1], UI_BLUE[2], UI_BLUE[3], 255))
-    nvgFill(ctx)
-    DrawDotMatrix(ctx, 34, 142, 11, 8, 13, {28, 62, 224, 26}, 1.5)
+    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    DrawAcidGrid(ctx, game.width, game.height)
+    DrawDotMatrix(ctx, 34, 142, 11, 8, 13, {61, 214, 232, 36}, 1.5)
     DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
@@ -807,13 +818,13 @@ local function DrawMenu(ctx, game)
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     DrawPixelText(ctx, 30, 550, "MISSION PARAMETERS", 8, UI_BLUE)
-    DrawBluePanel(ctx, 30, 568, game.width - 60, 106, {236, 240, 255, 255}, {184, 198, 240, 255}, 6)
+    DrawBluePanel(ctx, 30, 568, game.width - 60, 106, UI_BLUE_DARK, UI_BLUE, 10)
     DrawPixelText(ctx, 48, 586, "BASE CORE", 8, UI_BLUE)
-    DrawPixelText(ctx, 48, 608, "100", 24, UI_INK)
-    DrawPixelText(ctx, 108, 615, "INTEGRITY", 8, UI_BLUE)
+    DrawPixelText(ctx, 48, 608, "100", 24, UI_WHITE)
+    DrawPixelText(ctx, 108, 615, "INTEGRITY", 8, UI_COLD)
     DrawPixelText(ctx, 290, 586, "ORDNANCE", 8, UI_BLUE)
-    DrawPixelText(ctx, 290, 608, "04", 24, UI_INK)
-    DrawPixelText(ctx, 350, 615, "LOADOUTS", 8, UI_BLUE)
+    DrawPixelText(ctx, 290, 608, "04", 24, UI_WHITE)
+    DrawPixelText(ctx, 350, 615, "LOADOUTS", 8, UI_COLD)
     DrawSegmentedRule(ctx, 48, 650, game.width - 96, 12, UI_BLUE)
 
     DrawPixelText(ctx, 30, 716, "TOUCH / MOUSE  :  AIM + RELEASE", 8, UI_BLUE)
@@ -831,20 +842,19 @@ local function DrawGameOver(ctx, game)
     nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：结算缓入
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    nvgFillColor(ctx, nvgRGBA(14, 5, 36, 255))
-    nvgFill(ctx)
+    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     DrawAcidGrid(ctx, game.width, game.height)
     DrawHalo(ctx, game.width * 0.5, 390, 125, 180)
-    DrawPixelText(ctx, game.width * 0.5, 330, "链接中断", 36, ACID.paleBlue,
+    DrawPixelText(ctx, game.width * 0.5, 330, "链接中断", 36, UI_WHITE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 380, "FLIGHT CONTROL OFFLINE", 10,
-        ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        UI_CYAN, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 430,
         string.format("SCORE %d  /  BEST %d  /  WAVE %02d",
             game.score, game.highScore, game.wave), 13, ACID.paleBlue,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     -- WO-11/P8：结算回顾面板（只读快照统计，强化幸存者正反馈）。
-    DrawTechPanel(ctx, 24, 446, game.width - 48, 76, ACID.deepPurple, ACID.paleBlue)
+    DrawBluePanel(ctx, 24, 446, game.width - 48, 76, UI_BLUE_DARK, UI_BLUE, 10)
     DrawPixelText(ctx, 40, 458, string.format("到达波次 %02d", game.wave), 12, ACID.paleBlue,
         NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, 40, 478, string.format("等级 LV %02d", game.playerLevel), 12, ACID.brightPurple,
@@ -878,9 +888,9 @@ end
 local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local x = cx - cardW * 0.5
     local y = cy - cardH * 0.5
-    local cardColor = (choice.rarity == "rare" or choice.rarity == "epic") and UI_GOLD or UI_BLUE
-    local titleColor = UI_INK
-    DrawBluePanel(ctx, x, y, cardW, cardH, UI_WHITE, cardColor, 8)
+    local cardColor = (choice.rarity == "rare" or choice.rarity == "epic") and UI_GOLD or UI_CYAN
+    local titleColor = UI_WHITE
+    DrawBluePanel(ctx, x, y, cardW, cardH, UI_SURFACE, cardColor, 10)
 
     nvgBeginPath(ctx)
     nvgRect(ctx, x, y, cardW, 8)
@@ -904,7 +914,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
         start = start + chunk
     end
     for lineIndex, line in ipairs(lines) do
-        DrawPixelText(ctx, x + cardW * 0.5, y + 94 + (lineIndex - 1) * 16, line, 9, UI_BLUE,
+    DrawPixelText(ctx, x + cardW * 0.5, y + 94 + (lineIndex - 1) * 16, line, 9, UI_COLD,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
@@ -921,10 +931,10 @@ local function DrawLevelUp(ctx, game)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    nvgFillColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 255))
-    nvgFill(ctx)
-    DrawDotMatrix(ctx, 28, 152, 10, 7, 14, {28, 62, 224, 24}, 1.3)
-    DrawDotMatrix(ctx, 414, 700, 8, 8, 14, {28, 62, 224, 28}, 1.3)
+    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    DrawAcidGrid(ctx, game.width, game.height)
+    DrawDotMatrix(ctx, 28, 152, 10, 7, 14, {61, 214, 232, 28}, 1.3)
+    DrawDotMatrix(ctx, 414, 700, 8, 8, 14, {74, 139, 245, 36}, 1.3)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / UPGRADE RITE", 8, UI_BLUE)
     DrawPixelText(ctx, game.width - 24, 112, "PAUSED / SELECT ONE", 8, UI_GOLD,
@@ -965,13 +975,13 @@ local function DrawPaused(ctx, game)
     nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：暂停缓入
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    nvgFillColor(ctx, nvgRGBA(8, 3, 22, 180))
-    nvgFill(ctx)
+    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    DrawAcidGrid(ctx, game.width, game.height)
     DrawHalo(ctx, game.width * 0.5, 470, 120, 160)
-    DrawPixelText(ctx, game.width * 0.5, 430, "暂停", 34, ACID.paleBlue,
+    DrawPixelText(ctx, game.width * 0.5, 430, "暂停", 34, UI_WHITE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 482, "SYSTEM HALTED // PRESS P TO RESUME", 9,
-        ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
 
@@ -988,9 +998,9 @@ local function DrawWaveBanner(ctx, game, presentation)
     nvgSave(ctx)
     nvgGlobalAlpha(ctx, alpha)
     local cx = game.width * 0.5
-    DrawTechPanel(ctx, cx - 120, 150 + yOff, 240, 46, {20, 7, 49, 250}, {166, 229, 255, 255})
+    DrawBluePanel(ctx, cx - 120, 150 + yOff, 240, 46, UI_BLUE_DARK, UI_CYAN, 10)
     DrawPixelText(ctx, cx, 160 + yOff, string.format("WAVE %02d INCOMING", game.wave), 14,
-        ACID.brightPurple, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        UI_CYAN, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
 
@@ -1020,14 +1030,14 @@ local function RenderOverlay(game, presentation)
     if not vg_ then return end
     nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
     nvgScale(vg_, scale_, scale_)
-    DrawFullFrameBackground(vg_, screenDesignWidth_, screenDesignHeight_)
+    DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
     DrawWaveThemeTint(vg_, screenDesignWidth_, screenDesignHeight_, game)    -- A5：波次主题色
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgSave(vg_)
     nvgIntersectScissor(vg_, 0, 0, DESIGN_W, DESIGN_H)
     nvgBeginPath(vg_)
     nvgRect(vg_, 0, 0, DESIGN_W, DESIGN_H)
-    nvgStrokeColor(vg_, nvgRGBA(166, 229, 255, 180))
+    nvgStrokeColor(vg_, nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 180))
     nvgStrokeWidth(vg_, 2)
     nvgStroke(vg_)
     -- 反弹边缘在 2D 设计空间同步勾勒，与 3D 背景边界框保持一致。
@@ -1036,7 +1046,7 @@ local function RenderOverlay(game, presentation)
     nvgLineTo(vg_, 0, DESIGN_H)
     nvgLineTo(vg_, DESIGN_W, DESIGN_H)
     nvgLineTo(vg_, DESIGN_W, 0)
-    nvgStrokeColor(vg_, nvgRGBA(94, 169, 228, 150))
+    nvgStrokeColor(vg_, nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 150))
     nvgStrokeWidth(vg_, 3)
     nvgStroke(vg_)
     if game.state == "playing" then
@@ -1199,11 +1209,14 @@ function Backend.IsInsideGameCanvas(screenX, screenY)
         and screenY < viewportTop_ + viewportHeight_
 end
 
-function Backend.ScreenToGame(screenX, screenY)
+function Backend.ScreenToUi(screenX, screenY)
     local logicalX = screenX / dpr_
     local logicalY = screenY / dpr_
-    local canvasX = logicalX / scale_ - offsetX_
-    local canvasY = logicalY / scale_ - offsetY_
+    return logicalX / scale_ - offsetX_, logicalY / scale_ - offsetY_
+end
+
+function Backend.ScreenToGame(screenX, screenY)
+    local canvasX, canvasY = Backend.ScreenToUi(screenX, screenY)
     return (canvasX - projectionOffsetX_) / projectionScaleX_,
         (canvasY - projectionOffsetY_) / projectionScaleY_
 end

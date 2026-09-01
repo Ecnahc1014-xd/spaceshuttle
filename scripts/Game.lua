@@ -130,6 +130,7 @@ local playerLevel = 1
 local xp = 0
 local xpToNext = BASE_XP_TO_NEXT
 local pendingLevelUps = 0          -- 待处理的升级次数（暂停选强化）
+local deferredXp = 0               -- 升级触发同帧后续击碎经验原值，完成选卡后结算
 local upgradeChoices = nil         -- 当前可选的三选一强化
 local upgradePicks = {}            -- 已选强化的累计效果（id 列表，可重复）
 local upgradeStacks = {}           -- 已选强化各 id 的层数（WO-09/P5 叠加上限判定）
@@ -339,6 +340,7 @@ ResetGame = function()
     xp = 0
     xpToNext = BALANCE.baseXpToNext
     pendingLevelUps = 0
+    deferredXp = 0
     upgradeChoices = nil
     upgradePicks = {}
     upgradeStacks = {}
@@ -638,7 +640,10 @@ end
 
 -- 幸存者升级：获得经验，跨级时累计待处理的升级选择。
 local function GainXp(amount)
-    if pendingLevelUps > 0 then return end   -- 升级选择期间冻结经验累计
+    if pendingLevelUps > 0 then
+        deferredXp = deferredXp + amount
+        return
+    end
     xp = xp + amount * BALL_TUNING.xpMul
     while xp >= xpToNext do
         xp = xp - xpToNext
@@ -719,6 +724,11 @@ function Game.PickUpgrade(index)
         Emit("level_up", {level = playerLevel})
     else
         gameState = "playing"
+        if deferredXp > 0 then
+            local bufferedXp = deferredXp
+            deferredXp = 0
+            GainXp(bufferedXp)
+        end
     end
 end
 
@@ -1290,15 +1300,18 @@ end
 
 function Game.Update(dt)
     elapsed = elapsed + dt
-    if gameState == "playing" then
-        UpdateAiming()
-        UpdateMarbles(dt)
-        UpdateEnemies(dt)
-        UpdateReload()
-        UpdateWaveLogic(dt)
-    elseif gameState == "paused" then
-        -- 暂停态冻结所有玩法推进，仅保留 elapsed 累加用于 UI 动画。
+    if gameState ~= "playing" then
+        -- 非战斗态只保留时钟，供暂停/升级/菜单表现动画使用。
+        return
     end
+
+    UpdateAiming()
+    UpdateMarbles(dt)
+    if gameState ~= "playing" then return end
+    UpdateEnemies(dt)
+    if gameState ~= "playing" then return end
+    UpdateReload()
+    UpdateWaveLogic(dt)
 end
 
 function Game.IsLevelUp()
