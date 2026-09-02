@@ -997,9 +997,11 @@ end
 local function RenderOverlay(game, presentation)
     if not vg_ then return end
     nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
+    nvgResetTransform(vg_)
+    nvgResetScissor(vg_)
+    nvgGlobalAlpha(vg_, 1.0)
     nvgScale(vg_, scale_, scale_)
     DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
-    DrawWaveThemeTint(vg_, screenDesignWidth_, screenDesignHeight_, game)
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgSave(vg_)
     nvgBeginPath(vg_)
@@ -1026,6 +1028,11 @@ local function RenderOverlay(game, presentation)
     end
     nvgRestore(vg_)
 
+    nvgResetScissor(vg_)
+    nvgResetTransform(vg_)
+    nvgScale(vg_, scale_, scale_)
+    nvgTranslate(vg_, offsetX_, offsetY_)
+    nvgGlobalAlpha(vg_, 1.0)
     DrawHud(vg_, game)
     if game.state == "playing" then
         DrawAmmoSlots(vg_, game, presentation)
@@ -1038,6 +1045,8 @@ local function RenderOverlay(game, presentation)
     elseif game.state == "paused" then
         DrawPaused(vg_, game)
     end
+    nvgResetScissor(vg_)
+    nvgGlobalAlpha(vg_, 1.0)
     nvgEndFrame(vg_)
 end
 
@@ -1199,7 +1208,6 @@ function Backend.Render(gameSnapshot, presentationSnapshot)
             local pushIn = (presentationSnapshot.baseBarrierFlash or 0) * 1.6
             camera_.orthoSize = 18.0 - pushIn
         end
-        -- 车辆由当前相机投影，NanoVG 轨迹与输入也必须消费同一投影。
         UpdateProjectionMetrics(false)
     end
     if dangerBandNode_ then

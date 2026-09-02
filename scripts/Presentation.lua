@@ -210,6 +210,7 @@ local FEEDBACK_HANDLERS = {
 
 local function HandleEvent(event)
     -- WO-15/P2：未登记事件直派到同名处理器（如 marble_removed），保持向后兼容。
+    if type(event) ~= "table" or not event.type then return end
     local names = FEEDBACK_MAP[event.type]
     if names then
         for _, name in ipairs(names) do
@@ -264,7 +265,7 @@ end
 
 SpawnEjectedBox = function(event)
     local box = {
-        id = event.enemyId * 10000 + event.col * 100 + event.row,
+        id = nextDebrisId,
         x = event.x,
         y = event.y,
         vx = event.vx,
@@ -281,6 +282,7 @@ SpawnEjectedBox = function(event)
         row = event.row,
     }
     ejectedBoxes[#ejectedBoxes + 1] = box
+    nextDebrisId = nextDebrisId + 1
 end
 
 -- WO-17：被命中的敌方方块从编队脱离，持续旋转并沿规则层给出的随机向量飞散。

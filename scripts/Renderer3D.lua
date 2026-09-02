@@ -316,7 +316,7 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
         geometry:DefineTexCoord(Vector2(0, 0))
     end
     geometry:Commit()
-    geometry:SetMaterial(0, crateMaterial_)
+    geometry:SetMaterial(0, voxelMaterial_)
     geometry:SetMaterial(1, voxelMaterial_)
     record.signature = GetEnemySignature(enemy)
 end
@@ -735,22 +735,20 @@ function Renderer3D.Init(scene)
     voxelMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
 
     crateTexture_ = cache:GetResource("Texture2D", "image/crate.png")
+    crateMaterial_ = voxelMaterial_
     if crateTexture_ then
-        crateMaterial_ = Material:new()
-        local crateTechnique = cache:GetResource("Technique", "Techniques/DiffVCol.xml")
-        if not crateTechnique then
-            crateTechnique = cache:GetResource("Technique", "Techniques/Diff.xml")
-        end
-        crateMaterial_:SetTechnique(0, crateTechnique)
-        crateMaterial_:SetTexture(TU_DIFFUSE, crateTexture_)
-        crateMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+        local modelMaterial = Material:new()
+        modelMaterial:SetTechnique(0,
+            cache:GetResource("Technique", "Techniques/Diff.xml"))
+        modelMaterial:SetTexture(TU_DIFFUSE, crateTexture_)
+        modelMaterial:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+        crateMaterial_ = modelMaterial
         print("[Renderer3D] crate texture loaded")
     else
-        crateMaterial_ = voxelMaterial_
         print("[Renderer3D] crate texture unavailable, using VCol fallback")
     end
 
-    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil and crateMaterial_ ~= nil
+    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil
     initialized_ = initialized
     print("[Renderer3D] initialized, aircraft_crates=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
     return initialized_
@@ -799,6 +797,7 @@ function Renderer3D.Shutdown()
     modelBox_ = nil
     voxelMaterial_ = nil
     crateMaterial_ = nil
+    crateTexture_ = nil
     lastRenderElapsed_ = nil
     initialized_ = false
 end
