@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.0
-简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；NanoVG 与 3D Viewport 共用固定 9:16 CONTAIN 画布；敌方为由 AircraftPixelData occupied cells 生成的箱体化飞机，alive 方块使用官方木箱材质，命中后作为独立箱体取消碰撞、旋转飞散；飞机 SpawnWave 使用二维 AABB 不重叠候选布局；我方为放大后的大运式重卡；产品当前不绘制预瞄线和任何弹珠尾迹；Astroon 蓝紫 HUD/模态保持可见。
-最后巩固：2026-09-01
+当前版本：0.10.3
+简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；敌方 occupied cells 以更高厚度和紧凑体素比例表现为带箱体 UV 的 3D 方块；命中方块从编队退出后以独立箱体多轴旋转、Z 轴抛射并缩放淡出；SpawnWave 和移动阶段都执行二维 AABB 防重叠；NanoVG Overlay 每帧重置 transform/scissor/alpha 并在 UI 状态更新后绘制，防止 2D UI 中后期消失；当前不绘制预瞄线和弹珠尾迹。
+最后巩固：2026-09-03
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -117,7 +117,8 @@
 - D-045: 新需求废弃旧预瞄/拖尾产品方向：Game 不再生成 `aimTrajectory`，2D Renderer、Scene3DBackend 和 Renderer3D 均不绘制预瞄线/弹珠尾迹；拖拽输入仍保留为发射控制。
 - D-046: 敌方命中采用“箱体脱离”规则：`EjectBrick` 将砖块标记 `alive=false,ejected=true`，事件携带随机平面速度、角速度和生命周期；Presentation 更新飞散箱体，Renderer3D 用独立 Box 节点表现旋转，未 ejected 方块才可碰撞。
 - D-047: 敌方箱体网格继续由 occupied cells 驱动，但视觉本体 gap 收紧为 0.82，前后端面保留；使用官方木箱材质 UUID `uuid://C6Zh4Wb78SYH1lDk3QOBw_NQ`，不可用时回退顶点色材质。
-- D-048: SpawnWave 改用含间距的二维 AABB 候选检查，失败时确定性向上错层，不接受重叠候选；车辆显示缩放在权威半径推导基础上放大 1.12。
+- D-049: 3D 箱体不能只依赖薄体素和单轴 Z 旋转；敌方体素本体需提高厚度并保持紧凑间距，飞散箱体需使用可见多轴姿态、世界 Z 抛射和缩放淡出，才能在正交斜视下形成明确立体运动反馈。
+- D-050: NanoVG Overlay 在每个 frame 开始和各渲染层切换时重置 transform/scissor/global alpha，并在 `Backend.Render` 先执行 `UpdateUiState`，避免模态淡入状态或上帧剪裁污染后续 HUD。
 - v0.10.0: 废弃预瞄线与全部弹珠尾迹；3D 车辆按权威半径放大 1.12，敌方体素 gap 收紧并接入官方木箱材质；规则层新增 `EjectBrick`，命中方块立即取消碰撞并通过 `brick_ejected` 事件随机旋转飞散，表现层/3D 后端维护独立箱体生命周期；SpawnWave 改为二维 AABB 严格候选布局。官方 build 成功；当前沙箱 validate/GLES 未落盘报告或截图，需预览确认。
 - Lua LSP v0.9.4：`Game.lua`、`main.lua`、`Scene3DBackend.lua`、`Presentation.lua`、`Renderer3D.lua` 均 Error 0。
 - 官方 build v0.9.4：成功，正式入口 `main.lua`，单机模式。

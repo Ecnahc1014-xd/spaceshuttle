@@ -26,10 +26,10 @@ local scene_ = nil
 local modelBox_ = nil
 ---@type Material
 local voxelMaterial_ = nil
----@type Material
-local crateMaterial_ = nil
 ---@type Texture2D
 local crateTexture_ = nil
+---@type Material
+local crateMaterial_ = nil
 local vehicleMaterialSets_ = {}
 local materialCache_ = {}
 local enemyMeshes_ = {}
@@ -171,11 +171,11 @@ local function GetEnemySignature(enemy)
     return table.concat(parts)
 end
 
-local function EmitQuad(geometry, v1, v2, v3, v4, normal, color)
+local function EmitQuad(geometry, v1, v2, v3, v4, normal, color, uvScale)
     local vertices = {v1, v2, v3, v1, v3, v4}
     local uvs = {
-        Vector2(0, 1), Vector2(0, 0), Vector2(1, 0),
-        Vector2(0, 1), Vector2(1, 0), Vector2(1, 1),
+        Vector2(0, uvScale), Vector2(0, 0), Vector2(uvScale, 0),
+        Vector2(0, uvScale), Vector2(uvScale, 0), Vector2(uvScale, uvScale),
     }
     for i, vertex in ipairs(vertices) do
         geometry:DefineVertex(vertex)
@@ -217,7 +217,7 @@ local function EmitEdgeStrip(buffer, a, b, normal, halfWidth, color)
 end
 
 local function EmitVoxelFace(geometry, edgeVertices, v1, v2, v3, v4, normal, color, edgeWidth)
-    EmitQuad(geometry, v1, v2, v3, v4, normal, color)
+    EmitQuad(geometry, v1, v2, v3, v4, normal, color, 0.55)
     EmitEdgeStrip(edgeVertices, v1, v2, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
     EmitEdgeStrip(edgeVertices, v2, v3, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
     EmitEdgeStrip(edgeVertices, v3, v4, normal, edgeWidth, Color(0.012, 0.018, 0.038, 1))
@@ -226,6 +226,8 @@ end
 
 -- 敌机是由 AircraftPixelData occupied cells 逐块构成的单体素网格。
 -- 每个敌人仍只有一个 CustomGeometry；section 0 是暴露体素面，section 1 是棱线。
+local GetCrateMaterial
+
 local function RebuildEnemyMesh(record, enemy, visualCatalog)
     local geometry = record.geometry
     geometry:Clear()
@@ -234,29 +236,27 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     geometry:BeginGeometry(0, TRIANGLE_LIST)
 
     local pitch = enemy.brickSize * WORLD_SCALE
-    local unit = pitch * VOXEL_GAP
-    local depth = unit * VOXEL_DEPTH
+    local unit = pitch * 0.96
+    local depth = unit * 1.50
     local edgeWidth = math.max(0.004, unit * 0.045)
     local edgeVertices = {}
     local alive = {}
-    local cellColors = {}
 
-    -- WO-13/P2：冻结顶点色偏移 + 正面霜冻高光。freezeRatio 来自 Game 快照（0..1），
-    -- 渲染层只读，按此比例把基础色向冷白方向抬升，并在朝向镜头的正面叠加霜冻白。
+    -- 所有暴露面统一使用箱体纹理；飞机采样色不再调制材质，避免整体发黑。
+    -- 冻结状态仍由顶点色向冷白抬升。
     local freezeRatio = enemy.freezeRatio or 0
 
     for _, brick in ipairs(enemy.bricks) do
         if brick.alive then
             local key = tostring(brick.col) .. ":" .. tostring(brick.row)
             alive[key] = brick
-            cellColors[key] = GetBrickColor(enemy, brick, visualCatalog)
         end
     end
 
     for _, brick in ipairs(enemy.bricks) do
         if brick.alive then
             local key = tostring(brick.col) .. ":" .. tostring(brick.row)
-            local rgb = cellColors[key]
+            local rgb = {1.0, 0.72, 0.42}
             local cx = (brick.col - 0.5) * pitch
             local cy = -(brick.row - 0.5) * pitch
             local minX, maxX = cx - unit * 0.5, cx + unit * 0.5
@@ -283,8 +283,8 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
                         vertices[i] = Vector3(x, y, z)
                     end
                     -- 基础色按面朝向因子着色（正面更亮、背面更暗）。
-                    local color = ShadeColor(rgb, face.tint)
-                    -- 冻结色偏移：整体向冷白抬升，幅度随 freezeRatio。
+                    local color = Color(face.tint, face.tint, face.tint, 1.0)
+                    -- 纹理负责木箱外观，顶点色只保留面向亮度。
                     if freezeRatio > 0 then
                         color = Color(
                             math.min(1.0, color.r + freezeRatio * 0.30),
@@ -316,7 +316,7 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
         geometry:DefineTexCoord(Vector2(0, 0))
     end
     geometry:Commit()
-    geometry:SetMaterial(0, voxelMaterial_)
+    geometry:SetMaterial(0, GetCrateMaterial())
     geometry:SetMaterial(1, voxelMaterial_)
     record.signature = GetEnemySignature(enemy)
 end
@@ -687,23 +687,36 @@ local function SyncDebris(presentation)
     end
 end
 
+GetCrateMaterial = function()
+    if crateMaterial_ then return crateMaterial_ end
+    return voxelMaterial_
+end
+
 local function SyncEjectedBoxes(presentation)
     local active = {}
-    for _, box in ipairs(presentation.ejectedBoxes or {}) do
+    for i = 1, #(presentation.ejectedBoxes or {}) do
+        local box = presentation.ejectedBoxes[i]
         active[box.id] = true
         local node = ejectedBoxNodes_[box.id]
         if not node then
             node = scene_:CreateChild("EjectedCrate_" .. tostring(box.id))
             local model = node:CreateComponent("StaticModel")
             model:SetModel(modelBox_)
-            model:SetMaterial(crateMaterial_)
+            model:SetMaterial(GetCrateMaterial())
             model.castShadows = false
             ejectedBoxNodes_[box.id] = node
         end
-        node.position = GameToWorld(box.x, box.y, box.z * 0.01)
-        local size = math.max(0.01, box.size * WORLD_SCALE * 0.78)
-        node.scale = Vector3(size, size, size)
-        node.rotation = Quaternion(math.deg(box.rotation), Vector3(0, 0, 1))
+        node.position = GameToWorld(box.x, box.y, box.z * WORLD_SCALE)
+        local size = math.max(0.01, box.size * WORLD_SCALE * 0.92)
+        local fade = math.min(1.0, box.age / 0.12)
+        if box.lifetime - box.age < 0.28 then
+            fade = math.max(0, (box.lifetime - box.age) / 0.28)
+        end
+        node.scale = Vector3(size * fade, size * fade, size * fade)
+        local spin = Quaternion(math.deg(box.rotation), Vector3(0, 0, 1))
+        local pitch = Quaternion(math.deg(box.pitch), Vector3(1, 0, 0))
+        local roll = Quaternion(math.deg(box.roll), Vector3(0, 1, 0))
+        node.rotation = spin * pitch * roll
     end
     for id, node in pairs(ejectedBoxNodes_) do
         if not active[id] then
@@ -723,6 +736,15 @@ local function CreateWhiteTexture()
     return texture
 end
 
+local function BuildCrateMaterial()
+    local material = Material:new()
+    material:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/Diff.xml"))
+    material:SetTexture(TU_DIFFUSE, crateTexture_ or CreateWhiteTexture())
+    material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+    return material
+end
+
 function Renderer3D.Init(scene)
     scene_ = scene
     lastRenderElapsed_ = nil
@@ -735,20 +757,14 @@ function Renderer3D.Init(scene)
     voxelMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
 
     crateTexture_ = cache:GetResource("Texture2D", "image/crate.png")
-    crateMaterial_ = voxelMaterial_
+    crateMaterial_ = BuildCrateMaterial()
     if crateTexture_ then
-        local modelMaterial = Material:new()
-        modelMaterial:SetTechnique(0,
-            cache:GetResource("Technique", "Techniques/Diff.xml"))
-        modelMaterial:SetTexture(TU_DIFFUSE, crateTexture_)
-        modelMaterial:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
-        crateMaterial_ = modelMaterial
         print("[Renderer3D] crate texture loaded")
     else
-        print("[Renderer3D] crate texture unavailable, using VCol fallback")
+        print("[Renderer3D] crate texture unavailable, using white fallback")
     end
 
-    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil
+    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil and crateMaterial_ ~= nil
     initialized_ = initialized
     print("[Renderer3D] initialized, aircraft_crates=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
     return initialized_

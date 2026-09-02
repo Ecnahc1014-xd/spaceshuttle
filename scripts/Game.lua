@@ -578,8 +578,11 @@ local function EjectBrick(enemy, brick)
         vy = math.sin(angle) * speed - 80,
         rotation = Random() * math.pi * 2,
         angularVelocity = (Random() * 2 - 1) * 13,
+        pitch = (Random() * 2 - 1) * 0.9,
+        roll = (Random() * 2 - 1) * 0.9,
         lifetime = 1.15 + Random() * 0.55,
         brickSize = enemy.brickSize,
+        style = enemy.aircraftKey,
     })
     return true
 end
@@ -1238,6 +1241,7 @@ UpdateEnemies = function(dt)
                 local brickBottom = enemy.y + brick.row * enemy.brickSize
                 if brickBottom > DANGER_Y then
                     brick.alive = false
+                    brick.ejected = true
                     baseHp = baseHp - BALL_TUNING.brickDmg
                     local bx = enemy.x + (brick.col - 0.5) * enemy.brickSize
                     Emit("base_hit", {x = bx, y = DANGER_Y, brick = true})

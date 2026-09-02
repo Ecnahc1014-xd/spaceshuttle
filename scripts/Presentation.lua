@@ -273,11 +273,13 @@ SpawnEjectedBox = function(event)
         z = -2.0,
         vz = 5 + math.random() * 5,
         rotation = event.rotation,
+        pitch = event.pitch or 0,
+        roll = event.roll or 0,
         angularVelocity = event.angularVelocity,
         age = 0,
         lifetime = event.lifetime,
         size = event.brickSize,
-        aircraftKey = event.aircraftKey,
+        style = event.style or event.aircraftKey,
         col = event.col,
         row = event.row,
     }
@@ -295,8 +297,10 @@ local function UpdateEjectedBoxes(dt)
         box.z = box.z + box.vz * dt
         box.vy = box.vy + 260 * dt
         box.vx = box.vx * (1 - math.min(0.75, dt * 1.5))
-        box.vz = box.vz * (1 - math.min(0.75, dt * 1.5))
+        box.vz = box.vz - 90 * dt
         box.rotation = box.rotation + box.angularVelocity * dt
+        box.pitch = box.pitch + box.angularVelocity * 0.73 * dt
+        box.roll = box.roll + box.angularVelocity * 0.51 * dt
         if box.age >= box.lifetime then
             ejectedBoxes[i] = ejectedBoxes[#ejectedBoxes]
             ejectedBoxes[#ejectedBoxes] = nil

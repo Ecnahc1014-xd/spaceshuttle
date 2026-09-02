@@ -1195,6 +1195,7 @@ function Backend.ScreenToGame(screenX, screenY)
 end
 
 function Backend.Render(gameSnapshot, presentationSnapshot)
+    UpdateUiState(gameSnapshot)
     UpdateSpaceEnvironment(gameSnapshot.elapsed)
     local shake = presentationSnapshot.screenShake or 0
     if cameraNode_ then
