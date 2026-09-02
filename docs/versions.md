@@ -3,7 +3,8 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
-| v0.10.0 | 2026-09-01 | 按最新战斗反馈废弃预瞄线和全部弹珠尾迹；3D 车辆在权威半径推导基础上放大 1.12，敌方 occupied cells 视觉间距收紧并接入官方木箱材质；命中方块通过 `EjectBrick` 立即取消规则碰撞，发布 `brick_ejected` 事件，由 Presentation/Renderer3D 维护随机方向、持续旋转和独立箱体生命周期；SpawnWave 改为含间距的二维 AABB 严格不重叠候选布局；恢复完整 NanoVG HUD/模态渲染。官方 build 成功；当前沙箱 validate/GLES 未落盘报告或截图，需预览复测战斗态 |
+| v0.10.1 | 2026-09-02 | 修复敌方黑屏：不再将不兼容的 PBR 纹理技术绑定到 CustomGeometry，改用已验证的 `DiffVCol`/`Diff` 路径并正确绑定箱体纹理与 UV；新增真实 `crate.png` 资源。补齐移动阶段的二维 AABB 编队分离，确保飞机不重叠；校正 `brick_ejected` 到 Presentation/Renderer3D 的事件链，使方块可见地旋转飞散。官方 build 成功；当前沙箱运行验证未落盘报告/截图，需预览确认 |
+
 
 | v0.8.5 | 2026-08-15 | 修复 46° 正交视角下车辆与瞄准轨迹错位：轨迹从当前车辆中心起步，采样延长为 140×8，并按权威半径显示墙边反弹；相机震屏位移后刷新当前投影标定，使 3D、NanoVG 与输入继续共用同一映射。修复飞机二维 occupied cells 将自身误判为 Z 邻居导致正反面被剔除的问题，恢复实体体素块面并保留 XY 内部面剔除。巨型车继续由权威半径形成普通车 1.5× 且不越碰撞圆；LSP 0 Error、官方构建成功、240 帧 `lua_errors=0`、受控 normal/giant GLES 截图通过 |
 | v0.8.4 | 2026-08-15 | 敌人改为独立 `AircraftPixelData` 低像素采样：scout/striker/bomber/interceptor 的 occupied cells 同时驱动规则层逐块碰撞、隐藏 HP、2D 逐砖绘制、3D 单敌人双 section CustomGeometry 体素网格与碎片配色；相邻体素剔除内部面，`alive=false` 直接从飞机上消失；修正 3D 局部网格中心与规则坐标一致；保留 46° 正交、9:16 CONTAIN 和前六波 1 HP；LSP 0 Error、官方构建成功、受控 GLES 游戏态截图 `lua_errors=0` 通过 |

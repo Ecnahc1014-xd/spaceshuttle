@@ -28,6 +28,8 @@ local modelBox_ = nil
 local voxelMaterial_ = nil
 ---@type Material
 local crateMaterial_ = nil
+---@type Texture2D
+local crateTexture_ = nil
 local vehicleMaterialSets_ = {}
 local materialCache_ = {}
 local enemyMeshes_ = {}
@@ -311,6 +313,7 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
         geometry:DefineVertex(vertex.position)
         geometry:DefineNormal(vertex.normal)
         geometry:DefineColor(vertex.color)
+        geometry:DefineTexCoord(Vector2(0, 0))
     end
     geometry:Commit()
     geometry:SetMaterial(0, crateMaterial_)
@@ -731,12 +734,20 @@ function Renderer3D.Init(scene)
     voxelMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
     voxelMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
 
-    crateMaterial_ = cache:GetResource("Material", "uuid://C6Zh4Wb78SYH1lDk3QOBw_NQ")
-    if not crateMaterial_ then
-        crateMaterial_ = voxelMaterial_
-        print("[Renderer3D] crate material unavailable, using colored fallback")
+    crateTexture_ = cache:GetResource("Texture2D", "image/crate.png")
+    if crateTexture_ then
+        crateMaterial_ = Material:new()
+        local crateTechnique = cache:GetResource("Technique", "Techniques/DiffVCol.xml")
+        if not crateTechnique then
+            crateTechnique = cache:GetResource("Technique", "Techniques/Diff.xml")
+        end
+        crateMaterial_:SetTechnique(0, crateTechnique)
+        crateMaterial_:SetTexture(TU_DIFFUSE, crateTexture_)
+        crateMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+        print("[Renderer3D] crate texture loaded")
     else
-        print("[Renderer3D] crate material loaded from official wood crate asset")
+        crateMaterial_ = voxelMaterial_
+        print("[Renderer3D] crate texture unavailable, using VCol fallback")
     end
 
     local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil and crateMaterial_ ~= nil

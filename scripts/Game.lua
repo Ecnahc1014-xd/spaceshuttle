@@ -1142,6 +1142,40 @@ UpdateMarbles = function(dt)
     end
 end
 
+local function ResolveEnemyOverlap(enemy)
+    if enemy.dead then return end
+    local enemyWidth = enemy.gridW * enemy.brickSize
+    local enemyHeight = enemy.gridH * enemy.brickSize
+    local gap = 8
+    local ownLeft = enemy.x
+    local ownTop = enemy.y
+    for _, other in ipairs(veggies) do
+        if other ~= enemy and not other.dead and other.id < enemy.id then
+            local otherWidth = other.gridW * other.brickSize
+            local otherHeight = other.gridH * other.brickSize
+            local overlapX = math.min(enemy.x + enemyWidth + gap,
+                other.x + otherWidth + gap)
+                - math.max(enemy.x - gap, other.x - gap)
+            local overlapY = math.min(enemy.y + enemyHeight + gap,
+                other.y + otherHeight + gap)
+                - math.max(enemy.y - gap, other.y - gap)
+            if overlapX > 0 and overlapY > 0 then
+                if overlapX <= overlapY then
+                    local direction = enemy.x < other.x and -1 or 1
+                    if math.abs(enemy.x - other.x) < 0.001 then direction = 1 end
+                    enemy.x = enemy.x + direction * overlapX
+                    enemy.baseX = enemy.x - math.sin(enemy.phase) * enemy.swayAmp
+                else
+                    enemy.y = other.y - enemyHeight - gap
+                end
+            end
+        end
+    end
+    if enemy.x ~= ownLeft or enemy.y ~= ownTop then
+        enemy.baseX = enemy.x - math.sin(enemy.phase) * enemy.swayAmp
+    end
+end
+
 UpdateEnemies = function(dt)
     for i = #veggies, 1, -1 do
         if gameState == "gameover" then break end
@@ -1195,6 +1229,7 @@ UpdateEnemies = function(dt)
             enemy.x = DW - 10 - width
         end
         enemy.y = enemy.y + enemy.vy * speedMultiplier * dt
+        ResolveEnemyOverlap(enemy)
 
         -- 每个方块独立判定越线：越过目标线的方块立即销毁并对基地造成伤害。
         -- 飞行器以编队整体下移，单个方块越线即视为该块突破防线。
