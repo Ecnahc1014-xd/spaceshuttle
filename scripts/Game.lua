@@ -580,6 +580,8 @@ local function EjectBrick(enemy, brick)
         angularVelocity = (Random() * 2 - 1) * 13,
         pitch = (Random() * 2 - 1) * 0.9,
         roll = (Random() * 2 - 1) * 0.9,
+        axisPitchSpeed = (Random() * 2 - 1) * 8,
+        axisRollSpeed = (Random() * 2 - 1) * 8,
         lifetime = 1.15 + Random() * 0.55,
         brickSize = enemy.brickSize,
         style = enemy.aircraftKey,

@@ -7,7 +7,7 @@ local WORLD_SCALE = 0.018
 local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
 local VOXEL_GAP = 0.82
-local VOXEL_DEPTH = 1.18
+local VOXEL_DEPTH = 2.10
 local VEHICLE_PLANAR_RADIUS = 1.84
 local VEHICLE_COLLISION_FILL = 0.98
 local VEHICLE_LOCAL_CENTER_Z = -0.40
@@ -237,7 +237,7 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
 
     local pitch = enemy.brickSize * WORLD_SCALE
     local unit = pitch * 0.96
-    local depth = unit * 1.50
+    local depth = unit * VOXEL_DEPTH
     local edgeWidth = math.max(0.004, unit * 0.045)
     local edgeVertices = {}
     local alive = {}
@@ -703,14 +703,15 @@ local function SyncEjectedBoxes(presentation)
             local model = node:CreateComponent("StaticModel")
             model:SetModel(modelBox_)
             model:SetMaterial(GetCrateMaterial())
-            model.castShadows = false
+            model.castShadows = true
             ejectedBoxNodes_[box.id] = node
         end
-        node.position = GameToWorld(box.x, box.y, box.z * WORLD_SCALE)
-        local size = math.max(0.01, box.size * WORLD_SCALE * 0.92)
-        local fade = math.min(1.0, box.age / 0.12)
-        if box.lifetime - box.age < 0.28 then
-            fade = math.max(0, (box.lifetime - box.age) / 0.28)
+        -- 飞散箱体必须置于飞机前侧，否则会被未命中的前后端面遮住。
+        node.position = GameToWorld(box.x, box.y, -0.26 + box.z * WORLD_SCALE)
+        local size = math.max(0.01, box.size * WORLD_SCALE * 1.04)
+        local fade = math.min(1.0, box.age / 0.08)
+        if box.lifetime - box.age < 0.34 then
+            fade = math.max(0, (box.lifetime - box.age) / 0.34)
         end
         node.scale = Vector3(size * fade, size * fade, size * fade)
         local spin = Quaternion(math.deg(box.rotation), Vector3(0, 0, 1))
