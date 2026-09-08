@@ -670,7 +670,7 @@ local function IsEnemyCleared(enemy)
 end
 
 -- 幸存者升级：获得经验，跨级时累计待处理的升级选择。
-local function GainXp(amount)
+GainXp = function(amount)
     if pendingLevelUps > 0 then
         deferredXp = deferredXp + amount
         return
