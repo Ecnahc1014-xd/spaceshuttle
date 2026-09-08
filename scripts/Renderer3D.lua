@@ -8,6 +8,7 @@ local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
 local VOXEL_GAP = 0.82
 local VOXEL_DEPTH = 2.10
+local VOXEL_FRONT_OFFSET = -0.42
 local VEHICLE_PLANAR_RADIUS = 1.84
 local VEHICLE_COLLISION_FILL = 0.98
 local VEHICLE_LOCAL_CENTER_Z = -0.40
@@ -242,9 +243,11 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     local edgeVertices = {}
     local alive = {}
 
-    -- 所有暴露面统一使用箱体纹理；飞机采样色不再调制材质，避免整体发黑。
-    -- 冻结状态仍由顶点色向冷白抬升。
-    local freezeRatio = enemy.freezeRatio or 0
+    local function GetFaceColor(face)
+        if face.neighbor[3] < 0 then return Color(0.72, 0.38, 0.16, 1) end
+        if face.neighbor[3] > 0 then return Color(0.48, 0.20, 0.08, 1) end
+        return Color(face.tint, face.tint * 0.72, face.tint * 0.38, 1)
+    end
 
     for _, brick in ipairs(enemy.bricks) do
         if brick.alive then
@@ -283,23 +286,7 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
                         vertices[i] = Vector3(x, y, z)
                     end
                     -- 基础色按面朝向因子着色（正面更亮、背面更暗）。
-                    local color = Color(face.tint, face.tint, face.tint, 1.0)
-                    -- 纹理负责木箱外观，顶点色只保留面向亮度。
-                    if freezeRatio > 0 then
-                        color = Color(
-                            math.min(1.0, color.r + freezeRatio * 0.30),
-                            math.min(1.0, color.g + freezeRatio * 0.16),
-                            math.min(1.0, color.b + freezeRatio * 0.10),
-                            1.0)
-                        -- 朝向镜头的正面（+Z）追加霜冻白高光，强化"被冰封"立体感。
-                        if face.neighbor[3] == 1 then
-                            color = Color(
-                                math.min(1.0, color.r + freezeRatio * 0.42),
-                                math.min(1.0, color.g + freezeRatio * 0.42),
-                                math.min(1.0, color.b + freezeRatio * 0.38),
-                                1.0)
-                        end
-                    end
+                    local color = GetFaceColor(face)
                     EmitVoxelFace(geometry, edgeVertices,
                         vertices[1], vertices[2], vertices[3], vertices[4],
                         face.normal, color, edgeWidth)
@@ -692,6 +679,35 @@ GetCrateMaterial = function()
     return voxelMaterial_
 end
 
+local function BuildEjectedBoxGeometry(geometry)
+    -- 飞散箱体不再依赖内置 Box.mdl：直接生成闭合六面体，确保节点、尺寸、UV 和法线都可控。
+    local half = 0.5
+    local faces = {
+        {Vector3(-half, -half, -half), Vector3(-half, half, -half),
+            Vector3(half, half, -half), Vector3(half, -half, -half), Vector3(0, 0, -1)},
+        {Vector3(half, -half, half), Vector3(half, half, half),
+            Vector3(-half, half, half), Vector3(-half, -half, half), Vector3(0, 0, 1)},
+        {Vector3(-half, -half, half), Vector3(-half, half, half),
+            Vector3(-half, half, -half), Vector3(-half, -half, -half), Vector3(-1, 0, 0)},
+        {Vector3(half, -half, -half), Vector3(half, half, -half),
+            Vector3(half, half, half), Vector3(half, -half, half), Vector3(1, 0, 0)},
+        {Vector3(-half, half, -half), Vector3(-half, half, half),
+            Vector3(half, half, half), Vector3(half, half, -half), Vector3(0, 1, 0)},
+        {Vector3(-half, -half, half), Vector3(-half, -half, -half),
+            Vector3(half, -half, -half), Vector3(half, -half, half), Vector3(0, -1, 0)},
+    }
+    geometry:Clear()
+    geometry:SetNumGeometries(1)
+    geometry:SetDynamic(false)
+    geometry:BeginGeometry(0, TRIANGLE_LIST)
+    for _, face in ipairs(faces) do
+        EmitQuad(geometry, face[1], face[2], face[3], face[4], face[5],
+            Color(1, 1, 1, 1), 1.0)
+    end
+    geometry:Commit()
+    geometry:SetMaterial(0, GetCrateMaterial())
+end
+
 local function SyncEjectedBoxes(presentation)
     local active = {}
     for i = 1, #(presentation.ejectedBoxes or {}) do
@@ -700,24 +716,25 @@ local function SyncEjectedBoxes(presentation)
         local node = ejectedBoxNodes_[box.id]
         if not node then
             node = scene_:CreateChild("EjectedCrate_" .. tostring(box.id))
-            local model = node:CreateComponent("StaticModel")
-            model:SetModel(modelBox_)
-            model:SetMaterial(GetCrateMaterial())
-            model.castShadows = true
+            local geometry = node:CreateComponent("CustomGeometry")
+            geometry.castShadows = false
+            BuildEjectedBoxGeometry(geometry)
             ejectedBoxNodes_[box.id] = node
+            print("[Renderer3D] created visible ejected crate id=" .. tostring(box.id))
         end
-        -- 飞散箱体必须置于飞机前侧，否则会被未命中的前后端面遮住。
-        node.position = GameToWorld(box.x, box.y, -0.26 + box.z * WORLD_SCALE)
-        local size = math.max(0.01, box.size * WORLD_SCALE * 1.04)
-        local fade = math.min(1.0, box.age / 0.08)
-        if box.lifetime - box.age < 0.34 then
-            fade = math.max(0, (box.lifetime - box.age) / 0.34)
+        -- 独立箱体始终放在敌体朝向相机的一侧，避免主体网格遮挡刚脱离的第一帧。
+        node.position = GameToWorld(box.x, box.y, VOXEL_FRONT_OFFSET - 0.24 + box.z * WORLD_SCALE)
+        node.enabled = true
+        -- 前 0.10 秒保持完整尺寸，确保命中瞬间能读到“整块脱离”；末段再缩放消散。
+        local fade = 1.0
+        if box.age > 0.10 and box.lifetime - box.age < 0.45 then
+            fade = math.max(0, (box.lifetime - box.age) / 0.45)
         end
+        local size = math.max(0.01, box.size * WORLD_SCALE * 1.28)
         node.scale = Vector3(size * fade, size * fade, size * fade)
-        local spin = Quaternion(math.deg(box.rotation), Vector3(0, 0, 1))
-        local pitch = Quaternion(math.deg(box.pitch), Vector3(1, 0, 0))
-        local roll = Quaternion(math.deg(box.roll), Vector3(0, 1, 0))
-        node.rotation = spin * pitch * roll
+        local rotation = Quaternion()
+        rotation:FromEulerAngles(math.deg(box.pitch), math.deg(box.roll), math.deg(box.rotation))
+        node.rotation = rotation
     end
     for id, node in pairs(ejectedBoxNodes_) do
         if not active[id] then
@@ -737,12 +754,13 @@ local function CreateWhiteTexture()
     return texture
 end
 
-local function BuildCrateMaterial()
+local function CreateCrateMaterial()
     local material = Material:new()
-    material:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/Diff.xml"))
+    local technique = cache:GetResource("Technique", "Techniques/Diff.xml")
+    material:SetTechnique(0, technique)
     material:SetTexture(TU_DIFFUSE, crateTexture_ or CreateWhiteTexture())
     material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+    material:SetCullMode(CULL_NONE)
     return material
 end
 
@@ -758,7 +776,7 @@ function Renderer3D.Init(scene)
     voxelMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
 
     crateTexture_ = cache:GetResource("Texture2D", "image/crate.png")
-    crateMaterial_ = BuildCrateMaterial()
+    crateMaterial_ = CreateCrateMaterial()
     if crateTexture_ then
         print("[Renderer3D] crate texture loaded")
     else

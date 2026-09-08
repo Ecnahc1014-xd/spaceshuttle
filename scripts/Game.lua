@@ -565,7 +565,8 @@ local function EjectBrick(enemy, brick)
     GainXp(XP_PER_BRICK)
 
     local angle = Random() * math.pi * 2
-    local speed = 90 + Random() * 150
+    local speed = 240 + Random() * 260
+    local lift = 180 + Random() * 120
     Emit("brick_hit", {
         enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
         col = brick.col, row = brick.row, x = x, y = y,
@@ -575,7 +576,7 @@ local function EjectBrick(enemy, brick)
         enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
         col = brick.col, row = brick.row, x = x, y = y,
         vx = math.cos(angle) * speed,
-        vy = math.sin(angle) * speed - 80,
+        vy = math.sin(angle) * speed - lift,
         rotation = Random() * math.pi * 2,
         angularVelocity = (Random() * 2 - 1) * 13,
         pitch = (Random() * 2 - 1) * 0.9,
