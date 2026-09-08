@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.5
-简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；敌方 occupied cells 以 `VOXEL_DEPTH=2.10` 的更厚箱体表现，正面使用箱体纹理、侧面按面向明暗；命中方块强制置于敌体前侧，以独立箱体进行世界 Z 抛射、X/Y/Z 多轴旋转、快速入场和末段缩放淡出；SpawnWave 和移动阶段都执行二维 AABB 防重叠；NanoVG Overlay 每帧重置状态；当前不绘制预瞄线和弹珠尾迹。
-最后巩固：2026-09-03
+当前版本：0.10.6
+简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；敌方 occupied cells 以 `VOXEL_DEPTH=2.10` 的更厚箱体表现，正面使用箱体纹理、侧面按面向明暗；命中方块强制置于敌体前侧，以独立闭合 `CustomGeometry` 六面体进行世界 Z 抛射、X/Y/Z 多轴旋转、快速保持完整尺寸和末段缩放淡出；项目不存在的 `Models/Box.mdl` 不再作为飞散箱体依赖；SpawnWave 和移动阶段都执行二维 AABB 防重叠；NanoVG Overlay 每帧重置状态；当前不绘制预瞄线和弹珠尾迹。
+最后巩固：2026-09-08
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -92,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.6: 修复敌方箱体飞散不可见的实际根因：项目中不存在 `Models/Box.mdl`，飞散节点改为独立闭合 `CustomGeometry` 六面体并复用箱体纹理材质；保留前侧深度偏移、世界 Z 抛射、多轴旋转、首段完整尺寸和末段缩放淡出。修正 `GainXp` 前置声明槽赋值以支持隔离命中探针；正式 `main.lua` 清除自动测试注入，菜单 2D UI 真实截图恢复；隔离运行态序列确认敌机、箱体和底部 UI 可见，LSP MCP 超时，官方 build 成功。
 - v0.9.4: 修复 3D 渲染失灵根因：NanoVG 从整屏不透明背景改为仅填充 CONTAIN 画布外 letterbox，保护 3D Viewport；`Backend.Render` 保持 `Renderer3D.Render` → `RenderOverlay`；修复主循环更新前快照滞后、升级点击使用错误玩法逆投影、跨画布释放残留瞄准状态、升级/游戏结束同帧继续推进以及升级同帧 XP 丢失；新增 `deferredXp` 原值缓冲；全页面统一 Astroon 深蓝紫渐变、紫色 surface、蓝/青强调、白字与金色焦点。LSP 0 Error、官方 build 成功、菜单态 GLES 截图成功；战斗态探针受沙箱落盘限制未完成，代码级确认渲染顺序和 Viewport 合成。
 - v0.9.3: 按实机截图反馈重构 UI 信息架构：playing 态改为顶部 92px 战术仪表盘、中央战场、底部 94px 火控舱；修复画布外大块黑边；首页改为 Laterano 蓝白高对比视觉，增加主 CTA、任务参数块、半调点阵与分段规则线；升级模态改为可读的三张 156×214 蓝白强化卡，点击命中同步 `main.lua` 的 cardW/cardH/gap/cy；保持玩法规则、46° 正交投影和 540×960 9:16 CONTAIN 不变。LSP 0 Error、官方 build 成功、GLES 首页截图确认，运行时 `lua_errors=0`，环境资源错误与 llvmpipe 帧尖峰已记录。
 - v0.9.2: A 组纯代码打磨（用户要求先做可感知度提升，音频/美术等需生成 MCP 的 B 组与需用户放宽酸性 UI 契约的 C 组暂缓）。A3 敌人行为分化：`AircraftPixelData.behavior` 增加 scout/striker/bomber/interceptor 的 swayAmp/swayFreq/descentMul/agility/accent，`Game.CreateEnemy` 消费并加随机抖动。A1/A2 四模态 EaseOutCubic 淡入（`ModalIntro`/`nvgGlobalAlpha`）+ 波次横幅 `DrawWaveBanner` 顶部滑入淡出。A4 `DrawMarbleTrails` 按 `SLOT_COLORS[ballType]` 投影四色拖尾。A5 `DrawWaveThemeTint` 酸性风格内按波次色相旋转低 alpha 背景氛围。A6 `FindBoss`/`DrawBossPhaseBar` 阶段条 + 危险带 Boss 波常驻紫色警示。LSP 0 Error、官方构建成功、契约守门通过（Game 无渲染 API、表现层无 Game 写回、FXAA 仅探测默认关闭）。提交 2c2a37c。
