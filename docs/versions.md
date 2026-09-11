@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.18 | 2026-09-11 | 碰撞粒子特效接入 3D 后端：Presentation.particles 此前只被旧 2D 渲染器消费、Renderer3D 完全不画，碰撞无火花。新增单个 BillboardSet（96 固定槽、relative=false、1px 白纹理+DiffVCol 顶点色、1 draw call），SyncParticles 把命中粒子映射到世界 z=-0.95（浮于敌机/飞散箱前），尺寸 p.size·0.018·3.4·生命系数（min0.05m）随生命收缩，前段全亮后段淡出，超槽丢弃/空槽禁用/每帧 Commit，Init 建 Shutdown 释放。双固定色块探针验证 billboard 在真实相机+光照下可见，真实不可见纯因尺寸过小；SetFaceCameraAngle 绑定不存在。LSP 0、build、400 帧 lua=0 |
 | v0.10.17 | 2026-09-11 | 回滚召回 + 修复射不出去 + 升级卡布局：①整体删除 v0.10.15-16 主动召回（RecallMarbles/recalling/queuedLaunch/canRecall/事件/Presentation pulse/Dock 提示扫光），球自然回落补弹，保留全屏相对拖拽；②根因修复“射不出去”——回收线 DANGER_Y=900 在发射位 y850 上方仅 50px、下拉待发可到 y940，旧无条件位置判定让球出生即回收，改为 vy>0（向下运动）且越线才回收；③升级卡 cy→530 垂直居中、详情块区内垂直居中、层数提亮不贴底、副标题提亮、命中同步 cy530。探针下拉上射 vy=-414 稳定上行，截图/400 帧 lua=0 |
 | v0.10.16 | 2026-09-11 | 修复召回打断快速射击：空仓拖拽=召回+预约发射合流。空仓 PointerDown 触发召回后不中断拖拽，松手 distance>15 存 queuedLaunch，首个主球回库补弹同帧自动沿预约方向发射（零额外点击），纯点按（≤15px）只召回不预约；queuedLaunch 单发消费即清、ResetGame 清空。快照 recallFireQueued，Dock 青色“拖拽瞄准松手即射/点按仅召回”、金色“召回中·方向锁定·回库即射”+金色锁定粒子。LSP 0、build 成功、锁定态截图、700 帧探针 6射+2手势→2次自动开火 lua=0 |
 | v0.10.15 | 2026-09-11 | 操作体感优化：①全屏任意位置相对拖拽起手——取消底部 160px 起手限制，grabStart 记按下点、拉弓量按相对位移，车辆只在 SLING 附近移动（手指不挡车），ClampPull 保留 MAX_PULL=150 与向下钳制；②弹夹打空点击战场召回在飞主弹珠（canRecall 快照），召回中 vy+1700/s²封顶1150、vx 指数衰减、碰撞伤害照常，回收点从屏幕底提前到 DANGER_Y（进 Dock 即补弹），分裂子球不召回；③marbles_recalled 事件驱动 Dock 青色扫光/呼吸光带/“点击战场 召回载具”提示。LSP 0、build 成功、全屏拖拽与召回提示截图确认、500 帧自动发射→打空→召回→补弹探针 lua=0 |

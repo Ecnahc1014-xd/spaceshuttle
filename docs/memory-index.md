@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.17
-简述：540×960 竖屏弹珠；v0.10.15-16 的主动召回机制已整体删除（用户判定多余，球本来自然回落补弹，召回误触吞输出且打断发射），保留全屏任意位置相对拖拽起手；修复“射不出去”根因——回收必须 vy>0 且越过 DANGER_Y=900（发射位 y850、下拉待发可到 y940，只判位置会出生即回收）。升级卡 cy→530 在标题与操作提示间垂直居中、详情文本块区内垂直居中、层数提亮不贴底、副标题提亮、命中同步 cy530。升级卡 168×300 详情自动换行，刷怪 14s/7.5s/首波 2.5s。
+当前版本：0.10.18
+简述：540×960 竖屏弹珠；碰撞粒子特效接入 3D 后端——此前 Presentation.particles 只被旧 2D 渲染器消费、3D 完全不画，现 Renderer3D 用单个 BillboardSet（96 槽、白纹 DiffVCol、顶点色、1 draw call）在世界 z=-0.95 渲染命中火花，随生命收缩淡出。无主动召回（球自然回落补弹）、全屏相对拖拽、回收 vy>0 且越 DANGER_Y。升级卡 168×300 详情自动换行 cy530 垂直居中，刷怪 14s/7.5s/首波 2.5s。
 最后巩固：2026-09-11
 
 ## 项目概况
@@ -92,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.18: 碰撞粒子接入 3D 后端。根因：Presentation.particles（SpawnParticles，击毁 10/命中 4 粒、对象池）此前只被旧 2D Renderer.lua 消费，Renderer3D 完全没读，3D 后端下碰撞无火花。实现：Renderer3D 增单个 BillboardSet `HitParticles`（SetNumBillboards(96)、relative=false、castShadows=false、1px 白纹理 + DiffVCol），SyncParticles 每帧把粒子经 GameToWorld 放到 z=-0.95（相机在 -Z，浮于敌机体素/飞散箱前），billboard.color 用事件 rgb+alpha，worldSize=p.size·0.018·3.4·(0.45+0.55·lifeT)、min 0.05m、随生命收缩，alpha=clamp(lifeT/0.65) 前段全亮；超 96 丢弃、空槽 enabled=false、每帧 Commit；Init 建/Shutdown 释放。排查关键：先独立场景后游戏场景双固定色块探针证明 billboard 顶点色/位置/尺寸在真实相机+光照下可见，再发现真实火花不可见纯因尺寸过小（3.7px·0.018≈0.067m）与淡出过快；SetFaceCameraAngle 绑定不存在（默认即面向相机，勿调用）。LSP 0、build 成功、400 帧 lua=0。
 - v0.10.17: 回滚召回机制 + 修复“射不出去” + 升级卡垂直节奏。①删除 v0.10.15-16 全部召回：RecallMarbles/HasFlyingPrimary、marble.recalling 物理加速、queuedLaunch、UpdateReload 自动发射、s.canRecall/recallFireQueued、FEEDBACK_MAP 两事件、Presentation.recallPulse、Dock 召回提示/呼吸光带/扫光；空仓 PointerDown 恢复直接 return（球自然回落补弹），保留全屏相对拖拽（grabStart+ClampPull）。②根因修复回收出生即死：回收线 DANGER_Y=900 在弹弓发射位 y=850 之上仅 50px，下拉待发车可到 y≈940（巨型半径 30），旧 `y-radius>DANGER_Y` 无条件判定让球一发射还没向上走就被回收；改为 `vy>0 且 y-radius>DANGER_Y` 只回收向下回落的球。③升级 UI：GetUpgradeCardLayout cy 470→530（卡 380..680，在标题与 y704 提示间居中），详情文本块在详情区 y+88..y+208 垂直居中，底部标签 26→24/徽标 30→26、层数提亮 α85→{184,196,226} 且上移到 y+279 不贴底，副标题 UI_INK→UI_COLD，底部提示 8→9px，main.lua 命中 cy 同步 530。探针：向下拉满向上射 vy=-414 稳定上行 y843→443 flying=1；升级态截图均衡；400 帧 lua=0。
 - v0.10.16: 修复 v0.10.15 召回导致没法快速射击——召回与发射合流。PointerDown 空仓分支触发 RecallMarbles 后不再 return（继续 aiming=true 记录 grabStart）；PointerUp distance≤15 死区只清空 queuedLaunch/归位（纯点按=仅召回），distance>15 时：有 activeBall 立即 LaunchMarble，空仓则存 `queuedLaunch={dx,dy,power}` 并发 recall_fire_queued 事件；UpdateReload 在 QueueNextBall 后同帧消费 queuedLaunch 自动发射首个回库主球（单发消费即清），ResetGame 清空。快照增 recallFireQueued；Presentation FEEDBACK_MAP 增 recall_fire_queued→recallFireLock（复用 recallPulse+金色粒子）；Dock 提示 canRecall 青色“拖拽瞄准松手即射 // 点按仅召回”、queued 金色“召回中 // 方向锁定·回库即射”（胶囊宽 240→264）。LSP 0、build 成功、锁定态 GLES 截图确认、700 帧探针 6 射+2 空仓拖拽手势→autoFired=2 且 flying=4，lua=0。
 - v0.10.15: 操作体感优化。①全屏相对拖拽起手：删除 PointerDown 的 `py < DANGER_Y-100` 底部 160px 限制，新增 grabStartX/Y 记录按下点，GetPullState 改 ClampPull(pull=当前点-按下点)，保留 MAX_PULL=150 与向下钳制 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆仍只在 SLING(270,850) 附近移动，手指在战场任意位置起手都不遮挡车辆。②点击召回：activeBall=nil 且 ballQueue 空且有在飞主弹珠时快照 canRecall=true，PointerDown 触发 RecallMarbles 标记所有 isPrimary 主球 recalling；物理子步进内 recalling 球 vy+=1700·dt（封顶 1150）、vx*=exp(-2.6dt)，碰撞伤害反弹照常；回收判定 `y-radius>DH` 提前为 `>DANGER_Y`（进 Dock 即回库补弹）；分裂子球 isPrimary=false 不召回不补弹。③反馈：FEEDBACK_MAP 增 marbles_recalled→recallPulse（1.0/dt*1.8 衰减+轻震屏+弹弓区粒子），Dock 青色横向扫光（Dock 矩形 scissor），canRecall 常态上沿呼吸光带+“点击战场 召回载具 // TAP TO RECALL”胶囊。LSP 0、build 成功、截图验证全屏拖拽（战场上部起手车辆只在弹弓附近）与召回提示扫光、500 帧自动发射→打空→召回→补弹探针 lua=0。

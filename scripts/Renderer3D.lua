@@ -37,8 +37,17 @@ local enemyMeshes_ = {}
 local vehicleRecords_ = {}
 local debrisNodes_ = {}
 local ejectedBoxNodes_ = {}
+local particleNode_ = nil
+local particleSet_ = nil
+local particleMaterial_ = nil
 local lastRenderElapsed_ = nil
 local initialized_ = false
+
+-- v0.10.18：碰撞火花用单个 BillboardSet 批次渲染（所有粒子共享一个 draw call）。
+-- 固定槽位复用，超出预算丢弃，禁止按粒子创建节点。
+local PARTICLE_SLOTS = 96
+local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
+local PARTICLE_SCALE = 3.4       -- 设计像素尺寸 → 世界米的放大（火花小而亮）
 
 local BALL_COLORS = {
     normal = {1.00, 0.72, 0.12},
@@ -816,6 +825,33 @@ local function SyncEjectedBoxes(presentation)
     end
 end
 
+-- v0.10.18：碰撞火花。Presentation 的粒子是设计空间的迸发点（含速度/生命/颜色），
+-- 同步为世界空间 billboard；一个 BillboardSet 承载全部槽位，只占一个 draw call。
+local function SyncParticles(presentation)
+    if not particleSet_ then return end
+    local particles = presentation.particles or {}
+    local count = math.min(#particles, PARTICLE_SLOTS)
+    for i = 1, PARTICLE_SLOTS do
+        local bb = particleSet_:GetBillboard(i - 1)
+        local p = particles[i]
+        if p and i <= count then
+            bb.enabled = true
+            bb.position = GameToWorld(p.x, p.y, PARTICLE_FRONT_Z)
+            -- 火花尺寸：初始更大，并随生命周期收缩，保证命中瞬间醒目。
+            local lifeT = math.max(0, math.min(1, p.life / p.maxLife))
+            local sizeT = 0.45 + 0.55 * lifeT
+            local worldSize = math.max(0.05, p.size * WORLD_SCALE * PARTICLE_SCALE * sizeT)
+            bb.size = Vector2(worldSize, worldSize)
+            -- 前 35% 生命保持全亮，之后平滑淡出。
+            local alpha = math.max(0, math.min(1, (lifeT - 0.0) / 0.65))
+            bb.color = Color(p.r / 255, p.g / 255, p.b / 255, alpha)
+        else
+            bb.enabled = false
+        end
+    end
+    particleSet_:Commit()
+end
+
 local function CreateWhiteTexture()
     local image = Image()
     image:SetSize(1, 1, 4)
@@ -854,6 +890,23 @@ function Renderer3D.Init(scene)
     crateMaterial_ = CreateCrateMaterial()
     print("[Renderer3D] procedural aircraft panel texture ready")
 
+    -- v0.10.18：碰撞火花批次（单 BillboardSet，白纹理 DiffVCol，每粒子顶点色）。
+    particleNode_ = scene:CreateChild("HitParticles")
+    particleSet_ = particleNode_:CreateComponent("BillboardSet")
+    particleSet_:SetNumBillboards(PARTICLE_SLOTS)
+    particleSet_.castShadows = false
+    particleSet_.relative = false
+    particleMaterial_ = Material:new()
+    particleMaterial_:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
+    particleMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
+    particleMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+    particleSet_:SetMaterial(particleMaterial_)
+    for i = 0, PARTICLE_SLOTS - 1 do
+        particleSet_:GetBillboard(i).enabled = false
+    end
+    particleSet_:Commit()
+
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
     local initialized = voxelMaterial_ ~= nil and crateMaterial_ ~= nil
@@ -888,6 +941,7 @@ function Renderer3D.Render(game, presentation)
     SyncVehicles(game, dt)
     SyncDebris(presentation)
     SyncEjectedBoxes(presentation)
+    SyncParticles(presentation)
 end
 
 function Renderer3D.Shutdown()
@@ -895,6 +949,12 @@ function Renderer3D.Shutdown()
     for _, record in pairs(enemyMeshes_) do RemoveNode(record.root) end
     for _, node in pairs(debrisNodes_) do RemoveNode(node) end
     for _, node in pairs(ejectedBoxNodes_) do RemoveNode(node) end
+    if particleNode_ then RemoveNode(particleNode_) end
+    if particleSet_ then DisposeComponent(particleSet_) end
+    if particleMaterial_ then particleMaterial_:Dispose() end
+    particleNode_ = nil
+    particleSet_ = nil
+    particleMaterial_ = nil
     vehicleRecords_ = {}
     enemyMeshes_ = {}
     debrisNodes_ = {}

@@ -3,9 +3,9 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.17
-- 进度: 回滚召回机制（用户判定多余，球本来就自然回落补弹）：删除 RecallMarbles/HasFlyingPrimary/recalling 加速、queuedLaunch、canRecall/recallFireQueued 快照、marbles_recalled/recall_fire_queued 事件、Presentation.recallPulse 与 Dock 召回提示/扫光的全部代码；空仓 PointerDown 直接 return（等球自然回库），**保留**全屏任意位置相对拖拽起手（grabStart+ClampPull，MAX_PULL=150/向下钳制）。修复“射不出去”根因：回收线 DANGER_Y=900 在弹弓发射位 y=850 之上仅 50px，向下拉满待发车可到 y≈940、巨型半径 30 → 球出生即在回收线下，无条件回收判定让它还没向上飞就被回收；现回收必须同时 `vy>0`（向下运动）且越过线，向上发射不受出生点影响。升级 UI：卡片 cy 470→530（卡 380..680，在标题与底部提示间垂直居中），详情文本块在分隔线与底部信息区间垂直居中（2-3 行短文案不再堆上部留空洞），“已装配”提亮（α85→{184,196,226}）上移到 y+cardH-21 不贴底，底部标签/徽标收紧，副标题 UI_INK→UI_COLD 可见，命中同步 cy=530。LSP 0、build 成功；向下拉满向上射探针（vy=-414 稳定上行）+升级态截图+400 帧 validate lua=0。
-- 上次交付: v0.10.17 删除召回机制、修复回收线出生即回收、升级卡垂直节奏
+- 版本: 0.10.18
+- 进度: 碰撞粒子特效实装到 3D 后端（此前 Presentation.particles 只被旧 2D Renderer 消费，3D 后端完全没画，碰撞无火花）。Renderer3D 用**单个 BillboardSet**（96 固定槽、relative=false、白 1px 纹理 + DiffVCol，每粒子 billboard.color 顶点色）承载全部火花，只占 1 draw call；SyncParticles 把 presentation.particles 的设计坐标经 GameToWorld 映射到 z=-0.95（浮在敌机体素与飞散箱之前），worldSize=p.size·WORLD_SCALE·3.4·(0.45+0.55·lifeT)（最小 0.05m，随生命收缩），alpha=clamp(lifeT/0.65) 前段全亮后段淡出；超出 96 丢弃，槽位 enabled=false 复用。Init 创建、Shutdown 释放节点/组件/材质。沿用既有 brick_hit 粒子（击毁 10 粒暖白/命中 4 粒、分裂/追击/贯穿/召回已删事件各色）。验证：独立场景与游戏场景固定色块双探针确认 billboard 顶点色+位置+尺寸在本渲染管线可见；同步计数 active=8..38；400 帧 lua=0、build 成功。基线 v0.10.17：无召回（球自然回落）、全屏相对拖拽、回收 vy>0 且越 DANGER_Y、升级卡 cy530 详情垂直居中。
+- 上次交付: v0.10.18 3D 碰撞火花（BillboardSet 批次粒子）
 
 
 
@@ -19,6 +19,7 @@
 - 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
 
 ## 本批次新增避雷（WO-13/16/14/15/P11/P12）
+- 碰撞粒子契约（v0.10.18）：碰撞火花必须在当前 3D 后端可见——Presentation.particles 是引擎无关的瞬时状态（设计坐标 x/y/vx/vy/life/maxLife/size/rgb，带对象池），Renderer3D 用**单个 BillboardSet** 消费（禁止每粒子建节点）：固定 PARTICLE_SLOTS=96 槽、relative=false、白 1px 纹理 + DiffVCol（每粒子 billboard.color 顶点色），位置 GameToWorld(p.x,p.y,z=-0.95)（浮在敌机体素/飞散箱相机侧），worldSize≈p.size·WORLD_SCALE·3.4·(0.45+0.55·lifeT) 且有最小值，alpha 前段全亮后段淡出，超槽丢弃、空槽 enabled=false，每帧 Commit；Init 建/Shutdown 释放。新增表现粒子只在 Presentation.SpawnParticles 加，渲染层自动消费，禁止在规则层或每粒子建 draw call。验证 billboard 要先做"游戏场景内固定大色块"探针（独立场景可见≠游戏相机/光照下可见）。
 - 全屏拖拽契约（v0.10.15 保留，v0.10.17 召回删除后仍有效）：PointerDown 仅在 playing 态且 activeBall 存在时起手（空仓直接 return，等球自然回库），任意战场坐标记录 grabStart(grabStartX/Y)，拉弓量 = 当前点 - 按下点，经 `ClampPull` 钳 MAX_PULL=150 与向下 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆只在 SLING(270,850)+pull 附近移动，禁止让车辆跳到手指位置；15px 死区松手归位。
 - ⛔ 召回机制已废弃（v0.10.15 引入→v0.10.17 整体删除）：用户判定多余——球本来就会自然回落补弹；召回会误触吞输出、逻辑复杂且与快速发射冲突。禁止恢复 RecallMarbles/recalling/queuedLaunch/canRecall/marbles_recalled/recall_fire_queued/recallPulse/Dock 召回提示扫光。空窗问题靠“回收点提前到防线 + 自然回落”解决，不要再加主动召回类机制。
 - 回收线契约（v0.10.17 根因修复）：回收判定必须是 `marble.vy > 0 且 marble.y - marble.radius > DANGER_Y(900)`，两个条件缺一不可。DANGER_Y 在弹弓发射位 y=850 之上仅 50px，而向下拉满待发车可到 y≈940、巨型车半径 30——只判位置会让球一发射（出生点已在线下、还没向上走）就被回收，表现为“射不出去”；vy>0 保证只回收回落的球。
