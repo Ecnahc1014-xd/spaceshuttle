@@ -3,9 +3,9 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.16
-- 进度: 修复 v0.10.15 召回导致的"没法快速射击"——召回与发射合流：空仓（activeBall=nil、queue 空、有在飞主球）时 PointerDown 仍标记 recalling 但**不再 return**，继续进入全屏拖拽瞄准；PointerUp 时 distance>15 则存 `queuedLaunch={dx,dy,power}` 并发 recall_fire_queued 事件，首个主球回库（UpdateReload→QueueNextBall）同帧自动 LaunchMarble 沿预约方向射出，零额外点击；distance≤15 纯点按只召回不预约。queuedLaunch 单发（消费即清）、ResetGame 清空。快照 s.recallFireQueued；Dock 提示 canRecall 态青色“拖拽瞄准松手即射 // 点按仅召回”、queued 态金色“召回中 // 方向锁定·回库即射”，锁定触发金色粒子。v0.10.15 基线：全屏相对拖拽（grabStart、ClampPull MAX_PULL=150/向下钳制）、recalling vy+1700/s²封顶1150、vx exp(-2.6dt)、回收点 DANGER_Y、分裂子球不召回。LSP 0、build 成功，锁定态截图确认，700 帧探针 6 射+2 空仓手势→2 次自动开火（autoFired=2）lua=0。
-- 上次交付: v0.10.16 空仓拖拽=召回+预约发射，回库即射恢复快速连射
+- 版本: 0.10.17
+- 进度: 回滚召回机制（用户判定多余，球本来就自然回落补弹）：删除 RecallMarbles/HasFlyingPrimary/recalling 加速、queuedLaunch、canRecall/recallFireQueued 快照、marbles_recalled/recall_fire_queued 事件、Presentation.recallPulse 与 Dock 召回提示/扫光的全部代码；空仓 PointerDown 直接 return（等球自然回库），**保留**全屏任意位置相对拖拽起手（grabStart+ClampPull，MAX_PULL=150/向下钳制）。修复“射不出去”根因：回收线 DANGER_Y=900 在弹弓发射位 y=850 之上仅 50px，向下拉满待发车可到 y≈940、巨型半径 30 → 球出生即在回收线下，无条件回收判定让它还没向上飞就被回收；现回收必须同时 `vy>0`（向下运动）且越过线，向上发射不受出生点影响。升级 UI：卡片 cy 470→530（卡 380..680，在标题与底部提示间垂直居中），详情文本块在分隔线与底部信息区间垂直居中（2-3 行短文案不再堆上部留空洞），“已装配”提亮（α85→{184,196,226}）上移到 y+cardH-21 不贴底，底部标签/徽标收紧，副标题 UI_INK→UI_COLD 可见，命中同步 cy=530。LSP 0、build 成功；向下拉满向上射探针（vy=-414 稳定上行）+升级态截图+400 帧 validate lua=0。
+- 上次交付: v0.10.17 删除召回机制、修复回收线出生即回收、升级卡垂直节奏
 
 
 
@@ -15,19 +15,19 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: 真机触摸复测"空仓拖拽=召回+回库即射"的连射手感（召回耗时≈首个球回库时长、queuedLaunch 单发是否符合预期、若玩家在等待期间又拖一次是否需要覆盖方向）；确认纯点按召回与拖拽即射的区分（15px 死区）不会误触；Boss 波(每10波)与词条/异常反应实机手感；刷怪 14s 节奏体感。若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或卡片排版，不改变权威 HP、逐块扣血、XP 曲线、召回/拖拽契约和 9:16 共同投影契约
+- likely_next_task: 真机触摸复测发射手感——全屏任意位置拖拽、松手即射，向下拉满向上射的极端角度已修（回收 vy>0 判定）；确认空仓时按了没反应是否需要视觉上的"装填中"反馈（当前无召回，等球自然回落补弹，若用户仍觉得空窗长，应优先加快自然回落或缩短回收线，而非恢复主动召回）；Boss 波与词条/异常反应实机手感；刷怪 14s 节奏体感。若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或卡片排版，不改变权威 HP、逐块扣血、XP 曲线、回收/拖拽契约和 9:16 共同投影契约
 - 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
 
 ## 本批次新增避雷（WO-13/16/14/15/P11/P12）
-- 全屏拖拽契约（v0.10.15）：起手不再限定底部区域；PointerDown 在 playing 态任意战场坐标都记录 grabStart(grabStartX/Y)，拉弓量 = 当前点 - 按下点，经 `ClampPull` 钳 MAX_PULL=150 与向下 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆只在 SLING(270,850)+pull 附近移动，禁止让车辆跳到手指位置；15px 死区松手归位。
-- 召回契约（v0.10.15/16）：`activeBall=nil 且 #ballQueue=0 且 HasFlyingPrimary()` 时 canRecall=true；PointerDown 触发 RecallMarbles（标记所有 isPrimary 主球 recalling）后**不得 return**，必须继续进入全屏拖拽，否则会打断快速连射；PointerUp：distance>15 有 activeBall 立即发射、空仓则存 `queuedLaunch={dx,dy,power}`（单发，UpdateReload 在 QueueNextBall 后同帧消费自动 LaunchMarble 并清空），distance≤15 纯点按只召回不预约；recalling 在物理子步进内 vy+=1700·dt（封顶 1150）、vx*=exp(-2.6dt)，碰撞/伤害/反弹照常；回收判定 `y-radius>DANGER_Y(900)`，进 Dock 即回库补弹（EnqueueNextBall 仅 isPrimary）；分裂子球 isPrimary=false 不召回；queuedLaunch 在 ResetGame 必须清空。改这些值要同步快照 canRecall/recallFireQueued 与 UI 提示。
-- 召回反馈契约：marbles_recalled 事件写 Presentation.recallPulse（1.0，dt*1.8 衰减）+ 轻震屏/青色粒子；recall_fire_queued 事件（v0.10.16）同样置 pulse 但用金色粒子表示"方向锁定"；Scene3DBackend Dock 画横向扫光（scissor 在 Dock 矩形内），canRecall 且未 queued 时青色提示“拖拽瞄准松手即射 // 点按仅召回”，recallFireQueued 时金色“召回中 // 方向锁定·回库即射”；规则层禁止直接调渲染。
+- 全屏拖拽契约（v0.10.15 保留，v0.10.17 召回删除后仍有效）：PointerDown 仅在 playing 态且 activeBall 存在时起手（空仓直接 return，等球自然回库），任意战场坐标记录 grabStart(grabStartX/Y)，拉弓量 = 当前点 - 按下点，经 `ClampPull` 钳 MAX_PULL=150 与向下 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆只在 SLING(270,850)+pull 附近移动，禁止让车辆跳到手指位置；15px 死区松手归位。
+- ⛔ 召回机制已废弃（v0.10.15 引入→v0.10.17 整体删除）：用户判定多余——球本来就会自然回落补弹；召回会误触吞输出、逻辑复杂且与快速发射冲突。禁止恢复 RecallMarbles/recalling/queuedLaunch/canRecall/marbles_recalled/recall_fire_queued/recallPulse/Dock 召回提示扫光。空窗问题靠“回收点提前到防线 + 自然回落”解决，不要再加主动召回类机制。
+- 回收线契约（v0.10.17 根因修复）：回收判定必须是 `marble.vy > 0 且 marble.y - marble.radius > DANGER_Y(900)`，两个条件缺一不可。DANGER_Y 在弹弓发射位 y=850 之上仅 50px，而向下拉满待发车可到 y≈940、巨型车半径 30——只判位置会让球一发射（出生点已在线下、还没向上走）就被回收，表现为“射不出去”；vy>0 保证只回收回落的球。
 - 顶点色材质契约：任何需要顶点色染色的 CustomGeometry/箱体材质必须用消费顶点色的 Technique（`DiffVCol`），普通 `Diff` 不读顶点色会让面板纹理盖住整机颜色；程序化金属面板纹理基底要压暗（≈0.62）避免冲淡主色。
 - 敌机部件槽位契约：像素数据原色只用于槽位分类，最终颜色由 VisualCatalog 的机型配色表给出；座舱判定要区分高亮蓝（b-r≥55 且 g≥100）与灰蓝装甲（b-r≈30），禁止把大面积灰蓝装甲误判成座舱。
 - 升级抽卡去重契约：同一张三选一里用局内 `chosenThisRoll` 保证 id 唯一，叠加上限只控制跨局，不能让同名天赋在同一面板重复出现。
 - NanoVG 文本测量契约（v0.10.14 根因）：UrhoX 绑定的 `nvgTextBounds(ctx,x,y,str,nil)` 返回两个值 `(advance, boundsTable)`，boundsTable 是 `{minx,miny,maxx,maxy}` 数组，**不是** C API 的多返回值——`local minx,_,maxx = nvgTextBounds(...)` 会让 minx=advance、maxx=nil，恒走 fallback；且测量处于 CONTAIN 缩放 transform 下时必须先 `nvgSave`+`nvgResetTransform` 再 `nvgRestore`，否则宽度按物理像素翻倍；fallback 估宽按 `utf8.len`（字符数）禁止用 `#s`（中文 3 字节）。
-- 升级卡详情契约（v0.10.14）：天赋池每项必须带一句完整 `detail`，UI 用 `WrapTextLines` 做 UTF-8 逐字自动换行（实测 bounds 宽度）；卡片 168×300/gap=8：标题 15px 单行（天赋名≤7 汉字）、稀有度 11px、分隔线 y+74、详情 12px/18 行距/最多 6 行、底部标签 26px+增量徽标 30px+层数 9px 三段固定，避免重叠；HUD/卡片词条标识一律 NanoVG 程序化绘制，禁止外部 Icons PNG。
-- 升级卡命中同步契约（v0.10.14）：`main.lua:TryPickUpgradeAt` 的 cardW/cardH/gap/cy/HIT_PAD 必须与 `Scene3DBackend:GetUpgradeCardLayout` 视觉几何逐值一致（当前 168/300/8/cy470/HIT_PAD 4），禁止两套常量漂移；升级点击用 `ScreenToUi`。
+- 升级卡详情契约（v0.10.17）：天赋池每项必须带一句完整 `detail`，UI 用 `WrapTextLines` 做 UTF-8 逐字自动换行（实测 bounds 宽度）；卡片 168×300/gap=8/cy=530（卡 380..680，在标题区与 y=704 操作提示之间垂直居中）：标题 15px 单行、稀有度 11px、分隔线 y+74、详情 12px/18 行距/最多 6 行且**文本块在详情区（y+88..y+208）内垂直居中**（短文案不留空洞）、底部标签 24px（y+216）+增量徽标 26px（y+248）+层数 9px（y+279，提亮色 {184,196,226} 不贴底）三段固定；HUD/卡片词条标识一律 NanoVG 程序化绘制，禁止外部 Icons PNG。
+- 升级卡命中同步契约（v0.10.17）：`main.lua:TryPickUpgradeAt` 的 cardW/cardH/gap/cy/HIT_PAD 必须与 `Scene3DBackend:GetUpgradeCardLayout` 视觉几何逐值一致（当前 168/300/8/cy530/HIT_PAD 4），禁止两套常量漂移；升级点击用 `ScreenToUi`。
 - 顶部边界契约：规则反弹顶边是游戏坐标 `TOP_BOUND_Y=-135`（v0.10.10 取 0 与 -270 的均值，投影 designY≈105 在 HUD 下方）；规则常量与 3D 视觉 `EDGE_TOP_GAME_Y` 必须同步，左右边仍是 0/DW。禁止把游戏坐标 y=0 当屏幕顶。
 - 节奏平衡契约（v0.10.14）：刷怪基础间隔 14s、下限 7.5s、收紧 0.18/波，同屏上限 8（每 10 波 +1），单波 ≤5 架，首波冷却 2.5s；XP 首升 26、成长 ×1.26。改节奏时同时改 BALANCE、GetWaveParams、ResetGame 初始冷却与同屏增长分母，禁止只调一处。
 - 机群防重叠契约：`FleetPositionOccupied` 必须同时检查本批次 placed 与场上全部存活机；逐帧 `ResolveFleetOverlaps` 在所有飞机摆动/下移完成后统一跑 8 轮全对全 AABB，结束统一钳边界并回写 baseX；新增编队必须走 `ENEMY_SPACING=8` 与确定性逐层 fallback。
@@ -66,7 +66,7 @@
 - 主循环时序契约：`main.lua` 先用上一帧 Presentation 状态决定 hitStop，再调用 `Game.Update()`；随后重新获取 `Game.GetSnapshot()`，同一份更新后快照同时传给 `Presentation.Update()` 和渲染变量，禁止把更新前快照传给表现层或渲染层
 - 状态中断契约：`Game.Update()` 在 `UpdateMarbles()` 后、`UpdateEnemies()` 后检查 `gameState`；升级/游戏结束在当前帧切换状态后，禁止继续推进敌人、越线扣血、换弹或波次刷新
 - XP 保全契约：升级期间或升级触发同帧新增经验进入 `deferredXp` 原值缓冲，最后一张升级卡完成后只结算一次倍率；禁止用 `pendingLevelUps > 0` 直接丢弃经验
-- 输入契约：画布外按下必须过滤；移动和释放允许跨出画布以完成钳制和结束拖拽；升级卡必须用 `ScreenToUi` 命中，玩法瞄准必须用 `ScreenToGame`；playing 态全屏任意位置按下都可起手拖拽（v0.10.15，旧底部 160px 限制已删），弹夹打空且 canRecall 时按下改为召回而非拖拽
+- 输入契约：画布外按下必须过滤；移动和释放允许跨出画布以完成钳制和结束拖拽；升级卡必须用 `ScreenToUi` 命中，玩法瞄准必须用 `ScreenToGame`；playing 态全屏任意位置按下都可起手拖拽（v0.10.15，旧底部 160px 限制已删），但仅在 activeBall 存在时起手，空仓（球在飞/补弹中）按下不响应（v0.10.17 召回已删）
 - 渲染合成契约：`Backend.Render()` 必须先执行 `Renderer3D.Render()` 再执行 `RenderOverlay()`；NanoVG 仅允许绘制画布外 letterbox 与透明/局部 UI，禁止使用整屏不透明矩形覆盖设计画布
 - 弹珠技能契约：基础弹每次直接命中独立 5% 概率生成两颗完整功能分裂弹，分裂弹可继续分裂；加速弹每次反弹/命中加速 15%，按速度最高增至 3 伤并自动追击最近砖块；巨型弹任意有效反弹只武装一次贯穿，贯穿命中造成直径 7 格圆形范围伤害
 - 敌方基础下落速度固定乘以 0.25（降低 75%）；冰冻倍率继续叠加在此速度之上

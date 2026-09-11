@@ -15,8 +15,6 @@ local brickDebris = {}
 local ejectedBoxes = {}
 local baseImpacts = {}
 local baseBarrierFlash = 0
--- v0.10.15：召回在飞弹珠时底部 Dock 的扫光脉冲（0..1 衰减）。
-local recallPulse = 0
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,
@@ -45,8 +43,6 @@ local FEEDBACK_MAP = {
     speed_dash = {"dashSpark"},
     giant_pierce_armed = {"pierceArmed"},
     giant_area_hit = {"giantBurst"},
-    marbles_recalled = {"recallPulse"},
-    recall_fire_queued = {"recallFireLock"},
     game_reset = {"fullReset"},
 }
 
@@ -129,7 +125,6 @@ local FEEDBACK_HANDLERS = {
         ejectedBoxes = {}
         baseImpacts = {}
         baseBarrierFlash = 0
-        recallPulse = 0
         nextDebrisId = 1
         truckLaunchFlash = {
             normal = 0,
@@ -137,18 +132,6 @@ local FEEDBACK_HANDLERS = {
             speed = 0,
             giant = 0,
         }
-    end,
-    -- v0.10.15：召回触发 Dock 扫光 + 轻微震屏 + 弹弓区粒子，纯表现层反馈。
-    recallPulse = function(event)
-        recallPulse = 1.0
-        screenShake = math.max(screenShake, 0.06)
-        SpawnParticles(270, 872, {90, 200, 255}, 14)
-    end,
-    -- v0.10.16：空仓拖拽松手预约了"召回即射"，金色锁定反馈区别于普通召回。
-    recallFireLock = function(event)
-        recallPulse = 1.0
-        screenShake = math.max(screenShake, 0.05)
-        SpawnParticles(270, 860, {255, 213, 79}, 12)
     end,
     waveBanner = function(event)
         waveBannerTimer = 1.8
@@ -386,7 +369,6 @@ function Presentation.Init()
     ejectedBoxes = {}
     baseImpacts = {}
     baseBarrierFlash = 0
-    recallPulse = 0
     nextDebrisId = 1
     -- WO-16/P9：对象池在重开时清空回收对象，避免旧局残留引用（id 已随 nextDebrisId 重置）。
     particlePool = {}
@@ -405,7 +387,6 @@ function Presentation.Update(dt, gameSnapshot, events)
     if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
     if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
     if hitStop > 0 then hitStop = math.max(0, hitStop - dt) end
-    if recallPulse > 0 then recallPulse = math.max(0, recallPulse - dt * 1.8) end
 
     for _, event in ipairs(events) do
         HandleEvent(event)
@@ -432,7 +413,6 @@ function Presentation.GetSnapshot()
         baseImpacts = baseImpacts,
         ejectedBoxes = ejectedBoxes,
         baseBarrierFlash = baseBarrierFlash,
-        recallPulse = recallPulse,
         truckLaunchFlash = truckLaunchFlash,
         visualCatalog = VisualCatalog,
     }

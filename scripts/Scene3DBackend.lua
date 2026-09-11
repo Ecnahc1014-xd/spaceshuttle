@@ -683,40 +683,6 @@ local function DrawAmmoSlots(ctx, game, presentation)
         nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], selected and 255 or 125))
         nvgFill(ctx)
     end
-
-    -- v0.10.15/16：弹夹打空时 Dock 上沿呼吸提示。v0.10.16 起拖拽瞄准松手即"召回+自动开火"，
-    -- 纯点按只召回；已锁定方向等待回库时切换为金色锁定提示。
-    if game.canRecall or game.recallFireQueued then
-        local queued = game.recallFireQueued
-        local lineColor = queued and UI_GOLD or UI_CYAN
-        local blink = 0.55 + 0.45 * math.sin((game.elapsed or 0) * 6.0)
-        nvgBeginPath(ctx)
-        nvgRect(ctx, 0, BOTTOM_DOCK_Y - 3, DESIGN_W, 3)
-        nvgFillColor(ctx, nvgRGBA(lineColor[1], lineColor[2], lineColor[3], 120 + math.floor(120 * blink)))
-        nvgFill(ctx)
-        DrawBluePanel(ctx, DESIGN_W * 0.5 - 132, BOTTOM_DOCK_Y - 34, 264, 26,
-            {16, 30, 74, 235}, {lineColor[1], lineColor[2], lineColor[3], 220}, 6)
-        DrawPixelText(ctx, DESIGN_W * 0.5, BOTTOM_DOCK_Y - 27,
-            queued and "召回中  //  方向锁定 · 回库即射"
-                      or "拖拽瞄准松手即射  //  点按仅召回",
-            10, lineColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    end
-
-    -- 召回触发瞬间：Dock 顶沿横向扫光（脉冲由 Presentation 维护，约 0.55s 衰减）。
-    local pulse = presentation.recallPulse or 0
-    if pulse > 0 then
-        local sweepX = DESIGN_W * (1 - pulse)
-        nvgSave(ctx)
-        nvgIntersectScissor(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y)
-        local grad = nvgLinearGradient(ctx, sweepX - 130, 0, sweepX + 130, 0,
-            nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 0),
-            nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], math.floor(140 * pulse)))
-        nvgBeginPath(ctx)
-        nvgRect(ctx, sweepX - 130, BOTTOM_DOCK_Y, 260, DESIGN_H - BOTTOM_DOCK_Y)
-        nvgFillPaint(ctx, grad)
-        nvgFill(ctx)
-        nvgRestore(ctx)
-    end
 end
 
 local function DrawLetterboxBackground(ctx, width, height)
@@ -869,7 +835,7 @@ local function DrawMenu(ctx, game)
     DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.16", 8, UI_BLUE,
+    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.17", 8, UI_BLUE,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
 
@@ -967,7 +933,8 @@ local function GetUpgradeCardLayout(game)
     local gap = 8
     local totalW = 3 * cardW + 2 * gap
     local startX = game.width * 0.5 - totalW * 0.5 + cardW * 0.5
-    local cy = 470
+    -- v0.10.17：卡片在标题区与底部操作提示之间垂直居中（卡 380..680）。
+    local cy = 530
     return cardW, cardH, gap, startX, cy
 end
 
@@ -1008,42 +975,47 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     -- 分隔线。
     DrawSegmentedRule(ctx, x + 16, y + 74, cardW - 32, 6, accent)
 
-    -- 详情：12px 自动换行展示完整效果说明（固定区域内最多 6 行）。
+    -- 详情：12px 自动换行展示完整效果说明。文本块在分隔线与底部信息区之间垂直居中，
+    -- 避免 2-3 行短文案堆在卡片上部、中下部留空洞。
     local detailLines = WrapTextLines(ctx,
         choice.detail or choice.desc or "提升当前火控系统性能", 12, cardW - 28)
-    local detailTop = y + 88
     local detailLineH = 18
     local maxDetailLines = 6
-    for li = 1, math.min(maxDetailLines, #detailLines) do
+    local detailCount = math.min(maxDetailLines, #detailLines)
+    local detailAreaTop = y + 88
+    local detailAreaBottom = y + cardH - 92     -- 底部标签/徽标区从 y+208 起
+    local detailTop = detailAreaTop
+        + math.max(0, (detailAreaBottom - detailAreaTop - detailCount * detailLineH) * 0.5)
+    for li = 1, detailCount do
         DrawPixelText(ctx, x + cardW * 0.5, detailTop + (li - 1) * detailLineH,
             detailLines[li], 12, UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
     -- 风险/词条说明（抉择型），固定在底部信息区，避免与详情重叠。
-    local footerTop = y + cardH - 80
+    local footerTop = y + cardH - 84
     if choice.tradeoff then
-        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 26, {38, 20, 58}, {255, 138, 101})
-        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 6, "高风险 / 高回报", 11,
+        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 24, {38, 20, 58}, {255, 138, 101})
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 5, "高风险 / 高回报", 11,
             {255, 168, 130}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     elseif choice.kind == "word" then
-        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 26, {24, 34, 66}, accent)
-        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 6, "永久词条 · 一次性", 11, accent,
+        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 24, {24, 34, 66}, accent)
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 5, "永久词条 · 一次性", 11, accent,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
     -- 增量徽标。
     nvgBeginPath(ctx)
-    nvgRoundedRect(ctx, x + 16, y + cardH - 46, cardW - 32, 30, 6)
+    nvgRoundedRect(ctx, x + 16, y + cardH - 52, cardW - 32, 26, 6)
     nvgFillColor(ctx, nvgRGBA(accent[1], accent[2], accent[3], 38))
     nvgFill(ctx)
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 38, choice.value or "强化", 13, accent,
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 46, choice.value or "强化", 13, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    -- 已选层数 / 上限（无上限的维修显示 ∞）。
+    -- 已选层数 / 上限（无上限的维修显示 ∞）。提亮并上移，不再贴住卡底圆角边。
     local stacks = choice.stacks or 0
     local maxText = choice.maxStacks and choice.maxStacks >= 90 and "∞" or tostring(choice.maxStacks or "-")
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 12,
-        "已装配 " .. tostring(stacks) .. " / " .. maxText, 9, ACID.muted,
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 21,
+        "已装配 " .. tostring(stacks) .. " / " .. maxText, 9, {184, 196, 226, 255},
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
@@ -1064,8 +1036,8 @@ local function DrawLevelUp(ctx, game)
     DrawSegmentedRule(ctx, 24, 124, game.width - 48, 8, UI_BLUE)
     DrawPixelText(ctx, game.width * 0.5, 150, "升级 // 选择强化", 29, UI_BLUE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 194,
-        string.format("LEVEL %02d  /  CHOOSE ONE PROTOCOL", game.playerLevel), 9, UI_INK,
+    DrawPixelText(ctx, game.width * 0.5, 196,
+        string.format("LEVEL %02d  /  CHOOSE ONE PROTOCOL", game.playerLevel), 9, UI_COLD,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local choices = game.upgradeChoices or {}
@@ -1083,10 +1055,10 @@ local function DrawLevelUp(ctx, game)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawPixelText(ctx, 24, 706, "CHOOSE ONE  /  GAMEPLAY PAUSED", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 706, "TAP A CARD TO EQUIP", 8, UI_GOLD,
+    DrawPixelText(ctx, 24, 704, "CHOOSE ONE  /  GAMEPLAY PAUSED", 9, UI_BLUE)
+    DrawPixelText(ctx, game.width - 24, 704, "TAP A CARD TO EQUIP", 9, UI_GOLD,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 24, 730, game.width - 48, 4, UI_GOLD)
+    DrawSegmentedRule(ctx, 24, 726, game.width - 48, 4, UI_GOLD)
     nvgRestore(ctx)
 end
 

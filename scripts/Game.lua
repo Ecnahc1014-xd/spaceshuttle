@@ -16,9 +16,6 @@ local SLING_X = 270
 local SLING_Y = 850
 local MAX_PULL = 150
 local DANGER_Y = 900
--- v0.10.15：召回中的主弹珠向下加速度（单位/s²）与回落限速。
-local RECALL_ACCEL = 1700
-local RECALL_MAX_VY = 1150
 local BASE_HP = 100
 
 -- 幸存者化参数
@@ -228,8 +225,6 @@ local aimY = SLING_Y
 -- v0.10.15：全屏起手时记录手指按下点，拉弓量 = 当前点 - 按下点。
 local grabStartX = SLING_X
 local grabStartY = SLING_Y
--- v0.10.16：空仓拖拽松手后预约下一发射击，球回库补弹瞬间自动沿该方向射出。
-local queuedLaunch = nil
 
 local pendingEvents = {}
 local nextEnemyId = 1
@@ -361,7 +356,6 @@ ResetGame = function()
     aimY = SLING_Y
     grabStartX = SLING_X
     grabStartY = SLING_Y
-    queuedLaunch = nil
     waveCooldown = 2.5    -- v0.10.14：开局喘息拉长，避免首波贴脸
     nextEnemyId = 1
     nextMarbleId = 1
@@ -1088,29 +1082,6 @@ local function QueueNextBall()
     end
 end
 
--- v0.10.15：弹夹打空时点击战场召回所有在飞主弹珠。
--- 只标记状态，加速回落逻辑在 UpdateMarbles 中执行；召回途中碰撞/伤害照常结算。
-local function RecallMarbles()
-    local count = 0
-    for _, marble in ipairs(marbles) do
-        if marble.alive and marble.isPrimary and not marble.recalling then
-            marble.recalling = true
-            count = count + 1
-        end
-    end
-    if count > 0 then
-        Emit("marbles_recalled", {count = count})
-    end
-end
-
--- 场上是否还有可召回的主弹珠（供快照 UI 提示）。
-local function HasFlyingPrimary()
-    for _, marble in ipairs(marbles) do
-        if marble.alive and marble.isPrimary then return true end
-    end
-    return false
-end
-
 local function UpdateAiming()
     if aiming and activeBall then
         activeBall.x = aimX
@@ -1135,13 +1106,6 @@ UpdateMarbles = function(dt)
 
             if marble.redirectCooldown and marble.redirectCooldown > 0 then
                 marble.redirectCooldown = marble.redirectCooldown - subDt
-            end
-
-            -- v0.10.15：召回中的主弹珠向底线加速、水平速度指数衰减，尽快回库补弹。
-            if marble.recalling then
-                marble.vy = math.min(RECALL_MAX_VY,
-                    marble.vy + RECALL_ACCEL * subDt)
-                marble.vx = marble.vx * math.exp(-2.6 * subDt)
             end
 
             marble.x = marble.x + marble.vx * subDt
@@ -1252,9 +1216,11 @@ UpdateMarbles = function(dt)
                 end
             end
 
-            -- v0.10.15：回收点提前到防线 DANGER_Y（车进入底部 Dock 安全层即回库），
-            -- 不必飞出屏幕底，缩短发射空窗。
-            if marble.y - marble.radius > DANGER_Y then
+            -- 回收线在防线 DANGER_Y（车回落进入底部 Dock 安全层即回库补弹）。
+            -- 必须同时满足 vy>0（正在向下运动）：弹弓向下拉、向上发射时出生点可能就在
+            -- DANGER_Y 之下（待发位 y≈850、拉满可到 940，巨型车半径 30），若无此条件
+            -- 球一发射还没往上走就被判回收，表现为“射不出去”。
+            if marble.vy > 0 and marble.y - marble.radius > DANGER_Y then
                 marble.alive = false
                 break
             end
@@ -1501,15 +1467,7 @@ UpdateEnemies = function(dt)
 end
 
 UpdateReload = function()
-    if not activeBall and #ballQueue > 0 then
-        QueueNextBall()
-        -- v0.10.16：空仓时玩家已拖拽松手预约方向，回库补弹瞬间自动发射，快速连射零额外点击。
-        if queuedLaunch and activeBall then
-            local q = queuedLaunch
-            queuedLaunch = nil
-            LaunchMarble(q.dx, q.dy, q.power)
-        end
-    end
+    if not activeBall and #ballQueue > 0 then QueueNextBall() end
 end
 
 UpdateWaveLogic = function(dt)
@@ -1600,15 +1558,8 @@ function Game.PointerDown(px, py)
     end
     if gameState ~= "playing" then return end
 
-    -- v0.10.15：弹夹打空（无待发弹且队列空）时，按下战场即召回在飞主弹珠。
-    -- v0.10.16：空仓也允许继续拖拽瞄准——召回与发射合流，松手时预约方向，
-    -- 球回库补弹瞬间自动射出，快速连射不被召回打断。
-    if not activeBall then
-        if #ballQueue == 0 and HasFlyingPrimary() then
-            RecallMarbles()
-        end
-        queuedLaunch = nil
-    end
+    -- 只有待发车辆时才能起手拖拽；空仓时车辆会自然回落补弹，无需召回。
+    if not activeBall then return end
 
     -- 全屏任意位置起手：记录按下点，拉弓量按相对位移计算，
     -- 车辆只在弹弓点附近移动，手指不再遮挡车辆。
@@ -1631,23 +1582,15 @@ function Game.PointerUp(px, py)
     local dx, dy, distance = ClampPull(px - grabStartX, py - grabStartY)
     aiming = false
     if distance <= 15 then
-        -- 死区内松手：有待发车则归位；空仓时本次按下仅作为召回，不预约发射。
-        queuedLaunch = nil
+        -- 死区内松手：待发车辆归位，不发射。
         if activeBall then
             activeBall.x = SLING_X
             activeBall.y = SLING_Y
         end
         return
     end
-
-    local power = distance / BALANCE.maxPull
     if activeBall then
-        -- 弹夹有车：立即发射。
-        LaunchMarble(dx, dy, power)
-    else
-        -- 空仓：预约方向，召回的车回库补弹瞬间自动射出（UpdateReload 消费）。
-        queuedLaunch = {dx = dx, dy = dy, power = power}
-        Emit("recall_fire_queued", {dx = dx, dy = dy})
+        LaunchMarble(dx, dy, distance / BALANCE.maxPull)
     end
 end
 
@@ -1700,10 +1643,6 @@ function Game.GetSnapshot()
     s.clearStreak = clearStreak
     s.bricksBroken = bricksBroken
     s.concurrentCount = #veggies    -- WO-12/P6：当前同屏编队数（HUD 指标）
-    -- v0.10.15：弹夹打空且还有在飞主弹珠时，点击战场可召回（UI 据此提示）。
-    s.canRecall = (not activeBall) and (#ballQueue == 0) and HasFlyingPrimary()
-    -- v0.10.16：已拖拽预约方向，回库补弹即自动发射（UI 显示锁定提示）。
-    s.recallFireQueued = queuedLaunch ~= nil
     s.brickDmg = math.max(1, math.ceil(BRICK_BASE_DAMAGE) + BALL_TUNING.lineDamageBonus)
     -- P11：已激活词条（只读列表，供 HUD 展示，不反向写规则）。
     local words = {}
