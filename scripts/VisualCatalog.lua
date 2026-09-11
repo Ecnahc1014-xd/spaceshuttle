@@ -54,6 +54,27 @@ local AIRCRAFT_PALETTES = {
         hullMain = {180,  94, 226}, hullDark = { 86,  44, 122},
         canopy   = {234, 186, 255}, engine   = {255, 120, 222},
     },
+    -- v0.10.20 新四型，色相与前四型拉开，远看即可分辨。
+    -- dart 飞镖：金黄（最快、俯冲）
+    dart = {
+        hullMain = {240, 202,  74}, hullDark = {150, 112,  30},
+        canopy   = {255, 246, 200}, engine   = {255, 170,  60},
+    },
+    -- manta 宽翼鳐鱼：翡翠绿（滑翔、宽扁）
+    manta = {
+        hullMain = { 72, 210, 170}, hullDark = { 30, 110,  92},
+        canopy   = {190, 255, 235}, engine   = {120, 255, 210},
+    },
+    -- hive 蜂群小机：警示橙（小、成群）
+    hive = {
+        hullMain = {244, 146,  52}, hullDark = {150,  66,  30},
+        canopy   = {255, 222, 150}, engine   = {255,  96,  54},
+    },
+    -- cruiser 重装巡洋舰：钢银灰（厚重、缓压）
+    cruiser = {
+        hullMain = {176, 192, 208}, hullDark = { 88, 100, 116},
+        canopy   = {170, 226, 255}, engine   = {120, 200, 255},
+    },
 }
 
 -- 按像素原色归类部件槽位（阈值按 AircraftPixelData 实际像素标定）：

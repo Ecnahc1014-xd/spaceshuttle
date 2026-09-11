@@ -3,6 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.10.20
+- 进度（敌机扩到 8 种）：在原 4 型（scout青/striker红/bomber黄绿飞碟/interceptor紫精英=Boss）上新增 4 型，**外观轮廓与色相、运动性格都分化**：dart 金黄后掠翼尖头飞镖（11×9，最快 speedMul1.22/descent1.28/swayFreq1.35，wave2）、hive 橙色蜂群小机（9×7 最小，speed1.12/swayFreq1.6，wave4）、manta 翡翠绿宽翼鳐鱼（14×8 最宽，大横摆 swayAmp36，wave5）、cruiser 钢灰重装盒（13×9 装甲最密，最慢 descent0.68，wave8）。AircraftPixelData 新增 `bitmapToData(rows)` 位图转换器（字符 M=hullMain/d=hullDark/C=canopy/E=engine，映射到 ClassifySlot 能识别的像素 RGB；新机型用 ASCII 位图而非手写 entry 串），M.behavior 加四型；VisualCatalog.AIRCRAFT_PALETTES 加四套色相。Game 把硬编码 4 型解锁改为 **WAVE_ROSTER 门槛表**（scout1/dart2/striker3/hive4/manta5/bomber7/cruiser8/interceptor9，GetAvailableTypes 遍历过滤）。渲染完全 data 驱动无需改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏截图确认轮廓配色。
+- 上次交付: v0.10.20 敌机 4→8 种（位图转换器+四新机型+WAVE_ROSTER）
+
+## 历史
 - 版本: 0.10.19
 - 进度（3D 直瞄线）：拖拽蓄力超过 15px 死区时显示一条从待发车辆沿发射方向到最近玩法边界（左/右/TOP_BOUND_Y，不含底）的点状青色虚线，松手/死区内不显示。规则层 ComputeAimLine（local，GetSnapshot 之前定义）只在 `aiming 且 activeBall` 时算 {x1,y1,x2,y2}，方向=-pull 归一化（与 LaunchMarble 一致），射线按 activeBall.radius 求最近正 t，s.aimLine 输出、无瞄准时 nil。渲染层 Renderer3D.SyncAimLine 用**单 BillboardSet（22 槽，AimLine 节点，白 1px 纹理+DiffVCol+billboard.color）沿射线 t=(i-.5)/22 排点**，点世界尺寸 0.085m、z=-6（正交投影 z 不改屏幕 XY，只避遮挡雾）、alpha 起 1.0→终 0.65 渐隐；空槽 enabled=false、每帧 Commit；Init 建/Shutdown 释放。⚠️关键避坑：本引擎动态 CustomGeometry 的 DefineColor 顶点色与 NoTextureUnlit/NoTextureVCol/MatDiffColor 在游戏 Zone 光照下**实测恒显灰白**（独立探针场景无 Zone 时显色正常，游戏场景失效；纯红顶点色也灰白），只有 BillboardSet+DiffVCol+billboard.color（碰撞火花同款路径）在游戏场景稳定显色——辅助线/特效要彩色就走 billboard，不要再试 CustomGeometry 顶点色。基线 v0.10.18：碰撞火花 BillboardSet(96) z=-.95；无召回；全屏相对拖拽；回收 vy>0 越 DANGER_Y。LSP 0、build、400 帧 lua=0、拖拽截图确认青色虚线。
 - 上次交付: v0.10.19 3D 点状虚线辅助瞄准（规则层 aimLine + billboard 渲染）
@@ -24,6 +29,7 @@
 - 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
 
 ## 本批次新增避雷（WO-13/16/14/15/P11/P12）
+- 敌机扩展契约（v0.10.20）：敌机=像素网格砖块（AircraftPixelData.M.xxx：hp/score/speedMul/gridW/gridH/data）+ behavior 表（swayAmp/swayFreq/descentMul/agility/accent）+ VisualCatalog.AIRCRAFT_PALETTES 一套四槽位色（hullMain/hullDark/canopy/engine）+ WAVE_ROSTER 一行解锁门槛，四处齐全且 key 一致；渲染完全 data 驱动（CreateEnemy 解析 data、Renderer3D 用 GetBrickStyle 按 col/row 取色），加新机**不改 Renderer3D**。新轮廓优先用 `bitmapToData`（M/d/C/E 字符位图），字符颜色必须落在 ClassifySlot 阈值内（canopy: b-r≥55且g≥100；engine: 亮度<80；hullMain: r-b≥18；其余 hullDark）。机型差异要同时体现在轮廓（gridW/H、剪影）+ 色相（调色板）+ 运动性格（behavior）三方面。验证新机用"屏幕内两列冻结排开全部机型"截图。Boss 仍复用 interceptor key。
 - 辅助瞄准线契约（v0.10.19）：规则层 ComputeAimLine 只在 aiming 且 activeBall 且 pull 长>15 死区时返回射线，方向=-pull 归一化（必须与 LaunchMarble 的 vx,vy 完全同源），终点为射线与左(0+r)/右(DW-r)/顶(TOP_BOUND_Y+r) 三边的最近正 t（底边不参与，发射向上），s.aimLine=nil 即不显示；渲染层只读 {x1,y1,x2,y2} 画线，禁止在渲染层算弹道，且只画一条直线不做反弹预测（用户明确只要一条直线）。
 - ⚠️ 引擎显色契约（v0.10.19 实测）：游戏场景（有 Zone 环境光/雾）里**动态 CustomGeometry 的 DefineColor 顶点色不生效**，NoTextureUnlit 的 MatDiffColor、NoTextureVCol、DiffVCol 无纹理在细/斜几何上都恒显灰白（独立空场景探针显色正常、游戏场景失效，纯红也灰白）；只有 **BillboardSet + 1px 白纹理 + DiffVCol + billboard.color** 稳定按顶点色显示（碰撞火花、瞄准线均走此路径）。要在 3D 里画彩色辅助线/特效，用沿路径排布 billboard，不要再尝试 CustomGeometry 顶点色。正交相机下 billboard z 取靠近相机的固定值（瞄准线 -6、火花 -0.95）不改变屏幕 XY 投影，只控制遮挡/雾。
 - 碰撞粒子契约（v0.10.18）：碰撞火花必须在当前 3D 后端可见——Presentation.particles 是引擎无关的瞬时状态（设计坐标 x/y/vx/vy/life/maxLife/size/rgb，带对象池），Renderer3D 用**单个 BillboardSet** 消费（禁止每粒子建节点）：固定 PARTICLE_SLOTS=96 槽、relative=false、白 1px 纹理 + DiffVCol（每粒子 billboard.color 顶点色），位置 GameToWorld(p.x,p.y,z=-0.95)（浮在敌机体素/飞散箱相机侧），worldSize≈p.size·WORLD_SCALE·3.4·(0.45+0.55·lifeT) 且有最小值，alpha 前段全亮后段淡出，超槽丢弃、空槽 enabled=false，每帧 Commit；Init 建/Shutdown 释放。新增表现粒子只在 Presentation.SpawnParticles 加，渲染层自动消费，禁止在规则层或每粒子建 draw call。验证 billboard 要先做"游戏场景内固定大色块"探针（独立场景可见≠游戏相机/光照下可见）。

@@ -427,16 +427,25 @@ local function FleetPositionOccupied(x, y, w, h, placed, ignore)
     return false
 end
 
+-- v0.10.20：8 种敌机按波次门槛逐步解锁（顺序即难度曲线）。
+-- 蜂群 hive 可更早出现形成数量压力；重型/精英靠后；interceptor 仍是精英与 Boss。
+local WAVE_ROSTER = {
+    { key = "scout",       minWave = 1 },
+    { key = "dart",        minWave = 2 },
+    { key = "striker",     minWave = 3 },
+    { key = "hive",        minWave = 4 },
+    { key = "manta",       minWave = 5 },
+    { key = "bomber",      minWave = 7 },
+    { key = "cruiser",     minWave = 8 },
+    { key = "interceptor", minWave = 9 },
+}
+
 local function GetAvailableTypes(waveNum)
     local keys = {}
-    local allKeys = { "scout", "striker", "bomber", "interceptor" }
-    local maxIndex = 1
-    if waveNum >= 3 then maxIndex = 2 end
-    if waveNum >= 6 then maxIndex = 3 end
-    if waveNum >= 9 then maxIndex = 4 end
-
-    for i = 1, math.min(#allKeys, maxIndex) do
-        if AircraftData[allKeys[i]] then table.insert(keys, allKeys[i]) end
+    for _, entry in ipairs(WAVE_ROSTER) do
+        if waveNum >= entry.minWave and AircraftData[entry.key] then
+            table.insert(keys, entry.key)
+        end
     end
     return keys
 end

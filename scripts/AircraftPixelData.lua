@@ -13,7 +13,35 @@ M.behavior = {
     striker =     { swayAmp = 12, swayFreq = 0.85, descentMul = 1.18, agility = 1.0, accent = {150, 78, 54} },
     bomber =      { swayAmp = 28, swayFreq = 0.30, descentMul = 0.78, agility = 0.4, accent = {150, 86, 60} },
     interceptor = { swayAmp = 16, swayFreq = 1.05, descentMul = 1.30, agility = 1.4, accent = {150, 84, 60} },
+    -- v0.10.20：新四型，外观与运动性格进一步分化。
+    dart =        { swayAmp = 10, swayFreq = 1.35, descentMul = 1.28, agility = 1.6, accent = {200, 170, 60} },
+    manta =       { swayAmp = 36, swayFreq = 0.32, descentMul = 0.82, agility = 0.5, accent = {60, 170, 140} },
+    hive =        { swayAmp = 24, swayFreq = 1.60, descentMul = 1.12, agility = 1.3, accent = {220, 120, 50} },
+    cruiser =     { swayAmp = 6,  swayFreq = 0.20, descentMul = 0.68, agility = 0.3, accent = {150, 165, 185} },
 }
+
+-- v0.10.20：新增机型用 ASCII 位图设计轮廓，再转成与手写一致的砖块 entry 串。
+-- 字符仅决定“部件槽位”（最终颜色由 VisualCatalog 机型调色板覆盖）：
+--   M 主装甲(hullMain) / d 暗装甲·翼面(hullDark) / C 座舱玻璃(canopy) / E 引擎灯(engine)
+--   . 或空格为空。row 越大越靠近玩家（阵列底边）。
+local function bitmapToData(rows)
+    local slotColor = {
+        M = "150,82,56",    -- 红棕：ClassifySlot 归 hullMain
+        d = "120,124,150",  -- 灰蓝：归 hullDark
+        C = "70,120,160",   -- 高亮蓝：归 canopy
+        E = "110,46,40",    -- 低亮度：归 engine
+    }
+    local parts = {}
+    for row, line in ipairs(rows) do
+        for col = 1, #line do
+            local rgb = slotColor[line:sub(col, col)]
+            if rgb then
+                parts[#parts + 1] = string.format("%d,%d,%s", col, row, rgb)
+            end
+        end
+    end
+    return table.concat(parts, ";") .. ";"
+end
 
 -- scout：经典蟹形入侵者（12×9）
 M.scout = {
@@ -91,6 +119,83 @@ M.interceptor = {
         "3,8,144,76,54;4,8,150,84,60;5,8,150,84,60;6,8,150,84,60;7,8,150,84,60;8,8,150,84,60;9,8,144,76,54;",
         "4,9,136,68,48;5,9,146,80,56;6,9,146,80,56;7,9,146,80,56;8,9,136,68,48;",
         "5,10,116,50,40;6,10,116,50,40;7,10,116,50,40;8,10,116,50,40;",
+    }),
+}
+
+-- dart：尖锐飞镖（11×9），细中脊 + 后掠宽翼 + 底部尖刺，俯冲最快。
+M.dart = {
+    hp = 1,
+    score = 130,
+    speedMul = 1.22,
+    gridW = 11,
+    gridH = 9,
+    data = bitmapToData({
+        "....EEE....",
+        "....dCd....",
+        "....CCC....",
+        "...dCCCd...",
+        "..ddCCCdd..",
+        ".dddCCCddd.",
+        "MdddddddddM",
+        "MM.......MM",
+        "....dEd....",
+    }),
+}
+
+-- manta：宽翼鳐鱼（14×8），平直长翼、扁平滑翔，横摆幅度大。
+M.manta = {
+    hp = 1,
+    score = 150,
+    speedMul = 0.88,
+    gridW = 14,
+    gridH = 8,
+    data = bitmapToData({
+        "......CC......",
+        ".....dCCd.....",
+        ".dddddddddddd.",
+        "dddddddddddddd",
+        "MMMMMMMMMMMMMM",
+        ".MMMMMMMMMMMM.",
+        "..E..EEEE..E..",
+        "......EE......",
+    }),
+}
+
+-- hive：蜂群小机（9×7），体型小、急促抖动，常成群出现。
+M.hive = {
+    hp = 1,
+    score = 90,
+    speedMul = 1.12,
+    gridW = 9,
+    gridH = 7,
+    data = bitmapToData({
+        "....E....",
+        "..d.C.d..",
+        ".ddCCCdd.",
+        "dddCCCddd",
+        "MMMd.dMMM",
+        ".MEdddEM.",
+        "..E...E..",
+    }),
+}
+
+-- cruiser：重装装甲巡洋舰（13×9），方正厚重、缓慢下压，装甲格最密。
+M.cruiser = {
+    hp = 1,
+    score = 180,
+    speedMul = 0.82,
+    gridW = 13,
+    gridH = 9,
+    data = bitmapToData({
+        "...d....d...",
+        "..ddCCCCCdd..",
+        ".ddddddddddd.",
+        "MMMMMMMMMMMMM",
+        "dMMMMMMMMMMMd",
+        "MMMMdddddMMMM",
+        "dMMMMMMMMMMMd",
+        "MMMM..E..MMMM",
+        ".E..EEEEE..E.",
     }),
 }
 

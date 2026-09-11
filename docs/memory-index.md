@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.19
-简述：540×960 竖屏弹珠；新增一条 3D 辅助瞄准线——拖拽蓄力>15px 时从待发车沿发射方向到最近边界显示青色点状虚线（规则层 ComputeAimLine 算射线，Renderer3D 用单 BillboardSet 22 点沿射线排布，z=-6）。关键避坑：游戏 Zone 光照下动态 CustomGeometry 顶点色/NoTextureUnlit/NoTextureVCol 恒显灰白，只有 BillboardSet+DiffVCol+billboard.color 稳定显色。碰撞火花单 BillboardSet(96) z=-.95；无主动召回、全屏相对拖拽、回收 vy>0 越 DANGER_Y；升级卡 cy530；刷怪 14s/7.5s。
+当前版本：0.10.20
+简述：540×960 竖屏弹珠；敌机扩到 8 种——新增 dart 金黄飞镖(最快,w2)/hive 橙蜂群小机(急促,w4)/manta 翡翠绿宽翼鳐鱼(大横摆,w5)/cruiser 钢灰重装盒(最密最慢,w8)，与原 scout青/striker红/bomber黄绿飞碟/interceptor紫(Boss) 轮廓+色相+运动性格全分化。新增 bitmapToData 位图转换器（M/d/C/E→砖块），解锁改 WAVE_ROSTER 门槛表，渲染 data 驱动无改。一条 3D 青色点状虚线辅助瞄准（拖拽>15px 显示到边界，BillboardSet 22 点）；碰撞火花 BillboardSet(96)；无召回、全屏相对拖拽、回收 vy>0；升级卡 cy530；刷怪 14s/7.5s。
 最后巩固：2026-09-11
 
 ## 项目概况
@@ -92,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.20: 敌机 4→8 种。AircraftPixelData 新增 `bitmapToData(rows)`（M=hullMain红棕/d=hullDark灰蓝/C=canopy高亮蓝/E=engine暗，字符 RGB 落在 ClassifySlot 阈值，转成 col,row,r,g,b entry 串），新增 4 机型位图+behavior：dart 金黄尖头后掠飞镖 11×9（speed1.22/descent1.28/swayFreq1.35，最快）、hive 橙蜂群小机 9×7（swayFreq1.6 急促、分高）、manta 翡翠绿宽翼鳐鱼 14×8（swayAmp36 大横摆、speed.88）、cruiser 钢灰重装盒 13×9（装甲最密、descent.68 最慢、180分）。VisualCatalog 加 4 套四槽位色相。Game.GetAvailableTypes 硬编码 4 型+波次 index 改为 WAVE_ROSTER 门槛表（scout1/dart2/striker3/hive4/manta5/bomber7/cruiser8/interceptor9）。渲染完全 data 驱动不改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏两列冻结截图确认轮廓/配色/座舱/引擎灯。
 - v0.10.19: 一条 3D 辅助瞄准线。规则层新增 local ComputeAimLine（定义在 GetSnapshot 之前）：仅 aiming 且 activeBall 且 pull 长>15（AIM_DEAD_ZONE）时返回 {x1,y1,x2,y2}，dir=-pull 归一化（与 LaunchMarble 同源），按 activeBall.radius 求射线与左(0+r)/右(DW-r)/顶(TOP_BOUND_Y+r) 最近正 t（不含底边），s.aimLine 输出，无瞄准 nil。渲染层 Renderer3D.SyncAimLine 用单 BillboardSet（AimLine 节点、22 槽、白 1px 纹理+DiffVCol），沿射线 t=(i-.5)/22 排点，点尺寸 0.085m、z=-6（正交投影不改屏幕 XY、避遮挡雾）、alpha 1.0→0.65 渐隐，空槽 enabled=false/每帧 Commit，Init 建/Shutdown 释放。踩坑：先试 CustomGeometry 细四边形——游戏场景（Zone 环境光/雾）下动态 DefineColor 顶点色、NoTextureUnlit 的 MatDiffColor、NoTextureVCol、DiffVCol 无纹理全部恒显灰白（独立无 Zone 探针显色正常、纯红顶点色也灰白），最终改用碰撞火花同款 BillboardSet+billboard.color 路径才稳定青色；点状虚线同时避开方形 billboard 密排的斜线阶梯锯齿。LSP 0、build、400 帧 lua=0、拖拽截图确认。
 - v0.10.18: 碰撞粒子接入 3D 后端。根因：Presentation.particles（SpawnParticles，击毁 10/命中 4 粒、对象池）此前只被旧 2D Renderer.lua 消费，Renderer3D 完全没读，3D 后端下碰撞无火花。实现：Renderer3D 增单个 BillboardSet `HitParticles`（SetNumBillboards(96)、relative=false、castShadows=false、1px 白纹理 + DiffVCol），SyncParticles 每帧把粒子经 GameToWorld 放到 z=-0.95（相机在 -Z，浮于敌机体素/飞散箱前），billboard.color 用事件 rgb+alpha，worldSize=p.size·0.018·3.4·(0.45+0.55·lifeT)、min 0.05m、随生命收缩，alpha=clamp(lifeT/0.65) 前段全亮；超 96 丢弃、空槽 enabled=false、每帧 Commit；Init 建/Shutdown 释放。排查关键：先独立场景后游戏场景双固定色块探针证明 billboard 顶点色/位置/尺寸在真实相机+光照下可见，再发现真实火花不可见纯因尺寸过小（3.7px·0.018≈0.067m）与淡出过快；SetFaceCameraAngle 绑定不存在（默认即面向相机，勿调用）。LSP 0、build 成功、400 帧 lua=0。
 - v0.10.17: 回滚召回机制 + 修复“射不出去” + 升级卡垂直节奏。①删除 v0.10.15-16 全部召回：RecallMarbles/HasFlyingPrimary、marble.recalling 物理加速、queuedLaunch、UpdateReload 自动发射、s.canRecall/recallFireQueued、FEEDBACK_MAP 两事件、Presentation.recallPulse、Dock 召回提示/呼吸光带/扫光；空仓 PointerDown 恢复直接 return（球自然回落补弹），保留全屏相对拖拽（grabStart+ClampPull）。②根因修复回收出生即死：回收线 DANGER_Y=900 在弹弓发射位 y=850 之上仅 50px，下拉待发车可到 y≈940（巨型半径 30），旧 `y-radius>DANGER_Y` 无条件判定让球一发射还没向上走就被回收；改为 `vy>0 且 y-radius>DANGER_Y` 只回收向下回落的球。③升级 UI：GetUpgradeCardLayout cy 470→530（卡 380..680，在标题与 y704 提示间居中），详情文本块在详情区 y+88..y+208 垂直居中，底部标签 26→24/徽标 30→26、层数提亮 α85→{184,196,226} 且上移到 y+279 不贴底，副标题 UI_INK→UI_COLD，底部提示 8→9px，main.lua 命中 cy 同步 530。探针：向下拉满向上射 vy=-414 稳定上行 y843→443 flying=1；升级态截图均衡；400 帧 lua=0。

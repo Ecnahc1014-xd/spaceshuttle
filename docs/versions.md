@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.20 | 2026-09-11 | 敌机 4→8 种：新增 dart 金黄尖头飞镖(最快,wave2)/hive 橙蜂群小机(急促,wave4)/manta 翡翠绿宽翼鳐鱼(大横摆,wave5)/cruiser 钢灰重装盒(最密最慢,wave8)，轮廓+色相+运动性格全分化。新增 bitmapToData(M/d/C/E 位图→砖块)转换器，解锁改 WAVE_ROSTER 门槛表，渲染 data 驱动不改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏截图 |
 | v0.10.19 | 2026-09-11 | 一条 3D 辅助瞄准线：拖拽蓄力>15px 死区时，从待发车辆沿发射方向到最近边界（左/右/顶，不含底）显示青色点状虚线，松手或死区内不显示；方向与实际发射完全同源。规则层 ComputeAimLine 算射线输出 s.aimLine（渲染层只画不预测反弹）。渲染用单 BillboardSet 22 点沿射线排布（z=-6 避雾/遮挡，alpha 渐隐）。踩坑：游戏 Zone 光照下动态 CustomGeometry 顶点色与 NoTextureUnlit/VCol 材质色恒显灰白，只有 BillboardSet+DiffVCol+billboard.color 稳定显色（碰撞火花同款）。LSP 0、build、400 帧 lua=0、拖拽截图确认 |
 | v0.10.18 | 2026-09-11 | 碰撞粒子特效接入 3D 后端：Presentation.particles 此前只被旧 2D 渲染器消费、Renderer3D 完全不画，碰撞无火花。新增单个 BillboardSet（96 固定槽、relative=false、1px 白纹理+DiffVCol 顶点色、1 draw call），SyncParticles 把命中粒子映射到世界 z=-0.95（浮于敌机/飞散箱前），尺寸 p.size·0.018·3.4·生命系数（min0.05m）随生命收缩，前段全亮后段淡出，超槽丢弃/空槽禁用/每帧 Commit，Init 建 Shutdown 释放。双固定色块探针验证 billboard 在真实相机+光照下可见，真实不可见纯因尺寸过小；SetFaceCameraAngle 绑定不存在。LSP 0、build、400 帧 lua=0 |
 | v0.10.17 | 2026-09-11 | 回滚召回 + 修复射不出去 + 升级卡布局：①整体删除 v0.10.15-16 主动召回（RecallMarbles/recalling/queuedLaunch/canRecall/事件/Presentation pulse/Dock 提示扫光），球自然回落补弹，保留全屏相对拖拽；②根因修复“射不出去”——回收线 DANGER_Y=900 在发射位 y850 上方仅 50px、下拉待发可到 y940，旧无条件位置判定让球出生即回收，改为 vy>0（向下运动）且越线才回收；③升级卡 cy→530 垂直居中、详情块区内垂直居中、层数提亮不贴底、副标题提亮、命中同步 cy530。探针下拉上射 vy=-414 稳定上行，截图/400 帧 lua=0 |
