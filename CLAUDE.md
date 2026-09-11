@@ -3,6 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.10.19
+- 进度（3D 直瞄线）：拖拽蓄力超过 15px 死区时显示一条从待发车辆沿发射方向到最近玩法边界（左/右/TOP_BOUND_Y，不含底）的点状青色虚线，松手/死区内不显示。规则层 ComputeAimLine（local，GetSnapshot 之前定义）只在 `aiming 且 activeBall` 时算 {x1,y1,x2,y2}，方向=-pull 归一化（与 LaunchMarble 一致），射线按 activeBall.radius 求最近正 t，s.aimLine 输出、无瞄准时 nil。渲染层 Renderer3D.SyncAimLine 用**单 BillboardSet（22 槽，AimLine 节点，白 1px 纹理+DiffVCol+billboard.color）沿射线 t=(i-.5)/22 排点**，点世界尺寸 0.085m、z=-6（正交投影 z 不改屏幕 XY，只避遮挡雾）、alpha 起 1.0→终 0.65 渐隐；空槽 enabled=false、每帧 Commit；Init 建/Shutdown 释放。⚠️关键避坑：本引擎动态 CustomGeometry 的 DefineColor 顶点色与 NoTextureUnlit/NoTextureVCol/MatDiffColor 在游戏 Zone 光照下**实测恒显灰白**（独立探针场景无 Zone 时显色正常，游戏场景失效；纯红顶点色也灰白），只有 BillboardSet+DiffVCol+billboard.color（碰撞火花同款路径）在游戏场景稳定显色——辅助线/特效要彩色就走 billboard，不要再试 CustomGeometry 顶点色。基线 v0.10.18：碰撞火花 BillboardSet(96) z=-.95；无召回；全屏相对拖拽；回收 vy>0 越 DANGER_Y。LSP 0、build、400 帧 lua=0、拖拽截图确认青色虚线。
+- 上次交付: v0.10.19 3D 点状虚线辅助瞄准（规则层 aimLine + billboard 渲染）
+
+## 历史
 - 版本: 0.10.18
 - 进度: 碰撞粒子特效实装到 3D 后端（此前 Presentation.particles 只被旧 2D Renderer 消费，3D 后端完全没画，碰撞无火花）。Renderer3D 用**单个 BillboardSet**（96 固定槽、relative=false、白 1px 纹理 + DiffVCol，每粒子 billboard.color 顶点色）承载全部火花，只占 1 draw call；SyncParticles 把 presentation.particles 的设计坐标经 GameToWorld 映射到 z=-0.95（浮在敌机体素与飞散箱之前），worldSize=p.size·WORLD_SCALE·3.4·(0.45+0.55·lifeT)（最小 0.05m，随生命收缩），alpha=clamp(lifeT/0.65) 前段全亮后段淡出；超出 96 丢弃，槽位 enabled=false 复用。Init 创建、Shutdown 释放节点/组件/材质。沿用既有 brick_hit 粒子（击毁 10 粒暖白/命中 4 粒、分裂/追击/贯穿/召回已删事件各色）。验证：独立场景与游戏场景固定色块双探针确认 billboard 顶点色+位置+尺寸在本渲染管线可见；同步计数 active=8..38；400 帧 lua=0、build 成功。基线 v0.10.17：无召回（球自然回落）、全屏相对拖拽、回收 vy>0 且越 DANGER_Y、升级卡 cy530 详情垂直居中。
 - 上次交付: v0.10.18 3D 碰撞火花（BillboardSet 批次粒子）
@@ -19,6 +24,8 @@
 - 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
 
 ## 本批次新增避雷（WO-13/16/14/15/P11/P12）
+- 辅助瞄准线契约（v0.10.19）：规则层 ComputeAimLine 只在 aiming 且 activeBall 且 pull 长>15 死区时返回射线，方向=-pull 归一化（必须与 LaunchMarble 的 vx,vy 完全同源），终点为射线与左(0+r)/右(DW-r)/顶(TOP_BOUND_Y+r) 三边的最近正 t（底边不参与，发射向上），s.aimLine=nil 即不显示；渲染层只读 {x1,y1,x2,y2} 画线，禁止在渲染层算弹道，且只画一条直线不做反弹预测（用户明确只要一条直线）。
+- ⚠️ 引擎显色契约（v0.10.19 实测）：游戏场景（有 Zone 环境光/雾）里**动态 CustomGeometry 的 DefineColor 顶点色不生效**，NoTextureUnlit 的 MatDiffColor、NoTextureVCol、DiffVCol 无纹理在细/斜几何上都恒显灰白（独立空场景探针显色正常、游戏场景失效，纯红也灰白）；只有 **BillboardSet + 1px 白纹理 + DiffVCol + billboard.color** 稳定按顶点色显示（碰撞火花、瞄准线均走此路径）。要在 3D 里画彩色辅助线/特效，用沿路径排布 billboard，不要再尝试 CustomGeometry 顶点色。正交相机下 billboard z 取靠近相机的固定值（瞄准线 -6、火花 -0.95）不改变屏幕 XY 投影，只控制遮挡/雾。
 - 碰撞粒子契约（v0.10.18）：碰撞火花必须在当前 3D 后端可见——Presentation.particles 是引擎无关的瞬时状态（设计坐标 x/y/vx/vy/life/maxLife/size/rgb，带对象池），Renderer3D 用**单个 BillboardSet** 消费（禁止每粒子建节点）：固定 PARTICLE_SLOTS=96 槽、relative=false、白 1px 纹理 + DiffVCol（每粒子 billboard.color 顶点色），位置 GameToWorld(p.x,p.y,z=-0.95)（浮在敌机体素/飞散箱相机侧），worldSize≈p.size·WORLD_SCALE·3.4·(0.45+0.55·lifeT) 且有最小值，alpha 前段全亮后段淡出，超槽丢弃、空槽 enabled=false，每帧 Commit；Init 建/Shutdown 释放。新增表现粒子只在 Presentation.SpawnParticles 加，渲染层自动消费，禁止在规则层或每粒子建 draw call。验证 billboard 要先做"游戏场景内固定大色块"探针（独立场景可见≠游戏相机/光照下可见）。
 - 全屏拖拽契约（v0.10.15 保留，v0.10.17 召回删除后仍有效）：PointerDown 仅在 playing 态且 activeBall 存在时起手（空仓直接 return，等球自然回库），任意战场坐标记录 grabStart(grabStartX/Y)，拉弓量 = 当前点 - 按下点，经 `ClampPull` 钳 MAX_PULL=150 与向下 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆只在 SLING(270,850)+pull 附近移动，禁止让车辆跳到手指位置；15px 死区松手归位。
 - ⛔ 召回机制已废弃（v0.10.15 引入→v0.10.17 整体删除）：用户判定多余——球本来就会自然回落补弹；召回会误触吞输出、逻辑复杂且与快速发射冲突。禁止恢复 RecallMarbles/recalling/queuedLaunch/canRecall/marbles_recalled/recall_fire_queued/recallPulse/Dock 召回提示扫光。空窗问题靠“回收点提前到防线 + 自然回落”解决，不要再加主动召回类机制。

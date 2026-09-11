@@ -40,6 +40,9 @@ local ejectedBoxNodes_ = {}
 local particleNode_ = nil
 local particleSet_ = nil
 local particleMaterial_ = nil
+local aimLineSet_ = nil
+local aimLineNode_ = nil
+local aimLineMaterial_ = nil
 local lastRenderElapsed_ = nil
 local initialized_ = false
 
@@ -852,6 +855,43 @@ local function SyncParticles(presentation)
     particleSet_:Commit()
 end
 
+-- v0.10.19：3D 直瞄线。规则层快照 aimLine 给设计坐标起终点，这里转世界坐标，
+-- 沿射线均匀排布小 billboard 形成连续线段。复用与碰撞火花相同、已验证在游戏
+-- Zone 光照下显色正常的路径（白 1px 纹理 + DiffVCol + billboard.color 顶点色）；
+-- CustomGeometry 的动态顶点色/NoTextureUnlit 材质色在本引擎实测恒显灰白，弃用。
+local AIM_LINE_Z = -6.0          -- 正交投影下 z 不改变屏幕 XY，只避开遮挡与雾
+local AIM_LINE_SEGMENTS = 22     -- 沿线排布的 billboard 数（点状虚线）
+local AIM_LINE_DOT_WORLD = 0.085 -- 单个点的世界尺寸
+local AIM_LINE_COLOR = Color(0.30, 0.90, 1.0, 1)
+
+local function SyncAimLine(game)
+    if not aimLineSet_ then return end
+    local line = game.aimLine
+    local activeCount = 0
+    if line then
+        local a = GameToWorld(line.x1, line.y1, AIM_LINE_Z)
+        local b = GameToWorld(line.x2, line.y2, AIM_LINE_Z)
+        for i = 1, AIM_LINE_SEGMENTS do
+            local t = (i - 0.5) / AIM_LINE_SEGMENTS
+            local bb = aimLineSet_:GetBillboard(i - 1)
+            bb.enabled = true
+            bb.position = Vector3(
+                a.x + (b.x - a.x) * t,
+                a.y + (b.y - a.y) * t,
+                AIM_LINE_Z)
+            bb.size = Vector2(AIM_LINE_DOT_WORLD, AIM_LINE_DOT_WORLD)
+            -- 起点端最亮、终点端略淡，形成方向感。
+            local fade = 1.0 - 0.35 * t
+            bb.color = Color(AIM_LINE_COLOR.r, AIM_LINE_COLOR.g, AIM_LINE_COLOR.b, fade)
+            activeCount = i
+        end
+    end
+    for i = activeCount + 1, AIM_LINE_SEGMENTS do
+        aimLineSet_:GetBillboard(i - 1).enabled = false
+    end
+    aimLineSet_:Commit()
+end
+
 local function CreateWhiteTexture()
     local image = Image()
     image:SetSize(1, 1, 4)
@@ -907,6 +947,23 @@ function Renderer3D.Init(scene)
     end
     particleSet_:Commit()
 
+    -- v0.10.19：3D 直瞄线（单 BillboardSet 沿射线排点，与火花同源材质保证显色）。
+    aimLineNode_ = scene:CreateChild("AimLine")
+    aimLineSet_ = aimLineNode_:CreateComponent("BillboardSet")
+    aimLineSet_:SetNumBillboards(AIM_LINE_SEGMENTS)
+    aimLineSet_.castShadows = false
+    aimLineSet_.relative = false
+    aimLineMaterial_ = Material:new()
+    aimLineMaterial_:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
+    aimLineMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
+    aimLineMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+    aimLineSet_:SetMaterial(aimLineMaterial_)
+    for i = 0, AIM_LINE_SEGMENTS - 1 do
+        aimLineSet_:GetBillboard(i).enabled = false
+    end
+    aimLineSet_:Commit()
+
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
     local initialized = voxelMaterial_ ~= nil and crateMaterial_ ~= nil
@@ -942,6 +999,7 @@ function Renderer3D.Render(game, presentation)
     SyncDebris(presentation)
     SyncEjectedBoxes(presentation)
     SyncParticles(presentation)
+    SyncAimLine(game)
 end
 
 function Renderer3D.Shutdown()
@@ -955,6 +1013,12 @@ function Renderer3D.Shutdown()
     particleNode_ = nil
     particleSet_ = nil
     particleMaterial_ = nil
+    if aimLineNode_ then RemoveNode(aimLineNode_) end
+    if aimLineSet_ then DisposeComponent(aimLineSet_) end
+    if aimLineMaterial_ then aimLineMaterial_:Dispose() end
+    aimLineNode_ = nil
+    aimLineSet_ = nil
+    aimLineMaterial_ = nil
     vehicleRecords_ = {}
     enemyMeshes_ = {}
     debrisNodes_ = {}

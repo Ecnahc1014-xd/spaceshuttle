@@ -1624,6 +1624,37 @@ function Game.DrainEvents()
     return events
 end
 
+-- v0.10.19：瞄准直线。仅在拖拽蓄力超过 15px 死区时返回起点+到最近玩法边界的终点；
+-- 方向与 LaunchMarble 完全一致（-pull 归一化）。只算一条直线，不做反弹预测。
+local AIM_DEAD_ZONE = 15
+local function ComputeAimLine()
+    if not (aiming and activeBall) then return nil end
+    local pullX = aimX - SLING_X
+    local pullY = aimY - SLING_Y
+    local length = math.sqrt(pullX * pullX + pullY * pullY)
+    if length <= AIM_DEAD_ZONE then return nil end
+    local dirX = -pullX / length
+    local dirY = -pullY / length
+    local radius = activeBall.radius or 0
+    local x0, y0 = activeBall.x, activeBall.y
+
+    -- 求射线与左/右/顶三边的最近正参数 t（发射向上，底边不参与）。
+    local t = math.huge
+    if dirX < -0.0001 then
+        t = math.min(t, (radius - x0) / dirX)
+    elseif dirX > 0.0001 then
+        t = math.min(t, (DW - radius - x0) / dirX)
+    end
+    if dirY < -0.0001 then
+        t = math.min(t, (TOP_BOUND_Y + radius - y0) / dirY)
+    end
+    if t == math.huge or t <= 0 then return nil end
+    return {
+        x1 = x0, y1 = y0,
+        x2 = x0 + dirX * t, y2 = y0 + dirY * t,
+    }
+end
+
 function Game.GetSnapshot()
     -- WO-16/P9：复用常驻缓冲，仅每帧覆盖字段。瞄准状态只供拖拽发射，不再生成预瞄轨迹。
     local s = snapshotBuffer_ or {}
@@ -1660,6 +1691,9 @@ function Game.GetSnapshot()
     s.slingY = SLING_Y
     s.maxPull = MAX_PULL
     s.activeBall = activeBall
+    -- v0.10.19：拖拽蓄力超过死区时输出一条直瞄线（规则层算到最近玩法边界的交点），
+    -- 3D 后端只负责画，不做反弹预测。
+    s.aimLine = ComputeAimLine()
     s.ballQueue = ballQueue
     s.ballOrder = BALL_ORDER
     s.width = DW
