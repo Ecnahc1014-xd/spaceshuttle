@@ -3,9 +3,9 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.15
-- 进度: 操作体感优化：①全屏任意位置相对拖拽起手——取消旧 `py < DANGER_Y-100` 底部 160px 起手限制，PointerDown 记录 grabStart 点，拉弓量=当前点-按下点（`ClampPull`，保留向下钳制 PULL_MAX_DOWN_DY=DH-SLING_Y-20 与 MAX_PULL=150），车辆只在 SLING(270,850) 附近移动，手指不再遮挡车辆；②弹夹打空点击召回——`activeBall=nil 且 ballQueue 空 且有在飞主弹珠` 时快照 canRecall=true，点击战场标记全部 isPrimary 主球 recalling（vy 加速 1700/s²封顶1150、vx 按 exp(-2.6dt) 衰减、途中碰撞伤害照常），回收点从屏幕底 DH 提前到 DANGER_Y（进 Dock 即回库补弹）；分裂子球 isPrimary=false 不召回；③反馈 marbles_recalled→Presentation.recallPulse（Dock 青色横向扫光+粒子+轻震屏），canRecall 时 Dock 上沿呼吸光带与“点击战场 召回载具 // TAP TO RECALL”胶囊。LSP 0、build 成功，截图确认全屏拖拽/召回提示扫光，500 帧自动发射→打空→召回→补弹探针 lua=0。
-- 上次交付: v0.10.15 全屏相对拖拽起手 + 空窗点击召回 + 回收点提前
+- 版本: 0.10.16
+- 进度: 修复 v0.10.15 召回导致的"没法快速射击"——召回与发射合流：空仓（activeBall=nil、queue 空、有在飞主球）时 PointerDown 仍标记 recalling 但**不再 return**，继续进入全屏拖拽瞄准；PointerUp 时 distance>15 则存 `queuedLaunch={dx,dy,power}` 并发 recall_fire_queued 事件，首个主球回库（UpdateReload→QueueNextBall）同帧自动 LaunchMarble 沿预约方向射出，零额外点击；distance≤15 纯点按只召回不预约。queuedLaunch 单发（消费即清）、ResetGame 清空。快照 s.recallFireQueued；Dock 提示 canRecall 态青色“拖拽瞄准松手即射 // 点按仅召回”、queued 态金色“召回中 // 方向锁定·回库即射”，锁定触发金色粒子。v0.10.15 基线：全屏相对拖拽（grabStart、ClampPull MAX_PULL=150/向下钳制）、recalling vy+1700/s²封顶1150、vx exp(-2.6dt)、回收点 DANGER_Y、分裂子球不召回。LSP 0、build 成功，锁定态截图确认，700 帧探针 6 射+2 空仓手势→2 次自动开火（autoFired=2）lua=0。
+- 上次交付: v0.10.16 空仓拖拽=召回+预约发射，回库即射恢复快速连射
 
 
 
@@ -15,13 +15,13 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: 真机触摸复测全屏起手的拖拽灵敏度（MAX_PULL=150 的相对位移手感）、空窗点击召回的误触边界（当前战场任意点击都触发，可能与将来其他点击交互冲突）、召回加速度 1700 的手感；Boss 波(每10波)与词条/异常反应实机手感；刷怪 14s 节奏体感。若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或卡片排版，不改变权威 HP、逐块扣血、XP 曲线、召回/拖拽契约和 9:16 共同投影契约
+- likely_next_task: 真机触摸复测"空仓拖拽=召回+回库即射"的连射手感（召回耗时≈首个球回库时长、queuedLaunch 单发是否符合预期、若玩家在等待期间又拖一次是否需要覆盖方向）；确认纯点按召回与拖拽即射的区分（15px 死区）不会误触；Boss 波(每10波)与词条/异常反应实机手感；刷怪 14s 节奏体感。若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或卡片排版，不改变权威 HP、逐块扣血、XP 曲线、召回/拖拽契约和 9:16 共同投影契约
 - 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
 
 ## 本批次新增避雷（WO-13/16/14/15/P11/P12）
 - 全屏拖拽契约（v0.10.15）：起手不再限定底部区域；PointerDown 在 playing 态任意战场坐标都记录 grabStart(grabStartX/Y)，拉弓量 = 当前点 - 按下点，经 `ClampPull` 钳 MAX_PULL=150 与向下 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆只在 SLING(270,850)+pull 附近移动，禁止让车辆跳到手指位置；15px 死区松手归位。
-- 召回契约（v0.10.15）：`activeBall=nil 且 #ballQueue=0 且 HasFlyingPrimary()` 时 canRecall=true；此时 PointerDown 只触发 RecallMarbles（标记所有 isPrimary 主球 recalling），不起拖拽；recalling 在物理子步进内 vy+=1700·dt（封顶 1150）、vx*=exp(-2.6dt)，碰撞/伤害/反弹照常；回收判定从 `y-radius>DH(960)` 提前到 `>DANGER_Y(900)`，进 Dock 安全层即回库补弹（EnqueueNextBall 仅 isPrimary）；分裂子球 generation>0/isPrimary=false 不召回。改这些值要同步快照 canRecall 与 UI 提示。
-- 召回反馈契约：marbles_recalled 事件只写 Presentation.recallPulse（1.0，dt*1.8 衰减）+ 轻震屏/粒子；Scene3DBackend Dock 画青色横向扫光（scissor 在 Dock 矩形内），canRecall 常态画上沿呼吸光带+“点击战场 召回载具”胶囊；规则层禁止直接调渲染。
+- 召回契约（v0.10.15/16）：`activeBall=nil 且 #ballQueue=0 且 HasFlyingPrimary()` 时 canRecall=true；PointerDown 触发 RecallMarbles（标记所有 isPrimary 主球 recalling）后**不得 return**，必须继续进入全屏拖拽，否则会打断快速连射；PointerUp：distance>15 有 activeBall 立即发射、空仓则存 `queuedLaunch={dx,dy,power}`（单发，UpdateReload 在 QueueNextBall 后同帧消费自动 LaunchMarble 并清空），distance≤15 纯点按只召回不预约；recalling 在物理子步进内 vy+=1700·dt（封顶 1150）、vx*=exp(-2.6dt)，碰撞/伤害/反弹照常；回收判定 `y-radius>DANGER_Y(900)`，进 Dock 即回库补弹（EnqueueNextBall 仅 isPrimary）；分裂子球 isPrimary=false 不召回；queuedLaunch 在 ResetGame 必须清空。改这些值要同步快照 canRecall/recallFireQueued 与 UI 提示。
+- 召回反馈契约：marbles_recalled 事件写 Presentation.recallPulse（1.0，dt*1.8 衰减）+ 轻震屏/青色粒子；recall_fire_queued 事件（v0.10.16）同样置 pulse 但用金色粒子表示"方向锁定"；Scene3DBackend Dock 画横向扫光（scissor 在 Dock 矩形内），canRecall 且未 queued 时青色提示“拖拽瞄准松手即射 // 点按仅召回”，recallFireQueued 时金色“召回中 // 方向锁定·回库即射”；规则层禁止直接调渲染。
 - 顶点色材质契约：任何需要顶点色染色的 CustomGeometry/箱体材质必须用消费顶点色的 Technique（`DiffVCol`），普通 `Diff` 不读顶点色会让面板纹理盖住整机颜色；程序化金属面板纹理基底要压暗（≈0.62）避免冲淡主色。
 - 敌机部件槽位契约：像素数据原色只用于槽位分类，最终颜色由 VisualCatalog 的机型配色表给出；座舱判定要区分高亮蓝（b-r≥55 且 g≥100）与灰蓝装甲（b-r≈30），禁止把大面积灰蓝装甲误判成座舱。
 - 升级抽卡去重契约：同一张三选一里用局内 `chosenThisRoll` 保证 id 唯一，叠加上限只控制跨局，不能让同名天赋在同一面板重复出现。

@@ -684,18 +684,22 @@ local function DrawAmmoSlots(ctx, game, presentation)
         nvgFill(ctx)
     end
 
-    -- v0.10.15：弹夹打空且在飞主弹珠可召回时，Dock 上沿呼吸提示 + 战场底部文字。
-    if game.canRecall then
+    -- v0.10.15/16：弹夹打空时 Dock 上沿呼吸提示。v0.10.16 起拖拽瞄准松手即"召回+自动开火"，
+    -- 纯点按只召回；已锁定方向等待回库时切换为金色锁定提示。
+    if game.canRecall or game.recallFireQueued then
+        local queued = game.recallFireQueued
+        local lineColor = queued and UI_GOLD or UI_CYAN
         local blink = 0.55 + 0.45 * math.sin((game.elapsed or 0) * 6.0)
         nvgBeginPath(ctx)
         nvgRect(ctx, 0, BOTTOM_DOCK_Y - 3, DESIGN_W, 3)
-        nvgFillColor(ctx, nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 120 + math.floor(120 * blink)))
+        nvgFillColor(ctx, nvgRGBA(lineColor[1], lineColor[2], lineColor[3], 120 + math.floor(120 * blink)))
         nvgFill(ctx)
-        DrawBluePanel(ctx, DESIGN_W * 0.5 - 120, BOTTOM_DOCK_Y - 34, 240, 26,
-            {16, 30, 74, 235}, {UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 220}, 6)
+        DrawBluePanel(ctx, DESIGN_W * 0.5 - 132, BOTTOM_DOCK_Y - 34, 264, 26,
+            {16, 30, 74, 235}, {lineColor[1], lineColor[2], lineColor[3], 220}, 6)
         DrawPixelText(ctx, DESIGN_W * 0.5, BOTTOM_DOCK_Y - 27,
-            "点击战场  召回载具  //  TAP TO RECALL", 10, UI_CYAN,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            queued and "召回中  //  方向锁定 · 回库即射"
+                      or "拖拽瞄准松手即射  //  点按仅召回",
+            10, lineColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
     -- 召回触发瞬间：Dock 顶沿横向扫光（脉冲由 Presentation 维护，约 0.55s 衰减）。
@@ -865,7 +869,7 @@ local function DrawMenu(ctx, game)
     DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.15", 8, UI_BLUE,
+    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.16", 8, UI_BLUE,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
 

@@ -46,6 +46,7 @@ local FEEDBACK_MAP = {
     giant_pierce_armed = {"pierceArmed"},
     giant_area_hit = {"giantBurst"},
     marbles_recalled = {"recallPulse"},
+    recall_fire_queued = {"recallFireLock"},
     game_reset = {"fullReset"},
 }
 
@@ -142,6 +143,12 @@ local FEEDBACK_HANDLERS = {
         recallPulse = 1.0
         screenShake = math.max(screenShake, 0.06)
         SpawnParticles(270, 872, {90, 200, 255}, 14)
+    end,
+    -- v0.10.16：空仓拖拽松手预约了"召回即射"，金色锁定反馈区别于普通召回。
+    recallFireLock = function(event)
+        recallPulse = 1.0
+        screenShake = math.max(screenShake, 0.05)
+        SpawnParticles(270, 860, {255, 213, 79}, 12)
     end,
     waveBanner = function(event)
         waveBannerTimer = 1.8

@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.15
-简述：540×960 竖屏弹珠；操作体感优化——①全屏任意位置相对拖拽起手（取消底部 160px 限制，grabStart 记按下点、pull=当前-按下，车辆只在 SLING 附近移动不挡视线，ClampPull 保留 MAX_PULL=150 与向下钳制）；②弹夹打空点击战场召回在飞主弹珠（canRecall 快照，recalling 下 vy+1700/s²封顶1150、vx exp 衰减，碰撞照常，回收点从屏幕底提前到 DANGER_Y 进 Dock 即补弹；分裂子球不召回）；③marbles_recalled 事件→Dock 青色扫光/呼吸光带/“点击战场 召回载具”提示。升级卡 168×300 详情自动换行，刷怪 14s/7.5s/首波 2.5s。
+当前版本：0.10.16
+简述：540×960 竖屏弹珠；操作体感——空仓拖拽=召回+回库即射合流：空仓（无待发、队列空、有在飞主球）按下即召回且不中断拖拽，松手 distance>15 存 queuedLaunch，首个主球回库补弹同帧自动沿预约方向发射（零额外点击快速连射），纯点按（≤15px）只召回；Dock 青色“拖拽瞄准松手即射/点按仅召回”、金色“召回中·方向锁定·回库即射”。基线：全屏任意位置相对拖拽起手（grabStart+ClampPull，MAX_PULL=150）、recalling vy+1700 封顶1150、vx exp 衰减、回收点 DANGER_Y、分裂子球不召回。升级卡 168×300 详情自动换行，刷怪 14s/7.5s/首波 2.5s。
 最后巩固：2026-09-11
 
 ## 项目概况
@@ -92,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.16: 修复 v0.10.15 召回导致没法快速射击——召回与发射合流。PointerDown 空仓分支触发 RecallMarbles 后不再 return（继续 aiming=true 记录 grabStart）；PointerUp distance≤15 死区只清空 queuedLaunch/归位（纯点按=仅召回），distance>15 时：有 activeBall 立即 LaunchMarble，空仓则存 `queuedLaunch={dx,dy,power}` 并发 recall_fire_queued 事件；UpdateReload 在 QueueNextBall 后同帧消费 queuedLaunch 自动发射首个回库主球（单发消费即清），ResetGame 清空。快照增 recallFireQueued；Presentation FEEDBACK_MAP 增 recall_fire_queued→recallFireLock（复用 recallPulse+金色粒子）；Dock 提示 canRecall 青色“拖拽瞄准松手即射 // 点按仅召回”、queued 金色“召回中 // 方向锁定·回库即射”（胶囊宽 240→264）。LSP 0、build 成功、锁定态 GLES 截图确认、700 帧探针 6 射+2 空仓拖拽手势→autoFired=2 且 flying=4，lua=0。
 - v0.10.15: 操作体感优化。①全屏相对拖拽起手：删除 PointerDown 的 `py < DANGER_Y-100` 底部 160px 限制，新增 grabStartX/Y 记录按下点，GetPullState 改 ClampPull(pull=当前点-按下点)，保留 MAX_PULL=150 与向下钳制 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆仍只在 SLING(270,850) 附近移动，手指在战场任意位置起手都不遮挡车辆。②点击召回：activeBall=nil 且 ballQueue 空且有在飞主弹珠时快照 canRecall=true，PointerDown 触发 RecallMarbles 标记所有 isPrimary 主球 recalling；物理子步进内 recalling 球 vy+=1700·dt（封顶 1150）、vx*=exp(-2.6dt)，碰撞伤害反弹照常；回收判定 `y-radius>DH` 提前为 `>DANGER_Y`（进 Dock 即回库补弹）；分裂子球 isPrimary=false 不召回不补弹。③反馈：FEEDBACK_MAP 增 marbles_recalled→recallPulse（1.0/dt*1.8 衰减+轻震屏+弹弓区粒子），Dock 青色横向扫光（Dock 矩形 scissor），canRecall 常态上沿呼吸光带+“点击战场 召回载具 // TAP TO RECALL”胶囊。LSP 0、build 成功、截图验证全屏拖拽（战场上部起手车辆只在弹弓附近）与召回提示扫光、500 帧自动发射→打空→召回→补弹探针 lua=0。
 - v0.10.14: 升级卡可读性修复 + 刷怪再放慢。根因修复 `WrapTextLines`：UrhoX 绑定的 nvgTextBounds(ctx,x,y,str,nil) 返回 `(advance, boundsTable)`（{minx,miny,maxx,maxy} 数组）而非 C API 多返回值，旧 `minx,_,maxx=` 解构恒为 nil，fallback 按 `#s` 字节数（中文×3）计宽 → 每行只容 4-5 字、大量空白与截断；测量须在 nvgSave/nvgResetTransform/nvgRestore 内进行（避开 CONTAIN scale=2），fallback 改用 utf8.len。卡片布局 168×300/gap8：标题 15px 单行、稀有度 y+50、分隔线 y+74、详情 12px/18 行距/限 6 行、底部标签/徽标/层数三段；删除无引用的 DrawWrappedText。同步 main.lua 命中布局（原 156×214@478 与视觉漂移）为 168/300/8/cy470/HIT_PAD 4。刷怪：基础 11→14s、下限 5.5→7.5s、收紧 0.22→0.18、首波冷却 1.2→2.5s（GetWaveParams 数量曲线不动）。LSP 0、build 成功、强制升级态 GLES 截图确认详情完整折行、300 帧 validate lua=0（仅引擎壳 Vignetting/Skybox 缺资源噪音）。
 - v0.10.13: 升级 UI 大修。天赋池每项新增完整 detail 文案，`GetUpgradeChoices` 透出 detail/kind；Scene3DBackend 新增 `WrapTextLines`/`DrawWrappedText`（nvgTextBounds 实测宽度、UTF-8 按字节步进逐字折行，取代按 8 字硬切）；卡片 162×300 重排：序号圆点+稀有度（标准蓝/稀有金/史诗紫）+类型+7 行详情+抉择风险或词条标签+增量徽标+已装配层数/上限（维修 ∞）；HUD 词条图标去 Icons/*.png 依赖改程序化“贯/链/量”徽标，删除 wordIconTex_ 与 Init 加载。LSP 0、build 成功、强制升级态截图验证三卡、420 帧 lua=0。
