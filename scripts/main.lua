@@ -22,12 +22,13 @@ local function TryPickUpgradeAt(uiX, uiY)
     local snapshot = Game.GetSnapshot()
     local choices = snapshot.upgradeChoices
     if not choices or #choices == 0 then return false end
-    local cardW, cardH, gap = 156, 214, 8
-    -- 与 Scene3DBackend 的升级卡视觉几何一致；这里接收 UI 画布坐标，不是玩法平面坐标。
-    local HIT_PAD = 14
+    -- v0.10.14：与 Scene3DBackend:GetUpgradeCardLayout 的视觉几何保持一致。
+    local cardW, cardH, gap = 168, 300, 8
+    -- 这里接收 UI 画布坐标，不是玩法平面坐标。
+    local HIT_PAD = 4
     local totalW = #choices * cardW + (#choices - 1) * gap
     local startX = snapshot.width * 0.5 - totalW * 0.5 + cardW * 0.5
-    local cy = 478
+    local cy = 470
     for i = 1, #choices do
         local cx = startX + (i - 1) * (cardW + gap)
         if math.abs(uiX - cx) <= cardW * 0.5 + HIT_PAD

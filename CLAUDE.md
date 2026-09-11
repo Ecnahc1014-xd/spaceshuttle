@@ -3,9 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.6
-- 进度: 已修复敌方箱体退出链的可见性：飞散箱体改为独立闭合 `CustomGeometry` 六面体，不再依赖项目中不存在的 `Models/Box.mdl`；保留箱体纹理、敌体前侧偏移、世界 Z 抛射、多轴旋转和末段缩放消散。正式入口已移除临时自动脱离探针，2D UI 启动菜单恢复；`GainXp` 改为使用前置声明槽赋值，避免隔离命中验证时序触发空 upvalue。菜单截图和隔离战斗态序列已确认 UI、敌机和飞散箱体可见。
-- 上次交付: v0.10.6 箱体渲染根因修复与 UI 回归；官方 build 成功，正式入口无自动测试注入；LSP 工具请求超时，独立运行验证报告受工作区落盘权限限制，已使用 `/home/Maker` 输出完成运行态截图验证
+- 版本: 0.10.15
+- 进度: 操作体感优化：①全屏任意位置相对拖拽起手——取消旧 `py < DANGER_Y-100` 底部 160px 起手限制，PointerDown 记录 grabStart 点，拉弓量=当前点-按下点（`ClampPull`，保留向下钳制 PULL_MAX_DOWN_DY=DH-SLING_Y-20 与 MAX_PULL=150），车辆只在 SLING(270,850) 附近移动，手指不再遮挡车辆；②弹夹打空点击召回——`activeBall=nil 且 ballQueue 空 且有在飞主弹珠` 时快照 canRecall=true，点击战场标记全部 isPrimary 主球 recalling（vy 加速 1700/s²封顶1150、vx 按 exp(-2.6dt) 衰减、途中碰撞伤害照常），回收点从屏幕底 DH 提前到 DANGER_Y（进 Dock 即回库补弹）；分裂子球 isPrimary=false 不召回；③反馈 marbles_recalled→Presentation.recallPulse（Dock 青色横向扫光+粒子+轻震屏），canRecall 时 Dock 上沿呼吸光带与“点击战场 召回载具 // TAP TO RECALL”胶囊。LSP 0、build 成功，截图确认全屏拖拽/召回提示扫光，500 帧自动发射→打空→召回→补弹探针 lua=0。
+- 上次交付: v0.10.15 全屏相对拖拽起手 + 空窗点击召回 + 回收点提前
+
+
 
 ## 用户画像摘要
 - 使用简体中文沟通
@@ -13,10 +15,26 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: 在真实触摸交互中复测升级三选一点击命中、暂停恢复与逐块越线扣血节奏；Boss 波(每10波)与词条/异常反应的实机手感；若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或升级卡片排版，不改变权威 HP、逐块扣血、XP 曲线和 9:16 共同投影契约
+- likely_next_task: 真机触摸复测全屏起手的拖拽灵敏度（MAX_PULL=150 的相对位移手感）、空窗点击召回的误触边界（当前战场任意点击都触发，可能与将来其他点击交互冲突）、召回加速度 1700 的手感；Boss 波(每10波)与词条/异常反应实机手感；刷怪 14s 节奏体感。若继续调视觉，只基于实机截图调整像素飞机剪影密度、世界边界发光或卡片排版，不改变权威 HP、逐块扣血、XP 曲线、召回/拖拽契约和 9:16 共同投影契约
 - 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
 
 ## 本批次新增避雷（WO-13/16/14/15/P11/P12）
+- 全屏拖拽契约（v0.10.15）：起手不再限定底部区域；PointerDown 在 playing 态任意战场坐标都记录 grabStart(grabStartX/Y)，拉弓量 = 当前点 - 按下点，经 `ClampPull` 钳 MAX_PULL=150 与向下 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆只在 SLING(270,850)+pull 附近移动，禁止让车辆跳到手指位置；15px 死区松手归位。
+- 召回契约（v0.10.15）：`activeBall=nil 且 #ballQueue=0 且 HasFlyingPrimary()` 时 canRecall=true；此时 PointerDown 只触发 RecallMarbles（标记所有 isPrimary 主球 recalling），不起拖拽；recalling 在物理子步进内 vy+=1700·dt（封顶 1150）、vx*=exp(-2.6dt)，碰撞/伤害/反弹照常；回收判定从 `y-radius>DH(960)` 提前到 `>DANGER_Y(900)`，进 Dock 安全层即回库补弹（EnqueueNextBall 仅 isPrimary）；分裂子球 generation>0/isPrimary=false 不召回。改这些值要同步快照 canRecall 与 UI 提示。
+- 召回反馈契约：marbles_recalled 事件只写 Presentation.recallPulse（1.0，dt*1.8 衰减）+ 轻震屏/粒子；Scene3DBackend Dock 画青色横向扫光（scissor 在 Dock 矩形内），canRecall 常态画上沿呼吸光带+“点击战场 召回载具”胶囊；规则层禁止直接调渲染。
+- 顶点色材质契约：任何需要顶点色染色的 CustomGeometry/箱体材质必须用消费顶点色的 Technique（`DiffVCol`），普通 `Diff` 不读顶点色会让面板纹理盖住整机颜色；程序化金属面板纹理基底要压暗（≈0.62）避免冲淡主色。
+- 敌机部件槽位契约：像素数据原色只用于槽位分类，最终颜色由 VisualCatalog 的机型配色表给出；座舱判定要区分高亮蓝（b-r≥55 且 g≥100）与灰蓝装甲（b-r≈30），禁止把大面积灰蓝装甲误判成座舱。
+- 升级抽卡去重契约：同一张三选一里用局内 `chosenThisRoll` 保证 id 唯一，叠加上限只控制跨局，不能让同名天赋在同一面板重复出现。
+- NanoVG 文本测量契约（v0.10.14 根因）：UrhoX 绑定的 `nvgTextBounds(ctx,x,y,str,nil)` 返回两个值 `(advance, boundsTable)`，boundsTable 是 `{minx,miny,maxx,maxy}` 数组，**不是** C API 的多返回值——`local minx,_,maxx = nvgTextBounds(...)` 会让 minx=advance、maxx=nil，恒走 fallback；且测量处于 CONTAIN 缩放 transform 下时必须先 `nvgSave`+`nvgResetTransform` 再 `nvgRestore`，否则宽度按物理像素翻倍；fallback 估宽按 `utf8.len`（字符数）禁止用 `#s`（中文 3 字节）。
+- 升级卡详情契约（v0.10.14）：天赋池每项必须带一句完整 `detail`，UI 用 `WrapTextLines` 做 UTF-8 逐字自动换行（实测 bounds 宽度）；卡片 168×300/gap=8：标题 15px 单行（天赋名≤7 汉字）、稀有度 11px、分隔线 y+74、详情 12px/18 行距/最多 6 行、底部标签 26px+增量徽标 30px+层数 9px 三段固定，避免重叠；HUD/卡片词条标识一律 NanoVG 程序化绘制，禁止外部 Icons PNG。
+- 升级卡命中同步契约（v0.10.14）：`main.lua:TryPickUpgradeAt` 的 cardW/cardH/gap/cy/HIT_PAD 必须与 `Scene3DBackend:GetUpgradeCardLayout` 视觉几何逐值一致（当前 168/300/8/cy470/HIT_PAD 4），禁止两套常量漂移；升级点击用 `ScreenToUi`。
+- 顶部边界契约：规则反弹顶边是游戏坐标 `TOP_BOUND_Y=-135`（v0.10.10 取 0 与 -270 的均值，投影 designY≈105 在 HUD 下方）；规则常量与 3D 视觉 `EDGE_TOP_GAME_Y` 必须同步，左右边仍是 0/DW。禁止把游戏坐标 y=0 当屏幕顶。
+- 节奏平衡契约（v0.10.14）：刷怪基础间隔 14s、下限 7.5s、收紧 0.18/波，同屏上限 8（每 10 波 +1），单波 ≤5 架，首波冷却 2.5s；XP 首升 26、成长 ×1.26。改节奏时同时改 BALANCE、GetWaveParams、ResetGame 初始冷却与同屏增长分母，禁止只调一处。
+- 机群防重叠契约：`FleetPositionOccupied` 必须同时检查本批次 placed 与场上全部存活机；逐帧 `ResolveFleetOverlaps` 在所有飞机摆动/下移完成后统一跑 8 轮全对全 AABB，结束统一钳边界并回写 baseX；新增编队必须走 `ENEMY_SPACING=8` 与确定性逐层 fallback。
+- 屏外生成与进场契约（v0.10.11）：新编队必须“整机”位于可见战场顶（gameY≈-102）之上，生成 y = `-102 - 飞机高度 - 24`，随机候选只能在该屏外层选 X、禁止随机 y 落到屏内；新敌机 `phase=0`（首帧位置=baseX，禁止随机相位横向突跳）；逐帧分离在任一方仍屏外时只纵向抬高（overlap 阈值 >1px 防浮点），双方都进场后才允许横向让位。
+- HUD 整数格式契约：快照中被升级倍率（xpMul 等）作用过的字段可能是浮点，NanoVG `string.format("%d")` 在 Lua 5.4 对浮点直接抛错会中断整帧 HUD 绘制；显示前一律 `math.floor`。
+- 初始化致命依赖契约：`Renderer3D.Init` 的成功返回值只能由必需资源决定；`Models/Box.mdl` 等可选资源（仅供旧碎片）缺失时必须降级跳过，禁止纳入初始化条件——否则 `Backend.Init=false → Start() 提前 return → 不订阅 Update/NanoVGRender/输入`，真机表现为“2D UI 消失 + 游戏完全卡死”。
+- 瞬时独立节点预算契约：每个飞散箱体是独立 `CustomGeometry` 节点 + draw call，表现层（`MAX_EJECTED_BOXES`）与渲染层（`MAX_RENDERED_BOXES`）必须各设同屏硬上限，超预算丢弃最旧对象，防止高命中频率真机帧率归零。
 - 冻结表现契约：渲染层只读 `enemy.freezeRatio`（Game 快照，0..1），按此做顶点色冷色抬升与正面霜冻白高光；签名按 `freezeRatio*8` 量化档位触发重建，禁止每帧衰减都重建
 - 对象池契约：高频视觉(粒子/碎片/飘字)从 `particlePool/debrisPool/floatPool` 复用 table，禁止每帧 table.insert 新表；`Game.GetSnapshot()` 复用常驻 `snapshotBuffer_`，调用方不得跨帧持有引用
 - FXAA 契约：本环境不可启用 FXAA（ESSL shader cache 失败吞 3D 层），`ProbeFxaa()` 仅探测渲染路径是否声明 fxaa 命令，默认 `fxaaAvailable_=false` 且绝不强制启用
@@ -48,7 +66,7 @@
 - 主循环时序契约：`main.lua` 先用上一帧 Presentation 状态决定 hitStop，再调用 `Game.Update()`；随后重新获取 `Game.GetSnapshot()`，同一份更新后快照同时传给 `Presentation.Update()` 和渲染变量，禁止把更新前快照传给表现层或渲染层
 - 状态中断契约：`Game.Update()` 在 `UpdateMarbles()` 后、`UpdateEnemies()` 后检查 `gameState`；升级/游戏结束在当前帧切换状态后，禁止继续推进敌人、越线扣血、换弹或波次刷新
 - XP 保全契约：升级期间或升级触发同帧新增经验进入 `deferredXp` 原值缓冲，最后一张升级卡完成后只结算一次倍率；禁止用 `pendingLevelUps > 0` 直接丢弃经验
-- 输入契约：画布外按下必须过滤；移动和释放允许跨出画布以完成钳制和结束拖拽；升级卡必须用 `ScreenToUi` 命中，玩法瞄准必须用 `ScreenToGame`
+- 输入契约：画布外按下必须过滤；移动和释放允许跨出画布以完成钳制和结束拖拽；升级卡必须用 `ScreenToUi` 命中，玩法瞄准必须用 `ScreenToGame`；playing 态全屏任意位置按下都可起手拖拽（v0.10.15，旧底部 160px 限制已删），弹夹打空且 canRecall 时按下改为召回而非拖拽
 - 渲染合成契约：`Backend.Render()` 必须先执行 `Renderer3D.Render()` 再执行 `RenderOverlay()`；NanoVG 仅允许绘制画布外 letterbox 与透明/局部 UI，禁止使用整屏不透明矩形覆盖设计画布
 - 弹珠技能契约：基础弹每次直接命中独立 5% 概率生成两颗完整功能分裂弹，分裂弹可继续分裂；加速弹每次反弹/命中加速 15%，按速度最高增至 3 伤并自动追击最近砖块；巨型弹任意有效反弹只武装一次贯穿，贯穿命中造成直径 7 格圆形范围伤害
 - 敌方基础下落速度固定乘以 0.25（降低 75%）；冰冻倍率继续叠加在此速度之上
@@ -77,10 +95,10 @@
 - 飞行器底座契约：敌方底座与推进器必须位于阵列远离玩家的一侧（设计坐标上方）；靠近防线的规则判定只使用阵列底边 `enemy.y + height`，备用 2D 与 3D 后端方向必须一致
 - 四弹药槽契约：3D 后端底部必须显示分裂/冰冻/加速/巨型四个 64×64 小正方形槽位，前两格停靠左下、后两格停靠右下；每格保留序号、中文名、装填态、储备数量和类型色，中间必须留出弹弓/车辆可视空间，禁止恢复横向铺满底边或退化为纯文字图例
 - 防线撞击契约：`base_hit` 必须先由 `Presentation.lua` 维护瞬时状态，再由 3D 后端消费为相机震动、防线材质脉冲、冲击波和警示文字，禁止只扣血无空间反馈
-- 幸存者核心契约：基地生命 `BASE_HP=100`，敌方以编队整体下移（`enemy.y += vy`），每个 alive 方块越过 `DANGER_Y` 时独立 `brick.alive=false` 并对 `baseHp` 扣 `BRICK_BASE_DAMAGE`（受升级 `BALL_TUNING.brickDmg` 影响，最低 1）；`Game.lua` 用 `gameState="levelup"`/`"paused"` 暂停玩法，升级由 `Game.PickUpgrade(i)` 恢复 `playing`，禁止在规则层直接调用渲染或输入 API
+- 幸存者核心契约：基地生命 `BASE_HP=100`，敌方以编队整体下移（`enemy.y += vy`）；越线按**行**结算——越线方块先按 brick.row 分组，该行全部碎裂（飞箱但不加分/经验，`ShatterBreachedBrick`），每帧扣血只算一次：`max(1, ceil(越线行数*0.5) + lineDamageBonus)`，装甲/玻璃大炮改 `lineDamageBonus`（整体加成，禁止逐块乘）；`Game.lua` 用 `gameState="levelup"`/`"paused"` 暂停玩法，禁止在规则层调渲染。
 - 经验与升级契约：击碎方块获 `XP_PER_BRICK`、清整支飞船获 `XP_PER_CLEAR`（+连击加成），跨级累计 `pendingLevelUps` 并冻结经验；升级池 `UPGRADE_POOL` 的 `apply()` 只修改 `BALL_TUNING`/`baseHp` 等规则变量，必须通过 `Game.GetSnapshot().upgradeChoices` 暴露给 UI 三选一，禁止硬编码升级效果到渲染层
 - 波次节奏契约：幸存者持续涌出，间隔随波次从 `WAVE_INTERVAL` 收紧到 `WAVE_INTERVAL_MIN`，并受 `MAX_CONCURRENT` 同屏上限约束；禁止恢复"清场才出下一波"的离散波次
-- 世界边界契约：左/右/上三边反弹边缘必须渲染到 3D 背景层（`CreateWorldEdges`）并与 2D 设计空间边框一致；`Game.lua` 世界边界规则（0、DW、0 顶部）是权威碰撞来源，禁止把边界只当视觉
+- 世界边界契约：左/右反弹边为游戏坐标 0/DW 并渲染到 3D 背景层（`CreateWorldEdges`）与 2D 设计空间边框一致；顶部反弹边为 `TOP_BOUND_Y=-135`（0 与 -270 的中值，投影在 HUD 下方战场顶部），视觉顶边与规则共用常量，左右边线向上延伸闭合。禁止把边界只当视觉或把游戏 y=0 当屏幕顶；`Game.lua` 边界规则是权威碰撞来源。
 - 拖尾比例契约：拖尾宽度必须锚定权威碰撞半径（`marble.radius * WORLD_SCALE`），巨型车拖尾不得宽于车辆本体；车辆视觉仍由 `marble.radius * WORLD_SCALE * VEHICLE_COLLISION_FILL / VEHICLE_PLANAR_RADIUS` 推导
 - 像素敌人契约：敌方 occupied cells 参考经典太空飞机弹幕像素剪影（蟹形入侵者/箭头战机/圆盘飞碟/截击机），继续由 `AircraftPixelData.lua` 单一来源驱动规则、2D、3D 与碎片；禁止恢复战斗机写实轮廓或蔬菜阵列
 - 加速弹削弱契约：加速弹 `speedBoost` 收紧到 1.06、`maxSpeed` 900、`damageStep` 320、`maxDamage` 2，且自动追击受 `redirectThrottle=0.45s` 节流；禁止恢复 1.15/1250/3 的强成长与无节流黏着

@@ -30,17 +30,59 @@ local BALL_STYLES = {
 
 local aircraftStyles = {}
 
+-- v0.10.9 敌机太空战机化：像素原色只作为“部件槽位”识别依据，
+-- 具体颜色由各机型统一配色表给出，让四类敌人远看就能区分。
+-- 槽位：hullMain 主装甲 / hullDark 暗装甲与翼面 / canopy 座舱玻璃 / engine 引擎与翼尖灯。
+local AIRCRAFT_PALETTES = {
+    -- scout 侦察机：青蓝（高频、灵巧）
+    scout = {
+        hullMain = {108, 198, 232}, hullDark = { 64, 122, 162},
+        canopy   = {176, 242, 255}, engine   = {126, 228, 255},
+    },
+    -- striker 强袭机：红橙（直冲、压迫）
+    striker = {
+        hullMain = {230,  96,  62}, hullDark = {120, 40,  36},
+        canopy   = {255, 228, 154}, engine   = {255, 168,  66},
+    },
+    -- bomber 重型飞碟：黄绿（缓慢、厚重）
+    bomber = {
+        hullMain = {172, 196,  80}, hullDark = { 84,  96,  42},
+        canopy   = {196, 255, 216}, engine   = {255, 208,  88},
+    },
+    -- interceptor 截击机/Boss：品紫（高速、精英）
+    interceptor = {
+        hullMain = {180,  94, 226}, hullDark = { 86,  44, 122},
+        canopy   = {234, 186, 255}, engine   = {255, 120, 222},
+    },
+}
+
+-- 按像素原色归类部件槽位（阈值按 AircraftPixelData 实际像素标定）：
+-- 座舱玻璃是高亮蓝（如 70,120,160，b-r≈90），必须与灰蓝装甲（b-r≈30）区分；
+-- 引擎/翼尖灯是低亮度深色（如 110,46,40）；红棕(r 明显大于 b)是主装甲；其余灰蓝为暗装甲。
+local function ClassifySlot(r, g, b)
+    local luminance = (r + g + b) / 3
+    if b - r >= 55 and g >= 100 then return "canopy" end
+    if luminance < 80 then return "engine" end
+    if r - b >= 18 then return "hullMain" end
+    return "hullDark"
+end
+
 local function BuildAircraftStyle(aircraftKey)
     local data = AircraftData[aircraftKey]
     if not data then return nil end
+    local palette = AIRCRAFT_PALETTES[aircraftKey] or AIRCRAFT_PALETTES.scout
 
     local style = {}
     for entry in (data.data .. ";"):gmatch("(.-);") do
         local col, row, r, g, b = entry:match("(%d+),(%d+),(%d+),(%d+),(%d+)")
         if col then
-            local rv, gv, bv = tonumber(r), tonumber(g), tonumber(b)
+            local slot = ClassifySlot(tonumber(r), tonumber(g), tonumber(b))
+            local c = palette[slot] or palette.hullMain
+            local rv, gv, bv = c[1], c[2], c[3]
             style[col .. ":" .. row] = {
                 r = rv, g = gv, b = bv,
+                slot = slot,
+                -- 背面/暗面色：整体压暗，保持机型色相。
                 dr = math.floor(rv * 0.55),
                 dg = math.floor(gv * 0.55),
                 db = math.floor(bv * 0.55),

@@ -7,21 +7,28 @@ local Game = {}
 
 local DW = 540
 local DH = 960
+-- 顶部反弹边界（游戏坐标）。调整历史：最初为 0（屏幕内半空反弹），v0.10.8 抬到 -270（完全出屏），
+-- v0.10.10 取两者均值 -135：投影到设计坐标约 y≈105，恰在 HUD 下方，载具飞到战场顶部才反弹。
+-- 左右边界仍是 0 / DW；视觉边框必须与此常量一致（见 Scene3DBackend.CreateWorldEdges）。
+local TOP_BOUND_Y = -135
 local BASE_BRICK_SIZE = 16
 local SLING_X = 270
 local SLING_Y = 850
 local MAX_PULL = 150
 local DANGER_Y = 900
+-- v0.10.15：召回中的主弹珠向下加速度（单位/s²）与回落限速。
+local RECALL_ACCEL = 1700
+local RECALL_MAX_VY = 1150
 local BASE_HP = 100
 
 -- 幸存者化参数
-local BRICK_BASE_DAMAGE = 3        -- 每个方块越过目标线时对基地造成的伤害
+local BRICK_BASE_DAMAGE = 0.5      -- 每行方块越过目标线时的基础伤害，逐行向上取整（每行实际扣 1）
 local XP_PER_BRICK = 1             -- 击碎一个方块获得的经验
 local XP_PER_CLEAR = 8             -- 清掉整支飞船的额外经验
-local BASE_XP_TO_NEXT = 12         -- 第一级所需经验
-local WAVE_INTERVAL = 7.0          -- 持续刷新波次的间隔（秒）
-local WAVE_INTERVAL_MIN = 2.8      -- 后期最快刷新间隔
-local MAX_CONCURRENT = 14          -- 同屏飞船数量上限，避免无限叠加
+local BASE_XP_TO_NEXT = 26         -- 第一次升级所需经验（单架侦察机约 50 格，约两架升一级）
+local WAVE_INTERVAL = 14.0          -- 持续刷新波次的基础间隔（秒，v0.10.14 放慢）
+local WAVE_INTERVAL_MIN = 7.5      -- 后期最快刷新间隔（v0.10.14 上调）
+local MAX_CONCURRENT = 8           -- 同屏飞船数量上限，避免无限叠加
 
 -- 数值平衡表（WO-01/P1）：局内不可变数值集中管理，便于调参与离线模拟。
 -- 旧常量名仍作为本表的初始化来源，保持向后可读别名。
@@ -31,18 +38,18 @@ local BALANCE = {
     xpPerBrick = XP_PER_BRICK,
     xpPerClear = XP_PER_CLEAR,
     baseXpToNext = BASE_XP_TO_NEXT,
-    xpToNextGrowth = 1.18,          -- WO-02/P1：每级经验阈值指数乘子（替代原线性的 *0.35）
+    xpToNextGrowth = 1.26,          -- WO-02/P1：每级经验阈值指数乘子（v0.10.10 随基础阈值上调重调）
     waveInterval = WAVE_INTERVAL,
     waveIntervalMin = WAVE_INTERVAL_MIN,
-    waveTightenStep = 0.35,         -- WO-03/P1：波次间隔随波次收紧步长（原写死 0.35）
+    waveTightenStep = 0.18,         -- 波次间隔随波次收紧步长（v0.10.14 随基础间隔上调一并放缓）
     maxConcurrent = MAX_CONCURRENT,
     clearStreakBonusCap = 5,        -- WO-03/P1：连击经验加成封顶（原写死 5）
     -- 以下为批次2（P6 WO-12）预留字段，当前 UpdateWaveLogic 尚未使用
-    phaseLength = 5,
-    phaseTightenBonus = 0.6,
-    breatherEvery = 10,
-    breatherRelax = 1.5,
-    safeGap = 1.2,
+    phaseLength = 6,
+    phaseTightenBonus = 0.35,
+    breatherEvery = 12,
+    breatherRelax = 2.0,
+    safeGap = 2.0,
     -- 蓄力发射（WO-08/P7）：拖拽距离映射到初速比例，由规则层暴露供输入层消费。
     maxPull = MAX_PULL,
     powerMin = 0.35,   -- 最小蓄力初速比例（轻拖也有基础射程）
@@ -113,7 +120,8 @@ local BALL_TUNING = {
     splitBonus = 0,
     speedMul = 1.0,
     iceBonus = 0,
-    brickDmg = BRICK_BASE_DAMAGE,
+    -- 越线整体伤害净加成：在“越线行数 × ceil(0.5)”合计后一次性附加（装甲 -1 / 玻璃大炮 +1）。
+    lineDamageBonus = 0,
     xpMul = 1.0,
 }
 
@@ -144,39 +152,50 @@ local bricksBroken = 0            -- 累计击碎砖块数（WO-11/P8 gameover �
 -- tradeoff 是否抉择型（apply 同时改正负）；value 单次增量（用于升级卡 delta 预览）。
 -- apply(stacks) 接收当前已选层数，支持边际递减（如 damage 每层略减）。
 -- apply() 只改 BALL_TUNING / baseHp（规则层），UI 只读 GetSnapshot().upgradeChoices。
+-- detail 为天赋卡详情描述（自动换行展示）；value 是单次增量徽标；tradeoff=抉择型风险。
 local UPGRADE_POOL = {
     { id = "damage", name = "穿甲弹头", desc = "所有弹珠伤害 +1",
-      weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1",
+      detail = "所有弹珠命中砖块时额外造成 1 点伤害，更快击碎高耐久敌机。",
+      weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1 伤害",
       apply = function(stacks) BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1 end },
-    { id = "giant", name = "重型化", desc = "巨型弹珠贯穿范围 +1 格",
+    { id = "giant", name = "重型化", desc = "巨型弹贯穿范围 +1 格",
+      detail = "巨型弹贯穿爆发的圆形杀伤半径扩大 1 格，一次反弹波及更多砖块。",
       weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 格",
       apply = function(stacks) BALL_TUNING.giantArea = BALL_TUNING.giantArea + 1.0 end },
     { id = "split", name = "裂变核", desc = "基础弹分裂概率 +3%",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+3%",
+      detail = "基础弹命中砖块时分裂出两颗小弹的概率提高 3%，弹幕更密集。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+3% 概率",
       apply = function(stacks) BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.03 end },
     { id = "speed", name = "疾速引擎", desc = "弹珠飞行速度 +8%",
-      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8%",
+      detail = "全部弹珠飞行速度提高 8%，往返更快、单位时间命中更多，但更难瞄准。",
+      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8% 速度",
       apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.08 end },
     { id = "ice", name = "深寒涂层", desc = "冰冻时长 +1.2 秒",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+1.2s",
+      detail = "冰冻弹命中的敌机冻结时间延长 1.2 秒，更长时间迟滞其推进。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+1.2 秒",
       apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
     { id = "repair", name = "前线维修", desc = "立即恢复 25 点基地生命",
+      detail = "立即修复基地 25 点生命（不会超过 100 点上限），可反复选择。",
       weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+25 HP",
       apply = function(stacks) baseHp = math.min(BASE_HP, baseHp + 25) end },
-    { id = "armor", name = "装甲强化", desc = "越线方块伤害 -1（最低 1）",
-      weight = 1, rarity = "common", maxStacks = 2, tradeoff = false, value = "-1 伤害",
-      apply = function(stacks) BALL_TUNING.brickDmg = math.max(1, BALL_TUNING.brickDmg - 1) end },
+    { id = "armor", name = "装甲强化", desc = "防线受创伤害 -1（最低 1）",
+      detail = "敌机编队越过防线时，整次受创伤害降低 1 点；多行越线时也只在总计上减免。",
+      weight = 1, rarity = "common", maxStacks = 2, tradeoff = false, value = "-1 受创",
+      apply = function(stacks) BALL_TUNING.lineDamageBonus = BALL_TUNING.lineDamageBonus - 1 end },
     { id = "xp", name = "数据回收", desc = "经验获取 +20%",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+20%",
+      detail = "击碎砖块与清空编队获得的经验提高 20%，更频繁触发三选一升级。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+20% 经验",
       apply = function(stacks) BALL_TUNING.xpMul = BALL_TUNING.xpMul + 0.2 end },
     -- WO-09/P5 抉择型：同时改正负规则变量，高风险高回报（仍只改 BALL_TUNING/baseHp）。
-    { id = "glass_cannon", name = "玻璃 cannon", desc = "伤害 +2 但越线伤害 +1",
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "伤害+2 / 扣血+1",
+    { id = "glass_cannon", name = "玻璃巨炮", desc = "伤害 +2 但越线伤害 +1",
+      detail = "所有弹珠伤害 +2，输出显著提升；代价是敌机越线时防线每次多受 1 点伤害。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "伤害+2 / 受创+1",
       apply = function(stacks)
           BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 2
-          BALL_TUNING.brickDmg = BALL_TUNING.brickDmg + 1
+          BALL_TUNING.lineDamageBonus = BALL_TUNING.lineDamageBonus + 1
       end },
     { id = "overclock", name = "超载核心", desc = "速度 +15% 但基地 -8",
+      detail = "弹珠飞行速度立即提高 15%，但引擎过载直接损失 8 点基地生命。",
       weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "速度+15% / HP-8",
       apply = function(stacks)
           BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
@@ -185,13 +204,16 @@ local UPGRADE_POOL = {
     -- P11 词条系统：专属"词条"升级，apply 把对应 word 加入 activeWords（规则变量），
     -- 新生成弹珠自动携带；视觉染色推迟到表现层消费新事件。
     { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带[贯穿]词条",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条:贯穿",
+      detail = "之后生成的弹珠附带[贯穿]：命中首块砖块附加电击并直线穿透，不被反弹。一次性。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条·贯穿", kind = "word",
       apply = function(stacks) activeWords.pierce = true end },
     { id = "word_chain", name = "链能线圈", desc = "弹珠附带[连锁]词条",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条:连锁",
+      detail = "之后生成的弹珠附带[连锁]：腐蚀命中砖块，并向最近的另一块追加一次溅射。一次性。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条·连锁", kind = "word",
       apply = function(stacks) activeWords.chain = true end },
     { id = "word_momentum", name = "动量储能", desc = "弹珠附带[动量]词条",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条:动量",
+      detail = "之后生成的弹珠附带[动量]：命中附加燃烧，弹珠速度越高造成的伤害越高。一次性。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条·动量", kind = "word",
       apply = function(stacks) activeWords.momentum = true end },
 }
 
@@ -203,6 +225,9 @@ local ballCycleIndex = 0
 local aiming = false
 local aimX = SLING_X
 local aimY = SLING_Y
+-- v0.10.15：全屏起手时记录手指按下点，拉弓量 = 当前点 - 按下点。
+local grabStartX = SLING_X
+local grabStartY = SLING_Y
 
 local pendingEvents = {}
 local nextEnemyId = 1
@@ -252,8 +277,8 @@ local function GetWaveParams(waveNum)
     local count
     if waveNum <= 1 then count = 1
     elseif waveNum <= 3 then count = 2
-    elseif waveNum <= 5 then count = 3
-    else count = math.min(6, 3 + math.floor((waveNum - 4) / 2)) end
+    elseif waveNum <= 6 then count = 3
+    else count = math.min(5, 3 + math.floor((waveNum - 4) / 3)) end
 
     -- 敌方砖块保留隐藏 HP：前六波只需一次命中，之后再逐步增加耐久。
     local speed = 18 + (waveNum - 1) * 4
@@ -332,7 +357,9 @@ ResetGame = function()
     aiming = false
     aimX = SLING_X
     aimY = SLING_Y
-    waveCooldown = 0.5
+    grabStartX = SLING_X
+    grabStartY = SLING_Y
+    waveCooldown = 2.5    -- v0.10.14：开局喘息拉长，避免首波贴脸
     nextEnemyId = 1
     nextMarbleId = 1
     -- 幸存者成长状态复位
@@ -352,7 +379,7 @@ ResetGame = function()
     BALL_TUNING.splitBonus = 0
     BALL_TUNING.speedMul = 1.0
     BALL_TUNING.iceBonus = 0
-    BALL_TUNING.brickDmg = BRICK_BASE_DAMAGE
+    BALL_TUNING.lineDamageBonus = 0
     BALL_TUNING.xpMul = 1.0
     LoadBalls()
     Emit("game_reset")
@@ -368,6 +395,39 @@ end
 local function GetAircraftSize(aircraftKey, brickSize)
     local data = AircraftData[aircraftKey]
     return data.gridW * brickSize, data.gridH * brickSize
+end
+
+-- 编队间距与全场 AABB 防重叠：生成候选和逐帧分离共用同一套判定，
+-- 必须对“本批次已放置 + 场上仍存活”的所有飞机生效，禁止只检查其中一边。
+local ENEMY_SPACING = 8
+
+local function EnemyAABB(enemy)
+    return enemy.x, enemy.y,
+        enemy.gridW * enemy.brickSize, enemy.gridH * enemy.brickSize
+end
+
+local function RectsOverlap(x, y, w, h, ox, oy, ow, oh, gap)
+    gap = gap or ENEMY_SPACING
+    return x < ox + ow + gap and x + w + gap > ox
+        and y < oy + oh + gap and y + h + gap > oy
+end
+
+-- 候选矩形是否与本批次 placed 或场上存活飞机（ignore 可排除自身）重叠。
+local function FleetPositionOccupied(x, y, w, h, placed, ignore)
+    for _, item in ipairs(placed) do
+        if RectsOverlap(x, y, w, h, item.x, item.y, item.w, item.h) then
+            return true
+        end
+    end
+    for _, other in ipairs(veggies) do
+        if other ~= ignore and not other.dead then
+            local ow, oh = other.gridW * other.brickSize, other.gridH * other.brickSize
+            if RectsOverlap(x, y, w, h, other.x, other.y, ow, oh) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function GetAvailableTypes(waveNum)
@@ -421,7 +481,7 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         swayAmp = swayAmp,
         swayFreq = swayFreq,
         agility = beh.agility,    -- A3：节奏/反应质感标记（渲染层可读）
-        phase = Random() * math.pi * 2,
+        phase = 0,    -- 新编队从 phase=0 开始：首帧位置即 baseX，禁止生成瞬间横向突跳（“回撤”）。
         bricks = bricks,
         dead = false,
         frozen = 0,
@@ -441,7 +501,15 @@ SpawnWave = function()
         end
         local brickSize = GetBrickSize(wave)
         local bossHp = 6 + math.floor(wave / 10) * 2
-        local enemy = CreateEnemy(bossKey, DW * 0.5 - 60, -120, brickSize, bossHp, 14)
+        local bossW, bossH = GetAircraftSize(bossKey, brickSize)
+        local bossX = DW * 0.5 - bossW * 0.5
+        -- 整机置于屏外（可见顶约 -102）再加余量。
+        local bossY = -102 - bossH - 24
+        -- Boss 同样从屏外进入，且不允许与场上编队重叠，冲突时整体继续抬高。
+        while FleetPositionOccupied(bossX, bossY, bossW, bossH, {}) do
+            bossY = bossY - bossH - ENEMY_SPACING
+        end
+        local enemy = CreateEnemy(bossKey, bossX, bossY, brickSize, bossHp, 14)
         if enemy then
             enemy.isBoss = true
             enemy.bossPhase = 1
@@ -467,42 +535,50 @@ SpawnWave = function()
     local brickSize = GetBrickSize(wave)
     local margin = 20
     local placed = {}
-    local gap = 8
-    local maxYStep = 7
 
+    -- 候选检查同时覆盖本批次与场上存活飞机，gap 统一使用 ENEMY_SPACING。
     local function Overlaps(candidateX, candidateY, candidateW, candidateH)
-        for _, item in ipairs(placed) do
-            if candidateX < item.x + item.w + gap
-                and candidateX + candidateW + gap > item.x
-                and candidateY < item.y + item.h + gap
-                and candidateY + candidateH + gap > item.y then
-                return true
-            end
-        end
-        return false
+        return FleetPositionOccupied(candidateX, candidateY, candidateW, candidateH, placed)
     end
 
     for i = 1, count do
         local aircraftKey = pool[RandomInt(1, #pool)]
         local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
-        local x, y = margin, -aircraftHeight * 0.3
+        -- 所有新编队必须“整机”位于可见战场顶之上的屏外区。
+        -- 可见战场顶约 gameY=-102（HUD 下沿投影），故按飞机自身高度上推，
+        -- 再留 24px 余量；同波后续飞机继续向上排队，禁止任何像素在屏幕内生成。
+        local VISIBLE_TOP_Y = -102
+        local SPAWN_ENTRY_Y = VISIBLE_TOP_Y - aircraftHeight - 24
+        local baseY = SPAWN_ENTRY_Y - (i - 1) * (aircraftHeight + ENEMY_SPACING)
+        local x, y = margin, baseY
         local found = false
+        -- 先在同一屏外层做随机横向候选（y 始终是屏外 baseY，禁止落到屏幕内）。
         for _ = 1, 80 do
             local candidateX = margin + Random() * math.max(1, DW - aircraftWidth - margin * 2)
-            local candidateY = -aircraftHeight * 0.3 - (i - 1) * maxYStep - RandomInt(0, 10)
-            if not Overlaps(candidateX, candidateY, aircraftWidth, aircraftHeight) then
-                x, y, found = candidateX, candidateY, true
+            if not Overlaps(candidateX, baseY, aircraftWidth, aircraftHeight) then
+                x, y, found = candidateX, baseY, true
                 break
             end
         end
         if not found then
-            -- 确定性纵向 fallback：继续向上错层，绝不接受与已放置飞机重叠的位置。
-            y = -aircraftHeight * 0.3 - (i - 1) * (aircraftHeight + gap)
-            local guard = 0
-            while Overlaps(x, y, aircraftWidth, aircraftHeight) do
-                y = y - aircraftHeight - gap
-                guard = guard + 1
-                if guard > count then break end
+            -- 确定性 fallback：继续向上逐层排开，每层扫描均匀 X 槽，绝不进入可见区。
+            local slotSpan = math.max(1, DW - margin * 2 - aircraftWidth)
+            local slotCount = math.min(8, math.max(1, math.floor(slotSpan / 40) + 1))
+            for layer = 0, 60 do
+                local tryY = baseY - (layer + 1) * (aircraftHeight + ENEMY_SPACING)
+                for slot = 0, slotCount - 1 do
+                    local tryX = margin
+                        + (slotCount == 1 and 0
+                            or slot * slotSpan / (slotCount - 1))
+                    if not Overlaps(tryX, tryY, aircraftWidth, aircraftHeight) then
+                        x, y, found = tryX, tryY, true
+                        break
+                    end
+                end
+                if found then break end
+            end
+            if not found then
+                y = baseY - 62 * (aircraftHeight + ENEMY_SPACING)
             end
         end
         placed[#placed + 1] = {x = x, y = y, w = aircraftWidth, h = aircraftHeight}
@@ -553,24 +629,15 @@ local function CollideBrick(marble, rx, ry, rw, rh)
     return true
 end
 
-local function EjectBrick(enemy, brick)
-    if brick.ejected or not brick.alive then return false end
-    local data = AircraftData[enemy.aircraftKey]
-    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
-    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
-    brick.alive = false
-    brick.ejected = true
-    score = score + data.score
-    bricksBroken = bricksBroken + 1
-    GainXp(XP_PER_BRICK)
-
+-- 发射单个方块的碎裂视觉事件（火花 + 独立飞散箱体）。不修改存活状态，由调用方负责。
+local function EmitBrickShatterFx(enemy, brick, x, y)
     local angle = Random() * math.pi * 2
     local speed = 240 + Random() * 260
     local lift = 180 + Random() * 120
     Emit("brick_hit", {
         enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
         col = brick.col, row = brick.row, x = x, y = y,
-        destroyed = true, score = data.score,
+        destroyed = true, score = 0,
     })
     Emit("brick_ejected", {
         enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
@@ -587,7 +654,31 @@ local function EjectBrick(enemy, brick)
         brickSize = enemy.brickSize,
         style = enemy.aircraftKey,
     })
+end
+
+local function EjectBrick(enemy, brick)
+    if brick.ejected or not brick.alive then return false end
+    local data = AircraftData[enemy.aircraftKey]
+    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
+    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
+    brick.alive = false
+    brick.ejected = true
+    score = score + data.score
+    bricksBroken = bricksBroken + 1
+    GainXp(XP_PER_BRICK)
+    EmitBrickShatterFx(enemy, brick, x, y)
     return true
+end
+
+-- 越线碎裂：该行方块脱离编队并播放相同飞散视觉，但不加分、不给经验
+-- （它是“突破防线”的惩罚，不是被玩家击碎）。
+local function ShatterBreachedBrick(enemy, brick)
+    if brick.ejected or not brick.alive then return end
+    local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
+    local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
+    brick.alive = false
+    brick.ejected = true
+    EmitBrickShatterFx(enemy, brick, x, y)
 end
 
 local function DamageBrick(enemy, brick, damage)
@@ -691,15 +782,16 @@ GainXp = function(amount)
 end
 
 RollUpgradeChoices = function()
-    -- WO-09/P5：加权抽卡 + 叠加上限 + 稀有保底。
+    -- WO-09/P5：加权抽卡 + 叠加上限 + 稀有保底 + 同次三选一去重。
     upgradeChoices = {}
     local sinceRare = 0
+    local chosenThisRoll = {}
     for _ = 1, 3 do
         local avail = {}
         local totalW = 0
         for _, u in ipairs(UPGRADE_POOL) do
             local stacks = upgradeStacks[u.id] or 0
-            if stacks < u.maxStacks then
+            if stacks < u.maxStacks and not chosenThisRoll[u.id] then
                 local w = u.weight
                 if u.id == "repair" and stacks >= 4 then w = w * 0.4 end
                 if u.id == "xp" and stacks >= 4 then w = w * 0.5 end
@@ -742,6 +834,7 @@ RollUpgradeChoices = function()
         else
             sinceRare = sinceRare + 1
         end
+        chosenThisRoll[picked.id] = true
         upgradeChoices[#upgradeChoices + 1] = picked
     end
 
@@ -793,8 +886,8 @@ function Game.GetUpgradeChoices()
     -- WO-10/P5：升级卡 delta 预览字段，UI 只读展示，不在此做规则计算。
     for _, c in ipairs(upgradeChoices) do
         table.insert(list, {
-            id = c.id, name = c.name, desc = c.desc,
-            value = c.value, rarity = c.rarity,
+            id = c.id, name = c.name, desc = c.desc, detail = c.detail,
+            value = c.value, rarity = c.rarity, kind = c.kind or "buff",
             stacks = upgradeStacks[c.id] or 0, maxStacks = c.maxStacks,
             tradeoff = c.tradeoff,
         })
@@ -992,6 +1085,29 @@ local function QueueNextBall()
     end
 end
 
+-- v0.10.15：弹夹打空时点击战场召回所有在飞主弹珠。
+-- 只标记状态，加速回落逻辑在 UpdateMarbles 中执行；召回途中碰撞/伤害照常结算。
+local function RecallMarbles()
+    local count = 0
+    for _, marble in ipairs(marbles) do
+        if marble.alive and marble.isPrimary and not marble.recalling then
+            marble.recalling = true
+            count = count + 1
+        end
+    end
+    if count > 0 then
+        Emit("marbles_recalled", {count = count})
+    end
+end
+
+-- 场上是否还有可召回的主弹珠（供快照 UI 提示）。
+local function HasFlyingPrimary()
+    for _, marble in ipairs(marbles) do
+        if marble.alive and marble.isPrimary then return true end
+    end
+    return false
+end
+
 local function UpdateAiming()
     if aiming and activeBall then
         activeBall.x = aimX
@@ -1018,6 +1134,13 @@ UpdateMarbles = function(dt)
                 marble.redirectCooldown = marble.redirectCooldown - subDt
             end
 
+            -- v0.10.15：召回中的主弹珠向底线加速、水平速度指数衰减，尽快回库补弹。
+            if marble.recalling then
+                marble.vy = math.min(RECALL_MAX_VY,
+                    marble.vy + RECALL_ACCEL * subDt)
+                marble.vx = marble.vx * math.exp(-2.6 * subDt)
+            end
+
             marble.x = marble.x + marble.vx * subDt
             marble.y = marble.y + marble.vy * subDt
 
@@ -1036,8 +1159,8 @@ UpdateMarbles = function(dt)
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
             end
-            if marble.y - marble.radius < 0 then
-                marble.y = marble.radius
+            if marble.y - marble.radius < TOP_BOUND_Y then
+                marble.y = TOP_BOUND_Y + marble.radius
                 marble.vy = math.abs(marble.vy) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
@@ -1126,7 +1249,9 @@ UpdateMarbles = function(dt)
                 end
             end
 
-            if marble.y - marble.radius > DH then
+            -- v0.10.15：回收点提前到防线 DANGER_Y（车进入底部 Dock 安全层即回库），
+            -- 不必飞出屏幕底，缩短发射空窗。
+            if marble.y - marble.radius > DANGER_Y then
                 marble.alive = false
                 break
             end
@@ -1148,37 +1273,92 @@ UpdateMarbles = function(dt)
     end
 end
 
-local function ResolveEnemyOverlap(enemy)
-    if enemy.dead then return end
-    local enemyWidth = enemy.gridW * enemy.brickSize
-    local enemyHeight = enemy.gridH * enemy.brickSize
-    local gap = 8
-    local ownLeft = enemy.x
-    local ownTop = enemy.y
-    for _, other in ipairs(veggies) do
-        if other ~= enemy and not other.dead and other.id < enemy.id then
-            local otherWidth = other.gridW * other.brickSize
-            local otherHeight = other.gridH * other.brickSize
-            local overlapX = math.min(enemy.x + enemyWidth + gap,
-                other.x + otherWidth + gap)
-                - math.max(enemy.x - gap, other.x - gap)
-            local overlapY = math.min(enemy.y + enemyHeight + gap,
-                other.y + otherHeight + gap)
-                - math.max(enemy.y - gap, other.y - gap)
-            if overlapX > 0 and overlapY > 0 then
-                if overlapX <= overlapY then
-                    local direction = enemy.x < other.x and -1 or 1
-                    if math.abs(enemy.x - other.x) < 0.001 then direction = 1 end
-                    enemy.x = enemy.x + direction * overlapX
-                    enemy.baseX = enemy.x - math.sin(enemy.phase) * enemy.swayAmp
-                else
-                    enemy.y = other.y - enemyHeight - gap
+-- 逐帧全机群防重叠：摆动/下移完成后对所有存活飞机做多轮 AABB 迭代求解。
+-- 水平穿透：两架对称让位（顶到战场边界的一侧不动，全量推给另一侧）；
+-- 垂直穿透：只把更靠上的飞机整体抬高（y 减小），绝不向下挤压导致提前越线扣血。
+-- 多轮迭代用于消解 A 推开 B、B 又撞上 C 的链式穿插；最后统一钳制左右边界并回写 baseX。
+local FLEET_SOLVE_ITERATIONS = 8
+local FLEET_SIDE_MARGIN = 10
+
+local function ClampEnemyX(enemy, width)
+    if enemy.x < FLEET_SIDE_MARGIN then
+        enemy.x = FLEET_SIDE_MARGIN
+    elseif enemy.x + width > DW - FLEET_SIDE_MARGIN then
+        enemy.x = DW - FLEET_SIDE_MARGIN - width
+    end
+end
+
+local function ResolveFleetOverlaps()
+    local count = #veggies
+    if count < 2 then
+        for i = 1, count do
+            local a = veggies[i]
+            if not a.dead then
+                ClampEnemyX(a, a.gridW * a.brickSize)
+                a.baseX = a.x - math.sin(a.phase) * a.swayAmp
+            end
+        end
+        return
+    end
+
+    for _ = 1, FLEET_SOLVE_ITERATIONS do
+        for i = 1, count do ClampEnemyX(veggies[i], veggies[i].gridW * veggies[i].brickSize) end
+        for i = 1, count - 1 do
+            local a = veggies[i]
+            if not a.dead then
+                local ax, ay, aw, ah = EnemyAABB(a)
+                for j = i + 1, count do
+                    local b = veggies[j]
+                    if not b.dead then
+                        local bx, by, bw, bh = EnemyAABB(b)
+                        -- 纵向已由生成排序保证至少间隔 ENEMY_SPACING；只在纵向真正重叠时
+                        -- 才允许横向让位，避免临界浮点（overlapY≈0）误判把新机瞬间横推（“回撤”）。
+                        local overlapX = math.min(ax + aw + ENEMY_SPACING, bx + bw + ENEMY_SPACING)
+                            - math.max(ax - ENEMY_SPACING, bx - ENEMY_SPACING)
+                        local overlapY = math.min(ay + ah + ENEMY_SPACING, by + bh + ENEMY_SPACING)
+                            - math.max(ay - ENEMY_SPACING, by - ENEMY_SPACING)
+                        if overlapX > 1.0 and overlapY > 1.0 then
+                            -- 只要有一方还在可见战场顶（-102）之上，优先纵向把靠上的继续抬高，
+                            -- 避免新机进场时被对称横推造成“突然横向回撤”。
+                            local aOffscreen = ay + ah < -102
+                            local bOffscreen = by + bh < -102
+                            if aOffscreen or bOffscreen then
+                                if ay <= by then
+                                    a.y = by - ah - ENEMY_SPACING
+                                else
+                                    b.y = ay - bh - ENEMY_SPACING
+                                end
+                            elseif overlapX <= overlapY then
+                                local aBlocked = ax <= FLEET_SIDE_MARGIN + 0.01
+                                local bBlocked = bx + bw >= DW - FLEET_SIDE_MARGIN - 0.01
+                                if aBlocked and not bBlocked then
+                                    b.x = b.x + overlapX
+                                elseif bBlocked and not aBlocked then
+                                    a.x = a.x - overlapX
+                                else
+                                    a.x = a.x - overlapX * 0.5
+                                    b.x = b.x + overlapX * 0.5
+                                end
+                            elseif ay <= by then
+                                a.y = by - ah - ENEMY_SPACING
+                            else
+                                b.y = ay - bh - ENEMY_SPACING
+                            end
+                        end
+                        ax, ay, aw, ah = EnemyAABB(a)
+                    end
                 end
             end
         end
     end
-    if enemy.x ~= ownLeft or enemy.y ~= ownTop then
-        enemy.baseX = enemy.x - math.sin(enemy.phase) * enemy.swayAmp
+
+    for i = 1, count do
+        local enemy = veggies[i]
+        if not enemy.dead then
+            ClampEnemyX(enemy, enemy.gridW * enemy.brickSize)
+            -- 分离后的实际 x 回写为摆动中心，避免下一帧 sin(phase) 变化又把飞机拉回重叠位。
+            enemy.baseX = enemy.x - math.sin(enemy.phase) * enemy.swayAmp
+        end
     end
 end
 
@@ -1219,7 +1399,7 @@ UpdateEnemies = function(dt)
             local newPhase = ratio > 0.66 and 1 or (ratio > 0.33 and 2 or 3)
             if newPhase ~= enemy.bossPhase then
                 enemy.bossPhase = newPhase
-                -- 阶段切换：phase 1 普通；phase 2 加速下移；phase 3 狂暴（越线伤害提升由 brickDmg 决定）。
+                -- 阶段切换：phase 1 普通；phase 2 加速下移；phase 3 狂暴（视觉标记，越线伤害按行结算）。
                 enemy.vulnerable = (newPhase == 2)
                 Emit("boss_phase", {enemyId = enemy.id, phase = newPhase, vulnerable = enemy.vulnerable})
             end
@@ -1235,36 +1415,69 @@ UpdateEnemies = function(dt)
             enemy.x = DW - 10 - width
         end
         enemy.y = enemy.y + enemy.vy * speedMultiplier * dt
-        ResolveEnemyOverlap(enemy)
+    end
 
-        -- 每个方块独立判定越线：越过目标线的方块立即销毁并对基地造成伤害。
-        -- 飞行器以编队整体下移，单个方块越线即视为该块突破防线。
+    -- 所有编队本帧摆动/下移完成后统一做多轮 AABB 分离，避免逐机单轮求解漏判。
+    ResolveFleetOverlaps()
+
+    -- 第二趟：在最终位置上做越线判定（按行）、碎裂、清空与移除。
+    -- 本帧所有越线行先收集并逐块碎裂，扣血在整体合计后只结算一次。
+    local breachedRows = {}
+    for i = #veggies, 1, -1 do
+        if gameState == "gameover" then break end
+        local enemy = veggies[i]
+
+        -- 越线判定按“行”分组：同一架飞机里越过目标线的方块按 brick.row 归组。
+        local rows = {}
         for _, brick in ipairs(enemy.bricks) do
             if brick.alive then
                 local brickBottom = enemy.y + brick.row * enemy.brickSize
                 if brickBottom > DANGER_Y then
-                    brick.alive = false
-                    brick.ejected = true
-                    baseHp = baseHp - BALL_TUNING.brickDmg
-                    local bx = enemy.x + (brick.col - 0.5) * enemy.brickSize
-                    Emit("base_hit", {x = bx, y = DANGER_Y, brick = true})
-                    if baseHp <= 0 then
-                        baseHp = 0
-                        enemy.dead = true
-                        break
-                    end
+                    local list = rows[brick.row]
+                    if not list then list = {}; rows[brick.row] = list end
+                    list[#list + 1] = brick
                 end
             end
         end
 
+        for row, list in pairs(rows) do
+            -- 该行方块全部碎裂（独立飞散箱体），视觉反馈取该行中心。
+            local sumX = 0
+            for _, brick in ipairs(list) do
+                ShatterBreachedBrick(enemy, brick)
+                sumX = sumX + enemy.x + (brick.col - 0.5) * enemy.brickSize
+            end
+            local rowCenterX = sumX / #list
+            local rowY = enemy.y + (row - 0.5) * enemy.brickSize
+            breachedRows[#breachedRows + 1] = {x = rowCenterX, y = DANGER_Y, rowY = rowY}
+        end
+    end
+
+    -- 每行基础伤害 0.5 向上取整（=每行 1）；加成只在整体合计后附加一次，最终不低于 1。
+    if #breachedRows > 0 and gameState ~= "gameover" then
+        local baseDamage = math.ceil(#breachedRows * BRICK_BASE_DAMAGE)
+        local totalDamage = math.max(1, baseDamage + BALL_TUNING.lineDamageBonus)
+        baseHp = baseHp - totalDamage
+        -- 防线反馈：一条聚合事件（震屏/冲击波/飘字），碎裂方块的飞箱由各自事件呈现。
+        local focus = breachedRows[1]
+        Emit("base_hit", {x = focus.x, y = DANGER_Y, brick = true, damage = totalDamage, rows = #breachedRows})
         if baseHp <= 0 then
+            baseHp = 0
             gameState = "gameover"
             if score > highScore then highScore = score end
             Emit("game_over", {score = score, highScore = highScore, wave = wave})
             print("[Game] game over, score=" .. score .. ", wave=" .. wave)
-            break
         end
+    end
 
+    -- 清空与移除：越线碎裂后整架飞机的砖块都没了则视为被突破清空（不加分）。
+    for i = #veggies, 1, -1 do
+        local enemy = veggies[i]
+        local width = enemy.gridW * enemy.brickSize
+        local height = enemy.gridH * enemy.brickSize
+        if gameState == "gameover" then
+            enemy.dead = true
+        end
         if not enemy.dead and IsEnemyCleared(enemy) then
             enemy.dead = true
             score = score + 50
@@ -1305,8 +1518,8 @@ UpdateWaveLogic = function(dt)
     end
     interval = math.max(BALANCE.waveIntervalMin, interval)
 
-    -- 动态同屏上限：每 8 波 +1（受 maxConcurrent 基准，护栏上限由 P9 帧预算约束）。
-    local concurrentCap = BALANCE.maxConcurrent + math.floor(wave / 8)
+    -- 动态同屏上限：每 10 波 +1（v0.10.10 基数下调到 8，节奏更松）。
+    local concurrentCap = BALANCE.maxConcurrent + math.floor(wave / 10)
 
     -- 安全窗口：场上已清空且距上次 spawn 超过 safeGap 时，给一次短喘息不强制刷。
     if #veggies == 0 then
@@ -1321,16 +1534,17 @@ UpdateWaveLogic = function(dt)
     waveCooldown = interval
 end
 
-local function GetPullState(px, py)
-    local dx = px - SLING_X
-    local dy = py - SLING_Y
+-- v0.10.15：全屏起手的相对拖拽。pull 为手指相对按下点的位移（不再相对固定弹弓点），
+-- 车辆视觉锚定 SLING 附近，手指在屏幕任意位置起手都不会遮挡车辆。
+-- 向下位移单独钳制，避免拉弓时车辆被拖出屏幕底部 Dock。
+local PULL_MAX_DOWN_DY = DH - SLING_Y - 20
+local function ClampPull(dx, dy)
     local distance = math.sqrt(dx * dx + dy * dy)
     if distance > MAX_PULL then
         dx = dx / distance * MAX_PULL
         dy = dy / distance * MAX_PULL
     end
-    local maxDownDy = DH - SLING_Y - 20
-    if dy > maxDownDy then dy = maxDownDy end
+    if dy > PULL_MAX_DOWN_DY then dy = PULL_MAX_DOWN_DY end
     distance = math.sqrt(dx * dx + dy * dy)
     return dx, dy, distance
 end
@@ -1373,24 +1587,35 @@ function Game.PointerDown(px, py)
         StartGame()
         return
     end
-    if gameState ~= "playing" or not activeBall or py < DANGER_Y - 100 then return end
+    if gameState ~= "playing" then return end
 
+    -- v0.10.15：弹夹打空（无待发弹且队列空）时，点击战场召回在飞主弹珠补弹。
+    if not activeBall then
+        if #ballQueue == 0 and HasFlyingPrimary() then
+            RecallMarbles()
+        end
+        return
+    end
+
+    -- 全屏任意位置起手：记录按下点，拉弓量按相对位移计算，
+    -- 车辆只在弹弓点附近移动，手指不再遮挡车辆。
     aiming = true
-    local dx, dy = GetPullState(px, py)
-    aimX = SLING_X + dx
-    aimY = SLING_Y + dy
+    grabStartX = px
+    grabStartY = py
+    aimX = SLING_X
+    aimY = SLING_Y
 end
 
 function Game.PointerMove(px, py)
     if not aiming then return end
-    local dx, dy = GetPullState(px, py)
+    local dx, dy = ClampPull(px - grabStartX, py - grabStartY)
     aimX = SLING_X + dx
     aimY = SLING_Y + dy
 end
 
 function Game.PointerUp(px, py)
     if not aiming then return end
-    local dx, dy, distance = GetPullState(px, py)
+    local dx, dy, distance = ClampPull(px - grabStartX, py - grabStartY)
     aiming = false
     if distance > 15 then
         LaunchMarble(dx, dy, distance / BALANCE.maxPull)
@@ -1449,7 +1674,9 @@ function Game.GetSnapshot()
     s.clearStreak = clearStreak
     s.bricksBroken = bricksBroken
     s.concurrentCount = #veggies    -- WO-12/P6：当前同屏编队数（HUD 指标）
-    s.brickDmg = BALL_TUNING.brickDmg
+    -- v0.10.15：弹夹打空且还有在飞主弹珠时，点击战场可召回（UI 据此提示）。
+    s.canRecall = (not activeBall) and (#ballQueue == 0) and HasFlyingPrimary()
+    s.brickDmg = math.max(1, math.ceil(BRICK_BASE_DAMAGE) + BALL_TUNING.lineDamageBonus)
     -- P11：已激活词条（只读列表，供 HUD 展示，不反向写规则）。
     local words = {}
     for _, id in ipairs(WORD_IDS) do
@@ -1471,6 +1698,7 @@ function Game.GetSnapshot()
     s.width = DW
     s.height = DH
     s.dangerY = DANGER_Y
+    s.topBound = TOP_BOUND_Y
     return s
 end
 

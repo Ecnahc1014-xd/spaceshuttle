@@ -155,10 +155,61 @@ local function GetBrickColor(enemy, brick, visualCatalog)
     if visualCatalog and visualCatalog.GetBrickStyle then
         local style = visualCatalog.GetBrickStyle(enemy.aircraftKey, brick.col, brick.row)
         if style then
-            return FrozenColor({style.r / 255, style.g / 255, style.b / 255}, enemy.frozen > 0)
+            return FrozenColor({style.r / 255, style.g / 255, style.b / 255}, enemy.frozen > 0),
+                style.slot
         end
     end
-    return FrozenColor({0.72, 0.32, 0.18}, enemy.frozen > 0)
+    return FrozenColor({0.42, 0.55, 0.66}, enemy.frozen > 0), "hullMain"
+end
+
+-- 程序化金属面板纹理（64×64）：深色底 + 四角铆钉 + 边框 + 面板高光，
+-- 顶点色负责染色，材质本身是中性灰白，适合任意机型配色。
+local function CreateMetalPanelTexture()
+    local size = 64
+    local image = Image()
+    image:SetSize(size, size, 4)
+    local function Put(x, y, shade)
+        x = math.max(0, math.min(size - 1, x))
+        y = math.max(0, math.min(size - 1, y))
+        image:SetPixel(x, y, Color(shade, shade, shade, 1))
+    end
+    local base = 0.62
+    for y = 0, size - 1 do
+        for x = 0, size - 1 do
+            -- 轻微拉丝噪点，避免大面积纯色。
+            local grain = ((x * 37 + y * 61) % 7) / 7 * 0.06 - 0.03
+            Put(x, y, math.max(0, math.min(1, base + grain)))
+        end
+    end
+    -- 边框 3px（暗）。
+    for t = 0, 2 do
+        for i = 0, size - 1 do
+            Put(i, t, 0.22); Put(i, size - 1 - t, 0.18)
+            Put(t, i, 0.22); Put(size - 1 - t, i, 0.20)
+        end
+    end
+    -- 内面板线 1px（稍暗）。
+    for i = 6, size - 7 do
+        Put(i, 6, 0.42); Put(i, size - 7, 0.38)
+        Put(6, i, 0.42); Put(size - 7, i, 0.40)
+    end
+    -- 四角铆钉（亮点）。
+    local function Rivet(cx, cy)
+        for dy = -2, 2 do
+            for dx = -2, 2 do
+                if dx * dx + dy * dy <= 4 then
+                    local d = math.sqrt(dx * dx + dy * dy)
+                    Put(cx + dx, cy + dy, d <= 1 and 0.82 or 0.40)
+                end
+            end
+        end
+    end
+    Rivet(10, 10); Rivet(size - 11, 10); Rivet(10, size - 11); Rivet(size - 11, size - 11)
+
+    local texture = Texture2D:new()
+    texture:SetData(image, false)
+    texture:SetSRGB(true)
+    return texture
 end
 
 local function GetEnemySignature(enemy)
@@ -243,10 +294,13 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     local edgeVertices = {}
     local alive = {}
 
-    local function GetFaceColor(face)
-        if face.neighbor[3] < 0 then return Color(0.72, 0.38, 0.16, 1) end
-        if face.neighbor[3] > 0 then return Color(0.48, 0.20, 0.08, 1) end
-        return Color(face.tint, face.tint * 0.72, face.tint * 0.38, 1)
+    -- 正面朝向相机（Z-）最亮，其余面用 FACE_DEFS.tint 压暗；
+    -- 座舱/引擎是发光感部件，给一个最低亮度保证在翼面里跳得出来。
+    local function FaceColor(base, slot, face)
+        local factor = face.tint
+        if slot == "canopy" then factor = math.max(factor, 0.88)
+        elseif slot == "engine" then factor = math.max(factor, 0.74) end
+        return Color(base[1] * factor, base[2] * factor, base[3] * factor, 1)
     end
 
     for _, brick in ipairs(enemy.bricks) do
@@ -259,7 +313,7 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     for _, brick in ipairs(enemy.bricks) do
         if brick.alive then
             local key = tostring(brick.col) .. ":" .. tostring(brick.row)
-            local rgb = {1.0, 0.72, 0.42}
+            local rgb, slot = GetBrickColor(enemy, brick, visualCatalog)
             local cx = (brick.col - 0.5) * pitch
             local cy = -(brick.row - 0.5) * pitch
             local minX, maxX = cx - unit * 0.5, cx + unit * 0.5
@@ -285,8 +339,8 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
                         local z = corner[3] < 0 and frontZ or backZ
                         vertices[i] = Vector3(x, y, z)
                     end
-                    -- 基础色按面朝向因子着色（正面更亮、背面更暗）。
-                    local color = GetFaceColor(face)
+                    -- 每格按机型配色 + 面朝向明暗；座舱/引擎槽位有最低亮度。
+                    local color = FaceColor(rgb, slot, face)
                     EmitVoxelFace(geometry, edgeVertices,
                         vertices[1], vertices[2], vertices[3], vertices[4],
                         face.normal, color, edgeWidth)
@@ -648,6 +702,8 @@ GetVehicleAnchorWorld = function(marble)
 end
 
 local function SyncDebris(presentation)
+    -- 碎片走内置 Box 模型；该资源缺失时直接跳过，禁止让可选碎片拖垮整个 3D 初始化。
+    if not modelBox_ then return end
     local active = {}
     for _, debris in ipairs(presentation.brickDebris) do
         active[debris.id] = true
@@ -679,30 +735,34 @@ GetCrateMaterial = function()
     return voxelMaterial_
 end
 
-local function BuildEjectedBoxGeometry(geometry)
+local function BuildEjectedBoxGeometry(geometry, rgb)
     -- 飞散箱体不再依赖内置 Box.mdl：直接生成闭合六面体，确保节点、尺寸、UV 和法线都可控。
+    -- 顶点色使用该格的机型配色（正面最亮、背面更暗），材质面板纹理只负责金属细节。
+    local base = Color(rgb[1], rgb[2], rgb[3], 1)
+    local front = Color(math.min(1, rgb[1] * 1.0), math.min(1, rgb[2] * 1.0), math.min(1, rgb[3] * 1.0), 1)
+    local back = Color(rgb[1] * 0.55, rgb[2] * 0.55, rgb[3] * 0.55, 1)
+    local side = Color(rgb[1] * 0.78, rgb[2] * 0.78, rgb[3] * 0.78, 1)
     local half = 0.5
     local faces = {
         {Vector3(-half, -half, -half), Vector3(-half, half, -half),
-            Vector3(half, half, -half), Vector3(half, -half, -half), Vector3(0, 0, -1)},
+            Vector3(half, half, -half), Vector3(half, -half, -half), Vector3(0, 0, -1), front},
         {Vector3(half, -half, half), Vector3(half, half, half),
-            Vector3(-half, half, half), Vector3(-half, -half, half), Vector3(0, 0, 1)},
+            Vector3(-half, half, half), Vector3(-half, -half, half), Vector3(0, 0, 1), back},
         {Vector3(-half, -half, half), Vector3(-half, half, half),
-            Vector3(-half, half, -half), Vector3(-half, -half, -half), Vector3(-1, 0, 0)},
+            Vector3(-half, half, -half), Vector3(-half, -half, -half), Vector3(-1, 0, 0), side},
         {Vector3(half, -half, -half), Vector3(half, half, -half),
-            Vector3(half, half, half), Vector3(half, -half, half), Vector3(1, 0, 0)},
+            Vector3(half, half, half), Vector3(half, -half, half), Vector3(1, 0, 0), side},
         {Vector3(-half, half, -half), Vector3(-half, half, half),
-            Vector3(half, half, half), Vector3(half, half, -half), Vector3(0, 1, 0)},
+            Vector3(half, half, half), Vector3(half, half, -half), Vector3(0, 1, 0), side},
         {Vector3(-half, -half, half), Vector3(-half, -half, -half),
-            Vector3(half, -half, -half), Vector3(half, -half, half), Vector3(0, -1, 0)},
+            Vector3(half, -half, -half), Vector3(half, -half, half), Vector3(0, -1, 0), side},
     }
     geometry:Clear()
     geometry:SetNumGeometries(1)
     geometry:SetDynamic(false)
     geometry:BeginGeometry(0, TRIANGLE_LIST)
     for _, face in ipairs(faces) do
-        EmitQuad(geometry, face[1], face[2], face[3], face[4], face[5],
-            Color(1, 1, 1, 1), 1.0)
+        EmitQuad(geometry, face[1], face[2], face[3], face[4], face[5], face[6] or base, 1.0)
     end
     geometry:Commit()
     geometry:SetMaterial(0, GetCrateMaterial())
@@ -710,17 +770,29 @@ end
 
 local function SyncEjectedBoxes(presentation)
     local active = {}
-    for i = 1, #(presentation.ejectedBoxes or {}) do
-        local box = presentation.ejectedBoxes[i]
+    local boxes = presentation.ejectedBoxes or {}
+    local visualCatalog = presentation.visualCatalog
+    -- 飞散箱继承所属格的机型配色；VisualCatalog 只在槽位识别时用到原始像素色，
+    -- 因此这里直接用 box 自带原色走同一套映射结果（GetBrickStyle 已含最终颜色）。
+    local function ResolveBoxColor(box)
+        if visualCatalog and visualCatalog.GetBrickStyle then
+            local style = visualCatalog.GetBrickStyle(box.style, box.col, box.row)
+            if style then return {style.r / 255, style.g / 255, style.b / 255} end
+        end
+        return {0.62, 0.68, 0.78}
+    end
+    -- 渲染侧节点预算双保险：即使表现层快照异常堆积，也不允许无限创建 CustomGeometry 节点。
+    local MAX_RENDERED_BOXES = 28
+    for i = 1, math.min(#boxes, MAX_RENDERED_BOXES) do
+        local box = boxes[i]
         active[box.id] = true
         local node = ejectedBoxNodes_[box.id]
         if not node then
             node = scene_:CreateChild("EjectedCrate_" .. tostring(box.id))
             local geometry = node:CreateComponent("CustomGeometry")
             geometry.castShadows = false
-            BuildEjectedBoxGeometry(geometry)
+            BuildEjectedBoxGeometry(geometry, ResolveBoxColor(box))
             ejectedBoxNodes_[box.id] = node
-            print("[Renderer3D] created visible ejected crate id=" .. tostring(box.id))
         end
         -- 独立箱体始终放在敌体朝向相机的一侧，避免主体网格遮挡刚脱离的第一帧。
         node.position = GameToWorld(box.x, box.y, VOXEL_FRONT_OFFSET - 0.24 + box.z * WORLD_SCALE)
@@ -755,15 +827,17 @@ local function CreateWhiteTexture()
 end
 
 local function CreateCrateMaterial()
+    -- 必须使用 DiffVCol：敌机与飞散箱的机型配色走顶点色，
+    -- 普通 Diff 不消费顶点色，会导致金属纹理把整机盖成灰白。
     local material = Material:new()
-    local technique = cache:GetResource("Technique", "Techniques/Diff.xml")
+    local technique = cache:GetResource("Technique", "Techniques/DiffVCol.xml")
+        or cache:GetResource("Technique", "Techniques/Diff.xml")
     material:SetTechnique(0, technique)
     material:SetTexture(TU_DIFFUSE, crateTexture_ or CreateWhiteTexture())
     material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
     material:SetCullMode(CULL_NONE)
     return material
 end
-
 function Renderer3D.Init(scene)
     scene_ = scene
     lastRenderElapsed_ = nil
@@ -775,15 +849,14 @@ function Renderer3D.Init(scene)
     voxelMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
     voxelMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
 
-    crateTexture_ = cache:GetResource("Texture2D", "image/crate.png")
+    -- v0.10.9：程序化金属面板纹理，无外部资源依赖，顶点色按机型染色。
+    crateTexture_ = CreateMetalPanelTexture()
     crateMaterial_ = CreateCrateMaterial()
-    if crateTexture_ then
-        print("[Renderer3D] crate texture loaded")
-    else
-        print("[Renderer3D] crate texture unavailable, using white fallback")
-    end
+    print("[Renderer3D] procedural aircraft panel texture ready")
 
-    local initialized = modelBox_ ~= nil and voxelMaterial_ ~= nil and crateMaterial_ ~= nil
+    -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
+    -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
+    local initialized = voxelMaterial_ ~= nil and crateMaterial_ ~= nil
     initialized_ = initialized
     print("[Renderer3D] initialized, aircraft_crates=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
     return initialized_

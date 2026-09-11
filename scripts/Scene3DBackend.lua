@@ -25,8 +25,6 @@ local dangerBandMaterial_ = nil
 local skyNode_ = nil
 local starNode_ = nil
 local starFields_ = {}
--- P11：词条图标纹理（程序化生成于 assets/Icons），激活时于 HUD 左下展示。
-local wordIconTex_ = {}
 local CleanupFailedInit
 local ReleaseScene
 local vg_ = nil
@@ -302,6 +300,9 @@ local function CreateDangerBand()
 end
 
 -- 世界反弹边缘：左右上三边作为可见的边界框，渲染在背景层之后、玩法物体之前。
+-- 顶部反弹边位置必须与 Game.lua 的 TOP_BOUND_Y 一致：v0.10.10 取 0 与 -270 的均值 -135，
+-- 投影到设计坐标约 y≈105（HUD 下方），载具飞到战场顶部即反弹；左右边仍对齐 0 / 540。
+local EDGE_TOP_GAME_Y = -135
 local function CreateWorldEdges()
     local edgeNode = scene_:CreateChild("WorldEdges")
     edgeNode.position = Vector3(0, 0, 1.45)
@@ -311,10 +312,11 @@ local function CreateWorldEdges()
     -- 设计坐标 540x960；边界世界坐标由 WorldFromGame 标定。
     local leftX = (0 - DESIGN_W * 0.5) * 0.018
     local rightX = (DESIGN_W - DESIGN_W * 0.5) * 0.018
-    local topY = (DESIGN_H * 0.5 - 0) * 0.018
+    local topY = (DESIGN_H * 0.5 - EDGE_TOP_GAME_Y) * 0.018
     local bottomY = (DESIGN_H * 0.5 - DESIGN_H) * 0.018
     local fieldW = rightX - leftX
     local fieldH = topY - bottomY
+    local edgeCenterY = (topY + bottomY) * 0.5
     local thickness = 0.05
 
     local function AddEdge(cx, cy, sx, sy)
@@ -327,8 +329,9 @@ local function CreateWorldEdges()
         model.castShadows = false
     end
 
-    AddEdge(leftX + thickness * 0.5, 0, thickness, fieldH)
-    AddEdge(rightX - thickness * 0.5, 0, thickness, fieldH)
+    -- 左右边线一直延伸到屏幕外的顶边，战场看起来向上延伸出画面。
+    AddEdge(leftX + thickness * 0.5, edgeCenterY, thickness, fieldH)
+    AddEdge(rightX - thickness * 0.5, edgeCenterY, thickness, fieldH)
     AddEdge(0, topY - thickness * 0.5, fieldW, thickness)
 end
 
@@ -507,6 +510,52 @@ local function DrawPixelText(ctx, x, y, text, size, color, align)
     nvgText(ctx, x, y, text, nil)
 end
 
+-- 中文/ASCII 混排自动换行：按像素宽度贪心折行，返回行数。
+-- 用 nvgTextBounds 实测宽度，避免按固定字数硬切。align: center 时按行居中。
+local function WrapTextLines(ctx, text, size, maxWidth)
+    local lines = {}
+    local line = ""
+    nvgFontFace(ctx, "zpix")
+    nvgFontSize(ctx, size)
+    -- 调用方处于 CONTAIN 缩放（高分屏 scale 可为 2/3）后的 transform 下，
+    -- 测量期间临时重置 transform，保证按设计空间宽度折行。
+    nvgSave(ctx)
+    nvgResetTransform(ctx)
+    local function widthOf(s)
+        -- 绑定返回 (advance, boundsTable)：bounds = {minx,miny,maxx,maxy}，
+        -- 不能按 C API 的多返回值解构（旧写法恒为 nil 导致 fallback 按字节数计宽）。
+        local _, bounds = nvgTextBounds(ctx, 0, 0, s, nil)
+        if bounds and bounds[1] and bounds[3] then
+            return bounds[3] - bounds[1]
+        end
+        -- fallback：按 UTF-8 字符数（非字节数）估计等宽像素字宽。
+        return (utf8.len(s) or #s) * size
+    end
+    -- 逐字符遍历（兼容 UTF-8 中文字节）
+    local i = 1
+    while i <= #text do
+        local b = string.byte(text, i)
+        local step = 1
+        if b >= 0xF0 then step = 4 elseif b >= 0xE0 then step = 3
+        elseif b >= 0xC0 then step = 2 end
+        local ch = text:sub(i, i + step - 1)
+        local candidate = line .. ch
+        if ch == "\n" then
+            lines[#lines + 1] = line
+            line = ""
+        elseif widthOf(candidate) > maxWidth and #line > 0 then
+            lines[#lines + 1] = line
+            line = ch
+        else
+            line = candidate
+        end
+        i = i + step
+    end
+    nvgRestore(ctx)
+    if #line > 0 then lines[#lines + 1] = line end
+    return lines
+end
+
 local function DrawAstroonBackdrop(ctx, x, y, width, height)
     local gradient = nvgLinearGradient(ctx, x, y, x, y + height,
         nvgRGBA(26, 17, 64, 255), nvgRGBA(45, 27, 105, 255))
@@ -634,6 +683,36 @@ local function DrawAmmoSlots(ctx, game, presentation)
         nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], selected and 255 or 125))
         nvgFill(ctx)
     end
+
+    -- v0.10.15：弹夹打空且在飞主弹珠可召回时，Dock 上沿呼吸提示 + 战场底部文字。
+    if game.canRecall then
+        local blink = 0.55 + 0.45 * math.sin((game.elapsed or 0) * 6.0)
+        nvgBeginPath(ctx)
+        nvgRect(ctx, 0, BOTTOM_DOCK_Y - 3, DESIGN_W, 3)
+        nvgFillColor(ctx, nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 120 + math.floor(120 * blink)))
+        nvgFill(ctx)
+        DrawBluePanel(ctx, DESIGN_W * 0.5 - 120, BOTTOM_DOCK_Y - 34, 240, 26,
+            {16, 30, 74, 235}, {UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 220}, 6)
+        DrawPixelText(ctx, DESIGN_W * 0.5, BOTTOM_DOCK_Y - 27,
+            "点击战场  召回载具  //  TAP TO RECALL", 10, UI_CYAN,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
+    -- 召回触发瞬间：Dock 顶沿横向扫光（脉冲由 Presentation 维护，约 0.55s 衰减）。
+    local pulse = presentation.recallPulse or 0
+    if pulse > 0 then
+        local sweepX = DESIGN_W * (1 - pulse)
+        nvgSave(ctx)
+        nvgIntersectScissor(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y)
+        local grad = nvgLinearGradient(ctx, sweepX - 130, 0, sweepX + 130, 0,
+            nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 0),
+            nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], math.floor(140 * pulse)))
+        nvgBeginPath(ctx)
+        nvgRect(ctx, sweepX - 130, BOTTOM_DOCK_Y, 260, DESIGN_H - BOTTOM_DOCK_Y)
+        nvgFillPaint(ctx, grad)
+        nvgFill(ctx)
+        nvgRestore(ctx)
+    end
 end
 
 local function DrawLetterboxBackground(ctx, width, height)
@@ -746,22 +825,27 @@ local function DrawHud(ctx, game)
     local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
     DrawPixelText(ctx, 12, 76, string.format("LV %02d", game.playerLevel), 7, UI_GOLD)
     DrawPixelBar(ctx, 52, 78, 220, 5, xpRatio, UI_BLUE)
-    DrawPixelText(ctx, 282, 76, string.format("XP %d/%d", game.xp or 0, game.xpToNext or 0), 7, ACID.muted)
+    DrawPixelText(ctx, 282, 76,
+        string.format("XP %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 7, ACID.muted)
 
     local words = game.activeWords or {}
+    -- 词条徽标：NanoVG 程序化绘制（不依赖外部 PNG），每个词条一个高亮方块 + 汉字。
+    local WORD_BADGE = {
+        pierce = {label = "贯", color = {255, 213, 79}},
+        chain = {label = "链", color = {120, 224, 168}},
+        momentum = {label = "量", color = {255, 138, 101}},
+    }
     local iconSize = 24
     local iconX = game.width - 12 - #words * (iconSize + 5)
     local iconY = 64
     for i, wordId in ipairs(words) do
-        local tex = wordIconTex_[wordId]
+        local badge = WORD_BADGE[wordId]
         local ix = iconX + (i - 1) * (iconSize + 5)
-        if tex then
-            nvgBeginPath(ctx)
-            nvgRect(ctx, ix, iconY, iconSize, iconSize)
-            nvgFillPaint(ctx, nvgImagePattern(ctx, ix, iconY, iconSize, iconSize, 0, tex, 1))
-            nvgFill(ctx)
-        else
-            DrawTechPanel(ctx, ix, iconY, iconSize, iconSize, UI_BLUE_DARK, UI_COLD)
+        local bc = badge and badge.color or UI_COLD
+        DrawTechPanel(ctx, ix, iconY, iconSize, iconSize, UI_BLUE_DARK, bc)
+        if badge then
+            DrawPixelText(ctx, ix + iconSize * 0.5, iconY + 5, badge.label, 13, bc,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
     end
 
@@ -781,7 +865,7 @@ local function DrawMenu(ctx, game)
     DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.9.2", 8, UI_BLUE,
+    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.15", 8, UI_BLUE,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
 
@@ -865,53 +949,97 @@ local function DrawGameOver(ctx, game)
     nvgRestore(ctx)
 end
 
+local UPGRADE_RARITY = {
+    common = {tag = "标准", color = {120, 200, 245}},
+    rare = {tag = "稀有", color = {255, 213, 79}},
+    epic = {tag = "史诗", color = {214, 130, 255}},
+}
+
 local function GetUpgradeCardLayout(game)
-    local cardW = 156
-    local cardH = 214
+    -- v0.10.14：540 宽内三卡 + 两间距，两侧各留 10px 安全边距。
+    -- 与 main.lua:TryPickUpgradeAt 的命中常量必须保持一致。
+    local cardW = 168
+    local cardH = 300
     local gap = 8
     local totalW = 3 * cardW + 2 * gap
     local startX = game.width * 0.5 - totalW * 0.5 + cardW * 0.5
-    local cy = 478
+    local cy = 470
     return cardW, cardH, gap, startX, cy
 end
+
+-- 卡片序号圆点渲染在 DrawUpgradeCard 内。
 
 local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local x = cx - cardW * 0.5
     local y = cy - cardH * 0.5
-    local cardColor = (choice.rarity == "rare" or choice.rarity == "epic") and UI_GOLD or UI_CYAN
+    local rare = UPGRADE_RARITY[choice.rarity] or UPGRADE_RARITY.common
+    local accent = rare.color
     local titleColor = UI_WHITE
-    DrawBluePanel(ctx, x, y, cardW, cardH, UI_SURFACE, cardColor, 10)
+    DrawBluePanel(ctx, x, y, cardW, cardH, UI_SURFACE, accent, 12)
 
+    -- 顶部强调条 + 序号圆点。
     nvgBeginPath(ctx)
-    nvgRect(ctx, x, y, cardW, 8)
-    nvgFillColor(ctx, nvgRGBA(cardColor[1], cardColor[2], cardColor[3], 255))
+    nvgRect(ctx, x + 10, y, cardW - 20, 6)
+    nvgFillColor(ctx, nvgRGBA(accent[1], accent[2], accent[3], 255))
     nvgFill(ctx)
-    DrawPixelText(ctx, x + 12, y + 20, string.format("0%d", index), 10, cardColor)
-    local rarityTag = choice.rarity == "rare" and "RARE" or (choice.rarity == "epic" and "EPIC" or "STANDARD")
-    DrawPixelText(ctx, x + cardW - 12, y + 21, rarityTag, 7, cardColor,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-
-    DrawPixelText(ctx, x + cardW * 0.5, y + 50, choice.name or "强化协议", 16, titleColor,
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, x + cardW - 22, y + 30, 13)
+    nvgFillColor(ctx, nvgRGBA(UI_INK[1], UI_INK[2], UI_INK[3], 235))
+    nvgFill(ctx)
+    nvgStrokeColor(ctx, nvgRGBA(accent[1], accent[2], accent[3], 255))
+    nvgStrokeWidth(ctx, 1.5)
+    nvgStroke(ctx)
+    DrawPixelText(ctx, x + cardW - 22, y + 22, tostring(index), 13, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, x + 18, y + 78, cardW - 36, 5, cardColor)
 
-    local desc = choice.desc or "提升当前火控系统性能"
-    local lines = {}
-    local chunk = 8
-    local start = 1
-    while start <= #desc and #lines < 3 do
-        lines[#lines + 1] = desc:sub(start, start + chunk - 1)
-        start = start + chunk
+    -- 标题：15px 单行（当前天赋名最长 7 个汉字，实测宽度收在卡片内）。
+    DrawPixelText(ctx, x + cardW * 0.5, y + 22, choice.name or "强化协议", 15, titleColor,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    -- 稀有度标签（居中一行）。
+    DrawPixelText(ctx, x + cardW * 0.5, y + 50,
+        (choice.kind == "word" and "词条 · " or "强化 · ") .. rare.tag, 11, rare.color,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    -- 分隔线。
+    DrawSegmentedRule(ctx, x + 16, y + 74, cardW - 32, 6, accent)
+
+    -- 详情：12px 自动换行展示完整效果说明（固定区域内最多 6 行）。
+    local detailLines = WrapTextLines(ctx,
+        choice.detail or choice.desc or "提升当前火控系统性能", 12, cardW - 28)
+    local detailTop = y + 88
+    local detailLineH = 18
+    local maxDetailLines = 6
+    for li = 1, math.min(maxDetailLines, #detailLines) do
+        DrawPixelText(ctx, x + cardW * 0.5, detailTop + (li - 1) * detailLineH,
+            detailLines[li], 12, UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
-    for lineIndex, line in ipairs(lines) do
-    DrawPixelText(ctx, x + cardW * 0.5, y + 94 + (lineIndex - 1) * 16, line, 9, UI_COLD,
+
+    -- 风险/词条说明（抉择型），固定在底部信息区，避免与详情重叠。
+    local footerTop = y + cardH - 80
+    if choice.tradeoff then
+        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 26, {38, 20, 58}, {255, 138, 101})
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 6, "高风险 / 高回报", 11,
+            {255, 168, 130}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    elseif choice.kind == "word" then
+        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 26, {24, 34, 66}, accent)
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 6, "永久词条 · 一次性", 11, accent,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 58, choice.value or "强化", 13, cardColor,
+    -- 增量徽标。
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, x + 16, y + cardH - 46, cardW - 32, 30, 6)
+    nvgFillColor(ctx, nvgRGBA(accent[1], accent[2], accent[3], 38))
+    nvgFill(ctx)
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 38, choice.value or "强化", 13, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 38,
-        choice.tradeoff and "HIGH RISK / HIGH GAIN" or "EQUIP PROTOCOL", 7, UI_BLUE,
+
+    -- 已选层数 / 上限（无上限的维修显示 ∞）。
+    local stacks = choice.stacks or 0
+    local maxText = choice.maxStacks and choice.maxStacks >= 90 and "∞" or tostring(choice.maxStacks or "-")
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 12,
+        "已装配 " .. tostring(stacks) .. " / " .. maxText, 9, ACID.muted,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
@@ -926,13 +1054,13 @@ local function DrawLevelUp(ctx, game)
     DrawDotMatrix(ctx, 28, 152, 10, 7, 14, {61, 214, 232, 28}, 1.3)
     DrawDotMatrix(ctx, 414, 700, 8, 8, 14, {74, 139, 245, 36}, 1.3)
 
-    DrawPixelText(ctx, 24, 112, "SANCTUARY / UPGRADE RITE", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "PAUSED / SELECT ONE", 8, UI_GOLD,
+    DrawPixelText(ctx, 24, 104, "SANCTUARY / UPGRADE RITE", 8, UI_BLUE)
+    DrawPixelText(ctx, game.width - 24, 104, "PAUSED / SELECT ONE", 8, UI_GOLD,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
-    DrawPixelText(ctx, game.width * 0.5, 176, "升级 // 选择强化", 29, UI_BLUE,
+    DrawSegmentedRule(ctx, 24, 124, game.width - 48, 8, UI_BLUE)
+    DrawPixelText(ctx, game.width * 0.5, 150, "升级 // 选择强化", 29, UI_BLUE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 218,
+    DrawPixelText(ctx, game.width * 0.5, 194,
         string.format("LEVEL %02d  /  CHOOSE ONE PROTOCOL", game.playerLevel), 9, UI_INK,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
@@ -951,10 +1079,10 @@ local function DrawLevelUp(ctx, game)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawPixelText(ctx, 24, 758, "CHOOSE ONE  /  GAMEPLAY PAUSED", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 758, "TAP A CARD TO EQUIP", 8, UI_GOLD,
+    DrawPixelText(ctx, 24, 706, "CHOOSE ONE  /  GAMEPLAY PAUSED", 8, UI_BLUE)
+    DrawPixelText(ctx, game.width - 24, 706, "TAP A CARD TO EQUIP", 8, UI_GOLD,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 24, 782, game.width - 48, 4, UI_GOLD)
+    DrawSegmentedRule(ctx, 24, 730, game.width - 48, 4, UI_GOLD)
     nvgRestore(ctx)
 end
 
@@ -1122,21 +1250,6 @@ function Backend.Init(renderHandlerName)
         vg_ = nil
         CleanupFailedInit()
         return false
-    end
-
-    -- P11：加载词条图标（程序化 PNG，路径相对 assets 根），失败不阻断主流程。
-    local wordIconNames = {
-        pierce = "Icons/word_pierce.png",
-        chain = "Icons/word_chain.png",
-        momentum = "Icons/word_momentum.png",
-    }
-    for id, filePath in pairs(wordIconNames) do
-        local tex = nvgCreateImage(vg_, filePath, 0)
-        if tex and tex ~= 0 then
-            wordIconTex_[id] = tex
-        else
-            print("[Scene3DBackend] WARN: missing word icon " .. filePath)
-        end
     end
 
     if not Renderer3D.Init(scene_) then

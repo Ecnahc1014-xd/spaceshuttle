@@ -15,6 +15,8 @@ local brickDebris = {}
 local ejectedBoxes = {}
 local baseImpacts = {}
 local baseBarrierFlash = 0
+-- v0.10.15：召回在飞弹珠时底部 Dock 的扫光脉冲（0..1 衰减）。
+local recallPulse = 0
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,
@@ -43,6 +45,7 @@ local FEEDBACK_MAP = {
     speed_dash = {"dashSpark"},
     giant_pierce_armed = {"pierceArmed"},
     giant_area_hit = {"giantBurst"},
+    marbles_recalled = {"recallPulse"},
     game_reset = {"fullReset"},
 }
 
@@ -125,6 +128,7 @@ local FEEDBACK_HANDLERS = {
         ejectedBoxes = {}
         baseImpacts = {}
         baseBarrierFlash = 0
+        recallPulse = 0
         nextDebrisId = 1
         truckLaunchFlash = {
             normal = 0,
@@ -132,6 +136,12 @@ local FEEDBACK_HANDLERS = {
             speed = 0,
             giant = 0,
         }
+    end,
+    -- v0.10.15：召回触发 Dock 扫光 + 轻微震屏 + 弹弓区粒子，纯表现层反馈。
+    recallPulse = function(event)
+        recallPulse = 1.0
+        screenShake = math.max(screenShake, 0.06)
+        SpawnParticles(270, 872, {90, 200, 255}, 14)
     end,
     waveBanner = function(event)
         waveBannerTimer = 1.8
@@ -171,7 +181,10 @@ local FEEDBACK_HANDLERS = {
         })
         nextDebrisId = nextDebrisId + 1
         SpawnParticles(event.x, event.y, {255, 80, 60}, 24)
-        SpawnFloatText(event.x, event.y - 34, "防线受创!", {255, 110, 80}, 1.05)
+        local dmg = event.damage or 1
+        local rowTag = event.rows and event.rows > 1 and ("x" .. event.rows .. "行 ") or ""
+        SpawnFloatText(event.x, event.y - 34,
+            rowTag .. "防线 -" .. tostring(dmg), {255, 110, 80}, 1.05)
     end,
     launchFlash = function(event)
         truckLaunchFlash[event.ballType] = 0.28
@@ -290,6 +303,9 @@ SpawnEjectedBox = function(event)
 end
 
 -- WO-17：被命中的敌方方块从编队脱离，持续旋转并沿规则层给出的随机向量飞散。
+-- 同屏飞散箱体硬上限：每个箱体是独立 3D 节点 + draw call，超出预算时丢弃最旧对象，
+-- 防止高命中频率下真机 draw call/节点堆积导致帧率归零（表现为 UI 不刷新、画面卡死）。
+local MAX_EJECTED_BOXES = 24
 local function UpdateEjectedBoxes(dt)
     for i = #ejectedBoxes, 1, -1 do
         local box = ejectedBoxes[i]
@@ -307,6 +323,10 @@ local function UpdateEjectedBoxes(dt)
             ejectedBoxes[i] = ejectedBoxes[#ejectedBoxes]
             ejectedBoxes[#ejectedBoxes] = nil
         end
+    end
+    while #ejectedBoxes > MAX_EJECTED_BOXES do
+        ejectedBoxes[1] = ejectedBoxes[#ejectedBoxes]
+        ejectedBoxes[#ejectedBoxes] = nil
     end
 end
 
@@ -359,6 +379,7 @@ function Presentation.Init()
     ejectedBoxes = {}
     baseImpacts = {}
     baseBarrierFlash = 0
+    recallPulse = 0
     nextDebrisId = 1
     -- WO-16/P9：对象池在重开时清空回收对象，避免旧局残留引用（id 已随 nextDebrisId 重置）。
     particlePool = {}
@@ -377,6 +398,7 @@ function Presentation.Update(dt, gameSnapshot, events)
     if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
     if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
     if hitStop > 0 then hitStop = math.max(0, hitStop - dt) end
+    if recallPulse > 0 then recallPulse = math.max(0, recallPulse - dt * 1.8) end
 
     for _, event in ipairs(events) do
         HandleEvent(event)
@@ -403,6 +425,7 @@ function Presentation.GetSnapshot()
         baseImpacts = baseImpacts,
         ejectedBoxes = ejectedBoxes,
         baseBarrierFlash = baseBarrierFlash,
+        recallPulse = recallPulse,
         truckLaunchFlash = truckLaunchFlash,
         visualCatalog = VisualCatalog,
     }

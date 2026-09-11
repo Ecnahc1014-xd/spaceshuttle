@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.6
-简述：540×960 竖屏弹弓载具弹珠 + 肉鸽幸存者循环，采用 46° 正交斜俯视；敌方 occupied cells 以 `VOXEL_DEPTH=2.10` 的更厚箱体表现，正面使用箱体纹理、侧面按面向明暗；命中方块强制置于敌体前侧，以独立闭合 `CustomGeometry` 六面体进行世界 Z 抛射、X/Y/Z 多轴旋转、快速保持完整尺寸和末段缩放淡出；项目不存在的 `Models/Box.mdl` 不再作为飞散箱体依赖；SpawnWave 和移动阶段都执行二维 AABB 防重叠；NanoVG Overlay 每帧重置状态；当前不绘制预瞄线和弹珠尾迹。
-最后巩固：2026-09-08
+当前版本：0.10.15
+简述：540×960 竖屏弹珠；操作体感优化——①全屏任意位置相对拖拽起手（取消底部 160px 限制，grabStart 记按下点、pull=当前-按下，车辆只在 SLING 附近移动不挡视线，ClampPull 保留 MAX_PULL=150 与向下钳制）；②弹夹打空点击战场召回在飞主弹珠（canRecall 快照，recalling 下 vy+1700/s²封顶1150、vx exp 衰减，碰撞照常，回收点从屏幕底提前到 DANGER_Y 进 Dock 即补弹；分裂子球不召回）；③marbles_recalled 事件→Dock 青色扫光/呼吸光带/“点击战场 召回载具”提示。升级卡 168×300 详情自动换行，刷怪 14s/7.5s/首波 2.5s。
+最后巩固：2026-09-11
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -92,6 +92,15 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.15: 操作体感优化。①全屏相对拖拽起手：删除 PointerDown 的 `py < DANGER_Y-100` 底部 160px 限制，新增 grabStartX/Y 记录按下点，GetPullState 改 ClampPull(pull=当前点-按下点)，保留 MAX_PULL=150 与向下钳制 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆仍只在 SLING(270,850) 附近移动，手指在战场任意位置起手都不遮挡车辆。②点击召回：activeBall=nil 且 ballQueue 空且有在飞主弹珠时快照 canRecall=true，PointerDown 触发 RecallMarbles 标记所有 isPrimary 主球 recalling；物理子步进内 recalling 球 vy+=1700·dt（封顶 1150）、vx*=exp(-2.6dt)，碰撞伤害反弹照常；回收判定 `y-radius>DH` 提前为 `>DANGER_Y`（进 Dock 即回库补弹）；分裂子球 isPrimary=false 不召回不补弹。③反馈：FEEDBACK_MAP 增 marbles_recalled→recallPulse（1.0/dt*1.8 衰减+轻震屏+弹弓区粒子），Dock 青色横向扫光（Dock 矩形 scissor），canRecall 常态上沿呼吸光带+“点击战场 召回载具 // TAP TO RECALL”胶囊。LSP 0、build 成功、截图验证全屏拖拽（战场上部起手车辆只在弹弓附近）与召回提示扫光、500 帧自动发射→打空→召回→补弹探针 lua=0。
+- v0.10.14: 升级卡可读性修复 + 刷怪再放慢。根因修复 `WrapTextLines`：UrhoX 绑定的 nvgTextBounds(ctx,x,y,str,nil) 返回 `(advance, boundsTable)`（{minx,miny,maxx,maxy} 数组）而非 C API 多返回值，旧 `minx,_,maxx=` 解构恒为 nil，fallback 按 `#s` 字节数（中文×3）计宽 → 每行只容 4-5 字、大量空白与截断；测量须在 nvgSave/nvgResetTransform/nvgRestore 内进行（避开 CONTAIN scale=2），fallback 改用 utf8.len。卡片布局 168×300/gap8：标题 15px 单行、稀有度 y+50、分隔线 y+74、详情 12px/18 行距/限 6 行、底部标签/徽标/层数三段；删除无引用的 DrawWrappedText。同步 main.lua 命中布局（原 156×214@478 与视觉漂移）为 168/300/8/cy470/HIT_PAD 4。刷怪：基础 11→14s、下限 5.5→7.5s、收紧 0.22→0.18、首波冷却 1.2→2.5s（GetWaveParams 数量曲线不动）。LSP 0、build 成功、强制升级态 GLES 截图确认详情完整折行、300 帧 validate lua=0（仅引擎壳 Vignetting/Skybox 缺资源噪音）。
+- v0.10.13: 升级 UI 大修。天赋池每项新增完整 detail 文案，`GetUpgradeChoices` 透出 detail/kind；Scene3DBackend 新增 `WrapTextLines`/`DrawWrappedText`（nvgTextBounds 实测宽度、UTF-8 按字节步进逐字折行，取代按 8 字硬切）；卡片 162×300 重排：序号圆点+稀有度（标准蓝/稀有金/史诗紫）+类型+7 行详情+抉择风险或词条标签+增量徽标+已装配层数/上限（维修 ∞）；HUD 词条图标去 Icons/*.png 依赖改程序化“贯/链/量”徽标，删除 wordIconTex_ 与 Init 加载。LSP 0、build 成功、强制升级态截图验证三卡、420 帧 lua=0。
+- v0.10.12: 越线扣血改按行结算。越线方块按 brick.row 分组，整行碎裂（复用 EmitBrickShatterFx 发飞箱，新增 ShatterBreachedBrick 不加分/经验）；每帧收集越线行数后只扣一次血 `max(1, ceil(rows*0.5)+lineDamageBonus)`；BALL_TUNING.brickDmg 改为 lineDamageBonus（装甲 -1 / 玻璃大炮 +1 都在整体合计后加），聚合单条 base_hit(damage,rows)，防线飘字显示“xN行 防线 -伤害”。单测：2 行无加成扣 1、+1 加成扣 2；420 帧 lua=0。
+- v0.10.11: 修复屏内非法生成与进场回撤。根因：随机候选 y 仅 -43~-70（侦察机高 168，机身仍在可见顶 -102 之内），且 CreateEnemy 随机 phase 让首帧 x=baseX+sin(phase)*amp 突跳。修复：生成 y 改为 `-102-机高-24` 整机屏外（Boss 同规则），随机候选锁定屏外层只选 X；新敌机 phase=0；逐帧分离在任一方仍屏外时只纵向抬高（overlap>1px 防浮点误推），双方进场后才横移。刷怪间隔再放慢（11s/下限 5.5s）。420 帧探针 illegalSpawn=0、xJumps=0、lua=0。
+- v0.10.10: 刷怪放慢 + 经验曲线重做 + 顶边取中值。刷怪：基础间隔 7→9.5s、下限 2.8→4.5s、收紧 0.35→0.22/波，同屏上限 14→8（每 10 波 +1），单波最多 6→5 架，首波冷却 0.5→1.2s。XP：首升 12→26、成长 1.18→1.26（约两架侦察机首次升级，中期约一架一级）。顶边 `TOP_BOUND_Y` 与 3D `EDGE_TOP_GAME_Y` 从 -270 改为 0 与 -270 的均值 -135（投影 designY≈105，HUD 下方）。LSP 0、build 成功、10s 探针 4 波/2 级（原 7+波/连升）、420 帧 lua=0。
+- v0.10.9: 敌机太空战机化。VisualCatalog 把像素原色归类为 canopy/engine/hullMain/hullDark 四槽位（座舱 b-r≥55 且 g≥100，避免灰蓝装甲误判），每类敌机一套配色（侦察青蓝/强袭红橙/飞碟黄绿/截击品紫）；Renderer3D 箱体材质由木箱图换成程序化金属铆钉面板纹理并改用 `DiffVCol`（普通 Diff 不吃顶点色导致整机灰白），座舱/引擎槽位最低亮度，飞散箱继承所属格配色；修复同一升级面板出现重复同名天赋（chosenThisRoll 去重）。LSP 0、build 成功、自动战斗 420 帧 lua=0。待办：用户报“选完天赋后概率异常”，需补截图确认现象。
+- v0.10.8: 顶部反弹边外移+机群防重叠重做+修 HUD 浮点格式化。规则层新增 `TOP_BOUND_Y=-270`（投影下 designY=0 约对应 gameY=-240），载具飞出画布顶才反弹；3D 顶边移到屏外、左右边线上延闭合，左右仍 0/540。生成候选 `FleetPositionOccupied` 同时检查本批次与场上存活机（含 Boss），fallback 逐层抬高+均匀 X 槽；逐帧 `ResolveFleetOverlaps` 在全机摆动/下移后跑 8 轮全对全 AABB（水平对称让位/碰墙单向推、垂直只抬高不下压），统一钳边界回写 baseX。修 `DrawHud` 的 `XP %d` 在 xpMul=1.2 浮点时抛错中断 HUD 绘制（math.floor）。LSP 0、build 成功、隔离自动战斗 420 帧 lua=0/零穿插，截图确认顶边出屏。
+- v0.10.7: 修复真机“2D UI 消失 + 游戏卡死”致命链。根因是 `Renderer3D.Init` 把项目内不存在的可选资源 `Models/Box.mdl` 纳入初始化成功条件，真机/裁剪构建一旦缺失会让 `Backend.Init=false → Start() 提前 return`，从而不订阅 Update/NanoVGRender/输入。修复：初始化成功只取决于必需材质；`SyncDebris` 在无 Box 模型时直接跳过；飞散箱已是程序化六面体不依赖该模型。飞散箱在表现层 `MAX_EJECTED_BOXES=24`、渲染层 `MAX_RENDERED_BOXES=28` 各设同屏节点预算，防止高命中频率 draw call/节点堆积拖死帧率；清理逐对象 print。LSP 0 Error、官方 build 成功、正式菜单截图完整、隔离自动战斗 420 帧真实渲染 `lua_errors=0` 且 `scene_stalled=false`。
 - v0.10.6: 修复敌方箱体飞散不可见的实际根因：项目中不存在 `Models/Box.mdl`，飞散节点改为独立闭合 `CustomGeometry` 六面体并复用箱体纹理材质；保留前侧深度偏移、世界 Z 抛射、多轴旋转、首段完整尺寸和末段缩放淡出。修正 `GainXp` 前置声明槽赋值以支持隔离命中探针；正式 `main.lua` 清除自动测试注入，菜单 2D UI 真实截图恢复；隔离运行态序列确认敌机、箱体和底部 UI 可见，LSP MCP 超时，官方 build 成功。
 - v0.9.4: 修复 3D 渲染失灵根因：NanoVG 从整屏不透明背景改为仅填充 CONTAIN 画布外 letterbox，保护 3D Viewport；`Backend.Render` 保持 `Renderer3D.Render` → `RenderOverlay`；修复主循环更新前快照滞后、升级点击使用错误玩法逆投影、跨画布释放残留瞄准状态、升级/游戏结束同帧继续推进以及升级同帧 XP 丢失；新增 `deferredXp` 原值缓冲；全页面统一 Astroon 深蓝紫渐变、紫色 surface、蓝/青强调、白字与金色焦点。LSP 0 Error、官方 build 成功、菜单态 GLES 截图成功；战斗态探针受沙箱落盘限制未完成，代码级确认渲染顺序和 Viewport 合成。
 - v0.9.3: 按实机截图反馈重构 UI 信息架构：playing 态改为顶部 92px 战术仪表盘、中央战场、底部 94px 火控舱；修复画布外大块黑边；首页改为 Laterano 蓝白高对比视觉，增加主 CTA、任务参数块、半调点阵与分段规则线；升级模态改为可读的三张 156×214 蓝白强化卡，点击命中同步 `main.lua` 的 cardW/cardH/gap/cy；保持玩法规则、46° 正交投影和 540×960 9:16 CONTAIN 不变。LSP 0 Error、官方 build 成功、GLES 首页截图确认，运行时 `lua_errors=0`，环境资源错误与 llvmpipe 帧尖峰已记录。
