@@ -3,6 +3,17 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.10.21
+- 进度（粒子重做：烟雾+三角碎片+小火花，点击轻反馈）：把原来"不透明、纯色、大小一致的方块粒子"换成三类**小而稀疏、偶尔点缀**的柔和粒子，全部程序生成纹理无外部资源：
+  - **spark 小火花**：暖白软圆（烘焙色 1.0/0.92/0.62），短促收缩；击毁 3 粒、普通命中 50% 概率 1 粒（不再必出）。
+  - **shard 三角碎片**：浅金属米色等腰三角（烘焙色 0.95/0.82/0.52），受重力、持续自旋（Presentation p.angle/p.spin → billboard.rotation），末 35% 收缩；击毁固定 2 片。
+  - **smoke 烟雾**：灰蓝软圆（烘焙 rgb≈.72-.80、中心 alpha .5 边缘 0），上飘减速无重力、持续膨胀、半透明；击毁 35% 概率 1 缕、发射 25%、防线/巨型贯穿少量。
+  - **点击发射反馈**：launchFlash 从 8 粒降为 2 粒随弹种颜色小火花 + 25% 一缕烟，轻度不刷屏。各事件粒子量整体下调（防线 24→10、分裂 16→5、追击 10/8→3/2、贯穿 16→5、巨型 32→≤8）。
+  - Presentation.SpawnParticles(x,y,color,count,kind) 加 kind（默认 spark），UpdateParticles 按 kind 分运动；粒子对象池沿用，新增 p.kind/p.angle/p.spin。Renderer3D 从单 BillboardSet 改为**三个独立 BillboardSet**（particleSets_.spark/shard/smoke，槽 64/40/28，z=-0.95），各自绑定彩色程序纹理 + **Techniques/DiffAlpha**，SyncParticles 按 p.kind 分流；淡出统一靠末段尺寸收缩而非顶点 alpha。
+  - ⚠️**关键显色坑（v0.10.21 实测，覆盖 v0.10.18 结论的一部分）**：透明粒子要"彩色+软边/异形"时，**DiffVCol 不透明会忽略纹理 alpha（软圆/三角显示成方块）；DiffVColAdd 读顶点色但也忽略纹理 alpha；DiffAlpha 读纹理 alpha 但不读 billboard 顶点 rgb（顶点色只影响 alpha/开关）**。唯一可行：**颜色烘焙进程序纹理 + DiffAlpha**，顶点色保持白。需要彩色透明软粒子就按此，不要指望 DiffVCol+alpha 纹理。三角纹理因 Billboard UV 的 V 翻转，生成时要把形状沿 y 反向画才能正向显示。
+- 上次交付: v0.10.21 烟雾/三角碎片/小火花三类柔和粒子 + 点击轻反馈（DiffAlpha 烘焙纹理）
+
+## 历史
 - 版本: 0.10.20
 - 进度（敌机扩到 8 种）：在原 4 型（scout青/striker红/bomber黄绿飞碟/interceptor紫精英=Boss）上新增 4 型，**外观轮廓与色相、运动性格都分化**：dart 金黄后掠翼尖头飞镖（11×9，最快 speedMul1.22/descent1.28/swayFreq1.35，wave2）、hive 橙色蜂群小机（9×7 最小，speed1.12/swayFreq1.6，wave4）、manta 翡翠绿宽翼鳐鱼（14×8 最宽，大横摆 swayAmp36，wave5）、cruiser 钢灰重装盒（13×9 装甲最密，最慢 descent0.68，wave8）。AircraftPixelData 新增 `bitmapToData(rows)` 位图转换器（字符 M=hullMain/d=hullDark/C=canopy/E=engine，映射到 ClassifySlot 能识别的像素 RGB；新机型用 ASCII 位图而非手写 entry 串），M.behavior 加四型；VisualCatalog.AIRCRAFT_PALETTES 加四套色相。Game 把硬编码 4 型解锁改为 **WAVE_ROSTER 门槛表**（scout1/dart2/striker3/hive4/manta5/bomber7/cruiser8/interceptor9，GetAvailableTypes 遍历过滤）。渲染完全 data 驱动无需改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏截图确认轮廓配色。
 - 上次交付: v0.10.20 敌机 4→8 种（位图转换器+四新机型+WAVE_ROSTER）
@@ -32,7 +43,8 @@
 - 敌机扩展契约（v0.10.20）：敌机=像素网格砖块（AircraftPixelData.M.xxx：hp/score/speedMul/gridW/gridH/data）+ behavior 表（swayAmp/swayFreq/descentMul/agility/accent）+ VisualCatalog.AIRCRAFT_PALETTES 一套四槽位色（hullMain/hullDark/canopy/engine）+ WAVE_ROSTER 一行解锁门槛，四处齐全且 key 一致；渲染完全 data 驱动（CreateEnemy 解析 data、Renderer3D 用 GetBrickStyle 按 col/row 取色），加新机**不改 Renderer3D**。新轮廓优先用 `bitmapToData`（M/d/C/E 字符位图），字符颜色必须落在 ClassifySlot 阈值内（canopy: b-r≥55且g≥100；engine: 亮度<80；hullMain: r-b≥18；其余 hullDark）。机型差异要同时体现在轮廓（gridW/H、剪影）+ 色相（调色板）+ 运动性格（behavior）三方面。验证新机用"屏幕内两列冻结排开全部机型"截图。Boss 仍复用 interceptor key。
 - 辅助瞄准线契约（v0.10.19）：规则层 ComputeAimLine 只在 aiming 且 activeBall 且 pull 长>15 死区时返回射线，方向=-pull 归一化（必须与 LaunchMarble 的 vx,vy 完全同源），终点为射线与左(0+r)/右(DW-r)/顶(TOP_BOUND_Y+r) 三边的最近正 t（底边不参与，发射向上），s.aimLine=nil 即不显示；渲染层只读 {x1,y1,x2,y2} 画线，禁止在渲染层算弹道，且只画一条直线不做反弹预测（用户明确只要一条直线）。
 - ⚠️ 引擎显色契约（v0.10.19 实测）：游戏场景（有 Zone 环境光/雾）里**动态 CustomGeometry 的 DefineColor 顶点色不生效**，NoTextureUnlit 的 MatDiffColor、NoTextureVCol、DiffVCol 无纹理在细/斜几何上都恒显灰白（独立空场景探针显色正常、游戏场景失效，纯红也灰白）；只有 **BillboardSet + 1px 白纹理 + DiffVCol + billboard.color** 稳定按顶点色显示（碰撞火花、瞄准线均走此路径）。要在 3D 里画彩色辅助线/特效，用沿路径排布 billboard，不要再尝试 CustomGeometry 顶点色。正交相机下 billboard z 取靠近相机的固定值（瞄准线 -6、火花 -0.95）不改变屏幕 XY 投影，只控制遮挡/雾。
-- 碰撞粒子契约（v0.10.18）：碰撞火花必须在当前 3D 后端可见——Presentation.particles 是引擎无关的瞬时状态（设计坐标 x/y/vx/vy/life/maxLife/size/rgb，带对象池），Renderer3D 用**单个 BillboardSet** 消费（禁止每粒子建节点）：固定 PARTICLE_SLOTS=96 槽、relative=false、白 1px 纹理 + DiffVCol（每粒子 billboard.color 顶点色），位置 GameToWorld(p.x,p.y,z=-0.95)（浮在敌机体素/飞散箱相机侧），worldSize≈p.size·WORLD_SCALE·3.4·(0.45+0.55·lifeT) 且有最小值，alpha 前段全亮后段淡出，超槽丢弃、空槽 enabled=false，每帧 Commit；Init 建/Shutdown 释放。新增表现粒子只在 Presentation.SpawnParticles 加，渲染层自动消费，禁止在规则层或每粒子建 draw call。验证 billboard 要先做"游戏场景内固定大色块"探针（独立场景可见≠游戏相机/光照下可见）。
+- 碰撞粒子契约（v0.10.21 最新，取代 v0.10.18 单集不透明方块方案）：粒子分 spark 暖白软圆/shard 金属三角自旋/smoke 灰软圆膨胀三 kind，**小而稀疏、偶尔点缀**。Presentation.SpawnParticles(x,y,rgb,count,kind) 生成（对象池、p.kind/p.angle/p.spin），UpdateParticles 按 kind 分运动（shard 重力+自旋、smoke 上飘减速膨胀无重力、spark 重力短促）；Renderer3D 用**三个 BillboardSet**（particleSets_.spark/shard/smoke，槽 64/40/28、relative=false、z=-0.95）按 p.kind 分流，空槽 enabled=false 每帧 Commit。击毁=3 spark+2 shard+35%一缕烟，普通命中 50% 概率 1 spark；新增粒子只在表现层加，禁止规则层/每粒子建 draw call。
+- ⚠️ 透明软粒子显色契约（v0.10.21 实测）：要"彩色+软边/异形+半透明"billboard，颜色必须**烘焙进程序纹理 + Techniques/DiffAlpha.xml**。DiffVCol/DiffVColAdd 忽略纹理 alpha（软圆/三角显示成方块）；DiffAlpha 读纹理 alpha 但不读 billboard 顶点 rgb（白纹+顶点色不染色，顶点色只影响 alpha/开关）。做法：CreateSoftCircleTexture(r,g,b,centerA,edgeA)/CreateTriangleTexture(r,g,b) 生成带颜色+渐变 alpha 的 Image→Texture2D，材质 DiffAlpha+该纹理，billboard.color 保持白、淡出靠末段尺寸收缩。三角因 Billboard UV 的 V 翻转要在图像里沿 y 反向画才正向。不透明彩色体素仍用 DiffVCol+顶点色（见 v0.10.9 顶点色材质契约）；按是否需要透明软边二选一。
 - 全屏拖拽契约（v0.10.15 保留，v0.10.17 召回删除后仍有效）：PointerDown 仅在 playing 态且 activeBall 存在时起手（空仓直接 return，等球自然回库），任意战场坐标记录 grabStart(grabStartX/Y)，拉弓量 = 当前点 - 按下点，经 `ClampPull` 钳 MAX_PULL=150 与向下 PULL_MAX_DOWN_DY=DH-SLING_Y-20；待发车辆只在 SLING(270,850)+pull 附近移动，禁止让车辆跳到手指位置；15px 死区松手归位。
 - ⛔ 召回机制已废弃（v0.10.15 引入→v0.10.17 整体删除）：用户判定多余——球本来就会自然回落补弹；召回会误触吞输出、逻辑复杂且与快速发射冲突。禁止恢复 RecallMarbles/recalling/queuedLaunch/canRecall/marbles_recalled/recall_fire_queued/recallPulse/Dock 召回提示扫光。空窗问题靠“回收点提前到防线 + 自然回落”解决，不要再加主动召回类机制。
 - 回收线契约（v0.10.17 根因修复）：回收判定必须是 `marble.vy > 0 且 marble.y - marble.radius > DANGER_Y(900)`，两个条件缺一不可。DANGER_Y 在弹弓发射位 y=850 之上仅 50px，而向下拉满待发车可到 y≈940、巨型车半径 30——只判位置会让球一发射（出生点已在线下、还没向上走）就被回收，表现为“射不出去”；vy>0 保证只回收回落的球。

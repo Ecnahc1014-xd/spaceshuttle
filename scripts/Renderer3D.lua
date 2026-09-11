@@ -37,20 +37,19 @@ local enemyMeshes_ = {}
 local vehicleRecords_ = {}
 local debrisNodes_ = {}
 local ejectedBoxNodes_ = {}
-local particleNode_ = nil
-local particleSet_ = nil
-local particleMaterial_ = nil
+local particleSets_ = nil    -- {spark=..., shard=..., smoke=...}
+local particleMaterials_ = nil
+local particleNodes_ = nil
 local aimLineSet_ = nil
 local aimLineNode_ = nil
 local aimLineMaterial_ = nil
 local lastRenderElapsed_ = nil
 local initialized_ = false
 
--- v0.10.18：碰撞火花用单个 BillboardSet 批次渲染（所有粒子共享一个 draw call）。
--- 固定槽位复用，超出预算丢弃，禁止按粒子创建节点。
-local PARTICLE_SLOTS = 96
+-- v0.10.21：粒子分三类，各用一个 BillboardSet（每类独立槽位预算，共 3 draw call）。
+-- spark/shard/smoke 都是小而稀疏的点缀；软圆与三角纹理程序化生成。
+local PARTICLE_SLOTS = { spark = 64, shard = 40, smoke = 28 }
 local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
-local PARTICLE_SCALE = 3.4       -- 设计像素尺寸 → 世界米的放大（火花小而亮）
 
 local BALL_COLORS = {
     normal = {1.00, 0.72, 0.12},
@@ -828,31 +827,94 @@ local function SyncEjectedBoxes(presentation)
     end
 end
 
--- v0.10.18：碰撞火花。Presentation 的粒子是设计空间的迸发点（含速度/生命/颜色），
--- 同步为世界空间 billboard；一个 BillboardSet 承载全部槽位，只占一个 draw call。
-local function SyncParticles(presentation)
-    if not particleSet_ then return end
-    local particles = presentation.particles or {}
-    local count = math.min(#particles, PARTICLE_SLOTS)
-    for i = 1, PARTICLE_SLOTS do
-        local bb = particleSet_:GetBillboard(i - 1)
-        local p = particles[i]
-        if p and i <= count then
-            bb.enabled = true
-            bb.position = GameToWorld(p.x, p.y, PARTICLE_FRONT_Z)
-            -- 火花尺寸：初始更大，并随生命周期收缩，保证命中瞬间醒目。
-            local lifeT = math.max(0, math.min(1, p.life / p.maxLife))
-            local sizeT = 0.45 + 0.55 * lifeT
-            local worldSize = math.max(0.05, p.size * WORLD_SCALE * PARTICLE_SCALE * sizeT)
-            bb.size = Vector2(worldSize, worldSize)
-            -- 前 35% 生命保持全亮，之后平滑淡出。
-            local alpha = math.max(0, math.min(1, (lifeT - 0.0) / 0.65))
-            bb.color = Color(p.r / 255, p.g / 255, p.b / 255, alpha)
-        else
-            bb.enabled = false
+-- v0.10.21：软圆/三角程序纹理（无外部资源）。
+-- ⚠️实测 DiffAlpha 透明技术不读 billboard 顶点 rgb，颜色必须烘焙进纹理；
+-- 顶点色只用于 enabled/alpha，淡出统一靠末段尺寸收缩（见 SyncParticles）。
+local function CreateSoftCircleTexture(r, g, b, centerA, edgeA)
+    local N = 32
+    local image = Image()
+    image:SetSize(N, N, 4)
+    local c = (N - 1) * 0.5
+    centerA = centerA or 1
+    edgeA = edgeA or 0
+    for y = 0, N - 1 do
+        for x = 0, N - 1 do
+            local d = math.sqrt((x - c) ^ 2 + (y - c) ^ 2) / c
+            local t = math.max(0, math.min(1, math.max(0, (d - 0.45)) / 0.55))
+            local a = centerA + (edgeA - centerA) * t
+            a = math.max(0, math.min(1, a))
+            image:SetPixel(x, y, Color(r, g, b, a))
         end
     end
-    particleSet_:Commit()
+    local tex = Texture2D:new()
+    tex:SetData(image, false)
+    tex:SetSRGB(true)
+    return tex
+end
+
+local function CreateTriangleTexture(r, g, b)
+    local N = 32
+    local image = Image()
+    image:SetSize(N, N, 4)
+    for y = 0, N - 1 do
+        for x = 0, N - 1 do
+            local nx = (x / (N - 1)) * 2 - 1
+            -- Billboard UV 的 V 轴相对图像 y 翻转，这里在图像里画“尖朝下”，
+            -- 实际 billboard 上即尖朝上。
+            local ny = -((y / (N - 1)) * 2 - 1)
+            local halfW = 0.72 * (0.7 - ny) / (0.7 + 0.8)
+            local inside = (ny <= 0.7 and ny >= -0.8 and math.abs(nx) <= halfW)
+            image:SetPixel(x, y, Color(r, g, b, inside and 1.0 or 0.0))
+        end
+    end
+    local tex = Texture2D:new()
+    tex:SetData(image, false)
+    tex:SetSRGB(true)
+    return tex
+end
+
+-- v0.10.21：粒子按 kind 分到三个 BillboardSet（spark 暖白软圆 / shard 浅金属
+-- 三角自旋 / smoke 灰软圆膨胀）。颜色已烘焙进 DiffAlpha 纹理，淡出走末段尺寸收缩。
+local function SyncParticles(presentation)
+    if not particleSets_ then return end
+    local used = { spark = 0, shard = 0, smoke = 0 }
+    for _, p in ipairs(presentation.particles or {}) do
+        local kind = (p.kind == "shard" or p.kind == "smoke") and p.kind or "spark"
+        local slots = PARTICLE_SLOTS[kind]
+        if used[kind] < slots then
+            used[kind] = used[kind] + 1
+            local bb = particleSets_[kind]:GetBillboard(used[kind] - 1)
+            bb.enabled = true
+            bb.position = GameToWorld(p.x, p.y, PARTICLE_FRONT_Z)
+            local lifeT = math.max(0, math.min(1, p.life / p.maxLife))
+            local worldSize
+            if kind == "smoke" then
+                -- 烟雾：缓慢膨胀（纹理自带低 alpha），末段轻微收缩消散。
+                local grow = 0.6 + 0.7 * (1 - lifeT)
+                local shrink = lifeT < 0.25 and (lifeT / 0.25) or 1
+                worldSize = math.max(0.02, p.size * WORLD_SCALE * 1.3 * grow * shrink)
+                bb.rotation = 0
+            elseif kind == "shard" then
+                -- 碎片：尺寸稳定，末 35% 快速收缩，持续自旋。
+                local shrink = lifeT < 0.35 and (lifeT / 0.35) or 1
+                worldSize = math.max(0.02, p.size * WORLD_SCALE * 1.9 * shrink)
+                bb.rotation = p.angle or 0
+            else
+                -- 火花：短促，整段快速收缩。
+                worldSize = math.max(0.02, p.size * WORLD_SCALE * 1.2 * (0.35 + 0.65 * lifeT))
+                bb.rotation = 0
+            end
+            -- DiffAlpha 不读顶点 rgb；保留白顶点，alpha 恒 1（透明度已在纹理里）。
+            bb.color = Color(1, 1, 1, 1)
+            bb.size = Vector2(worldSize, worldSize)
+        end
+    end
+    for kind, set in pairs(particleSets_) do
+        for i = used[kind] + 1, PARTICLE_SLOTS[kind] do
+            set:GetBillboard(i - 1).enabled = false
+        end
+        set:Commit()
+    end
 end
 
 -- v0.10.19：3D 直瞄线。规则层快照 aimLine 给设计坐标起终点，这里转世界坐标，
@@ -930,22 +992,33 @@ function Renderer3D.Init(scene)
     crateMaterial_ = CreateCrateMaterial()
     print("[Renderer3D] procedural aircraft panel texture ready")
 
-    -- v0.10.18：碰撞火花批次（单 BillboardSet，白纹理 DiffVCol，每粒子顶点色）。
-    particleNode_ = scene:CreateChild("HitParticles")
-    particleSet_ = particleNode_:CreateComponent("BillboardSet")
-    particleSet_:SetNumBillboards(PARTICLE_SLOTS)
-    particleSet_.castShadows = false
-    particleSet_.relative = false
-    particleMaterial_ = Material:new()
-    particleMaterial_:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
-    particleMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
-    particleMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
-    particleSet_:SetMaterial(particleMaterial_)
-    for i = 0, PARTICLE_SLOTS - 1 do
-        particleSet_:GetBillboard(i).enabled = false
+    -- v0.10.21：碰撞粒子三批次，DiffAlpha 透明混合；颜色烘焙进程序纹理
+    -- （实测 DiffAlpha 不读 billboard 顶点 rgb）。
+    local sparkTex = CreateSoftCircleTexture(1.0, 0.92, 0.62, 1.0, 0.0)
+    local shardTex = CreateTriangleTexture(0.95, 0.82, 0.52)
+    local smokeTex = CreateSoftCircleTexture(0.72, 0.74, 0.80, 0.5, 0.0)
+    local function CreateParticleSet(name, slots, texture)
+        local node = scene:CreateChild(name)
+        local set = node:CreateComponent("BillboardSet")
+        set:SetNumBillboards(slots)
+        set.castShadows = false
+        set.relative = false
+        local mat = Material:new()
+        mat:SetTechnique(0,
+            cache:GetResource("Technique", "Techniques/DiffAlpha.xml"))
+        mat:SetTexture(TU_DIFFUSE, texture)
+        mat:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+        set:SetMaterial(mat)
+        for i = 0, slots - 1 do set:GetBillboard(i).enabled = false end
+        set:Commit()
+        return set, mat, node
     end
-    particleSet_:Commit()
+    local sparkSet, sparkMat, sparkNode = CreateParticleSet("SparkParticles", PARTICLE_SLOTS.spark, sparkTex)
+    local shardSet, shardMat, shardNode = CreateParticleSet("ShardParticles", PARTICLE_SLOTS.shard, shardTex)
+    local smokeSet, smokeMat, smokeNode = CreateParticleSet("SmokeParticles", PARTICLE_SLOTS.smoke, smokeTex)
+    particleSets_ = { spark = sparkSet, shard = shardSet, smoke = smokeSet }
+    particleMaterials_ = { sparkMat, shardMat, smokeMat }
+    particleNodes_ = { sparkNode, shardNode, smokeNode }
 
     -- v0.10.19：3D 直瞄线（单 BillboardSet 沿射线排点，与火花同源材质保证显色）。
     aimLineNode_ = scene:CreateChild("AimLine")
@@ -1007,12 +1080,18 @@ function Renderer3D.Shutdown()
     for _, record in pairs(enemyMeshes_) do RemoveNode(record.root) end
     for _, node in pairs(debrisNodes_) do RemoveNode(node) end
     for _, node in pairs(ejectedBoxNodes_) do RemoveNode(node) end
-    if particleNode_ then RemoveNode(particleNode_) end
-    if particleSet_ then DisposeComponent(particleSet_) end
-    if particleMaterial_ then particleMaterial_:Dispose() end
-    particleNode_ = nil
-    particleSet_ = nil
-    particleMaterial_ = nil
+    if particleNodes_ then
+        for _, node in ipairs(particleNodes_) do RemoveNode(node) end
+    end
+    if particleSets_ then
+        for _, set in pairs(particleSets_) do DisposeComponent(set) end
+    end
+    if particleMaterials_ then
+        for _, mat in ipairs(particleMaterials_) do mat:Dispose() end
+    end
+    particleSets_ = nil
+    particleMaterials_ = nil
+    particleNodes_ = nil
     if aimLineNode_ then RemoveNode(aimLineNode_) end
     if aimLineSet_ then DisposeComponent(aimLineSet_) end
     if aimLineMaterial_ then aimLineMaterial_:Dispose() end

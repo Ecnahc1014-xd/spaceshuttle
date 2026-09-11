@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.21 | 2026-09-11 | 粒子重做为柔和点缀：spark 暖白软圆/shard 金属三角碎片(重力+自旋)/smoke 灰蓝半透明上飘膨胀，小而稀疏（普通命中 50% 1 粒、击毁 3 火花+2 碎片+35% 烟），点击发射 2 火花+偶尔烟的轻反馈。三 BillboardSet(64/40/28)+程序生成彩色纹理+DiffAlpha（实测 DiffVCol/Add 忽略纹理 alpha、DiffAlpha 不读顶点 rgb，故颜色烘焙进纹理、淡出靠尺寸收缩；三角 UV 翻转反向画）。LSP 0、build、1500 帧 lua=0 |
 | v0.10.20 | 2026-09-11 | 敌机 4→8 种：新增 dart 金黄尖头飞镖(最快,wave2)/hive 橙蜂群小机(急促,wave4)/manta 翡翠绿宽翼鳐鱼(大横摆,wave5)/cruiser 钢灰重装盒(最密最慢,wave8)，轮廓+色相+运动性格全分化。新增 bitmapToData(M/d/C/E 位图→砖块)转换器，解锁改 WAVE_ROSTER 门槛表，渲染 data 驱动不改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏截图 |
 | v0.10.19 | 2026-09-11 | 一条 3D 辅助瞄准线：拖拽蓄力>15px 死区时，从待发车辆沿发射方向到最近边界（左/右/顶，不含底）显示青色点状虚线，松手或死区内不显示；方向与实际发射完全同源。规则层 ComputeAimLine 算射线输出 s.aimLine（渲染层只画不预测反弹）。渲染用单 BillboardSet 22 点沿射线排布（z=-6 避雾/遮挡，alpha 渐隐）。踩坑：游戏 Zone 光照下动态 CustomGeometry 顶点色与 NoTextureUnlit/VCol 材质色恒显灰白，只有 BillboardSet+DiffVCol+billboard.color 稳定显色（碰撞火花同款）。LSP 0、build、400 帧 lua=0、拖拽截图确认 |
 | v0.10.18 | 2026-09-11 | 碰撞粒子特效接入 3D 后端：Presentation.particles 此前只被旧 2D 渲染器消费、Renderer3D 完全不画，碰撞无火花。新增单个 BillboardSet（96 固定槽、relative=false、1px 白纹理+DiffVCol 顶点色、1 draw call），SyncParticles 把命中粒子映射到世界 z=-0.95（浮于敌机/飞散箱前），尺寸 p.size·0.018·3.4·生命系数（min0.05m）随生命收缩，前段全亮后段淡出，超槽丢弃/空槽禁用/每帧 Commit，Init 建 Shutdown 释放。双固定色块探针验证 billboard 在真实相机+光照下可见，真实不可见纯因尺寸过小；SetFaceCameraAngle 绑定不存在。LSP 0、build、400 帧 lua=0 |

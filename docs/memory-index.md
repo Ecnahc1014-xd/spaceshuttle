@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.20
-简述：540×960 竖屏弹珠；敌机扩到 8 种——新增 dart 金黄飞镖(最快,w2)/hive 橙蜂群小机(急促,w4)/manta 翡翠绿宽翼鳐鱼(大横摆,w5)/cruiser 钢灰重装盒(最密最慢,w8)，与原 scout青/striker红/bomber黄绿飞碟/interceptor紫(Boss) 轮廓+色相+运动性格全分化。新增 bitmapToData 位图转换器（M/d/C/E→砖块），解锁改 WAVE_ROSTER 门槛表，渲染 data 驱动无改。一条 3D 青色点状虚线辅助瞄准（拖拽>15px 显示到边界，BillboardSet 22 点）；碰撞火花 BillboardSet(96)；无召回、全屏相对拖拽、回收 vy>0；升级卡 cy530；刷怪 14s/7.5s。
+当前版本：0.10.21
+简述：540×960 竖屏弹珠；碰撞粒子从"不透明等大方形"重做为三类柔和点缀——spark 暖白软圆短促收缩、shard 浅金属三角碎片受重力自旋、smoke 灰蓝半透明软圆上飘膨胀；小而稀疏（普通命中仅 50% 出 1 粒、击毁 3 火花+2 碎片+35% 一缕烟），玩家点击发射有 2 粒小火花+偶尔一缕烟的轻反馈。关键：DiffVCol/Add 忽略纹理 alpha、DiffAlpha 不读顶点 rgb，故彩色软粒子必须把颜色烘焙进程序纹理+DiffAlpha，淡出靠尺寸收缩；三角因 Billboard UV 翻转需反向画。Renderer3D 三个 BillboardSet(64/40/28)。8 种敌机；3D 青色点状虚线瞄准；无召回、全屏拖拽；刷怪 14s。
 最后巩固：2026-09-11
 
 ## 项目概况
@@ -92,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.21: 粒子从"不透明纯色等大方形"重做为三类柔和点缀。Presentation.SpawnParticles 加 kind(spark/shard/smoke，默认 spark)，p 新增 angle/spin/kind，UpdateParticles 分运动：shard 重力+自转、smoke 上飘减速无重力且 size 膨胀、spark 重力短促。事件降频降量：击毁=3 spark+2 shard+35% 1 smoke，普通命中 50% 概率 1 spark，防线 24→10(+50%烟)，分裂 16→5、追击 10/8→3/2、贯穿 16→5、巨型 32→≤8(+40%烟)；launchFlash 点击反馈 8→2 spark+25% 烟。Renderer3D 单 BillboardSet 改三个(particleSets_ spark/shard/smoke 槽 64/40/28、DiffAlpha)，程序生成 CreateSoftCircleTexture(r,g,b,cA,eA) 暖白/灰半透明、CreateTriangleTexture 金属三角，SyncParticles 按 kind 分流、淡出靠末段尺寸收缩。踩坑（探针实证）：DiffVCol/DiffVColAdd 忽略纹理 alpha（软圆/三角→方块），DiffAlpha 读纹理 alpha 但不读 billboard 顶点 rgb（白纹+顶点色不染色），唯一解=颜色烘焙进纹理+DiffAlpha+顶点白；三角因 Billboard UV V 翻转要在图像里反向画。LSP 0、build、1500 帧 lua=0、三类形状截图确认。
 - v0.10.20: 敌机 4→8 种。AircraftPixelData 新增 `bitmapToData(rows)`（M=hullMain红棕/d=hullDark灰蓝/C=canopy高亮蓝/E=engine暗，字符 RGB 落在 ClassifySlot 阈值，转成 col,row,r,g,b entry 串），新增 4 机型位图+behavior：dart 金黄尖头后掠飞镖 11×9（speed1.22/descent1.28/swayFreq1.35，最快）、hive 橙蜂群小机 9×7（swayFreq1.6 急促、分高）、manta 翡翠绿宽翼鳐鱼 14×8（swayAmp36 大横摆、speed.88）、cruiser 钢灰重装盒 13×9（装甲最密、descent.68 最慢、180分）。VisualCatalog 加 4 套四槽位色相。Game.GetAvailableTypes 硬编码 4 型+波次 index 改为 WAVE_ROSTER 门槛表（scout1/dart2/striker3/hive4/manta5/bomber7/cruiser8/interceptor9）。渲染完全 data 驱动不改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏两列冻结截图确认轮廓/配色/座舱/引擎灯。
 - v0.10.19: 一条 3D 辅助瞄准线。规则层新增 local ComputeAimLine（定义在 GetSnapshot 之前）：仅 aiming 且 activeBall 且 pull 长>15（AIM_DEAD_ZONE）时返回 {x1,y1,x2,y2}，dir=-pull 归一化（与 LaunchMarble 同源），按 activeBall.radius 求射线与左(0+r)/右(DW-r)/顶(TOP_BOUND_Y+r) 最近正 t（不含底边），s.aimLine 输出，无瞄准 nil。渲染层 Renderer3D.SyncAimLine 用单 BillboardSet（AimLine 节点、22 槽、白 1px 纹理+DiffVCol），沿射线 t=(i-.5)/22 排点，点尺寸 0.085m、z=-6（正交投影不改屏幕 XY、避遮挡雾）、alpha 1.0→0.65 渐隐，空槽 enabled=false/每帧 Commit，Init 建/Shutdown 释放。踩坑：先试 CustomGeometry 细四边形——游戏场景（Zone 环境光/雾）下动态 DefineColor 顶点色、NoTextureUnlit 的 MatDiffColor、NoTextureVCol、DiffVCol 无纹理全部恒显灰白（独立无 Zone 探针显色正常、纯红顶点色也灰白），最终改用碰撞火花同款 BillboardSet+billboard.color 路径才稳定青色；点状虚线同时避开方形 billboard 密排的斜线阶梯锯齿。LSP 0、build、400 帧 lua=0、拖拽截图确认。
 - v0.10.18: 碰撞粒子接入 3D 后端。根因：Presentation.particles（SpawnParticles，击毁 10/命中 4 粒、对象池）此前只被旧 2D Renderer.lua 消费，Renderer3D 完全没读，3D 后端下碰撞无火花。实现：Renderer3D 增单个 BillboardSet `HitParticles`（SetNumBillboards(96)、relative=false、castShadows=false、1px 白纹理 + DiffVCol），SyncParticles 每帧把粒子经 GameToWorld 放到 z=-0.95（相机在 -Z，浮于敌机体素/飞散箱前），billboard.color 用事件 rgb+alpha，worldSize=p.size·0.018·3.4·(0.45+0.55·lifeT)、min 0.05m、随生命收缩，alpha=clamp(lifeT/0.65) 前段全亮；超 96 丢弃、空槽 enabled=false、每帧 Commit；Init 建/Shutdown 释放。排查关键：先独立场景后游戏场景双固定色块探针证明 billboard 顶点色/位置/尺寸在真实相机+光照下可见，再发现真实火花不可见纯因尺寸过小（3.7px·0.018≈0.067m）与淡出过快；SetFaceCameraAngle 绑定不存在（默认即面向相机，勿调用）。LSP 0、build 成功、400 帧 lua=0。
