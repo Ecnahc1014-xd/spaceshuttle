@@ -889,19 +889,19 @@ local function SyncParticles(presentation)
             local lifeT = math.max(0, math.min(1, p.life / p.maxLife))
             local worldSize
             if kind == "smoke" then
-                -- 烟雾：缓慢膨胀（纹理自带低 alpha），末段轻微收缩消散。
-                local grow = 0.6 + 0.7 * (1 - lifeT)
+                -- 烟雾：小幅膨胀、整体偏小，末段收缩消散。
+                local grow = 0.5 + 0.55 * (1 - lifeT)
                 local shrink = lifeT < 0.25 and (lifeT / 0.25) or 1
-                worldSize = math.max(0.02, p.size * WORLD_SCALE * 1.3 * grow * shrink)
+                worldSize = math.max(0.015, p.size * WORLD_SCALE * 0.85 * grow * shrink)
                 bb.rotation = 0
             elseif kind == "shard" then
-                -- 碎片：尺寸稳定，末 35% 快速收缩，持续自旋。
+                -- 碎片：小而稳定，末 35% 快速收缩，持续自旋。
                 local shrink = lifeT < 0.35 and (lifeT / 0.35) or 1
-                worldSize = math.max(0.02, p.size * WORLD_SCALE * 1.9 * shrink)
+                worldSize = math.max(0.015, p.size * WORLD_SCALE * 1.25 * shrink)
                 bb.rotation = p.angle or 0
             else
-                -- 火花：短促，整段快速收缩。
-                worldSize = math.max(0.02, p.size * WORLD_SCALE * 1.2 * (0.35 + 0.65 * lifeT))
+                -- 火花：小亮点，整段快速收缩。
+                worldSize = math.max(0.012, p.size * WORLD_SCALE * 0.85 * (0.3 + 0.7 * lifeT))
                 bb.rotation = 0
             end
             -- DiffAlpha 不读顶点 rgb；保留白顶点，alpha 恒 1（透明度已在纹理里）。
@@ -917,13 +917,13 @@ local function SyncParticles(presentation)
     end
 end
 
--- v0.10.19：3D 直瞄线。规则层快照 aimLine 给设计坐标起终点，这里转世界坐标，
--- 沿射线均匀排布小 billboard 形成连续线段。复用与碰撞火花相同、已验证在游戏
--- Zone 光照下显色正常的路径（白 1px 纹理 + DiffVCol + billboard.color 顶点色）；
--- CustomGeometry 的动态顶点色/NoTextureUnlit 材质色在本引擎实测恒显灰白，弃用。
+-- v0.10.22：3D 直瞄线。规则层快照 aimLine 给设计坐标起终点，这里转世界坐标，
+-- 沿射线排青色软圆点，从车辆到边界渐小。彩色+软边必须颜色烘焙进纹理 + DiffAlpha
+-- （DiffVCol 会忽略纹理 alpha 显示成方块）。起点 z 取车辆锚点 z，因相机为 46°
+-- 斜俯视正交，z 差会投影到屏幕 Y，不能用固定近相机 z。
 local AIM_LINE_Z = -6.0          -- 正交投影下 z 不改变屏幕 XY，只避开遮挡与雾
-local AIM_LINE_SEGMENTS = 22     -- 沿线排布的 billboard 数（点状虚线）
-local AIM_LINE_DOT_WORLD = 0.085 -- 单个点的世界尺寸
+local AIM_LINE_SEGMENTS = 14     -- 沿线排布的软圆点数
+local AIM_LINE_DOT_WORLD = 0.10  -- 起点端点尺寸（世界米），向终点渐小
 local AIM_LINE_COLOR = Color(0.30, 0.90, 1.0, 1)
 
 local function SyncAimLine(game)
@@ -931,20 +931,33 @@ local function SyncAimLine(game)
     local line = game.aimLine
     local activeCount = 0
     if line then
-        local a = GameToWorld(line.x1, line.y1, AIM_LINE_Z)
-        local b = GameToWorld(line.x2, line.y2, AIM_LINE_Z)
+        -- 相机是 46° 斜俯视正交（非纯俯视），z 会投影到屏幕 Y：
+        -- 瞄准线必须与待发车辆锚点同一 z 平面，否则起点相对车辆偏移。
+        local zWorld = AIM_LINE_Z
+        if game.activeBall then
+            zWorld = GetVehicleAnchorWorld(game.activeBall).z
+        end
+        local a
+        if game.activeBall then
+            a = GetVehicleAnchorWorld(game.activeBall)
+        else
+            a = GameToWorld(line.x1, line.y1, zWorld)
+        end
+        local b = GameToWorld(line.x2, line.y2, zWorld)
         for i = 1, AIM_LINE_SEGMENTS do
-            local t = (i - 0.5) / AIM_LINE_SEGMENTS
+            -- t 从 0（车辆中心）到 1（边界），点与点略重叠形成连续虚线。
+            local t = (i - 1) / (AIM_LINE_SEGMENTS - 1)
             local bb = aimLineSet_:GetBillboard(i - 1)
             bb.enabled = true
             bb.position = Vector3(
                 a.x + (b.x - a.x) * t,
                 a.y + (b.y - a.y) * t,
-                AIM_LINE_Z)
-            bb.size = Vector2(AIM_LINE_DOT_WORLD, AIM_LINE_DOT_WORLD)
-            -- 起点端最亮、终点端略淡，形成方向感。
-            local fade = 1.0 - 0.35 * t
-            bb.color = Color(AIM_LINE_COLOR.r, AIM_LINE_COLOR.g, AIM_LINE_COLOR.b, fade)
+                zWorld)
+            -- 从车辆到边界逐渐变小，避免等大均一。
+            local dot = AIM_LINE_DOT_WORLD * (1.0 - 0.55 * t)
+            bb.size = Vector2(dot, dot)
+            -- DiffAlpha 不读顶点 rgb；alpha 恒 1，淡出已烘焙在软圆边缘。
+            bb.color = Color(1, 1, 1, 1)
             activeCount = i
         end
     end
@@ -1020,7 +1033,7 @@ function Renderer3D.Init(scene)
     particleMaterials_ = { sparkMat, shardMat, smokeMat }
     particleNodes_ = { sparkNode, shardNode, smokeNode }
 
-    -- v0.10.19：3D 直瞄线（单 BillboardSet 沿射线排点，与火花同源材质保证显色）。
+    -- v0.10.22：直瞄线用青色软圆纹理 + DiffAlpha（颜色烘焙，软边半透明）。
     aimLineNode_ = scene:CreateChild("AimLine")
     aimLineSet_ = aimLineNode_:CreateComponent("BillboardSet")
     aimLineSet_:SetNumBillboards(AIM_LINE_SEGMENTS)
@@ -1028,8 +1041,9 @@ function Renderer3D.Init(scene)
     aimLineSet_.relative = false
     aimLineMaterial_ = Material:new()
     aimLineMaterial_:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
-    aimLineMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
+        cache:GetResource("Technique", "Techniques/DiffAlpha.xml"))
+    aimLineMaterial_:SetTexture(TU_DIFFUSE,
+        CreateSoftCircleTexture(AIM_LINE_COLOR.r, AIM_LINE_COLOR.g, AIM_LINE_COLOR.b, 1.0, 0.0))
     aimLineMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
     aimLineSet_:SetMaterial(aimLineMaterial_)
     for i = 0, AIM_LINE_SEGMENTS - 1 do

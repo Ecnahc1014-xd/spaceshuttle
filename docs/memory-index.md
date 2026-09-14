@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.21
-简述：540×960 竖屏弹珠；碰撞粒子从"不透明等大方形"重做为三类柔和点缀——spark 暖白软圆短促收缩、shard 浅金属三角碎片受重力自旋、smoke 灰蓝半透明软圆上飘膨胀；小而稀疏（普通命中仅 50% 出 1 粒、击毁 3 火花+2 碎片+35% 一缕烟），玩家点击发射有 2 粒小火花+偶尔一缕烟的轻反馈。关键：DiffVCol/Add 忽略纹理 alpha、DiffAlpha 不读顶点 rgb，故彩色软粒子必须把颜色烘焙进程序纹理+DiffAlpha，淡出靠尺寸收缩；三角因 Billboard UV 翻转需反向画。Renderer3D 三个 BillboardSet(64/40/28)。8 种敌机；3D 青色点状虚线瞄准；无召回、全屏拖拽；刷怪 14s。
-最后巩固：2026-09-11
+当前版本：0.10.22
+简述：540×960 竖屏弹珠；修复瞄准线起点脱离车辆（根因：相机是 46° 斜俯视正交而非纯俯视，z 差会投影到屏幕 Y，瞄准线固定 z=-6 而车锚点 z≈.09；改为整条线取 GetVehicleAnchorWorld 的 z、起点=车辆锚点）；瞄准线 22 个等大青方块→14 个青色软圆点从车到边界渐小(DiffAlpha+烘焙青软圆纹理)。粒子更小更少更不均一（击毁 1-2 火花+55%碎片+20%烟、普通命中 35% 1 火花、点击仅 1 火花+15%烟，尺寸/生命/数量全随机，世界尺寸系数下调）。三类粒子=暖白软圆火花/金属三角碎片/灰蓝烟雾；8 敌机；无召回、全屏拖拽；刷怪 14s。
+最后巩固：2026-09-14
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -92,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.22: ①瞄准线起点脱离车辆修复——相机是 46° 斜俯视**正交**（非纯俯视），z 差会投影到屏幕 Y；旧瞄准线固定 z=-6、车锚点 z≈0.09，整条线在屏幕偏移。SyncAimLine 改为起点直接取 GetVehicleAnchorWorld(activeBall)（含 z）、终点同 z（规则层 x1,y1 本就=车坐标，问题纯在渲染 z）。②瞄准线视觉：22 等大青方块→14 青色软圆点，t=(i-1)/(N-1) 从 0(车中心)到 1(边界)，尺寸 ×(1-0.55t) 渐小；材质 DiffVCol→DiffAlpha+烘焙青软圆纹理。③粒子更小更少去均一：Presentation 生成尺寸/生命随机范围拉大（spark 1.4-3.4px/0.18-0.42s、shard 2-4.5px spin±16、smoke 4-10px/0.45-0.9s 低速）；击毁 random(1,2) spark+55% 1 shard+20%烟，普通命中 35% 1 spark，防线 random(4,7) spark+35%烟，发射点击 1 spark+15%烟，分裂/追击/贯穿/巨型数量再降且随机；Renderer3D 世界系数下调（spark×0.85/shard×1.25/smoke×0.85，min 0.012-0.015m）。LSP 0、build、1200 帧 lua=0、瞄准线截图确认贴车渐小。
 - v0.10.21: 粒子从"不透明纯色等大方形"重做为三类柔和点缀。Presentation.SpawnParticles 加 kind(spark/shard/smoke，默认 spark)，p 新增 angle/spin/kind，UpdateParticles 分运动：shard 重力+自转、smoke 上飘减速无重力且 size 膨胀、spark 重力短促。事件降频降量：击毁=3 spark+2 shard+35% 1 smoke，普通命中 50% 概率 1 spark，防线 24→10(+50%烟)，分裂 16→5、追击 10/8→3/2、贯穿 16→5、巨型 32→≤8(+40%烟)；launchFlash 点击反馈 8→2 spark+25% 烟。Renderer3D 单 BillboardSet 改三个(particleSets_ spark/shard/smoke 槽 64/40/28、DiffAlpha)，程序生成 CreateSoftCircleTexture(r,g,b,cA,eA) 暖白/灰半透明、CreateTriangleTexture 金属三角，SyncParticles 按 kind 分流、淡出靠末段尺寸收缩。踩坑（探针实证）：DiffVCol/DiffVColAdd 忽略纹理 alpha（软圆/三角→方块），DiffAlpha 读纹理 alpha 但不读 billboard 顶点 rgb（白纹+顶点色不染色），唯一解=颜色烘焙进纹理+DiffAlpha+顶点白；三角因 Billboard UV V 翻转要在图像里反向画。LSP 0、build、1500 帧 lua=0、三类形状截图确认。
 - v0.10.20: 敌机 4→8 种。AircraftPixelData 新增 `bitmapToData(rows)`（M=hullMain红棕/d=hullDark灰蓝/C=canopy高亮蓝/E=engine暗，字符 RGB 落在 ClassifySlot 阈值，转成 col,row,r,g,b entry 串），新增 4 机型位图+behavior：dart 金黄尖头后掠飞镖 11×9（speed1.22/descent1.28/swayFreq1.35，最快）、hive 橙蜂群小机 9×7（swayFreq1.6 急促、分高）、manta 翡翠绿宽翼鳐鱼 14×8（swayAmp36 大横摆、speed.88）、cruiser 钢灰重装盒 13×9（装甲最密、descent.68 最慢、180分）。VisualCatalog 加 4 套四槽位色相。Game.GetAvailableTypes 硬编码 4 型+波次 index 改为 WAVE_ROSTER 门槛表（scout1/dart2/striker3/hive4/manta5/bomber7/cruiser8/interceptor9）。渲染完全 data 驱动不改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏两列冻结截图确认轮廓/配色/座舱/引擎灯。
 - v0.10.19: 一条 3D 辅助瞄准线。规则层新增 local ComputeAimLine（定义在 GetSnapshot 之前）：仅 aiming 且 activeBall 且 pull 长>15（AIM_DEAD_ZONE）时返回 {x1,y1,x2,y2}，dir=-pull 归一化（与 LaunchMarble 同源），按 activeBall.radius 求射线与左(0+r)/右(DW-r)/顶(TOP_BOUND_Y+r) 最近正 t（不含底边），s.aimLine 输出，无瞄准 nil。渲染层 Renderer3D.SyncAimLine 用单 BillboardSet（AimLine 节点、22 槽、白 1px 纹理+DiffVCol），沿射线 t=(i-.5)/22 排点，点尺寸 0.085m、z=-6（正交投影不改屏幕 XY、避遮挡雾）、alpha 1.0→0.65 渐隐，空槽 enabled=false/每帧 Commit，Init 建/Shutdown 释放。踩坑：先试 CustomGeometry 细四边形——游戏场景（Zone 环境光/雾）下动态 DefineColor 顶点色、NoTextureUnlit 的 MatDiffColor、NoTextureVCol、DiffVCol 无纹理全部恒显灰白（独立无 Zone 探针显色正常、纯红顶点色也灰白），最终改用碰撞火花同款 BillboardSet+billboard.color 路径才稳定青色；点状虚线同时避开方形 billboard 密排的斜线阶梯锯齿。LSP 0、build、400 帧 lua=0、拖拽截图确认。

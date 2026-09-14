@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.22 | 2026-09-14 | 修瞄准线起点脱离车辆：相机为46°斜俯视正交（非纯俯视），z差会投影到屏幕Y，旧固定z=-6相对车锚点z≈.09导致整线偏移；改为整条线取车辆锚点z。瞄准线22等大青方块→14软圆点从车到边界渐小（DiffAlpha+烘焙青软圆纹理）。粒子更小更少更随机（击毁1-2火花+55%碎片+20%烟、命中35%1火花、点击1火花+15%烟）。LSP 0、build、1200帧lua=0 |
 | v0.10.21 | 2026-09-11 | 粒子重做为柔和点缀：spark 暖白软圆/shard 金属三角碎片(重力+自旋)/smoke 灰蓝半透明上飘膨胀，小而稀疏（普通命中 50% 1 粒、击毁 3 火花+2 碎片+35% 烟），点击发射 2 火花+偶尔烟的轻反馈。三 BillboardSet(64/40/28)+程序生成彩色纹理+DiffAlpha（实测 DiffVCol/Add 忽略纹理 alpha、DiffAlpha 不读顶点 rgb，故颜色烘焙进纹理、淡出靠尺寸收缩；三角 UV 翻转反向画）。LSP 0、build、1500 帧 lua=0 |
 | v0.10.20 | 2026-09-11 | 敌机 4→8 种：新增 dart 金黄尖头飞镖(最快,wave2)/hive 橙蜂群小机(急促,wave4)/manta 翡翠绿宽翼鳐鱼(大横摆,wave5)/cruiser 钢灰重装盒(最密最慢,wave8)，轮廓+色相+运动性格全分化。新增 bitmapToData(M/d/C/E 位图→砖块)转换器，解锁改 WAVE_ROSTER 门槛表，渲染 data 驱动不改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏截图 |
 | v0.10.19 | 2026-09-11 | 一条 3D 辅助瞄准线：拖拽蓄力>15px 死区时，从待发车辆沿发射方向到最近边界（左/右/顶，不含底）显示青色点状虚线，松手或死区内不显示；方向与实际发射完全同源。规则层 ComputeAimLine 算射线输出 s.aimLine（渲染层只画不预测反弹）。渲染用单 BillboardSet 22 点沿射线排布（z=-6 避雾/遮挡，alpha 渐隐）。踩坑：游戏 Zone 光照下动态 CustomGeometry 顶点色与 NoTextureUnlit/VCol 材质色恒显灰白，只有 BillboardSet+DiffVCol+billboard.color 稳定显色（碰撞火花同款）。LSP 0、build、400 帧 lua=0、拖拽截图确认 |

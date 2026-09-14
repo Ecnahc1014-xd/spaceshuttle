@@ -61,32 +61,33 @@ local function SpawnParticles(x, y, color, count, kind)
         p.x = x; p.y = y
         p.r = color[1]; p.g = color[2]; p.b = color[3]
         if kind == "smoke" then
-            local angle = -math.pi / 2 + (math.random() - 0.5) * 1.6
-            local speed = 12 + math.random() * 34
+            local angle = -math.pi / 2 + (math.random() - 0.5) * 1.8
+            local speed = 8 + math.random() * 26
             p.vx = math.cos(angle) * speed
             p.vy = math.sin(angle) * speed
-            p.life = 0.55 + math.random() * 0.35
+            -- 生命与尺寸拉开随机范围，避免每缕烟一样大、一样久。
+            p.life = 0.45 + math.random() * 0.45
             p.maxLife = p.life
-            p.size = 6 + math.random() * 4
+            p.size = 4 + math.random() * 6
             p.spin = 0
         elseif kind == "shard" then
             local angle = math.random() * math.pi * 2
-            local speed = 55 + math.random() * 120
-            p.vx = math.cos(angle) * speed
-            p.vy = math.sin(angle) * speed - 45
-            p.life = 0.4 + math.random() * 0.3
-            p.maxLife = p.life
-            p.size = 4 + math.random() * 3
-            p.angle = math.random() * math.pi * 2
-            p.spin = (math.random() - 0.5) * 14
-        else
-            local angle = math.random() * math.pi * 2
-            local speed = 50 + math.random() * 130
+            local speed = 45 + math.random() * 130
             p.vx = math.cos(angle) * speed
             p.vy = math.sin(angle) * speed - 40
-            p.life = 0.22 + math.random() * 0.25
+            p.life = 0.35 + math.random() * 0.3
             p.maxLife = p.life
-            p.size = 2.5 + math.random() * 2
+            p.size = 2 + math.random() * 2.5
+            p.angle = math.random() * math.pi * 2
+            p.spin = (math.random() - 0.5) * 16
+        else
+            local angle = math.random() * math.pi * 2
+            local speed = 40 + math.random() * 140
+            p.vx = math.cos(angle) * speed
+            p.vy = math.sin(angle) * speed - 35
+            p.life = 0.18 + math.random() * 0.24
+            p.maxLife = p.life
+            p.size = 1.4 + math.random() * 2
             p.spin = 0
         end
         particles[#particles + 1] = p
@@ -168,18 +169,21 @@ local FEEDBACK_HANDLERS = {
         local particleColor = {color.r, color.g, color.b}
         hitFlashes[GetBrickKey(event.enemyId, event.col, event.row)] = 0.12
         if event.destroyed then
-            -- v0.10.21：击毁给少量火花 + 2 片三角碎片，偶尔一缕轻烟，作为点缀。
-            SpawnParticles(event.x, event.y, particleColor, 3, "spark")
-            SpawnParticles(event.x, event.y, particleColor, 2, "shard")
-            if math.random() < 0.35 then
+            -- v0.10.22：数量与大小随机，多数击毁只给 1~2 火花 + 0~1 碎片，
+            -- 约 1/5 概率一缕烟，整体稀疏不重复。
+            SpawnParticles(event.x, event.y, particleColor, math.random(1, 2), "spark")
+            if math.random() < 0.55 then
+                SpawnParticles(event.x, event.y, particleColor, 1, "shard")
+            end
+            if math.random() < 0.2 then
                 SpawnParticles(event.x, event.y,
                     {math.min(255, color.r * 0.5 + 60),
                      math.min(255, color.g * 0.5 + 60),
                      math.min(255, color.b * 0.5 + 70)}, 1, "smoke")
             end
             SpawnFloatText(event.x, event.y - 4, "+" .. event.score, {255, 240, 180}, 0.8)
-        elseif math.random() < 0.5 then
-            -- 普通命中只有一半概率冒 1 粒小火星，避免频繁刷屏。
+        elseif math.random() < 0.35 then
+            -- 普通命中仅约 1/3 概率冒 1 粒小火星。
             SpawnParticles(event.x, event.y, {255, 240, 180}, 1, "spark")
         end
     end,
@@ -205,9 +209,9 @@ local FEEDBACK_HANDLERS = {
             spin = (math.random() - 0.5) * 2.4,
         })
         nextDebrisId = nextDebrisId + 1
-        SpawnParticles(event.x, event.y, {255, 80, 60}, 10, "spark")
-        if math.random() < 0.5 then
-            SpawnParticles(event.x, event.y, {180, 150, 150}, 2, "smoke")
+        SpawnParticles(event.x, event.y, {255, 80, 60}, math.random(4, 7), "spark")
+        if math.random() < 0.35 then
+            SpawnParticles(event.x, event.y, {180, 150, 150}, 1, "smoke")
         end
         local dmg = event.damage or 1
         local rowTag = event.rows and event.rows > 1 and ("x" .. event.rows .. "行 ") or ""
@@ -222,34 +226,34 @@ local FEEDBACK_HANDLERS = {
             event.ballType == "giant" and 170 or 220,
             event.ballType == "speed" and 80 or 160,
         }
-        SpawnParticles(event.x or 270, event.y or 850, launchColor, 2, "spark")
-        if math.random() < 0.25 then
+        SpawnParticles(event.x or 270, event.y or 850, launchColor, 1, "spark")
+        if math.random() < 0.15 then
             SpawnParticles(event.x or 270, (event.y or 850) + 6,
                 {200, 200, 210}, 1, "smoke")
         end
     end,
     splitSpark = function(event)
-        SpawnParticles(event.x, event.y, {255, 230, 140}, 5, "spark")
+        SpawnParticles(event.x, event.y, {255, 230, 140}, math.random(2, 4), "spark")
         SpawnFloatText(event.x, event.y - 18,
             "分裂 G" .. event.generation, {255, 235, 150}, 0.8)
     end,
     dashSpark = function(event)
         screenShake = math.max(screenShake, 0.08)
-        SpawnParticles(event.x, event.y, {255, 160, 70}, 3, "spark")
-        SpawnParticles(event.targetX, event.targetY, {255, 210, 80}, 2, "spark")
+        SpawnParticles(event.x, event.y, {255, 160, 70}, 2, "spark")
+        SpawnParticles(event.targetX, event.targetY, {255, 210, 80}, 1, "spark")
         SpawnFloatText(event.x, event.y - 18,
             "追击 x" .. event.damage, {255, 170, 80}, 0.8)
     end,
     pierceArmed = function(event)
         screenShake = math.max(screenShake, 0.16)
-        SpawnParticles(event.x, event.y, {205, 145, 255}, 5, "spark")
+        SpawnParticles(event.x, event.y, {205, 145, 255}, math.random(2, 4), "spark")
         SpawnFloatText(event.x, event.y - 22, "贯穿就绪!", {225, 170, 255}, 0.9)
     end,
     giantBurst = function(event)
         screenShake = math.max(screenShake, 0.22)
         SpawnParticles(event.x, event.y, {205, 145, 255},
-            math.min(8, 3 + event.hitCount), "spark")
-        if math.random() < 0.4 then
+            math.min(5, 2 + event.hitCount), "spark")
+        if math.random() < 0.25 then
             SpawnParticles(event.x, event.y, {190, 160, 210}, 1, "smoke")
         end
         SpawnFloatText(event.x, event.y - 28,
