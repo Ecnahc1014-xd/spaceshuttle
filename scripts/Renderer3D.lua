@@ -944,21 +944,30 @@ local function SyncAimLine(game)
             a = GameToWorld(line.x1, line.y1, zWorld)
         end
         local b = GameToWorld(line.x2, line.y2, zWorld)
+        -- v0.10.23：弱拉弓只显示前段，随蓄力从 30% 增长到 100%，
+        -- 避免刚过死区就整条拉到边界的突兀感。
+        local power = line.power or 1
+        local shown = math.max(3, math.floor(AIM_LINE_SEGMENTS * (0.3 + 0.7 * power) + 0.5))
+        shown = math.min(shown, AIM_LINE_SEGMENTS)
         for i = 1, AIM_LINE_SEGMENTS do
             -- t 从 0（车辆中心）到 1（边界），点与点略重叠形成连续虚线。
             local t = (i - 1) / (AIM_LINE_SEGMENTS - 1)
             local bb = aimLineSet_:GetBillboard(i - 1)
-            bb.enabled = true
-            bb.position = Vector3(
-                a.x + (b.x - a.x) * t,
-                a.y + (b.y - a.y) * t,
-                zWorld)
-            -- 从车辆到边界逐渐变小，避免等大均一。
-            local dot = AIM_LINE_DOT_WORLD * (1.0 - 0.55 * t)
-            bb.size = Vector2(dot, dot)
-            -- DiffAlpha 不读顶点 rgb；alpha 恒 1，淡出已烘焙在软圆边缘。
-            bb.color = Color(1, 1, 1, 1)
-            activeCount = i
+            if i > shown then
+                bb.enabled = false
+            else
+                bb.enabled = true
+                bb.position = Vector3(
+                    a.x + (b.x - a.x) * t,
+                    a.y + (b.y - a.y) * t,
+                    zWorld)
+                -- 从车辆到边界逐渐变小，避免等大均一；弱拉整体更小。
+                local dot = AIM_LINE_DOT_WORLD * (1.0 - 0.55 * t) * (0.7 + 0.3 * power)
+                bb.size = Vector2(dot, dot)
+                -- DiffAlpha 不读顶点 rgb；alpha 恒 1，淡出已烘焙在软圆边缘。
+                bb.color = Color(1, 1, 1, 1)
+                activeCount = shown
+            end
         end
     end
     for i = activeCount + 1, AIM_LINE_SEGMENTS do

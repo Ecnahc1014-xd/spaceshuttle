@@ -7,6 +7,7 @@ local Presentation = {}
 
 local screenShake = 0
 local waveBannerTimer = 0
+local waveBannerBoss = false    -- v0.10.23：Boss 波横幅用红色警告样式
 local hitStop = 0    -- P12：命中顿帧（hitstop），由大命中事件触发，期间主循环对玩法 dt 打折
 local particles = {}
 local floatTexts = {}
@@ -15,6 +16,7 @@ local brickDebris = {}
 local ejectedBoxes = {}
 local baseImpacts = {}
 local baseBarrierFlash = 0
+local shockRings = {}    -- v0.10.23：击毁砖块的扩散环（少量、点缀）
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,
@@ -61,14 +63,15 @@ local function SpawnParticles(x, y, color, count, kind)
         p.x = x; p.y = y
         p.r = color[1]; p.g = color[2]; p.b = color[3]
         if kind == "smoke" then
-            local angle = -math.pi / 2 + (math.random() - 0.5) * 1.8
-            local speed = 8 + math.random() * 26
+            -- 烟只在出生点附近缓慢漂移，不持续上升（否则会堆到屏幕顶部）。
+            local angle = -math.pi / 2 + (math.random() - 0.5) * 2.0
+            local speed = 4 + math.random() * 12
             p.vx = math.cos(angle) * speed
             p.vy = math.sin(angle) * speed
             -- 生命与尺寸拉开随机范围，避免每缕烟一样大、一样久。
-            p.life = 0.45 + math.random() * 0.45
+            p.life = 0.4 + math.random() * 0.35
             p.maxLife = p.life
-            p.size = 4 + math.random() * 6
+            p.size = 4 + math.random() * 5
             p.spin = 0
         elseif kind == "shard" then
             local angle = math.random() * math.pi * 2
@@ -141,6 +144,7 @@ local FEEDBACK_HANDLERS = {
     fullReset = function(event)
         screenShake = 0
         waveBannerTimer = 0
+        waveBannerBoss = false
         -- WO-16/P9：重置时把存活对象回收进对象池，保持池规模稳定。
         for _, p in ipairs(particles) do particlePool[#particlePool + 1] = p end
         for _, f in ipairs(floatTexts) do floatPool[#floatPool + 1] = f end
@@ -152,6 +156,7 @@ local FEEDBACK_HANDLERS = {
         ejectedBoxes = {}
         baseImpacts = {}
         baseBarrierFlash = 0
+        shockRings = {}
         nextDebrisId = 1
         truckLaunchFlash = {
             normal = 0,
@@ -162,6 +167,7 @@ local FEEDBACK_HANDLERS = {
     end,
     waveBanner = function(event)
         waveBannerTimer = 1.8
+        waveBannerBoss = event.isBoss == true
     end,
     brickSpark = function(event)
         local color = VisualCatalog.GetBrickStyle(event.aircraftKey, event.col, event.row)
@@ -182,6 +188,17 @@ local FEEDBACK_HANDLERS = {
                      math.min(255, color.b * 0.5 + 70)}, 1, "smoke")
             end
             SpawnFloatText(event.x, event.y - 4, "+" .. event.score, {255, 240, 180}, 0.8)
+            -- v0.10.23：约 1/3 击毁给一个扩散白环，作为点缀式冲击波。
+            if math.random() < 0.34 then
+                shockRings[#shockRings + 1] = {
+                    x = event.x, y = event.y,
+                    life = 0.3, maxLife = 0.3,
+                    r0 = 6, r1 = 20,
+                    r = particleColor and particleColor[1] or 255,
+                    g = particleColor and particleColor[2] or 240,
+                    b = particleColor and particleColor[3] or 200,
+                }
+            end
         elseif math.random() < 0.35 then
             -- 普通命中仅约 1/3 概率冒 1 粒小火星。
             SpawnParticles(event.x, event.y, {255, 240, 180}, 1, "spark")
@@ -289,10 +306,10 @@ local function UpdateParticles(dt)
             p.x = p.x + p.vx * dt
             p.y = p.y + p.vy * dt
             if p.kind == "smoke" then
-                -- 烟雾：轻微上飘减速、无重力、不断膨胀。
-                p.vx = p.vx * 0.94
-                p.vy = p.vy * 0.96 - 14 * dt
-                p.size = p.size + 10 * dt
+                -- 烟雾：原地附近强阻尼缓漂、无重力、不断膨胀，不堆向屏顶。
+                p.vx = p.vx * 0.90
+                p.vy = p.vy * 0.90
+                p.size = p.size + 9 * dt
             elseif p.kind == "shard" then
                 -- 碎片：受重力、自转。
                 p.vy = p.vy + 300 * dt
@@ -416,6 +433,17 @@ local function UpdateBaseImpacts(dt)
     end
 end
 
+local function UpdateShockRings(dt)
+    for i = #shockRings, 1, -1 do
+        local ring = shockRings[i]
+        ring.life = ring.life - dt
+        if ring.life <= 0 then
+            shockRings[i] = shockRings[#shockRings]
+            shockRings[#shockRings] = nil
+        end
+    end
+end
+
 local function UpdateTruckLaunchFlashes(dt)
     for ballType, timeLeft in pairs(truckLaunchFlash) do
         truckLaunchFlash[ballType] = math.max(0, timeLeft - dt)
@@ -425,6 +453,7 @@ end
 function Presentation.Init()
     screenShake = 0
     waveBannerTimer = 0
+    waveBannerBoss = false
     particles = {}
     floatTexts = {}
     hitFlashes = {}
@@ -432,6 +461,7 @@ function Presentation.Init()
     ejectedBoxes = {}
     baseImpacts = {}
     baseBarrierFlash = 0
+    shockRings = {}
     nextDebrisId = 1
     -- WO-16/P9：对象池在重开时清空回收对象，避免旧局残留引用（id 已随 nextDebrisId 重置）。
     particlePool = {}
@@ -461,6 +491,7 @@ function Presentation.Update(dt, gameSnapshot, events)
     UpdateBrickDebris(dt)
     UpdateEjectedBoxes(dt)
     UpdateBaseImpacts(dt)
+    UpdateShockRings(dt)
     UpdateTruckLaunchFlashes(dt)
 end
 
@@ -469,11 +500,13 @@ function Presentation.GetSnapshot()
         screenShake = screenShake,
         hitStop = hitStop,    -- P12：主循环读取，对玩法 dt 打折实现顿帧
         waveBannerTimer = waveBannerTimer,    -- A2：波次横幅入场计时（秒，1.8 起递减）
+        waveBannerBoss = waveBannerBoss,      -- v0.10.23：Boss 波红色警告横幅
         particles = particles,
         floatTexts = floatTexts,
         hitFlashes = hitFlashes,
         brickDebris = brickDebris,
         baseImpacts = baseImpacts,
+        shockRings = shockRings,
         ejectedBoxes = ejectedBoxes,
         baseBarrierFlash = baseBarrierFlash,
         truckLaunchFlash = truckLaunchFlash,

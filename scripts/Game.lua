@@ -526,7 +526,7 @@ SpawnWave = function()
             Emit("boss_spawn", {enemyId = enemy.id, wave = wave})
             print("[Game] BOSS spawned at wave " .. wave)
         end
-        Emit("wave_started", {wave = wave})
+        Emit("wave_started", {wave = wave, isBoss = true})
         print("[Game] wave " .. wave .. " (BOSS) spawned")
         return
     end
@@ -638,8 +638,9 @@ end
 -- 发射单个方块的碎裂视觉事件（火花 + 独立飞散箱体）。不修改存活状态，由调用方负责。
 local function EmitBrickShatterFx(enemy, brick, x, y)
     local angle = Random() * math.pi * 2
-    local speed = 240 + Random() * 260
-    local lift = 180 + Random() * 120
+    -- v0.10.23：降低飞散速度/上抛，避免碎片飞到屏顶长期堆积、与新小粒子抢戏。
+    local speed = 120 + Random() * 150
+    local lift = 80 + Random() * 90
     Emit("brick_hit", {
         enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
         col = brick.col, row = brick.row, x = x, y = y,
@@ -656,7 +657,7 @@ local function EmitBrickShatterFx(enemy, brick, x, y)
         roll = (Random() * 2 - 1) * 0.9,
         axisPitchSpeed = (Random() * 2 - 1) * 8,
         axisRollSpeed = (Random() * 2 - 1) * 8,
-        lifetime = 1.15 + Random() * 0.55,
+        lifetime = 0.7 + Random() * 0.4,
         brickSize = enemy.brickSize,
         style = enemy.aircraftKey,
     })
@@ -1658,9 +1659,12 @@ local function ComputeAimLine()
         t = math.min(t, (TOP_BOUND_Y + radius - y0) / dirY)
     end
     if t == math.huge or t <= 0 then return nil end
+    -- v0.10.23：输出归一化蓄力 (死区→满拉 映射到 0..1)，供渲染层做弱拉渐显。
+    local power01 = math.max(0, math.min(1, (length - AIM_DEAD_ZONE) / (MAX_PULL - AIM_DEAD_ZONE)))
     return {
         x1 = x0, y1 = y0,
         x2 = x0 + dirX * t, y2 = y0 + dirY * t,
+        power = power01,
     }
 end
 

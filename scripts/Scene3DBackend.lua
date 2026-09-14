@@ -478,6 +478,44 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
     end
 end
 
+-- v0.10.23：击毁扩散环（少量点缀），从 r0 扩到 r1 并淡出。
+local function DrawShockRings(ctx, game, presentation)
+    for _, ring in ipairs(presentation.shockRings or {}) do
+        local sx, sy = ProjectGamePoint(ring.x, ring.y)
+        local progress = 1 - ring.life / ring.maxLife
+        local radius = ring.r0 + (ring.r1 - ring.r0) * progress
+        local alpha = math.floor(180 * (1 - progress))
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, sx, sy, radius * math.abs(projectionScaleX_))
+        nvgStrokeColor(ctx, nvgRGBA(ring.r, ring.g, ring.b, alpha))
+        nvgStrokeWidth(ctx, 2.5)
+        nvgStroke(ctx)
+    end
+end
+
+-- v0.10.23：飘字（+分数/防线扣血/技能提示）。此前 floatTexts 只有旧 2D 后端
+-- 消费，3D 后端一直没画；这里在 overlay 按世界坐标投影绘制，随震屏一起动。
+local function DrawFloatTexts(ctx, game, presentation)
+    for _, f in ipairs(presentation.floatTexts or {}) do
+        local sx, sy = ProjectGamePoint(f.x, f.y)
+        local lifeT = math.max(0, math.min(1, f.life / (f.maxLife or 0.9)))
+        -- 末段淡出 + 轻微放大，提升命中正反馈。
+        local alpha = math.floor(235 * math.min(1, lifeT * 3))
+        local pop = 1 + 0.18 * (1 - lifeT)
+        local size = math.floor((f.size or 20) * pop)
+        local col = f.color or {255, 240, 180}
+        nvgFontSize(ctx, size)
+        nvgFontFace(ctx, "zpix")
+        nvgTextAlign(ctx, NVG_ALIGN_CENTER)
+        -- 深色描边保证亮字在亮色敌机/烟团上也可读。
+        nvgStrokeWidth(ctx, 3)
+        nvgStrokeColor(ctx, nvgRGBA(12, 8, 32, math.min(220, alpha + 40)))
+        nvgText(ctx, sx, sy, f.text)
+        nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], alpha))
+        nvgText(ctx, sx, sy, f.text)
+    end
+end
+
 local function DrawTechPanel(ctx, x, y, width, height, fill, border)
     nvgBeginPath(ctx)
     nvgRect(ctx, x, y, width, height)
@@ -755,10 +793,28 @@ local function DrawBossPhaseBar(ctx, game, boss)
     end
 end
 
+-- v0.10.23：基地受击时屏幕四边向内的红色危险渐变（不遮挡中心战斗区）。
+local function DrawDamageVignette(ctx, game, presentation)
+    local flash = presentation.baseBarrierFlash or 0
+    if flash <= 0 then return end
+    local a = math.min(1, flash / 0.62)
+    local edge = 90
+    local rgba = function(alpha) return nvgRGBA(232, 64, 64, math.floor(alpha)) end
+    -- 上/下/左/右四条向内淡出的渐变条。
+    local g
+    g = nvgLinearGradient(ctx, 0, 0, 0, edge, rgba(150 * a), rgba(0))
+    nvgBeginPath(ctx); nvgRect(ctx, 0, 0, game.width, edge); nvgFillPaint(ctx, g); nvgFill(ctx)
+    g = nvgLinearGradient(ctx, 0, game.height, 0, game.height - edge, rgba(170 * a), rgba(0))
+    nvgBeginPath(ctx); nvgRect(ctx, 0, game.height - edge, game.width, edge); nvgFillPaint(ctx, g); nvgFill(ctx)
+    g = nvgLinearGradient(ctx, 0, 0, edge, 0, rgba(130 * a), rgba(0))
+    nvgBeginPath(ctx); nvgRect(ctx, 0, 0, edge, game.height); nvgFillPaint(ctx, g); nvgFill(ctx)
+    g = nvgLinearGradient(ctx, game.width, 0, game.width - edge, 0, rgba(130 * a), rgba(0))
+    nvgBeginPath(ctx); nvgRect(ctx, game.width - edge, 0, edge, game.height); nvgFillPaint(ctx, g); nvgFill(ctx)
+end
+
 local function DrawHud(ctx, game)
     local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
     local hpColor = hpRatio > 0.35 and UI_COLD or UI_GOLD
-
     -- 重构后的战术仪表盘：左侧分数，中部波次，右侧基地状态，底部统一经验进度。
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, 0, game.width, HUD_HEIGHT)
@@ -835,7 +891,7 @@ local function DrawMenu(ctx, game)
     DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.22", 8, UI_BLUE,
+    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.23", 8, UI_BLUE,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
 
@@ -1081,7 +1137,7 @@ end
 
 local function DrawWaveBanner(ctx, game, presentation)
     -- A2：波次横幅。waveBannerTimer 由 Presentation 维护（1.8 起递减），
-    -- 入场用 ease 从上方滑入，生命周期尾部淡出；不破坏酸性风格，仅位移+透明度。
+    -- 入场用 ease 从上方滑入，生命周期尾部淡出。v0.10.23：Boss 波红框警告。
     local t = presentation.waveBannerTimer or 0
     if t <= 0 then return end
     local life = 1.8
@@ -1092,9 +1148,19 @@ local function DrawWaveBanner(ctx, game, presentation)
     nvgSave(ctx)
     nvgGlobalAlpha(ctx, alpha)
     local cx = game.width * 0.5
-    DrawBluePanel(ctx, cx - 120, 150 + yOff, 240, 46, UI_BLUE_DARK, UI_CYAN, 10)
-    DrawPixelText(ctx, cx, 160 + yOff, string.format("WAVE %02d INCOMING", game.wave), 14,
-        UI_CYAN, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if presentation.waveBannerBoss then
+        local pulse = 220 + math.floor(35 * math.abs(math.sin(game.elapsed * 8)))
+        local warn = {232, 76, 76}
+        DrawBluePanel(ctx, cx - 130, 146 + yOff, 260, 54, {46, 14, 22}, warn, 10)
+        DrawPixelText(ctx, cx, 153 + yOff, "!! WARNING !!", 10, {pulse, 90, 90},
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, cx, 172 + yOff, string.format("WAVE %02d  //  BOSS", game.wave), 14,
+            warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        DrawBluePanel(ctx, cx - 120, 150 + yOff, 240, 46, UI_BLUE_DARK, UI_CYAN, 10)
+        DrawPixelText(ctx, cx, 160 + yOff, string.format("WAVE %02d INCOMING", game.wave), 14,
+            UI_CYAN, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
     nvgRestore(ctx)
 end
 
@@ -1128,6 +1194,8 @@ local function RenderOverlay(game, presentation)
                 math.cos(game.elapsed * 73) * amplitude * 0.65)
         end
         DrawBaseImpactFeedback(vg_, game, presentation)
+        DrawShockRings(vg_, game, presentation)
+        DrawFloatTexts(vg_, game, presentation)
         DrawWaveBanner(vg_, game, presentation)
     end
     nvgRestore(vg_)
@@ -1140,6 +1208,7 @@ local function RenderOverlay(game, presentation)
     DrawHud(vg_, game)
     if game.state == "playing" then
         DrawAmmoSlots(vg_, game, presentation)
+        DrawDamageVignette(vg_, game, presentation)
     elseif game.state == "menu" then
         DrawMenu(vg_, game)
     elseif game.state == "gameover" then
