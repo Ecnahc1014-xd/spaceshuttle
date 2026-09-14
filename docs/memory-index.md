@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.23
-简述：540×960 竖屏弹珠；10轮自主优化——修复飘字(+分数/防线/技能)在3D后端从不渲染(NanoVG投影+描边)、击毁新增扩散白环 shockRings、基地受击屏幕四边红色渐变 vignette、Boss 波红框 WARNING 脉冲横幅(wave_started.isBoss)、瞄准线随蓄力从30%渐长到100%；修烟雾持续上升堆到屏顶(去上升项改强阻尼)、飞散3D箱体初速/上抛减半+寿命缩短防顶部立方体堆积；清理死代码(_texprobe探针、旧2D Renderer/NanoVGBackend、VeggiePixelData，scripts仅7个lua)。三类柔和粒子(火花/三角碎片/烟)、8敌机、青色软圆瞄准线、无召回全屏拖拽；刷怪14s。
+当前版本：0.10.24
+简述：540×960 竖屏弹珠；第2轮10项优化聚焦移动端触摸闭环——暂停态点按恢复、Pause/进升级都取消拖拽并归位待发车防残留蓄力、基地血≤35%红色脉冲、COMBO≥2金色高亮、升级选择后中心"已装配"飘字、主球回收 Dock 顶边青色扫光+激活槽提亮(reloadFlash/marble_reloaded)、发射点扩散环(复用shockRings)、升级面板 Move/Up 全拦截防穿透+空白点击金色提示脉冲(PulseUpgradeHint)、菜单/结算改松手确认(startArmed)防死亡抬手误重开。上一轮：飘字3D可见、冲击环、边缘红闪、Boss横幅、蓄力渐长瞄准线、防粒子/飞散箱堆积、清死代码。三类柔和粒子(火花/三角碎片/烟)、8敌机、青色软圆瞄准线、无召回全屏拖拽；刷怪14s。
 最后巩固：2026-09-14
 
 ## 项目概况
@@ -29,7 +29,6 @@
 | `scripts/AircraftPixelData.lua` | 独立低像素飞机 occupied cells、分数、速度倍率与采样 RGB 数据源 |
 | `scripts/Renderer3D.lua` | 只读同步四类采样飞机（每个 occupied cell 对应一个可破坏体素，单 `CustomGeometry` 双 section）、官方木箱材质、放大大运式平头重卡、撞飞独立箱体；每敌人/车辆各一个 `CustomGeometry` |
 | `scripts/Scene3DBackend.lua` | 3D Scene/Camera/Viewport、46° 正交斜俯视与 `orthoSize=18.0`、固定 9:16 `IntRect` CONTAIN、相机投影标定、3 批动态视差星层、深空底板、深紫/淡蓝 Laterano 酸性 HUD/四弹药槽/菜单和撞线反馈覆盖层 |
-| `scripts/Renderer.lua` | 无规则计算的 NanoVG 绘制器，只消费两个快照 |
 | `assets/model/6d5f1062-5bea-5cf8-a404-280333d4d4c8/` | 低多边形越野皮卡 MDL、LOD、diffuse/normal 纹理和材质资源 |
 
 ## 有效决策
@@ -80,7 +79,7 @@
 | `Game.DrainEvents()` | `scripts/Game.lua` | 稳定，单次消费 |
 | `Presentation.Update(dt, gameSnapshot, events)` | `scripts/Presentation.lua` | 稳定 |
 | `Presentation.GetSnapshot()` | `scripts/Presentation.lua` | 稳定，渲染只读 |
-| 后端 `Init/Shutdown/Resize/ScreenToGame/Render/GetDesignSize` | `scripts/NanoVGBackend.lua` / `scripts/Scene3DBackend.lua` | 2D 与 3D 后端保持同等编排职责 |
+| 后端 `Init/Shutdown/Resize/ScreenToGame/Render/GetDesignSize` | `scripts/Scene3DBackend.lua` | 唯一后端（旧 2D NanoVGBackend/Renderer 已于 v0.10.23 删除） |
 
 ## 避雷清单
 - TodoWrite 必须前置创建并包含 DEV + POST-1/2/3。
@@ -92,6 +91,8 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.24: 第2轮10项优化（移动端触摸闭环/输入防穿透/正反馈）。①PointerDown paused 态直接 Resume（移动端恢复）；②Pause 与进 levelup 都 aiming=false+activeBall 归位 SLING，防残留蓄力；③DrawHud 基地血≤35% 文字色 sin·7 红脉冲；④COMBO(clearStreak)≥2 金色+sin·8 放大；⑤FEEDBACK_MAP upgrade_picked→upgradeConfirm 中心青色"已装配"飘字+轻震屏；⑥UpdateMarbles 主球移除 Emit marble_reloaded(仅 isPrimary)→Presentation.reloadFlash(.3s)，DrawAmmoSlots Dock 顶边右→左青色扫光+激活槽提亮；⑦launchFlash 处理器 push shockRing(r8→26/.24s/弹种色)复用冲击环零新增 draw call；⑧main.lua levelup 态 Mouse/Touch 的 Up/Move 全 return 防穿透，卡片空白点击不关面板改 Presentation.PulseUpgradeHint()（右下提示金色脉冲.5s），DrawLevelUp 加 presentation 参；⑨menu/gameover PointerDown 只置 startArmed、PointerUp 松手才 StartGame（防死亡抬手误重开），ResetGame 清 startArmed；⑩BUILD→0.10.24。LSP 0、build、surfaceless 2503 帧 lua=0、自动开局/发射/选卡探针截图验证后探针已删。
+- v0.10.23: 飘字 3D 可见（DrawFloatTexts 投影+描边+末段放大）、击毁 34% shockRings 扩散环、DrawDamageVignette 受击四边红闪、Boss 波红框 WARNING 横幅（waveBannerBoss）、瞄准线 power 30%→100% 渐长、烟雾去持续上升改强阻尼防堆屏顶、飞散箱初速/寿命减半防顶部堆积、删死代码（_texprobe/Renderer/NanoVGBackend/VeggiePixelData，scripts 仅 7 lua）。
 - v0.10.22: ①瞄准线起点脱离车辆修复——相机是 46° 斜俯视**正交**（非纯俯视），z 差会投影到屏幕 Y；旧瞄准线固定 z=-6、车锚点 z≈0.09，整条线在屏幕偏移。SyncAimLine 改为起点直接取 GetVehicleAnchorWorld(activeBall)（含 z）、终点同 z（规则层 x1,y1 本就=车坐标，问题纯在渲染 z）。②瞄准线视觉：22 等大青方块→14 青色软圆点，t=(i-1)/(N-1) 从 0(车中心)到 1(边界)，尺寸 ×(1-0.55t) 渐小；材质 DiffVCol→DiffAlpha+烘焙青软圆纹理。③粒子更小更少去均一：Presentation 生成尺寸/生命随机范围拉大（spark 1.4-3.4px/0.18-0.42s、shard 2-4.5px spin±16、smoke 4-10px/0.45-0.9s 低速）；击毁 random(1,2) spark+55% 1 shard+20%烟，普通命中 35% 1 spark，防线 random(4,7) spark+35%烟，发射点击 1 spark+15%烟，分裂/追击/贯穿/巨型数量再降且随机；Renderer3D 世界系数下调（spark×0.85/shard×1.25/smoke×0.85，min 0.012-0.015m）。LSP 0、build、1200 帧 lua=0、瞄准线截图确认贴车渐小。
 - v0.10.21: 粒子从"不透明纯色等大方形"重做为三类柔和点缀。Presentation.SpawnParticles 加 kind(spark/shard/smoke，默认 spark)，p 新增 angle/spin/kind，UpdateParticles 分运动：shard 重力+自转、smoke 上飘减速无重力且 size 膨胀、spark 重力短促。事件降频降量：击毁=3 spark+2 shard+35% 1 smoke，普通命中 50% 概率 1 spark，防线 24→10(+50%烟)，分裂 16→5、追击 10/8→3/2、贯穿 16→5、巨型 32→≤8(+40%烟)；launchFlash 点击反馈 8→2 spark+25% 烟。Renderer3D 单 BillboardSet 改三个(particleSets_ spark/shard/smoke 槽 64/40/28、DiffAlpha)，程序生成 CreateSoftCircleTexture(r,g,b,cA,eA) 暖白/灰半透明、CreateTriangleTexture 金属三角，SyncParticles 按 kind 分流、淡出靠末段尺寸收缩。踩坑（探针实证）：DiffVCol/DiffVColAdd 忽略纹理 alpha（软圆/三角→方块），DiffAlpha 读纹理 alpha 但不读 billboard 顶点 rgb（白纹+顶点色不染色），唯一解=颜色烘焙进纹理+DiffAlpha+顶点白；三角因 Billboard UV V 翻转要在图像里反向画。LSP 0、build、1500 帧 lua=0、三类形状截图确认。
 - v0.10.20: 敌机 4→8 种。AircraftPixelData 新增 `bitmapToData(rows)`（M=hullMain红棕/d=hullDark灰蓝/C=canopy高亮蓝/E=engine暗，字符 RGB 落在 ClassifySlot 阈值，转成 col,row,r,g,b entry 串），新增 4 机型位图+behavior：dart 金黄尖头后掠飞镖 11×9（speed1.22/descent1.28/swayFreq1.35，最快）、hive 橙蜂群小机 9×7（swayFreq1.6 急促、分高）、manta 翡翠绿宽翼鳐鱼 14×8（swayAmp36 大横摆、speed.88）、cruiser 钢灰重装盒 13×9（装甲最密、descent.68 最慢、180分）。VisualCatalog 加 4 套四槽位色相。Game.GetAvailableTypes 硬编码 4 型+波次 index 改为 WAVE_ROSTER 门槛表（scout1/dart2/striker3/hive4/manta5/bomber7/cruiser8/interceptor9）。渲染完全 data 驱动不改 Renderer3D。LSP 0、build、1500 帧 lua=0、8 机型同屏两列冻结截图确认轮廓/配色/座舱/引擎灯。

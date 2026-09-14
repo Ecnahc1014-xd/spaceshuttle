@@ -225,6 +225,9 @@ local aimY = SLING_Y
 -- v0.10.15：全屏起手时记录手指按下点，拉弓量 = 当前点 - 按下点。
 local grabStartX = SLING_X
 local grabStartY = SLING_Y
+-- v0.10.24：菜单/结算改为松手确认开始；只有按下时本就处于菜单/结算态才武装，
+-- 避免死亡瞬间手指还按着、抬手即误重开。
+local startArmed = false
 
 local pendingEvents = {}
 local nextEnemyId = 1
@@ -352,6 +355,7 @@ ResetGame = function()
     veggies = {}
     marbles = {}
     aiming = false
+    startArmed = false
     aimX = SLING_X
     aimY = SLING_Y
     grabStartX = SLING_X
@@ -781,6 +785,13 @@ GainXp = function(amount)
         pendingLevelUps = pendingLevelUps + 1
     end
     if pendingLevelUps > 0 then
+        -- v0.10.24：与 Pause 一致，进入升级面板时取消进行中的拖拽并让待发车归位，
+        -- 防止选完强化回到 playing 后残留旧 aiming/grabStart。
+        aiming = false
+        if activeBall then
+            activeBall.x = SLING_X
+            activeBall.y = SLING_Y
+        end
         gameState = "levelup"
         RollUpgradeChoices()
         Emit("level_up", {level = playerLevel})
@@ -1238,8 +1249,12 @@ UpdateMarbles = function(dt)
 
         if not marble.alive then
             table.remove(marbles, i)
-            if marble.isPrimary then EnqueueNextBall() end
-            Emit("marble_removed", {id = marble.id})
+            if marble.isPrimary then
+                EnqueueNextBall()
+                -- v0.10.24：主球回库补弹，给表现层一个轻量反馈事件。
+                Emit("marble_reloaded", {ballType = activeBall and activeBall.ballType or "normal"})
+            end
+            Emit("marble_removed", {id = marble.id, isPrimary = marble.isPrimary == true})
         end
     end
 
@@ -1563,7 +1578,14 @@ end
 
 function Game.PointerDown(px, py)
     if gameState == "menu" or gameState == "gameover" then
-        StartGame()
+        -- v0.10.24：仅武装，松手才真正开始，给结算画面留出阅读时间、防误触。
+        startArmed = true
+        return
+    end
+    startArmed = false
+    -- v0.10.24：移动端无键盘，暂停态点按任意处恢复（桌面端仍可用 P/ESC）。
+    if gameState == "paused" then
+        Game.Resume()
         return
     end
     if gameState ~= "playing" then return end
@@ -1588,6 +1610,15 @@ function Game.PointerMove(px, py)
 end
 
 function Game.PointerUp(px, py)
+    -- v0.10.24：菜单/结算在松手确认时才开局。
+    if gameState == "menu" or gameState == "gameover" then
+        if startArmed then
+            startArmed = false
+            StartGame()
+        end
+        return
+    end
+    startArmed = false
     if not aiming then return end
     local dx, dy, distance = ClampPull(px - grabStartX, py - grabStartY)
     aiming = false
@@ -1612,6 +1643,13 @@ end
 
 function Game.Pause()
     if gameState == "playing" then
+        -- v0.10.24：暂停时取消进行中的拖拽并让待发车归位，
+        -- 避免恢复瞬间带着旧蓄力/残留 aiming 状态。
+        aiming = false
+        if activeBall then
+            activeBall.x = SLING_X
+            activeBall.y = SLING_Y
+        end
         gameState = "paused"
         Emit("game_paused")
     end

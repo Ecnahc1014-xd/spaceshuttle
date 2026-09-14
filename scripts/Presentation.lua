@@ -17,6 +17,8 @@ local ejectedBoxes = {}
 local baseImpacts = {}
 local baseBarrierFlash = 0
 local shockRings = {}    -- v0.10.23：击毁砖块的扩散环（少量、点缀）
+local reloadFlash = 0    -- v0.10.24：主球回库补弹的 Dock 轻闪
+local upgradeHintPulse = 0    -- v0.10.24：升级面板空白点击时的提示轻脉冲
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,
@@ -45,6 +47,8 @@ local FEEDBACK_MAP = {
     speed_dash = {"dashSpark"},
     giant_pierce_armed = {"pierceArmed"},
     giant_area_hit = {"giantBurst"},
+    upgrade_picked = {"upgradeConfirm"},
+    marble_reloaded = {"reloadPulse"},
     game_reset = {"fullReset"},
 }
 
@@ -157,6 +161,8 @@ local FEEDBACK_HANDLERS = {
         baseImpacts = {}
         baseBarrierFlash = 0
         shockRings = {}
+        reloadFlash = 0
+        upgradeHintPulse = 0
         nextDebrisId = 1
         truckLaunchFlash = {
             normal = 0,
@@ -248,6 +254,13 @@ local FEEDBACK_HANDLERS = {
             SpawnParticles(event.x or 270, (event.y or 850) + 6,
                 {200, 200, 210}, 1, "smoke")
         end
+        -- v0.10.24：发射点一个快速扩散的青色小环，作为"离弦"反馈。
+        shockRings[#shockRings + 1] = {
+            x = event.x or 270, y = event.y or 850,
+            life = 0.24, maxLife = 0.24,
+            r0 = 8, r1 = 26,
+            r = launchColor[1], g = launchColor[2], b = launchColor[3],
+        }
     end,
     splitSpark = function(event)
         SpawnParticles(event.x, event.y, {255, 230, 140}, math.random(2, 4), "spark")
@@ -275,6 +288,15 @@ local FEEDBACK_HANDLERS = {
         end
         SpawnFloatText(event.x, event.y - 28,
             "圆域 x" .. event.hitCount, {235, 190, 255}, 1.0)
+    end,
+    -- v0.10.24：主球回库补弹，Dock 轻闪一下。
+    reloadPulse = function(event)
+        reloadFlash = 0.3
+    end,
+    -- v0.10.24：选中升级后的中心确认提示（飘字在恢复 playing 后显示）。
+    upgradeConfirm = function(event)
+        SpawnFloatText(270, 430, (event.name or "强化") .. "  已装配", {140, 235, 255}, 1.1)
+        screenShake = math.max(screenShake, 0.05)
     end,
     -- marble_removed 无需维护拖尾状态。
 }
@@ -462,6 +484,8 @@ function Presentation.Init()
     baseImpacts = {}
     baseBarrierFlash = 0
     shockRings = {}
+    reloadFlash = 0
+    upgradeHintPulse = 0
     nextDebrisId = 1
     -- WO-16/P9：对象池在重开时清空回收对象，避免旧局残留引用（id 已随 nextDebrisId 重置）。
     particlePool = {}
@@ -480,6 +504,8 @@ function Presentation.Update(dt, gameSnapshot, events)
     if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
     if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
     if hitStop > 0 then hitStop = math.max(0, hitStop - dt) end
+    if reloadFlash > 0 then reloadFlash = math.max(0, reloadFlash - dt) end
+    if upgradeHintPulse > 0 then upgradeHintPulse = math.max(0, upgradeHintPulse - dt) end
 
     for _, event in ipairs(events) do
         HandleEvent(event)
@@ -509,9 +535,16 @@ function Presentation.GetSnapshot()
         shockRings = shockRings,
         ejectedBoxes = ejectedBoxes,
         baseBarrierFlash = baseBarrierFlash,
+        reloadFlash = reloadFlash,
+        upgradeHintPulse = upgradeHintPulse,
         truckLaunchFlash = truckLaunchFlash,
         visualCatalog = VisualCatalog,
     }
+end
+
+-- v0.10.24：升级面板空白区域被点按时，由编排层直接触发提示脉冲（非领域事件）。
+function Presentation.PulseUpgradeHint()
+    upgradeHintPulse = 0.5
 end
 
 return Presentation

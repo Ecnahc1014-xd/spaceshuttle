@@ -100,7 +100,10 @@ function HandleMouseDown(eventType, eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     if Game.IsLevelUp() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-        TryPickUpgradeAt(uiX, uiY)
+        -- v0.10.24：点在卡片外不关闭面板也不穿透，轻脉冲提示必须三选一。
+        if not TryPickUpgradeAt(uiX, uiY) then
+            Presentation.PulseUpgradeHint()
+        end
         return
     end
     Game.PointerDown(x, y)
@@ -108,12 +111,15 @@ end
 
 function HandleMouseUp(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
+    -- v0.10.24：升级态的按下已在 Down 分支消费，禁止其穿透成玩法 PointerUp。
+    if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerUp(x, y)
 end
 
 function HandleMouseMove(eventType, eventData)
+    if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerMove(x, y)
@@ -125,19 +131,24 @@ function HandleTouchBegin(eventType, eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     if Game.IsLevelUp() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-        TryPickUpgradeAt(uiX, uiY)
+        -- v0.10.24：点在卡片外不关闭面板也不穿透，轻脉冲提示必须三选一。
+        if not TryPickUpgradeAt(uiX, uiY) then
+            Presentation.PulseUpgradeHint()
+        end
         return
     end
     Game.PointerDown(x, y)
 end
 
 function HandleTouchMove(eventType, eventData)
+    if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerMove(x, y)
 end
 
 function HandleTouchEnd(eventType, eventData)
+    if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerUp(x, y)

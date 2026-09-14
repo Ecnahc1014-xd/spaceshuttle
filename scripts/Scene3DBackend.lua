@@ -689,6 +689,20 @@ local function DrawAmmoSlots(ctx, game, presentation)
     nvgStrokeWidth(ctx, 2)
     nvgStroke(ctx)
 
+    -- v0.10.24：主球回库补弹时 Dock 顶边一道青色轻扫光（0.3s 衰减）。
+    local reload = presentation.reloadFlash or 0
+    if reload > 0 then
+        local a = math.floor(190 * (reload / 0.3))
+        local sweep = reload / 0.3
+        local sx = DESIGN_W * (1 - sweep)
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, sx, BOTTOM_DOCK_Y)
+        nvgLineTo(ctx, DESIGN_W, BOTTOM_DOCK_Y)
+        nvgStrokeColor(ctx, nvgRGBA(120, 235, 255, a))
+        nvgStrokeWidth(ctx, 3)
+        nvgStroke(ctx)
+    end
+
     DrawPixelText(ctx, 12, BOTTOM_DOCK_Y + 10, "ORDNANCE / FIRE CONTROL", 9, UI_COLD)
     DrawPixelText(ctx, DESIGN_W - 12, BOTTOM_DOCK_Y + 10,
         "SLOT LINK // ACTIVE", 8, UI_GOLD, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -704,7 +718,12 @@ local function DrawAmmoSlots(ctx, game, presentation)
         local color = SLOT_COLORS[ballType]
         local selected = game.activeBall and game.activeBall.ballType == ballType
         local flash = presentation.truckLaunchFlash[ballType] or 0
+        local reload = presentation.reloadFlash or 0
         local fill = selected and {23, 37, 112, 255} or {11, 16, 54, 255}
+        if selected and reload > 0 then
+            local lift = math.floor(28 * (reload / 0.3))
+            fill = {23 + lift, 37 + lift, 112 + math.min(143, lift * 2), 255}
+        end
         local border = selected and UI_GOLD or {color[1], color[2], color[3], 220}
         DrawTechPanel(ctx, x, slotY, slotSize, slotSize, fill, border)
         DrawPixelText(ctx, x + 7, slotY + 6, string.format("%02d", i), 8, color)
@@ -814,7 +833,14 @@ end
 
 local function DrawHud(ctx, game)
     local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
-    local hpColor = hpRatio > 0.35 and UI_COLD or UI_GOLD
+    -- v0.10.24：低血量（≤35%）基地读数与血条红色脉冲，强化危险提示。
+    local hpColor
+    if hpRatio > 0.35 then
+        hpColor = UI_COLD
+    else
+        local pulse = 0.5 + 0.5 * math.sin((game.elapsed or 0) * 7)
+        hpColor = {235 + math.floor(20 * pulse), 70 + math.floor(40 * pulse), 70}
+    end
     -- 重构后的战术仪表盘：左侧分数，中部波次，右侧基地状态，底部统一经验进度。
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, 0, game.width, HUD_HEIGHT)
@@ -835,9 +861,17 @@ local function DrawHud(ctx, game)
     DrawPixelText(ctx, centerX, 8, "WAVE", 8, UI_GOLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, centerX, 22, string.format("%02d", game.wave), 25, UI_WHITE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- v0.10.24：连击≥2 时整句转金色并轻微脉冲放大，给连续清场正反馈。
+    local combo = game.clearStreak or 0
+    local comboColor = UI_COLD
+    local comboSize = 7
+    if combo >= 2 then
+        comboColor = UI_GOLD
+        comboSize = 7 + math.floor(2 * (0.5 + 0.5 * math.sin((game.elapsed or 0) * 8)))
+    end
     DrawPixelText(ctx, centerX, 53,
-        string.format("HOSTILES %02d  //  COMBO %02d", game.concurrentCount or 0, game.clearStreak or 0),
-        7, UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        string.format("HOSTILES %02d  //  COMBO x%d", game.concurrentCount or 0, combo),
+        comboSize, comboColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     DrawPixelText(ctx, game.width - 12, 9, "BASE INTEGRITY", 8, UI_COLD,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -891,7 +925,7 @@ local function DrawMenu(ctx, game)
     DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.23", 8, UI_BLUE,
+    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.24", 8, UI_BLUE,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
 
@@ -1075,7 +1109,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
-local function DrawLevelUp(ctx, game)
+local function DrawLevelUp(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     nvgGlobalAlpha(ctx, ModalIntro(game))
@@ -1112,7 +1146,21 @@ local function DrawLevelUp(ctx, game)
     end
 
     DrawPixelText(ctx, 24, 704, "CHOOSE ONE  /  GAMEPLAY PAUSED", 9, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 704, "TAP A CARD TO EQUIP", 9, UI_GOLD,
+    -- v0.10.24：空白点击时"点选卡片"提示轻脉冲，明确告知必须三选一。
+    local hintPulse = presentation and presentation.upgradeHintPulse or 0
+    local hintColor = UI_GOLD
+    local hintSize = 9
+    if hintPulse > 0 then
+        local p = hintPulse / 0.5
+        hintColor = {
+            UI_GOLD[1] + math.floor((255 - UI_GOLD[1]) * p),
+            UI_GOLD[2] + math.floor((248 - UI_GOLD[2]) * p),
+            UI_GOLD[3] + math.floor((210 - UI_GOLD[3]) * p),
+            255,
+        }
+        hintSize = 9 + math.floor(3 * p)
+    end
+    DrawPixelText(ctx, game.width - 24, 704, "TAP A CARD TO EQUIP", hintSize, hintColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 24, 726, game.width - 48, 4, UI_GOLD)
     nvgRestore(ctx)
@@ -1130,7 +1178,9 @@ local function DrawPaused(ctx, game)
     DrawHalo(ctx, game.width * 0.5, 470, 120, 160)
     DrawPixelText(ctx, game.width * 0.5, 430, "暂停", 34, UI_WHITE,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 482, "SYSTEM HALTED // PRESS P TO RESUME", 9,
+    DrawPixelText(ctx, game.width * 0.5, 482, "点击屏幕或按 P 继续", 12,
+        UI_WHITE, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 506, "TAP ANYWHERE OR PRESS P TO RESUME", 8,
         UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
@@ -1214,7 +1264,7 @@ local function RenderOverlay(game, presentation)
     elseif game.state == "gameover" then
         DrawGameOver(vg_, game)
     elseif game.state == "levelup" then
-        DrawLevelUp(vg_, game)
+        DrawLevelUp(vg_, game, presentation)
     elseif game.state == "paused" then
         DrawPaused(vg_, game)
     end
