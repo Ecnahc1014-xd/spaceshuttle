@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.24
-简述：540×960 竖屏弹珠；第2轮10项优化聚焦移动端触摸闭环——暂停态点按恢复、Pause/进升级都取消拖拽并归位待发车防残留蓄力、基地血≤35%红色脉冲、COMBO≥2金色高亮、升级选择后中心"已装配"飘字、主球回收 Dock 顶边青色扫光+激活槽提亮(reloadFlash/marble_reloaded)、发射点扩散环(复用shockRings)、升级面板 Move/Up 全拦截防穿透+空白点击金色提示脉冲(PulseUpgradeHint)、菜单/结算改松手确认(startArmed)防死亡抬手误重开。上一轮：飘字3D可见、冲击环、边缘红闪、Boss横幅、蓄力渐长瞄准线、防粒子/飞散箱堆积、清死代码。三类柔和粒子(火花/三角碎片/烟)、8敌机、青色软圆瞄准线、无召回全屏拖拽；刷怪14s。
-最后巩固：2026-09-14
+当前版本：0.10.25
+简述：接入引擎 VoxelPhysicsWorld（探测+回退）：规则层仍 AABB；模块可用时每敌机一个体积网格+命中挖空+独立动态碎块（禁止 ApplyDamage 撕编队）；Linux CLI 当前 CreateComponent 返回 nil，自动 CustomGeometry。上一轮 v0.10.24 移动端触摸闭环。8敌机、青色软圆瞄准线、无召回全屏拖拽；刷怪14s。
+最后巩固：2026-09-15
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -71,6 +71,7 @@
 - D-040: 3D 消失根因是 NanoVG 渲染事件位于 3D Viewport 之后，旧 `DrawFullFrameBackground` 用整屏不透明填充覆盖设计画布；修复为 `DrawLetterboxBackground`，只填充 CONTAIN 画布外区域，`Backend.Render` 保持 `Renderer3D.Render` → `RenderOverlay` 顺序。
 - D-041: 主循环必须在 `Game.Update` 后重新获取快照，再把同一更新后快照传给 `Presentation.Update` 和渲染；升级触发后 `Game.Update` 立即状态中断；升级同帧新增 XP 使用 `deferredXp` 原值缓冲，最后一张升级卡后只结算一次倍率。
 - D-042: UI 统一 Astroon 蓝紫主题，不允许首页蓝白、升级白卡、结算深紫、暂停黑 overlay 混搭；token 为深蓝紫渐变、紫色 surface、蓝/青强调、白字、金色焦点。升级点击使用 `ScreenToUi`，玩法瞄准使用 `ScreenToGame`。
+- D-043: v0.10.25 接入引擎 `VoxelPhysicsWorld` 仅作表现：规则层继续 AABB；模块探测失败必须回退 CustomGeometry，禁止 Init 失败。编队体积零重力传送、命中挖空+独立碎块，禁止对编队 ApplyDamage（连通性会撕机翼）。Linux CLI 当前未编译该模块。
 
 ## 活跃系统契约
 | 契约 | 文件 | 状态 |
@@ -91,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.25: 接入引擎 VoxelPhysicsWorld（探测+回退）。Scene3DBackend 创建体素世界失败则 voxel_physics=false 走 CustomGeometry；模块可用时每敌机一个 VoxelVolume（gridW×gridH×2、voxelSize=brickSize*WORLD_SCALE、原点对齐阵列底边）、VisualCatalog 调色板 1-64、命中 HollowBrick+独立动态碎块（禁止 ApplyDamage）、碎块上限 24、模态暂停求解。Linux CLI 未知组件 ECEBFC51 回退成功。LSP 0、build、400/200 帧 lua=0。
 - v0.10.24: 第2轮10项优化（移动端触摸闭环/输入防穿透/正反馈）。①PointerDown paused 态直接 Resume（移动端恢复）；②Pause 与进 levelup 都 aiming=false+activeBall 归位 SLING，防残留蓄力；③DrawHud 基地血≤35% 文字色 sin·7 红脉冲；④COMBO(clearStreak)≥2 金色+sin·8 放大；⑤FEEDBACK_MAP upgrade_picked→upgradeConfirm 中心青色"已装配"飘字+轻震屏；⑥UpdateMarbles 主球移除 Emit marble_reloaded(仅 isPrimary)→Presentation.reloadFlash(.3s)，DrawAmmoSlots Dock 顶边右→左青色扫光+激活槽提亮；⑦launchFlash 处理器 push shockRing(r8→26/.24s/弹种色)复用冲击环零新增 draw call；⑧main.lua levelup 态 Mouse/Touch 的 Up/Move 全 return 防穿透，卡片空白点击不关面板改 Presentation.PulseUpgradeHint()（右下提示金色脉冲.5s），DrawLevelUp 加 presentation 参；⑨menu/gameover PointerDown 只置 startArmed、PointerUp 松手才 StartGame（防死亡抬手误重开），ResetGame 清 startArmed；⑩BUILD→0.10.24。LSP 0、build、surfaceless 2503 帧 lua=0、自动开局/发射/选卡探针截图验证后探针已删。
 - v0.10.23: 飘字 3D 可见（DrawFloatTexts 投影+描边+末段放大）、击毁 34% shockRings 扩散环、DrawDamageVignette 受击四边红闪、Boss 波红框 WARNING 横幅（waveBannerBoss）、瞄准线 power 30%→100% 渐长、烟雾去持续上升改强阻尼防堆屏顶、飞散箱初速/寿命减半防顶部堆积、删死代码（_texprobe/Renderer/NanoVGBackend/VeggiePixelData，scripts 仅 7 lua）。
 - v0.10.22: ①瞄准线起点脱离车辆修复——相机是 46° 斜俯视**正交**（非纯俯视），z 差会投影到屏幕 Y；旧瞄准线固定 z=-6、车锚点 z≈0.09，整条线在屏幕偏移。SyncAimLine 改为起点直接取 GetVehicleAnchorWorld(activeBall)（含 z）、终点同 z（规则层 x1,y1 本就=车坐标，问题纯在渲染 z）。②瞄准线视觉：22 等大青方块→14 青色软圆点，t=(i-1)/(N-1) 从 0(车中心)到 1(边界)，尺寸 ×(1-0.55t) 渐小；材质 DiffVCol→DiffAlpha+烘焙青软圆纹理。③粒子更小更少去均一：Presentation 生成尺寸/生命随机范围拉大（spark 1.4-3.4px/0.18-0.42s、shard 2-4.5px spin±16、smoke 4-10px/0.45-0.9s 低速）；击毁 random(1,2) spark+55% 1 shard+20%烟，普通命中 35% 1 spark，防线 random(4,7) spark+35%烟，发射点击 1 spark+15%烟，分裂/追击/贯穿/巨型数量再降且随机；Renderer3D 世界系数下调（spark×0.85/shard×1.25/smoke×0.85，min 0.012-0.015m）。LSP 0、build、1200 帧 lua=0、瞄准线截图确认贴车渐小。

@@ -3,6 +3,17 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.10.25（接入引擎 VoxelPhysicsWorld，探测失败自动回退 CustomGeometry）：
+  - **探测即接入**：`Scene3DBackend.Init` 在 Octree 后 `CreateComponent("VoxelPhysicsWorld")`，nil/未知组件类型则 `voxelWorld_=nil`，禁止把探测失败当初始化失败。
+  - **规则层零侵入**：AABB 逐块碰撞、HP、编队、回收仍在 `Game.lua`；体素物理只消费快照做表现。
+  - **真机路径（模块可用时）**：每敌机一个 `VoxelVolume`（gridW×gridH×2，voxelSize=`brickSize*WORLD_SCALE`），零重力动态体每帧传送 Node 并清速度、互撞关闭；调色板 8 机型×4 槽×冻结/正常（VisualCatalog.GetVoxelMatIndex 1-64）；命中不走 ApplyDamage（会撕连通性），改 HollowBrick 挖空当前格 + 另建 1×1×2 动态碎块赋初速，同屏碎块硬上限 24。
+  - **体积原点**：网格最小角对齐阵列底边 `GameToWorld(x, y+gridH*brickSize)`，体素 `(col-1, gridH-row, z)` 对应规则格 `(col,row)`。
+  - **当前 Linux CLI 运行时未启用体素物理**（`Could not create unknown component type ECEBFC51`，CreateComponent 返回 nil），日志 `voxel_physics=false`，自动走 CustomGeometry 飞散箱旧路径。Preview/真机 Web/Android 需再确认模块是否编译进该端。
+  - **同步失败降级**：SyncVoxelEnemies pcall，CreateVolume nil 抛错，失败则清体积并 SyncEnemyMeshes+SyncEjectedBoxes。
+  - 验证：LSP 0、build、headless 200/400 帧 lua=0、探测失败回退日志齐。临时探针已删。
+- 上次交付: v0.10.25 VoxelPhysicsWorld 探测接入+挖空/独立碎块+Linux CLI 回退 CustomGeometry
+
+## 历史
 - 版本: 0.10.24（第 2 轮 10 项自主优化，聚焦移动端触摸闭环/输入防穿透/正反馈补全）：
   - **触摸恢复暂停**：Game.PointerDown 在 paused 态直接 Resume（移动端无键盘），DrawPaused 文案改"点击屏幕或按 P 继续"+英文副行。
   - **Pause/升级都取消拖拽**：Game.Pause 与进入 levelup（CheckLevelUp 分支）都把 aiming=false 并让 activeBall 归位 SLING，防恢复/选完强化后残留旧蓄力。
@@ -69,10 +80,18 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: 真机触摸复测本轮输入闭环——菜单/结算现在"松手才开局"（按下武装 startArmed），确认触屏快速点按仍灵敏、死亡瞬间抬手不再误重开；暂停态点按恢复、升级面板空白点击只弹提示不关闭；补弹 Dock 扫光/发射环/低血红脉冲/连击金色高亮的强弱是否合适（都在表现层常量，过强可降）。之后仍待实测：全屏拖拽松手即射的极端角度（回收 vy>0 判定）、空仓空窗若仍觉长应加快自然回落而非恢复召回；Boss 波与词条/异常反应手感、14s 刷怪节奏。继续调视觉只基于实机截图，不改权威 HP、逐块扣血、XP 曲线、回收/拖拽契约和 9:16 共同投影契约
-- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/Presentation.lua`, `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/main.lua`, `docs/plans/WORK-ORDERS.md`, `docs/plans/deferred.md`
+- likely_next_task: 在 Preview / 真机（Web 或 Android，文档声明体素物理可用）确认 VoxelPhysicsWorld 组件能创建；若仍 nil 则继续 CustomGeometry。模块可用后再看：敌机体素对齐编队、命中挖空缺口、独立碎块飞散/重力、冻结换色、同屏 24 碎块预算。禁止对编队主体 ApplyDamage（连通性会把机翼撕成独立刚体）。车辆暂不改成体素物理。不改权威 HP、AABB、XP、回收/拖拽、9:16 投影。
+- 相关文件: `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/VisualCatalog.lua`, `scripts/Presentation.lua`, `engine-docs/recipes/voxel-physics.md`
 
-## 本批次新增避雷（v0.10.24 输入闭环 / WO-13/16/14/15/P11/P12）
+## 本批次新增避雷（v0.10.25 体素物理接入）
+- ⚠️ VoxelPhysicsWorld 探测契约（v0.10.25）：`scene:CreateComponent("VoxelPhysicsWorld")` 返回 nil 表示当前运行时未编译该模块（Linux CLI 实测未知类型 ECEBFC51）。探测必须 pcall，失败只打日志并走 CustomGeometry，**禁止**把失败当 `Backend.Init=false`（否则 Start 不订阅事件，UI 消失卡死）。一个 Scene 只能有 PhysicsWorld 或 VoxelPhysicsWorld 其一；本项目不用 Bullet。
+- ⚠️ 体素物理与权威规则分离（v0.10.25）：规则层继续 AABB 逐块碰撞；体素体积只做表现。编队位置每帧由快照传送 Node，体积 gravityFactor=0、collisionMask=0，禁止让 Jolt 推动编队。
+- ⚠️ 禁止对编队主体 ApplyDamage（v0.10.25）：伤害 API 会按连通性分裂体积，机翼/座舱会变成独立刚体，和“整机编队下移、逐块 AABB”冲突。命中=HollowBrick 只挖当前格 occupancy + 另建 1×1×depth 动态碎块赋初速。挖空后立刻把该机 signature 对齐快照，避免同帧 FillEnemyVolume 把刚挖的格填回去。
+- 体积原点契约（v0.10.25）：VoxelVolume 原点在网格最小角。规则 enemy.x/y 是阵列左上、设计 Y 向下、世界 Y 向上，原点=GameToWorld(x, y+gridH*brickSize)；体素 (col-1, gridH-row, z) 对应规则格 (col,row)。voxelSize=brickSize*WORLD_SCALE，深度 2 体素，z 居中。调色板槽位只由 VisualCatalog.GetVoxelMatIndex 分配（1-64），CreateVolume 前 SetPaletteEntry 完毕。
+- 碎块预算：MAX_VOXEL_DEBRIS=24，碎块 evictable=true、编队 evictable=false；超预算删最老碎块。模态（非 playing）SetSimulationPaused(true)。
+- Linux CLI / 部分运行时体素物理未启用：headless 验证只能证明回退路径 lua=0，不能证明碎块物理；真机验收必须看 VoxelPhysicsWorld ready 日志。
+
+## 历史避雷（v0.10.24 输入闭环 / WO-13/16/14/15/P11/P12）
 - 模态输入防穿透契约（v0.10.24）：main.lua 每个 Mouse/Touch 处理器必须先判模态再决定是否调 Game.Pointer*——levelup 态 Down 只走 TryPickUpgradeAt（UI 坐标 ScreenToUi），且 **Move/Up 在 levelup 态直接 return**（旧代码 Up/Move 无模态守卫，升级面板上抬手会穿透成玩法 PointerUp）。paused 态 PointerDown 恢复（移动端无键盘）。卡片空白点击不关面板、调 Presentation.PulseUpgradeHint() 做提示脉冲，禁止让空白点击关闭/透传。
 - ⚠️ 模态切换必须取消拖拽（v0.10.24）：进入任何非 playing 模态（Pause、CheckLevelUp 进 levelup）都要 `aiming=false` 并把 activeBall 归位 SLING，否则拖拽蓄力中触发升级、选完回到 playing 会残留 aiming/grabStart 导致下一抬手误射。
 - 菜单/结算松手确认契约（v0.10.24）：menu/gameover 的 PointerDown 只置 startArmed=true（不立即 StartGame），PointerUp 在仍处于该态且 startArmed 时才 StartGame——防止死亡瞬间手指还按着、抬手即误重开。startArmed 在 ResetGame 清。键盘 SPACE/RETURN 仍走 HandleAction 不受影响。

@@ -387,6 +387,7 @@ SpawnEjectedBox = function(event)
         lifetime = math.max(1.6, event.lifetime or 1.6),
         size = event.brickSize,
         style = event.style or event.aircraftKey,
+        enemyId = event.enemyId,
         col = event.col,
         row = event.row,
     }

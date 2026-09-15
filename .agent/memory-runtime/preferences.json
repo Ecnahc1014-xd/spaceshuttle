@@ -1,13 +1,13 @@
 {
   "_comment": "跨项目用户偏好，POST-3 同步时自动更新",
-  "_last_sync": "2026-08-15",
+  "_last_sync": "2026-09-15",
   "_source_project": "太空飞机弹珠",
   "wake_word": null,
   "persona_type": null,
   "communication_style": "简体中文",
   "code_preferences": {
     "gamedev_architecture": "渲染与权威玩法逻辑分离",
-    "voxel_rendering": "敌方体素对象按实体合并 CustomGeometry，避免逐体素节点",
+    "voxel_rendering": "敌方体素优先 VoxelPhysicsWorld（探测失败回退 CustomGeometry）；规则层保持 AABB，禁止用 ApplyDamage 撕编队",
     "vehicle_rendering": "车辆使用单 CustomGeometry 多 PBR section 的大运式平头重卡几何，并用独立浅色侧围区分侧面；视觉外轮廓不得超出权威碰撞判定",
     "vehicle_motion": "载具转向区分目标角与显示角，沿最短角路径平滑过渡；操作点、权威位置、3D 模型投影中心和预测轨迹首点必须一致，动态相机位移后刷新共享投影标定",
     "enemy_aircraft": "敌方使用参考图采样的独立低像素 occupied-cell 网格；同一网格驱动规则碰撞、2D/3D 表现和碎片颜色，逐块破坏后必须显示真实缺口；二维邻接只剔除 XY 内部侧面，前后 Z 端面必须保留；砖块 HP 只保留为隐藏规则状态",

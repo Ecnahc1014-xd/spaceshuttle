@@ -124,4 +124,45 @@ function VisualCatalog.GetBrickStyle(aircraftKey, col, row)
     return style[tostring(col) .. ":" .. tostring(row)]
 end
 
+-- v0.10.25：体素物理调色板槽位。手建体积占用 1-64（8 机型 × 4 槽 × 冻结/正常）。
+-- 渲染层按 (aircraftKey, slot, frozen) 取全局索引，禁止在 Renderer3D 里再发明一套编号。
+local AIRCRAFT_KEYS = {
+    "scout", "striker", "bomber", "interceptor",
+    "dart", "manta", "hive", "cruiser",
+}
+---@type table<string, integer>
+local SLOT_INDEX = { hullMain = 0, hullDark = 1, canopy = 2, engine = 3 }
+---@type integer
+local VOXEL_MAT_BASE = 1
+---@type integer
+local VOXEL_MAT_FREEZE_BASE = 33
+
+function VisualCatalog.GetAircraftKeys()
+    return AIRCRAFT_KEYS
+end
+
+function VisualCatalog.GetAircraftPalette(aircraftKey)
+    return AIRCRAFT_PALETTES[aircraftKey] or AIRCRAFT_PALETTES.scout
+end
+
+---@param aircraftKey string
+---@param slot string
+---@param frozen boolean|nil
+---@return integer
+function VisualCatalog.GetVoxelMatIndex(aircraftKey, slot, frozen)
+    ---@type integer
+    local keyIndex = 1
+    for i = 1, #AIRCRAFT_KEYS do
+        if AIRCRAFT_KEYS[i] == aircraftKey then
+            keyIndex = i
+            break
+        end
+    end
+    ---@type integer
+    local slotIndex = SLOT_INDEX[slot] or 0
+    ---@type integer
+    local base = frozen and VOXEL_MAT_FREEZE_BASE or VOXEL_MAT_BASE
+    return base + (keyIndex - 1) * 4 + slotIndex
+end
+
 return VisualCatalog

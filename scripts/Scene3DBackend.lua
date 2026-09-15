@@ -25,6 +25,8 @@ local dangerBandMaterial_ = nil
 local skyNode_ = nil
 local starNode_ = nil
 local starFields_ = {}
+---@type VoxelPhysicsWorld|nil
+local voxelWorld_ = nil
 local CleanupFailedInit
 local ReleaseScene
 local vg_ = nil
@@ -101,6 +103,7 @@ CleanupFailedInit = function()
     skyNode_ = nil
     starNode_ = nil
     starFields_ = {}
+    voxelWorld_ = nil
 end
 
 ReleaseScene = function()
@@ -118,6 +121,7 @@ ReleaseScene = function()
     skyNode_ = nil
     starNode_ = nil
     starFields_ = {}
+    voxelWorld_ = nil
 end
 
 local function UpdateScreenMetrics()
@@ -1288,6 +1292,32 @@ function Backend.Init(renderHandlerName)
     scene_ = Scene()
     scene_:CreateComponent("Octree")
     scene_:CreateComponent("DebugRenderer")
+    -- v0.10.25：探测体素物理模块。当前运行时未启用时 CreateComponent 返回 nil，
+    -- 渲染层回退到手搓 CustomGeometry，禁止把探测失败当成初始化失败。
+    -- 一个 Scene 只能有 PhysicsWorld 或 VoxelPhysicsWorld 其一；本项目不用 Bullet。
+    local okVoxel, voxelWorld = pcall(function()
+        return scene_:CreateComponent("VoxelPhysicsWorld")
+    end)
+    if okVoxel and voxelWorld then
+        voxelWorld_ = voxelWorld
+        voxelWorld_.gravity = Vector3(0, -9.81, 0)
+        voxelWorld_.updateEnabled = true
+        voxelWorld_:SetMinFragmentVoxels(1)
+        voxelWorld_:SetSpallChunkVoxels(1)
+        voxelWorld_:SetMaxSpallChunks(4)
+        voxelWorld_:SetSpallSpeed(3.2)
+        voxelWorld_:SetDamageNoise(0.12)
+        voxelWorld_:SetStressBreakFactor(0)
+        voxelWorld_:SetMinDamageableVoxels(1)
+        voxelWorld_:SetDebrisMaxAge(1.4)
+        voxelWorld_:SetMaxFrozenFragments(48)
+        voxelWorld_:SetContactEventThreshold(0)
+        print("[Scene3DBackend] VoxelPhysicsWorld ready")
+    else
+        voxelWorld_ = nil
+        print("[Scene3DBackend] VoxelPhysicsWorld unavailable, fallback CustomGeometry ok="
+            .. tostring(okVoxel) .. " result=" .. tostring(voxelWorld))
+    end
 
     local lightGroupFile = cache:GetResource("XMLFile", "LightGroup/Daytime.xml")
     if not lightGroupFile then
@@ -1347,7 +1377,7 @@ function Backend.Init(renderHandlerName)
         return false
     end
 
-    if not Renderer3D.Init(scene_) then
+    if not Renderer3D.Init(scene_, voxelWorld_) then
         print("[Scene3DBackend] ERROR: Renderer3D initialization failed")
         CleanupFailedInit()
         return false
@@ -1439,6 +1469,11 @@ function Backend.Render(gameSnapshot, presentationSnapshot)
                 flash * 3.1 + (bossActive and 0.6 or 0),
                 flash * 4.0 + (bossActive and 2.4 or 0), 1)))
         end
+    end
+    -- 升级/暂停/菜单时停体素求解，避免碎块在模态下继续飞。
+    if voxelWorld_ then
+        local playing = gameSnapshot.state == "playing"
+        voxelWorld_:SetSimulationPaused(not playing)
     end
     Renderer3D.Render(gameSnapshot, presentationSnapshot)
     RenderOverlay(gameSnapshot, presentationSnapshot)

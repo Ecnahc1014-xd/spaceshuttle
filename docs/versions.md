@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.25 | 2026-09-15 | 接入引擎 VoxelPhysicsWorld：探测 CreateComponent，失败回退 CustomGeometry（Linux CLI 未知类型 ECEBFC51）；规则层仍 AABB；模块可用时每敌机一体积网格+挖空当前格+独立动态碎块（禁止 ApplyDamage 撕编队）、调色板 1-64、碎块上限 24、模态暂停求解。LSP 0、build、400/200 帧 lua=0 |
 | v0.10.24 | 2026-09-14 | 第2轮10项自主优化（移动端触摸闭环/输入防穿透/正反馈补全）：①PointerDown paused态直接Resume（移动端恢复暂停）；②Pause与进levelup都aiming=false+待发车归位SLING防残留蓄力；③基地血≤35%时血条文字红色sin脉冲；④COMBO≥2金色sin放大；⑤upgrade_picked→upgradeConfirm中心青色"已装配"飘字+轻震屏；⑥主球回收Emit marble_reloaded(仅isPrimary)→reloadFlash(.3s)→Dock顶边右→左青色扫光+激活槽提亮；⑦发射launchFlash追加shockRing(r8→26/.24s/弹种色)复用冲击环通道零新增draw call；⑧levelup态Mouse/Touch的Up/Move全拦截防穿透，空白点击不关面板改触发PulseUpgradeHint金色提示脉冲；⑨menu/gameover改松手确认(startArmed按下武装、PointerUp才StartGame)防死亡抬手误重开；⑩版本号→0.10.24。LSP 0、build、surfaceless 2503帧lua=0、自动开局+发射+选卡探针截图验证后探针已删 |
 | v0.10.23 | 2026-09-14 | 10轮自主优化：修复飘字(+分数/防线/技能)在3D后端从不渲染(NanoVG投影+深色描边+末段放大)；击毁34%概率扩散白环 shockRings；基地受击屏幕四边红色 vignette；Boss波红框WARNING脉冲横幅(wave_started.isBoss)；瞄准线随蓄力30%→100%渐长渐大；烟雾去持续上升项改强阻尼防屏顶堆积；飞散3D箱体初速/上抛减半+寿命1.15-1.7→0.7-1.1s防顶部堆积；删死代码(_texprobe/旧2D Renderer/NanoVGBackend/VeggiePixelData)。LSP 0、build、2500帧lua=0 |
 | v0.10.22 | 2026-09-14 | 修瞄准线起点脱离车辆：相机为46°斜俯视正交（非纯俯视），z差会投影到屏幕Y，旧固定z=-6相对车锚点z≈.09导致整线偏移；改为整条线取车辆锚点z。瞄准线22等大青方块→14软圆点从车到边界渐小（DiffAlpha+烘焙青软圆纹理）。粒子更小更少更随机（击毁1-2火花+55%碎片+20%烟、命中35%1火花、点击1火花+15%烟）。LSP 0、build、1200帧lua=0 |

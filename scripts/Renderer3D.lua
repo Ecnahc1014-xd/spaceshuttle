@@ -37,6 +37,17 @@ local enemyMeshes_ = {}
 local vehicleRecords_ = {}
 local debrisNodes_ = {}
 local ejectedBoxNodes_ = {}
+---@type VoxelPhysicsWorld|nil
+local voxelWorld_ = nil
+local voxelPhysicsEnabled_ = false
+local voxelPaletteReady_ = false
+---@type integer
+local voxelDepthVoxels_ = 2
+local MAX_VOXEL_DEBRIS = 24
+local voxelDebrisCount_ = 0
+local consumedEjectIds_ = {}
+-- WO-04/P9：单帧体素重建预算。必须在 SyncVoxelEnemies 之前声明，避免 Lua 把它解析成全局。
+local REBUILD_BUDGET = 4
 local particleSets_ = nil    -- {spark=..., shard=..., smoke=...}
 local particleMaterials_ = nil
 local particleNodes_ = nil
@@ -373,11 +384,333 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     record.signature = GetEnemySignature(enemy)
 end
 
+-- v0.10.25：体素物理调色板。8 机型 × 4 槽位 × 正常/冻结，全部落在 bank 0 的 1-64。
+-- 必须在任何 CreateVolume 之前设完；颜色来自 VisualCatalog，硬度低到弹珠伤害能挖掉。
+local function EnsureVoxelPalette(visualCatalog)
+    if voxelPaletteReady_ or not voxelWorld_ or not visualCatalog then return end
+    if not visualCatalog.GetAircraftKeys or not visualCatalog.GetAircraftPalette then return end
+    local keys = visualCatalog.GetAircraftKeys()
+    for _, key in ipairs(keys) do
+        local palette = visualCatalog.GetAircraftPalette(key)
+        for _, frozen in ipairs({ false, true }) do
+            for _, slot in ipairs({ "hullMain", "hullDark", "canopy", "engine" }) do
+                local rgb = palette[slot] or palette.hullMain
+                local r, g, b = rgb[1] / 255, rgb[2] / 255, rgb[3] / 255
+                if frozen then
+                    r = math.min(1.0, r * 0.45 + 0.35)
+                    g = math.min(1.0, g * 0.45 + 0.45)
+                    b = math.min(1.0, b * 0.45 + 0.55)
+                end
+                local index = visualCatalog.GetVoxelMatIndex(key, slot, frozen)
+                voxelWorld_:SetPaletteEntry(index, Color(r, g, b), 0.2)
+                local metallic = (slot == "hullMain" or slot == "hullDark") and 0.55 or 0.08
+                local roughness = slot == "canopy" and 0.18 or 0.42
+                local emissive = nil
+                if slot == "engine" then
+                    emissive = Color(r, g, b, frozen and 2.0 or 4.0)
+                elseif slot == "canopy" then
+                    emissive = Color(r, g, b, 1.2)
+                end
+                if emissive then
+                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5, emissive)
+                else
+                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5)
+                end
+                voxelWorld_:SetPaletteCutColor(index, Color(r * 0.55, g * 0.55, b * 0.55))
+            end
+        end
+    end
+    voxelPaletteReady_ = true
+    print("[Renderer3D] voxel palette ready (8 aircraft x 4 slots x freeze)")
+end
+
+---@return integer
+local function VoxelDepthCount()
+    return voxelDepthVoxels_
+end
+
+-- 体积原点在网格最小角。规则层 enemy.x/y 是阵列左上角（设计坐标，Y 向下），
+-- 世界 Y 向上，所以最小角对齐阵列底边：GameToWorld(x, y+gridH*brickSize)。
+-- 体素 (col-1, gridH-row, z) 对应规则格 (col,row)：row=1 在世界 +Y（远离玩家）。
+local function EnemyVolumeWorldOrigin(enemy, voxelSize)
+    local origin = GameToWorld(enemy.x, enemy.y + enemy.gridH * enemy.brickSize, 0)
+    local depth = VoxelDepthCount()
+    origin.z = origin.z - voxelSize * depth * 0.5
+    return origin
+end
+
+local function FillEnemyVolume(volume, enemy, visualCatalog)
+    if not visualCatalog or not visualCatalog.GetVoxelMatIndex then return end
+    local grid = volume:GetGrid()
+    grid:Clear()
+    local dimX = math.tointeger(enemy.gridW) or 1
+    local dimY = math.tointeger(enemy.gridH) or 1
+    local dimZ = VoxelDepthCount()
+    local frozen = (enemy.freezeRatio or 0) > 0.35
+    for _, brick in ipairs(enemy.bricks) do
+        if brick.alive then
+            local col = math.tointeger(brick.col)
+            local row = math.tointeger(brick.row)
+            if col and row then
+                local style = visualCatalog.GetBrickStyle
+                    and visualCatalog.GetBrickStyle(enemy.aircraftKey, col, row)
+                local slot = style and style.slot or "hullMain"
+                local mat = visualCatalog.GetVoxelMatIndex(enemy.aircraftKey, slot, frozen)
+                local gx = col - 1
+                local gy = dimY - row
+                if gx >= 0 and gx < dimX and gy >= 0 and gy < dimY then
+                    grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, true)
+                    grid:PaintBox(gx, gy, 0, gx, gy, dimZ - 1, mat)
+                end
+            end
+        end
+    end
+end
+
+local function CreateEnemyVolume(enemy, visualCatalog)
+    if not voxelWorld_ then return nil end
+    EnsureVoxelPalette(visualCatalog)
+    local voxelSize = enemy.brickSize * WORLD_SCALE
+    local dimX = math.tointeger(enemy.gridW) or 1
+    local dimY = math.tointeger(enemy.gridH) or 1
+    local dimZ = VoxelDepthCount()
+    local origin = EnemyVolumeWorldOrigin(enemy, voxelSize)
+    local okCreate, volume = pcall(function()
+        return voxelWorld_:CreateVolume(dimX, dimY, dimZ, voxelSize, origin)
+    end)
+    if not okCreate or not volume then
+        print("[Renderer3D] CreateVolume failed: " .. tostring(volume))
+        return nil
+    end
+    FillEnemyVolume(volume, enemy, visualCatalog)
+    -- 编队主体用零重力动态体：每帧由规则层传送 Node 并清速度，禁止互撞/下坠。
+    -- 碎块由 ApplyDamage 自动生成动态体积，继承密度后受重力。
+    volume.density = 420.0
+    volume.gravityFactor = 0.0
+    volume.useGravity = false
+    volume.linearDamping = 1.0
+    volume.angularDamping = 1.0
+    volume.destructible = true
+    volume.evictable = false
+    volume.collisionLayer = 1
+    volume.collisionMask = 0
+    volume.material = voxelWorld_:GetPaletteMaterial()
+    voxelWorld_:FinalizeVolumeAsDynamic(volume)
+    volume:RebuildGeometry()
+    local node = volume.node
+    if node then
+        node.position = origin
+    end
+    print("[Renderer3D] enemy volume id=" .. tostring(enemy.id)
+        .. " " .. tostring(enemy.aircraftKey)
+        .. " " .. tostring(dimX) .. "x" .. tostring(dimY) .. "x" .. tostring(dimZ)
+        .. " voxel=" .. string.format("%.3f", voxelSize))
+    return volume
+end
+
+local function BrickWorldCenter(record, col, row)
+    local node = record.volume.node
+    if not node then return nil end
+    local size = record.voxelSize
+    local colI = math.tointeger(col)
+    local rowI = math.tointeger(row)
+    if not colI or not rowI then return nil end
+    local gx = colI - 1
+    local gy = record.gridH - rowI
+    local gz = (VoxelDepthCount() - 1) * 0.5
+    local origin = node.position
+    return Vector3(
+        origin.x + (gx + 0.5) * size,
+        origin.y + (gy + 0.5) * size,
+        origin.z + (gz + 0.5) * size)
+end
+
+-- 禁止对编队主体走 ApplyDamage：连通性会把机翼撕成独立刚体，和规则层整机编队冲突。
+-- 挖空只改当前格 occupancy；碎块是另建的 1×1×depth 动态体积。
+local function HollowBrick(record, col, row)
+    local volume = record.volume
+    if not volume then return end
+    local grid = volume:GetGrid()
+    local colI = math.tointeger(col)
+    local rowI = math.tointeger(row)
+    local dimY = math.tointeger(record.gridH) or 1
+    if not colI or not rowI then return end
+    local gx = colI - 1
+    local gy = dimY - rowI
+    local dimZ = VoxelDepthCount()
+    if gx < 0 or gy < 0 then return end
+    grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, false)
+    volume:MarkRegionDirty(gx, gy, 0, gx, gy, dimZ - 1)
+    voxelWorld_:RebuildDynamicProxy(volume)
+    volume:RebuildGeometry()
+end
+
+local function SpawnVoxelDebris(record, event, visualCatalog)
+    if not voxelWorld_ or not visualCatalog or not visualCatalog.GetVoxelMatIndex then return end
+    local worldPos = BrickWorldCenter(record, event.col, event.row)
+        or GameToWorld(event.x, event.y, VOXEL_FRONT_OFFSET)
+    local size = record.voxelSize
+    local dimZ = VoxelDepthCount()
+    local origin = Vector3(
+        worldPos.x - size * 0.5,
+        worldPos.y - size * 0.5,
+        worldPos.z - size * dimZ * 0.5)
+    local debris = voxelWorld_:CreateVolume(1, 1, dimZ, size, origin)
+    if not debris then return end
+    local style = visualCatalog.GetBrickStyle
+        and visualCatalog.GetBrickStyle(record.aircraftKey, event.col, event.row)
+    local slot = style and style.slot or "hullMain"
+    local mat = visualCatalog.GetVoxelMatIndex(record.aircraftKey, slot, false)
+    local grid = debris:GetGrid()
+    grid:FillBox(0, 0, 0, 0, 0, dimZ - 1, true)
+    grid:PaintBox(0, 0, 0, 0, 0, dimZ - 1, mat)
+    debris.density = 280.0
+    debris.evictable = true
+    debris.destructible = true
+    debris.gravityFactor = 1.0
+    debris.linearDamping = 0.18
+    debris.angularDamping = 0.22
+    debris.material = voxelWorld_:GetPaletteMaterial()
+    voxelWorld_:FinalizeVolumeAsDynamic(debris)
+    debris:RebuildGeometry()
+    local vx = (event.vx or 0) * WORLD_SCALE
+    local vy = -(event.vy or 0) * WORLD_SCALE
+    local vz = -2.2
+    debris:SetLinearVelocity(Vector3(vx, vy, vz))
+    debris:SetAngularVelocity(Vector3(
+        event.axisPitchSpeed or 0,
+        event.axisRollSpeed or 0,
+        event.angularVelocity or 0))
+    voxelDebrisCount_ = voxelDebrisCount_ + 1
+end
+
+local function ForEachVolume(fn)
+    local count = voxelWorld_:GetVolumeCount()
+    -- 同时兼容 0 基与 1 基索引；空槽直接跳过。
+    for i = 0, count do
+        local vol = voxelWorld_:GetVolume(i)
+        if vol then fn(vol) end
+    end
+end
+
+local function TrimVoxelDebris()
+    if not voxelWorld_ then return end
+    local extra = voxelDebrisCount_ - MAX_VOXEL_DEBRIS
+    if extra <= 0 then return end
+    -- 超预算时优先删最老的可驱逐碎块；编队主体 evictable=false，不会被误删。
+    local toRemove = {}
+    ForEachVolume(function(vol)
+        if extra <= #toRemove then return end
+        if vol.evictable then
+            toRemove[#toRemove + 1] = vol
+        end
+    end)
+    for i = 1, #toRemove do
+        voxelWorld_:RemoveVolume(toRemove[i])
+    end
+    voxelDebrisCount_ = math.max(0, voxelDebrisCount_ - #toRemove)
+end
+
+local function SyncVoxelEnemies(game, presentation)
+    local visualCatalog = presentation.visualCatalog
+    EnsureVoxelPalette(visualCatalog)
+    local active = {}
+    local dirty = {}
+    for _, enemy in ipairs(game.veggies) do
+        if not enemy.dead then
+            active[enemy.id] = true
+            local record = enemyMeshes_[enemy.id]
+            if not record or (not record.volume and not record.root) then
+                local volume = CreateEnemyVolume(enemy, visualCatalog)
+                if volume then
+                    record = {
+                        volume = volume,
+                        signature = GetEnemySignature(enemy),
+                        voxelSize = enemy.brickSize * WORLD_SCALE,
+                        gridH = math.tointeger(enemy.gridH) or 1,
+                        aircraftKey = enemy.aircraftKey,
+                    }
+                    enemyMeshes_[enemy.id] = record
+                else
+                    error("CreateVolume returned nil")
+                end
+            elseif record.signature ~= GetEnemySignature(enemy) then
+                dirty[#dirty + 1] = {record = record, enemy = enemy}
+            end
+            if record and record.volume then
+                local node = record.volume.node
+                if node then
+                    node.position = EnemyVolumeWorldOrigin(enemy, record.voxelSize)
+                    record.volume:SetLinearVelocity(Vector3(0, 0, 0))
+                    record.volume:SetAngularVelocity(Vector3(0, 0, 0))
+                end
+            end
+        end
+    end
+
+    -- 必须先挖碎块再按签名重建：同一帧 alive=false 若先整网 Fill，刚挖的格会被填回去。
+    local boxes = presentation.ejectedBoxes or {}
+    local liveEjectIds = {}
+    local hollowed = {}
+    for i = 1, #boxes do
+        local box = boxes[i]
+        liveEjectIds[box.id] = true
+        if box.enemyId and not consumedEjectIds_[box.id] then
+            consumedEjectIds_[box.id] = true
+            local record = enemyMeshes_[box.enemyId]
+            if record and record.volume then
+                SpawnVoxelDebris(record, box, visualCatalog)
+                HollowBrick(record, box.col, box.row)
+                hollowed[box.enemyId] = true
+            end
+        end
+    end
+    for _, enemy in ipairs(game.veggies) do
+        if hollowed[enemy.id] then
+            local record = enemyMeshes_[enemy.id]
+            if record then
+                record.signature = GetEnemySignature(enemy)
+            end
+        end
+    end
+    for id in pairs(consumedEjectIds_) do
+        if not liveEjectIds[id] then consumedEjectIds_[id] = nil end
+    end
+    TrimVoxelDebris()
+
+    -- 冻结换色等非挖空脏记录才整网重建。
+    local budget = REBUILD_BUDGET
+    local rebuilt = 0
+    for i = 1, #dirty do
+        local item = dirty[i]
+        local currentSig = GetEnemySignature(item.enemy)
+        if item.record.signature ~= currentSig and rebuilt < budget then
+            FillEnemyVolume(item.record.volume, item.enemy, visualCatalog)
+            voxelWorld_:RebuildDynamicProxy(item.record.volume)
+            item.record.volume:RebuildGeometry()
+            item.record.signature = currentSig
+            rebuilt = rebuilt + 1
+        end
+    end
+    if #dirty - rebuilt > 0 and rebuilt >= budget then
+        print("[Renderer3D] voxel rebuild budget hit: " .. #dirty .. " dirty, " .. rebuilt .. " rebuilt")
+    end
+
+    for id, record in pairs(enemyMeshes_) do
+        if not active[id] then
+            if record.volume then
+                voxelWorld_:RemoveVolume(record.volume)
+            elseif record.root then
+                RemoveNode(record.root)
+            end
+            enemyMeshes_[id] = nil
+        end
+    end
+end
+
 -- WO-04/P9：单帧体素重建预算护栏。极端同屏 + 批量冻结切换时，
 -- 限制每帧实际重建数量，超额脏记录顺延到下一帧（signature 仍不同会被再次命中）。
 -- 触发条件维持「仅拓扑或冻结态改变」（GetEnemySignature），预算只限频次不放松语义。
-local REBUILD_BUDGET = 4
-
 local function SyncEnemyMeshes(game, presentation)
     local active = {}
     local visualCatalog = presentation.visualCatalog
@@ -998,8 +1331,13 @@ local function CreateCrateMaterial()
     material:SetCullMode(CULL_NONE)
     return material
 end
-function Renderer3D.Init(scene)
+function Renderer3D.Init(scene, voxelWorld)
     scene_ = scene
+    voxelWorld_ = voxelWorld
+    voxelPhysicsEnabled_ = voxelWorld ~= nil
+    voxelPaletteReady_ = false
+    voxelDebrisCount_ = 0
+    consumedEjectIds_ = {}
     lastRenderElapsed_ = nil
     modelBox_ = cache:GetResource("Model", "Models/Box.mdl")
 
@@ -1064,7 +1402,8 @@ function Renderer3D.Init(scene)
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
     local initialized = voxelMaterial_ ~= nil and crateMaterial_ ~= nil
     initialized_ = initialized
-    print("[Renderer3D] initialized, aircraft_crates=true, hidden_brick_hp=true, dayun_heavy_trucks=true")
+    print("[Renderer3D] initialized, aircraft_crates=true, voxel_physics="
+        .. tostring(voxelPhysicsEnabled_) .. ", dayun_heavy_trucks=true")
     return initialized_
 end
 
@@ -1090,17 +1429,39 @@ function Renderer3D.Render(game, presentation)
     end
     lastRenderElapsed_ = elapsed
 
-    SyncEnemyMeshes(game, presentation)
+    if voxelPhysicsEnabled_ then
+        local okSync, syncErr = pcall(SyncVoxelEnemies, game, presentation)
+        if not okSync then
+            print("[Renderer3D] voxel sync failed, fallback CustomGeometry: " .. tostring(syncErr))
+            voxelPhysicsEnabled_ = false
+            for id, record in pairs(enemyMeshes_) do
+                if record.volume and voxelWorld_ then
+                    pcall(function() voxelWorld_:RemoveVolume(record.volume) end)
+                    enemyMeshes_[id] = nil
+                end
+            end
+            SyncEnemyMeshes(game, presentation)
+            SyncEjectedBoxes(presentation)
+        end
+    else
+        SyncEnemyMeshes(game, presentation)
+        SyncEjectedBoxes(presentation)
+    end
     SyncVehicles(game, dt)
     SyncDebris(presentation)
-    SyncEjectedBoxes(presentation)
     SyncParticles(presentation)
     SyncAimLine(game)
 end
 
 function Renderer3D.Shutdown()
     for _, record in pairs(vehicleRecords_) do RemoveNode(record.root) end
-    for _, record in pairs(enemyMeshes_) do RemoveNode(record.root) end
+    for _, record in pairs(enemyMeshes_) do
+        if record.volume and voxelWorld_ then
+            voxelWorld_:RemoveVolume(record.volume)
+        elseif record.root then
+            RemoveNode(record.root)
+        end
+    end
     for _, node in pairs(debrisNodes_) do RemoveNode(node) end
     for _, node in pairs(ejectedBoxNodes_) do RemoveNode(node) end
     if particleNodes_ then
@@ -1125,6 +1486,11 @@ function Renderer3D.Shutdown()
     enemyMeshes_ = {}
     debrisNodes_ = {}
     ejectedBoxNodes_ = {}
+    voxelWorld_ = nil
+    voxelPhysicsEnabled_ = false
+    voxelPaletteReady_ = false
+    voxelDebrisCount_ = 0
+    consumedEjectIds_ = {}
     materialCache_ = {}
     vehicleMaterialSets_ = {}
     scene_ = nil
