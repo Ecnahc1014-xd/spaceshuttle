@@ -43,6 +43,9 @@ local voxelPhysicsEnabled_ = false
 local voxelPaletteReady_ = false
 ---@type integer
 local voxelDepthVoxels_ = 2
+-- 飞散碎块用立方体素，避免 1×1×depth 扁长条（用户可见的 1:1:2）。
+---@type integer
+local voxelDebrisDepth_ = 1
 local MAX_VOXEL_DEBRIS = 24
 local voxelDebrisCount_ = 0
 local consumedEjectIds_ = {}
@@ -483,21 +486,17 @@ local function CreateEnemyVolume(enemy, visualCatalog)
         return nil
     end
     FillEnemyVolume(volume, enemy, visualCatalog)
-    -- 编队主体用零重力动态体：每帧由规则层传送 Node 并清速度，禁止互撞/下坠。
-    -- 碎块由 ApplyDamage 自动生成动态体积，继承密度后受重力。
-    volume.density = 420.0
-    volume.gravityFactor = 0.0
-    volume.useGravity = false
-    volume.linearDamping = 1.0
-    volume.angularDamping = 1.0
-    volume.destructible = true
+    -- 编队主体必须是静态体积：动态体 Node 在质心，每帧把 position 设回网格最小角
+    -- 会把整机平移出视野（Preview 上表现为敌机消失、只剩 1:1:2 碎块）。
+    -- 规则层仍用 AABB；体素只做表现，每帧只改静态 Node 位置，不让 Jolt 推编队。
+    volume.destructible = false
     volume.evictable = false
     volume.collisionLayer = 1
     volume.collisionMask = 0
     volume.material = voxelWorld_:GetPaletteMaterial()
-    voxelWorld_:FinalizeVolumeAsDynamic(volume)
+    voxelWorld_:FinalizeVolume(volume)
     volume:RebuildGeometry()
-    local node = volume.node
+    local node = volume:GetNode()
     if node then
         node.position = origin
     end
@@ -509,7 +508,7 @@ local function CreateEnemyVolume(enemy, visualCatalog)
 end
 
 local function BrickWorldCenter(record, col, row)
-    local node = record.volume.node
+    local node = record.volume:GetNode()
     if not node then return nil end
     local size = record.voxelSize
     local colI = math.tointeger(col)
@@ -526,7 +525,7 @@ local function BrickWorldCenter(record, col, row)
 end
 
 -- 禁止对编队主体走 ApplyDamage：连通性会把机翼撕成独立刚体，和规则层整机编队冲突。
--- 挖空只改当前格 occupancy；碎块是另建的 1×1×depth 动态体积。
+-- 挖空只改当前格 occupancy；碎块是另建的 1×1×1 立方动态体积。
 local function HollowBrick(record, col, row)
     local volume = record.volume
     if not volume then return end
@@ -541,7 +540,7 @@ local function HollowBrick(record, col, row)
     if gx < 0 or gy < 0 then return end
     grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, false)
     volume:MarkRegionDirty(gx, gy, 0, gx, gy, dimZ - 1)
-    voxelWorld_:RebuildDynamicProxy(volume)
+    -- 编队是静态体积，手改 grid 后只重网格，不要 RebuildDynamicProxy。
     volume:RebuildGeometry()
 end
 
@@ -550,7 +549,7 @@ local function SpawnVoxelDebris(record, event, visualCatalog)
     local worldPos = BrickWorldCenter(record, event.col, event.row)
         or GameToWorld(event.x, event.y, VOXEL_FRONT_OFFSET)
     local size = record.voxelSize
-    local dimZ = VoxelDepthCount()
+    local dimZ = voxelDebrisDepth_
     local origin = Vector3(
         worldPos.x - size * 0.5,
         worldPos.y - size * 0.5,
@@ -638,11 +637,9 @@ local function SyncVoxelEnemies(game, presentation)
                 dirty[#dirty + 1] = {record = record, enemy = enemy}
             end
             if record and record.volume then
-                local node = record.volume.node
+                local node = record.volume:GetNode()
                 if node then
                     node.position = EnemyVolumeWorldOrigin(enemy, record.voxelSize)
-                    record.volume:SetLinearVelocity(Vector3(0, 0, 0))
-                    record.volume:SetAngularVelocity(Vector3(0, 0, 0))
                 end
             end
         end
@@ -686,7 +683,6 @@ local function SyncVoxelEnemies(game, presentation)
         local currentSig = GetEnemySignature(item.enemy)
         if item.record.signature ~= currentSig and rebuilt < budget then
             FillEnemyVolume(item.record.volume, item.enemy, visualCatalog)
-            voxelWorld_:RebuildDynamicProxy(item.record.volume)
             item.record.volume:RebuildGeometry()
             item.record.signature = currentSig
             rebuilt = rebuilt + 1

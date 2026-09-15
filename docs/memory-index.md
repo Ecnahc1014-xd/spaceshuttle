@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.25
-简述：接入引擎 VoxelPhysicsWorld（探测+回退）：规则层仍 AABB；模块可用时每敌机一个体积网格+命中挖空+独立动态碎块（禁止 ApplyDamage 撕编队）；Linux CLI 当前 CreateComponent 返回 nil，自动 CustomGeometry。上一轮 v0.10.24 移动端触摸闭环。8敌机、青色软圆瞄准线、无召回全屏拖拽；刷怪14s。
-最后巩固：2026-09-15
+当前版本：0.10.26
+简述：修 Preview 体素路径——编队改静态体积（动态体质心 vs 网格最小角导致敌机消失），碎块 1×1×2 扁条改 1×1×1 立方。规则层仍 AABB；Linux CLI 回退 CustomGeometry。8敌机、青色软圆瞄准线、无召回全屏拖拽；刷怪14s。
+最后巩固：2026-09-16
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -92,6 +92,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.26: Preview 体素路径修敌机消失+碎块 1:1:2。根因：编队 FinalizeVolumeAsDynamic 后 Node 在质心，每帧设回网格最小角把整机平移出视野；碎块 CreateVolume(1,1,2) 是扁长条。现编队 FinalizeVolume 静态、每帧只改 GetNode().position；碎块 1×1×1。LSP 0、build、headless 200 帧 lua=0。
 - v0.10.25: 接入引擎 VoxelPhysicsWorld（探测+回退）。Scene3DBackend 创建体素世界失败则 voxel_physics=false 走 CustomGeometry；模块可用时每敌机一个 VoxelVolume（gridW×gridH×2、voxelSize=brickSize*WORLD_SCALE、原点对齐阵列底边）、VisualCatalog 调色板 1-64、命中 HollowBrick+独立动态碎块（禁止 ApplyDamage）、碎块上限 24、模态暂停求解。Linux CLI 未知组件 ECEBFC51 回退成功。LSP 0、build、400/200 帧 lua=0。
 - v0.10.24: 第2轮10项优化（移动端触摸闭环/输入防穿透/正反馈）。①PointerDown paused 态直接 Resume（移动端恢复）；②Pause 与进 levelup 都 aiming=false+activeBall 归位 SLING，防残留蓄力；③DrawHud 基地血≤35% 文字色 sin·7 红脉冲；④COMBO(clearStreak)≥2 金色+sin·8 放大；⑤FEEDBACK_MAP upgrade_picked→upgradeConfirm 中心青色"已装配"飘字+轻震屏；⑥UpdateMarbles 主球移除 Emit marble_reloaded(仅 isPrimary)→Presentation.reloadFlash(.3s)，DrawAmmoSlots Dock 顶边右→左青色扫光+激活槽提亮；⑦launchFlash 处理器 push shockRing(r8→26/.24s/弹种色)复用冲击环零新增 draw call；⑧main.lua levelup 态 Mouse/Touch 的 Up/Move 全 return 防穿透，卡片空白点击不关面板改 Presentation.PulseUpgradeHint()（右下提示金色脉冲.5s），DrawLevelUp 加 presentation 参；⑨menu/gameover PointerDown 只置 startArmed、PointerUp 松手才 StartGame（防死亡抬手误重开），ResetGame 清 startArmed；⑩BUILD→0.10.24。LSP 0、build、surfaceless 2503 帧 lua=0、自动开局/发射/选卡探针截图验证后探针已删。
 - v0.10.23: 飘字 3D 可见（DrawFloatTexts 投影+描边+末段放大）、击毁 34% shockRings 扩散环、DrawDamageVignette 受击四边红闪、Boss 波红框 WARNING 横幅（waveBannerBoss）、瞄准线 power 30%→100% 渐长、烟雾去持续上升改强阻尼防堆屏顶、飞散箱初速/寿命减半防顶部堆积、删死代码（_texprobe/Renderer/NanoVGBackend/VeggiePixelData，scripts 仅 7 lua）。

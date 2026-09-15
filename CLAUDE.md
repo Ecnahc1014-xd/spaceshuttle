@@ -3,17 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.25（接入引擎 VoxelPhysicsWorld，探测失败自动回退 CustomGeometry）：
-  - **探测即接入**：`Scene3DBackend.Init` 在 Octree 后 `CreateComponent("VoxelPhysicsWorld")`，nil/未知组件类型则 `voxelWorld_=nil`，禁止把探测失败当初始化失败。
-  - **规则层零侵入**：AABB 逐块碰撞、HP、编队、回收仍在 `Game.lua`；体素物理只消费快照做表现。
-  - **真机路径（模块可用时）**：每敌机一个 `VoxelVolume`（gridW×gridH×2，voxelSize=`brickSize*WORLD_SCALE`），零重力动态体每帧传送 Node 并清速度、互撞关闭；调色板 8 机型×4 槽×冻结/正常（VisualCatalog.GetVoxelMatIndex 1-64）；命中不走 ApplyDamage（会撕连通性），改 HollowBrick 挖空当前格 + 另建 1×1×2 动态碎块赋初速，同屏碎块硬上限 24。
-  - **体积原点**：网格最小角对齐阵列底边 `GameToWorld(x, y+gridH*brickSize)`，体素 `(col-1, gridH-row, z)` 对应规则格 `(col,row)`。
-  - **当前 Linux CLI 运行时未启用体素物理**（`Could not create unknown component type ECEBFC51`，CreateComponent 返回 nil），日志 `voxel_physics=false`，自动走 CustomGeometry 飞散箱旧路径。Preview/真机 Web/Android 需再确认模块是否编译进该端。
-  - **同步失败降级**：SyncVoxelEnemies pcall，CreateVolume nil 抛错，失败则清体积并 SyncEnemyMeshes+SyncEjectedBoxes。
-  - 验证：LSP 0、build、headless 200/400 帧 lua=0、探测失败回退日志齐。临时探针已删。
-- 上次交付: v0.10.25 VoxelPhysicsWorld 探测接入+挖空/独立碎块+Linux CLI 回退 CustomGeometry
+- 版本: 0.10.26（修复 Preview 体素路径：敌机消失 + 碎块 1:1:2）：
+  - **根因 1 敌机不可见**：编队被 FinalizeVolumeAsDynamic，动态体 Node 在质心；每帧 `node.position = 网格最小角` 把整机平移出视野，只剩独立碎块。现改为 `FinalizeVolume` 静态体，每帧只改 `GetNode().position`，不 RebuildDynamicProxy、不清速度。
+  - **根因 2 碎块 1:1:2**：`CreateVolume(1,1,dimZ=2)` 是扁长条。碎块改 `voxelDebrisDepth_=1` 的 1×1×1 立方，编队主体仍 gridW×gridH×2 保持厚度。
+  - **API**：体积 Node 一律 `volume:GetNode()`，禁止 `.node`。编队 `destructible=false`，命中仍 HollowBrick 挖空 + 独立动态碎块。
+  - Linux CLI 仍 `voxel_physics=false` 走 CustomGeometry；Preview/真机走静态体积路径。规则层 AABB 未改。
+  - 验证：LSP 0、build、headless 200 帧 lua=0 + VoxelPhysicsWorld unavailable 回退日志。
+- 上次交付: v0.10.26 编队改静态体积+碎块改立方，修 Preview 敌机消失/扁条碎块
 
 ## 历史
+- 版本: 0.10.25（接入引擎 VoxelPhysicsWorld，探测失败自动回退 CustomGeometry）：探测 CreateComponent，失败回退 CustomGeometry；规则层仍 AABB；模块可用时每敌机一体积网格+挖空+独立碎块。Linux CLI 未启用模块。
 - 版本: 0.10.24（第 2 轮 10 项自主优化，聚焦移动端触摸闭环/输入防穿透/正反馈补全）：
   - **触摸恢复暂停**：Game.PointerDown 在 paused 态直接 Resume（移动端无键盘），DrawPaused 文案改"点击屏幕或按 P 继续"+英文副行。
   - **Pause/升级都取消拖拽**：Game.Pause 与进入 levelup（CheckLevelUp 分支）都把 aiming=false 并让 activeBall 归位 SLING，防恢复/选完强化后残留旧蓄力。
@@ -80,14 +79,17 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: 在 Preview / 真机（Web 或 Android，文档声明体素物理可用）确认 VoxelPhysicsWorld 组件能创建；若仍 nil 则继续 CustomGeometry。模块可用后再看：敌机体素对齐编队、命中挖空缺口、独立碎块飞散/重力、冻结换色、同屏 24 碎块预算。禁止对编队主体 ApplyDamage（连通性会把机翼撕成独立刚体）。车辆暂不改成体素物理。不改权威 HP、AABB、XP、回收/拖拽、9:16 投影。
+- likely_next_task: Preview 复测 v0.10.26——敌机静态体积是否对齐编队、挖空缺口、立方碎块飞散；若仍不可见再查调色板/RebuildGeometry。禁止对编队 ApplyDamage、禁止把编队改回动态体再每帧设最小角。车辆暂不改体素。不改权威 HP、AABB、XP、回收/拖拽、9:16 投影。
 - 相关文件: `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/VisualCatalog.lua`, `scripts/Presentation.lua`, `engine-docs/recipes/voxel-physics.md`
 
-## 本批次新增避雷（v0.10.25 体素物理接入）
+## 本批次新增避雷（v0.10.26 静态编队体积 / v0.10.25 体素物理接入）
+- ⚠️ 编队体积必须静态（v0.10.26）：`CreateVolume` 的 position 是网格最小角；动态体 Node 在质心。每帧把动态 Node 设回最小角会把整机平移出视野（敌机消失、只剩碎块）。编队用 `FinalizeVolume` 静态体，每帧只改 `GetNode().position`；碎块才 `FinalizeVolumeAsDynamic`。禁止对编队 RebuildDynamicProxy / SetLinearVelocity。
+- ⚠️ 碎块必须是立方（v0.10.26）：编队深度 2 是为了斜视厚度；碎块再 `CreateVolume(1,1,2)` 就是扁长条 1:1:2。碎块用 1×1×1（voxelDebrisDepth_=1）。
+- 体积 Node API：用 `volume:GetNode()`，不要 `.node`。
 - ⚠️ VoxelPhysicsWorld 探测契约（v0.10.25）：`scene:CreateComponent("VoxelPhysicsWorld")` 返回 nil 表示当前运行时未编译该模块（Linux CLI 实测未知类型 ECEBFC51）。探测必须 pcall，失败只打日志并走 CustomGeometry，**禁止**把失败当 `Backend.Init=false`（否则 Start 不订阅事件，UI 消失卡死）。一个 Scene 只能有 PhysicsWorld 或 VoxelPhysicsWorld 其一；本项目不用 Bullet。
-- ⚠️ 体素物理与权威规则分离（v0.10.25）：规则层继续 AABB 逐块碰撞；体素体积只做表现。编队位置每帧由快照传送 Node，体积 gravityFactor=0、collisionMask=0，禁止让 Jolt 推动编队。
-- ⚠️ 禁止对编队主体 ApplyDamage（v0.10.25）：伤害 API 会按连通性分裂体积，机翼/座舱会变成独立刚体，和“整机编队下移、逐块 AABB”冲突。命中=HollowBrick 只挖当前格 occupancy + 另建 1×1×depth 动态碎块赋初速。挖空后立刻把该机 signature 对齐快照，避免同帧 FillEnemyVolume 把刚挖的格填回去。
-- 体积原点契约（v0.10.25）：VoxelVolume 原点在网格最小角。规则 enemy.x/y 是阵列左上、设计 Y 向下、世界 Y 向上，原点=GameToWorld(x, y+gridH*brickSize)；体素 (col-1, gridH-row, z) 对应规则格 (col,row)。voxelSize=brickSize*WORLD_SCALE，深度 2 体素，z 居中。调色板槽位只由 VisualCatalog.GetVoxelMatIndex 分配（1-64），CreateVolume 前 SetPaletteEntry 完毕。
+- ⚠️ 体素物理与权威规则分离（v0.10.25）：规则层继续 AABB 逐块碰撞；体素体积只做表现。编队位置每帧由快照传送静态 Node，collisionMask=0，禁止让 Jolt 推动编队。
+- ⚠️ 禁止对编队主体 ApplyDamage（v0.10.25）：伤害 API 会按连通性分裂体积，机翼/座舱会变成独立刚体，和“整机编队下移、逐块 AABB”冲突。命中=HollowBrick 只挖当前格 occupancy + 另建 1×1×1 动态碎块赋初速。挖空后立刻把该机 signature 对齐快照，避免同帧 FillEnemyVolume 把刚挖的格填回去。
+- 体积原点契约（v0.10.25）：VoxelVolume 原点在网格最小角。规则 enemy.x/y 是阵列左上、设计 Y 向下、世界 Y 向上，原点=GameToWorld(x, y+gridH*brickSize)；体素 (col-1, gridH-row, z) 对应规则格 (col,row)。voxelSize=brickSize*WORLD_SCALE，编队深度 2 体素、碎块深度 1，z 居中。调色板槽位只由 VisualCatalog.GetVoxelMatIndex 分配（1-64），CreateVolume 前 SetPaletteEntry 完毕。
 - 碎块预算：MAX_VOXEL_DEBRIS=24，碎块 evictable=true、编队 evictable=false；超预算删最老碎块。模态（非 playing）SetSimulationPaused(true)。
 - Linux CLI / 部分运行时体素物理未启用：headless 验证只能证明回退路径 lua=0，不能证明碎块物理；真机验收必须看 VoxelPhysicsWorld ready 日志。
 

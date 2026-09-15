@@ -929,7 +929,7 @@ local function DrawMenu(ctx, game)
     DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
 
     DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.24", 8, UI_BLUE,
+    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.26", 8, UI_BLUE,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
 
