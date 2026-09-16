@@ -19,6 +19,10 @@ local baseBarrierFlash = 0
 local shockRings = {}    -- v0.10.23：击毁砖块的扩散环（少量、点缀）
 local reloadFlash = 0    -- v0.10.24：主球回库补弹的 Dock 轻闪
 local upgradeHintPulse = 0    -- v0.10.24：升级面板空白点击时的提示轻脉冲
+local adStatus = nil          -- v0.10.32：nil / "loading"
+local adToast = nil
+local adToastTimer = 0
+local cloudStatus = "idle"    -- idle / syncing / ok / offline
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,
@@ -50,6 +54,7 @@ local FEEDBACK_MAP = {
     upgrade_picked = {"upgradeConfirm"},
     marble_reloaded = {"reloadPulse"},
     game_reset = {"fullReset"},
+    base_revived = {"reviveConfirm"},
 }
 
 local function GetBrickKey(enemyId, col, row)
@@ -163,6 +168,9 @@ local FEEDBACK_HANDLERS = {
         shockRings = {}
         reloadFlash = 0
         upgradeHintPulse = 0
+        adStatus = nil
+        adToast = nil
+        adToastTimer = 0
         nextDebrisId = 1
         truckLaunchFlash = {
             normal = 0,
@@ -297,6 +305,10 @@ local FEEDBACK_HANDLERS = {
     upgradeConfirm = function(event)
         SpawnFloatText(270, 430, (event.name or "强化") .. "  已装配", {140, 235, 255}, 1.1)
         screenShake = math.max(screenShake, 0.05)
+    end,
+    reviveConfirm = function(event)
+        SpawnFloatText(270, 430, "防线重构  +" .. tostring(event.hp or 50), {0, 229, 208}, 1.2)
+        screenShake = math.max(screenShake, 0.12)
     end,
     -- marble_removed 无需维护拖尾状态。
 }
@@ -487,6 +499,10 @@ function Presentation.Init()
     shockRings = {}
     reloadFlash = 0
     upgradeHintPulse = 0
+    adStatus = nil
+    adToast = nil
+    adToastTimer = 0
+    cloudStatus = "idle"
     nextDebrisId = 1
     -- WO-16/P9：对象池在重开时清空回收对象，避免旧局残留引用（id 已随 nextDebrisId 重置）。
     particlePool = {}
@@ -507,6 +523,10 @@ function Presentation.Update(dt, gameSnapshot, events)
     if hitStop > 0 then hitStop = math.max(0, hitStop - dt) end
     if reloadFlash > 0 then reloadFlash = math.max(0, reloadFlash - dt) end
     if upgradeHintPulse > 0 then upgradeHintPulse = math.max(0, upgradeHintPulse - dt) end
+    if adToastTimer > 0 then
+        adToastTimer = math.max(0, adToastTimer - dt)
+        if adToastTimer <= 0 then adToast = nil end
+    end
 
     for _, event in ipairs(events) do
         HandleEvent(event)
@@ -538,6 +558,9 @@ function Presentation.GetSnapshot()
         baseBarrierFlash = baseBarrierFlash,
         reloadFlash = reloadFlash,
         upgradeHintPulse = upgradeHintPulse,
+        adStatus = adStatus,
+        adToast = adToast,
+        cloudStatus = cloudStatus,
         truckLaunchFlash = truckLaunchFlash,
         visualCatalog = VisualCatalog,
     }
@@ -546,6 +569,19 @@ end
 -- v0.10.24：升级面板空白区域被点按时，由编排层直接触发提示脉冲（非领域事件）。
 function Presentation.PulseUpgradeHint()
     upgradeHintPulse = 0.5
+end
+
+function Presentation.SetAdStatus(status)
+    adStatus = status
+end
+
+function Presentation.SetAdToast(message)
+    adToast = message
+    adToastTimer = 2.2
+end
+
+function Presentation.SetCloudStatus(status)
+    cloudStatus = status or "idle"
 end
 
 return Presentation

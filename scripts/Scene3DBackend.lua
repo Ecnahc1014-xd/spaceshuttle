@@ -367,7 +367,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.31"
+local BUILD_VERSION = "0.10.32"
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -894,7 +894,7 @@ local function DrawDamageVignette(ctx, game, presentation)
     nvgBeginPath(ctx); nvgRect(ctx, game.width - edge, 0, edge, game.height); nvgFillPaint(ctx, g); nvgFill(ctx)
 end
 
-local function DrawHud(ctx, game)
+local function DrawHud(ctx, game, presentation)
     local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
     -- v0.10.24：低血量（≤35%）基地读数与血条红色脉冲，强化危险提示。
     local hpColor
@@ -911,6 +911,14 @@ local function DrawHud(ctx, game)
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
 
     DrawPixelText(ctx, 14, 8, "FLIGHT CONTROL", 8, C.dim)
+    local cloud = presentation and presentation.cloudStatus
+    if cloud == "ok" then
+        DrawPixelText(ctx, 128, 8, "CLOUD", 8, C.cyan)
+    elseif cloud == "syncing" then
+        DrawPixelText(ctx, 128, 8, "SYNC", 8, C.dim)
+    elseif cloud == "offline" then
+        DrawPixelText(ctx, 128, 8, "LOCAL", 8, C.warn)
+    end
     DrawPixelText(ctx, 14, 24, string.format("%06d", game.score), 22, C.text)
     DrawPixelText(ctx, 14, 54, "BEST " .. string.format("%06d", game.highScore), 8, C.dim)
 
@@ -1024,18 +1032,36 @@ local function DrawMenu(ctx, game)
     nvgRestore(ctx)
 end
 
-local function DrawGameOver(ctx, game)
+local function GetGameOverButtonLayout(game)
+    local w = game.width or DESIGN_W
+    local btnW, btnH, gap = 216, 48, 12
+    local revive = {
+        x = (w - btnW) * 0.5,
+        y = 496,
+        w = btnW,
+        h = btnH,
+    }
+    local restart = {
+        x = (w - btnW) * 0.5,
+        y = revive.y + btnH + gap,
+        w = btnW,
+        h = btnH,
+    }
+    return revive, restart
+end
+
+local function DrawGameOver(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
-    local winX, winY = 24, 220
-    local winW, winH = game.width - 48, 460
+    local winX, winY = 24, 200
+    local winW, winH = game.width - 48, 520
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
     DrawPixelText(ctx, winX + 18, winY + 14, "SESSION SEALED", 15, C.cyan)
-    DrawPixelText(ctx, winX + winW - 16, winY + 16, "OFFLINE", 9, C.warn,
+    DrawPixelText(ctx, winX + winW - 16, winY + 16, "SEALED", 9, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     DrawPixelText(ctx, game.width * 0.5, 286, "链接中断", 28, C.text,
@@ -1047,22 +1073,50 @@ local function DrawGameOver(ctx, game)
             game.score, game.highScore, game.wave), 12, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawBluePanel(ctx, 44, 386, game.width - 88, 92, C.rail, C.cyanDim, 6)
-    DrawPixelText(ctx, 60, 400, string.format("到达波次 %02d", game.wave), 12, C.text)
-    DrawPixelText(ctx, 60, 422, string.format("等级 LV %02d", game.playerLevel), 12, C.text)
-    DrawPixelText(ctx, 60, 444, string.format("击碎砖块 %d", game.bricksBroken or 0), 12, C.dim)
-    DrawPixelText(ctx, game.width - 60, 400, string.format("强化 %d 次", #(game.upgradePicks or {})), 12,
+    DrawBluePanel(ctx, 44, 370, game.width - 88, 92, C.rail, C.cyanDim, 6)
+    DrawPixelText(ctx, 60, 384, string.format("到达波次 %02d", game.wave), 12, C.text)
+    DrawPixelText(ctx, 60, 406, string.format("等级 LV %02d", game.playerLevel), 12, C.text)
+    DrawPixelText(ctx, 60, 428, string.format("击碎砖块 %d", game.bricksBroken or 0), 12, C.dim)
+    DrawPixelText(ctx, game.width - 60, 384, string.format("强化 %d 次", #(game.upgradePicks or {})), 12,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 60, 422, string.format("连击 %d", game.clearStreak or 0), 12,
+    DrawPixelText(ctx, game.width - 60, 406, string.format("连击 %d", game.clearStreak or 0), 12,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 60, 444, string.format("存活 %.0fs", game.elapsed or 0), 12,
+    DrawPixelText(ctx, game.width - 60, 428, string.format("存活 %.0fs", game.elapsed or 0), 12,
         C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawRect(ctx, 44, 500, game.width - 88, 54, C.cyan, 8)
-    DrawPixelText(ctx, game.width * 0.5, 516, "点击重新建立链接", 16, C.ink,
+    local reviveBtn, restartBtn = GetGameOverButtonLayout(game)
+    local canRevive = game.canRevive
+    local adBusy = presentation and presentation.adStatus == "loading"
+    if canRevive then
+        if adBusy then
+            DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.widget, 8)
+            DrawStroke(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyanDim, 8, 1)
+            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 16, "广告加载中…", 14, C.dim,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        else
+            DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyan, 8)
+            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 8, "看广告复活", 15, C.ink,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 28, "防线回 50 血 · 本局一次", 9, C.ink,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
+    else
+        DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.widget, 8)
+        DrawStroke(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyanDim, 8, 1)
+        DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 16, "本局已复活", 14, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
+    DrawRect(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.card, 8)
+    DrawStroke(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.cyanDim, 8, 1)
+    DrawPixelText(ctx, game.width * 0.5, restartBtn.y + 16, "重新建立链接", 14, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 572, "AWAITING RESTART", 8, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    local toast = presentation and presentation.adToast
+    if toast and toast ~= "" then
+        DrawPixelText(ctx, game.width * 0.5, restartBtn.y + restartBtn.h + 10, toast, 10, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
     nvgRestore(ctx)
 end
 
@@ -1266,14 +1320,14 @@ local function RenderOverlay(game, presentation)
     nvgScale(vg_, scale_, scale_)
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgGlobalAlpha(vg_, 1.0)
-    DrawHud(vg_, game)
+    DrawHud(vg_, game, presentation)
     if game.state == "playing" then
         DrawAmmoSlots(vg_, game, presentation)
         DrawDamageVignette(vg_, game, presentation)
     elseif game.state == "menu" then
         DrawMenu(vg_, game)
     elseif game.state == "gameover" then
-        DrawGameOver(vg_, game)
+        DrawGameOver(vg_, game, presentation)
     elseif game.state == "levelup" then
         DrawLevelUp(vg_, game, presentation)
     elseif game.state == "paused" then
@@ -1487,6 +1541,17 @@ function Backend.Render(gameSnapshot, presentationSnapshot)
     end
     Renderer3D.Render(gameSnapshot, presentationSnapshot)
     RenderOverlay(gameSnapshot, presentationSnapshot)
+end
+
+function Backend.HitTestGameOverButton(uiX, uiY, game)
+    local revive, restart = GetGameOverButtonLayout(game or {})
+    local function inside(btn)
+        return uiX >= btn.x and uiX <= btn.x + btn.w
+            and uiY >= btn.y and uiY <= btn.y + btn.h
+    end
+    if inside(revive) then return "revive" end
+    if inside(restart) then return "restart" end
+    return nil
 end
 
 function Backend.GetDesignSize()

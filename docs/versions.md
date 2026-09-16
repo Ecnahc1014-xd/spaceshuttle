@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.32 | 2026-09-16 | 激励广告复活（看广告回 50 血，本局一次）+ clientCloud 云高分；结算按钮几何命中。LSP 0、build 成功 |
 | v0.10.31 | 2026-09-16 | 战斗底部中央下一波敌人像素小图（同源预抽+倒计时）。LSP 0、build、截图、headless 200 帧 lua=0 |
 | v0.10.30 | 2026-09-16 | 8bit 街机剪影（蟹/蜂/蝶/飞碟/截击）+ 同波同机阵型 line/vee/grid/swarm/wedge/stream。LSP 0、build、roster/阵型截图、headless 200 帧 lua=0 |
 | v0.10.29 | 2026-09-16 | 碰撞选最近重叠格、步进 6–16；体素挖空失败可重试并用规则签名强制对齐网格。LSP 0、build、headless 180 帧 lua=0 |

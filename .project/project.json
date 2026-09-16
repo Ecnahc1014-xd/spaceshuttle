@@ -5,7 +5,7 @@
     "id": "170922189"
   },
   "entry": "main.lua",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "taptap_publish": {
     "title": "太空飞机弹珠",
     "description": "竖屏弹弓载具弹珠：拖拽发射重卡撞击像素敌机，逐块碎裂、波次推进、三选一强化的肉鸽幸存者。",

@@ -3,13 +3,15 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.31（底部中央下一波敌人小图）：
-  - **规则**：`nextWavePlan` 预抽下一波（机型/数量/阵型/Boss），`SpawnWave` 消费同一份计划，Dock 小图与真实刷怪同源。
-  - **UI**：playing Dock 中央 156×70 面板，像素剪影 + NEXT/倒计时 + 机名/数量；Boss 红边。四弹药槽仍左右分组。
-  - 验证：LSP 0、build、战斗截图确认飞镖小图、headless 200 帧 lua=0。
-- 上次交付: v0.10.31 底部中央下一波敌人预告
+- 版本: 0.10.32（激励广告复活 + clientCloud 云高分）：
+  - **广告**：`ad.status=1` 已开通。结算页「看广告复活」走 `sdk:ShowRewardVideoAd`，完整观看才 `Game.ReviveFromAd()`（回 50 血、编队抬回屏外、本局一次）。编排层处理 accepted/回调/防重复；规则层不碰 sdk。
+  - **云存档**：`clientCloud` 读写 `high_score`（iscores）。启动拉取、破纪录写入；失败标 LOCAL，不挡开局。
+  - **结算输入**：不再全屏松手重开。复活/重开按钮几何与 `HitTestGameOverButton` 同步。
+  - 验证：LSP 0、build 成功。
+- 上次交付: v0.10.32 广告复活与云高分
 
 ## 历史
+- 版本: 0.10.31（底部中央下一波敌人小图）：nextWavePlan 同源预抽；Dock 中央 156×70 像素剪影+倒计时。
 - 版本: 0.10.30（8bit 街机剪影 + 同波阵型）：8 机 ASCII 位图（蟹/黄蜂/蝴蝶/蜜蜂/宽翼/飞碟/双荚/截击）；同波同机 line/vee/grid/swarm。
 - 版本: 0.10.29（修剩余碰撞漏检与碎裂未完成）：子步进收集重叠格打最近格、步进 6–16；挖空失败可重试并用规则签名强制对齐网格。
 - 版本: 0.10.28（按 ecnach-ui-skill 重构精细 UI）：
@@ -97,10 +99,14 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: Preview 复测 v0.10.31——底部中央下一波小图是否挡住车辆/瞄准，倒计时与真实刷怪是否一致。禁止预告再抽一次随机。不改权威 HP、AABB、XP、回收/拖拽、9:16 投影。
-- 相关文件: `scripts/Game.lua`, `scripts/VisualCatalog.lua`, `scripts/Scene3DBackend.lua`
+- likely_next_task: 真机扫码测广告复活（完整观看回 50 血、中途关闭不发、本局一次）和云高分跨设备同步。禁止把 sdk/clientCloud 写进 Game.lua。不接 Banner/插屏。
+- 相关文件: `scripts/main.lua`, `scripts/Game.lua`, `scripts/Scene3DBackend.lua`, `scripts/Presentation.lua`
 
-## 本批次新增避雷（v0.10.31 下一波小图 / v0.10.30 8bit 阵型 / v0.10.29 碰撞选最近格）
+## 本批次新增避雷（v0.10.32 广告/云存档 / v0.10.31 下一波小图）
+- ⚠️ 激励广告契约（v0.10.32）：只接 `sdk:ShowRewardVideoAd`；`success==true` 才发奖。`accepted==false` 可能无回调，必须同时处理返回值与回调，并用一次性 `completed` 防重复。中途关闭不复活。广告/云 API 只在 `main.lua`。
+- 结算按钮几何必须与 `HitTestGameOverButton` 同源；禁止结算页全屏松手重开。每局只能复活一次。
+- 云高分用 `SetInt/Get` 的 `high_score`（iscores）。`clientCloud` 失败只标 LOCAL，不挡开局。
+
 - ⚠️ 下一波预告必须同源（v0.10.31）：规则层 `PlanWave` 预抽并锁定 `nextWavePlan`，`SpawnWave` 消费同一份，禁止 UI 再 Random 一次。`GetSnapshot` 只读 `nextWavePlan`，不在快照里抽签。小图放 Dock 中央（四槽左右分组中间），只画 VisualCatalog 像素格，禁止新贴图。
 
 - ⚠️ 同波必须同机成阵（v0.10.30）：随机散点 + 混种会把 8bit 剪影拆成“一坨砖”。`SpawnWave` 抽一种机、按 `line/vee/grid/swarm/wedge/stream` 算槽位；宽机 3+ 走 2+1 grid，不要硬塞横排再退化成纵列。整队锁定 swayAmp/swayFreq/phase，opts 里 0 必须用 `~= nil` 判断。

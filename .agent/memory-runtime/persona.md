@@ -31,4 +31,4 @@
 - [observed] 偏好有持续压力与成长的肉鸽幸存者结构：高基地生命（100）、敌人编队推进且单块越线独立扣血、XP/升级三选一与局内强化，并要求明显削弱过强的加速技能；把"质量/设计度 1:1 超过组合参考"作为交付标准（出现次数: 1） [scope:gamedev]
 
 ## 项目足迹
-- 太空飞机弹珠（2026-08）：完成权威规则、表现状态和 3D 后端分层；迭代为重卡载具弹珠、棱线体素敌人、dark-tech HUD，以及 UI/3D/Input 共用固定 9:16 CONTAIN 画布；v0.9.0 实装肉鸽幸存者循环；至 v0.10.24 完成触摸闭环；v0.10.25 探测接入 VoxelPhysicsWorld（Linux CLI 未启用则回退 CustomGeometry），规则层仍 AABB；v0.10.28 按 ecnach-ui-skill 精细重构 UI。[scope:gamedev]
+- 太空飞机弹珠（2026-08）：完成权威规则、表现状态和 3D 后端分层；迭代为重卡载具弹珠、棱线体素敌人、dark-tech HUD，以及 UI/3D/Input 共用固定 9:16 CONTAIN 画布；v0.9.0 实装肉鸽幸存者循环；v0.10.32 激励广告复活 + clientCloud 云高分。[scope:gamedev]

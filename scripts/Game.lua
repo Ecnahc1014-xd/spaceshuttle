@@ -230,6 +230,9 @@ local grabStartY = SLING_Y
 -- v0.10.24：菜单/结算改为松手确认开始；只有按下时本就处于菜单/结算态才武装，
 -- 避免死亡瞬间手指还按着、抬手即误重开。
 local startArmed = false
+-- v0.10.32：每局一次广告复活；结算页按钮由编排层消费几何。
+local reviveUsed = false
+local REVIVE_HP = 50
 
 local pendingEvents = {}
 local nextEnemyId = 1
@@ -361,6 +364,7 @@ ResetGame = function()
     marbles = {}
     aiming = false
     startArmed = false
+    reviveUsed = false
     aimX = SLING_X
     aimY = SLING_Y
     grabStartX = SLING_X
@@ -1711,9 +1715,15 @@ UpdateEnemies = function(dt)
         if baseHp <= 0 then
             baseHp = 0
             gameState = "gameover"
+            aiming = false
+            startArmed = false
             if score > highScore then highScore = score end
-            Emit("game_over", {score = score, highScore = highScore, wave = wave})
-            print("[Game] game over, score=" .. score .. ", wave=" .. wave)
+            Emit("game_over", {
+                score = score, highScore = highScore, wave = wave,
+                canRevive = not reviveUsed,
+            })
+            print("[Game] game over, score=" .. score .. ", wave=" .. wave
+                .. ", canRevive=" .. tostring(not reviveUsed))
         end
     end
 
@@ -1722,9 +1732,6 @@ UpdateEnemies = function(dt)
         local enemy = veggies[i]
         local width = enemy.gridW * enemy.brickSize
         local height = enemy.gridH * enemy.brickSize
-        if gameState == "gameover" then
-            enemy.dead = true
-        end
         if not enemy.dead and IsEnemyCleared(enemy) then
             enemy.dead = true
             score = score + 50
@@ -1804,11 +1811,12 @@ function Game.Init(config)
     DH = config.height or DH
     SetRandomSeed(config.seed or 1)
     pendingEvents = {}
-    highScore = 0
+    highScore = math.max(0, math.floor(tonumber(config.highScore) or 0))
     ResetGame()
     pendingEvents = {}
     gameState = "menu"
-    print("[Game] core initialized at " .. DW .. "x" .. DH)
+    print("[Game] core initialized at " .. DW .. "x" .. DH
+        .. " highScore=" .. tostring(highScore))
 end
 
 function Game.Update(dt)
@@ -1832,9 +1840,13 @@ function Game.IsLevelUp()
 end
 
 function Game.PointerDown(px, py)
-    if gameState == "menu" or gameState == "gameover" then
+    if gameState == "menu" then
         -- v0.10.24：仅武装，松手才真正开始，给结算画面留出阅读时间、防误触。
         startArmed = true
+        return
+    end
+    if gameState == "gameover" then
+        -- 结算点击由编排层按 UI 按钮几何分发，规则层不接收玩法 PointerDown。
         return
     end
     startArmed = false
@@ -1865,12 +1877,15 @@ function Game.PointerMove(px, py)
 end
 
 function Game.PointerUp(px, py)
-    -- v0.10.24：菜单/结算在松手确认时才开局。
-    if gameState == "menu" or gameState == "gameover" then
+    -- v0.10.24：菜单在松手确认时才开局。结算页按钮由编排层分发。
+    if gameState == "menu" then
         if startArmed then
             startArmed = false
             StartGame()
         end
+        return
+    end
+    if gameState == "gameover" then
         return
     end
     startArmed = false
@@ -1891,9 +1906,54 @@ function Game.PointerUp(px, py)
 end
 
 function Game.HandleAction(action, pressed)
-    if pressed and action == "start" and (gameState == "menu" or gameState == "gameover") then
+    if not pressed then return end
+    if action == "start" and gameState == "menu" then
+        StartGame()
+    elseif action == "restart" and gameState == "gameover" then
         StartGame()
     end
+end
+
+function Game.IsGameOver()
+    return gameState == "gameover"
+end
+
+function Game.CanRevive()
+    return gameState == "gameover" and not reviveUsed
+end
+
+-- 激励视频看完后由编排层调用：回 50 血、把仍存活的编队抬回屏外，继续本局。
+function Game.ReviveFromAd()
+    if gameState ~= "gameover" or reviveUsed then return false end
+    reviveUsed = true
+    baseHp = REVIVE_HP
+    aiming = false
+    startArmed = false
+    local spawnY = -102
+    for _, enemy in ipairs(veggies) do
+        if not enemy.dead then
+            local height = enemy.gridH * enemy.brickSize
+            enemy.y = spawnY - height - 24
+        end
+    end
+    gameState = "playing"
+    Emit("base_revived", {hp = baseHp})
+    print("[Game] revived from ad, hp=" .. tostring(baseHp))
+    return true
+end
+
+function Game.RestartFromOver()
+    if gameState ~= "gameover" then return end
+    StartGame()
+end
+
+function Game.ApplyCloudHighScore(value)
+    local n = math.max(0, math.floor(tonumber(value) or 0))
+    if n > highScore then
+        highScore = n
+        print("[Game] cloud highScore applied=" .. tostring(highScore))
+    end
+    return highScore
 end
 
 function Game.Pause()
@@ -2009,6 +2069,8 @@ function Game.GetSnapshot()
     -- v0.10.31：下一波预告只读计划，渲染层画小图，不反向写规则。
     s.nextWave = (gameState == "playing") and nextWavePlan or nil
     s.waveCooldown = waveCooldown
+    s.canRevive = (gameState == "gameover") and not reviveUsed
+    s.reviveUsed = reviveUsed
     return s
 end
 
