@@ -629,7 +629,6 @@ local function SyncVoxelEnemies(game, presentation)
     local visualCatalog = presentation.visualCatalog
     EnsureVoxelPalette(visualCatalog)
     local active = {}
-    local dirty = {}
     for _, enemy in ipairs(game.veggies) do
         if not enemy.dead then
             active[enemy.id] = true
@@ -649,8 +648,6 @@ local function SyncVoxelEnemies(game, presentation)
                 else
                     error("CreateVolume returned nil")
                 end
-            elseif record.signature ~= GetEnemySignature(enemy) then
-                dirty[#dirty + 1] = {record = record, enemy = enemy}
             end
             if record and record.volume then
                 local node = record.volume:GetNode()

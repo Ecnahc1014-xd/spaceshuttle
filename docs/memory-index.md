@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.28
-简述：按 ecnach-ui-skill 把 HUD/菜单/结算/升级/暂停重做为 dark-tech（深黑蓝层级 + 品牌青强调）。升级卡几何仍 168×300@cy530。玩法节奏与体素路径沿用 v0.10.27。
+当前版本：0.10.29
+简述：修剩余碰撞漏检与碎裂未完成——子步进选最近重叠格、步进 6–16；体素挖空失败可重试并用规则签名强制对齐网格。UI 为 v0.10.28 dark-tech。
 最后巩固：2026-09-16
 
 ## 项目概况
@@ -93,6 +93,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.29: 修剩余碰撞漏检与碎裂未完成。子步进改为收集本步所有重叠格再打最近格（不再按 bricks 顺序 break）；步进 6–16。体素 HollowBrick 失败每帧重试，规则签名强制 FillEnemyVolume，禁止一次性 consumed。碎块失败才画 CustomGeometry。LSP 0、build、headless 180 帧 lua=0。
 - v0.10.28: 按 ecnach-ui-skill 精细重构 UI。废弃 Astroon/Laterano 蓝紫金；HUD/Dock/菜单/结算/升级/暂停统一 dark-tech 令牌与窗口骨架（角标、断线边框、局部网格、刻度、青识别线）。升级卡外观换肤，几何/命中仍 168×300@cy530。玩法与 3D 未改。LSP 0、build 成功。
 - v0.10.27: 波次再放慢+首波加快+修碰撞/碎裂丢失。基础间隔 14→18s、下限 7.5→9s、收紧 0.18→0.15、首波冷却 2.5→3.2s；全局下落 0.25→0.42、首波基础速度 18→28。高速弹自适应子步进 4–12 + 线段 AABB 扫掠。体素碎块/挖空失败时 needVisualFallback 走 CustomGeometry 飞散箱，碎块 vz 朝相机。LSP 0、build、headless 200 帧 lua=0。
 - v0.10.26: Preview 体素路径修敌机消失+碎块 1:1:2。根因：编队 FinalizeVolumeAsDynamic 后 Node 在质心，每帧设回网格最小角把整机平移出视野；碎块 CreateVolume(1,1,2) 是扁长条。现编队 FinalizeVolume 静态、每帧只改 GetNode().position；碎块 1×1×1。LSP 0、build、headless 200 帧 lua=0。

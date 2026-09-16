@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.10.29（修剩余碰撞漏检与碎裂未完成）：
+  - **碰撞**：子步进不再按 bricks 数组顺序打第一格就 break，改为收集本步所有重叠格、打最近格；步进 6–16。擦边/对角穿格仍结算。
+  - **碎裂**：体素挖空失败不再一次性 `consumed=true`；HollowBrick 失败每帧重试，规则签名强制 FillEnemyVolume 对齐网格。碎块失败才画 CustomGeometry 飞散箱。
+  - 验证：LSP 0、build、headless 180 帧 lua=0。
+- 上次交付: v0.10.29 最近格碰撞 + 签名强制挖空
+
+## 历史
 - 版本: 0.10.28（按 ecnach-ui-skill 重构精细 UI）：
   - **令牌**：废弃 Astroon/Laterano 蓝紫+金色。全页改 dark-tech：`bg/panel/rail/card/widget` 深黑蓝层级，品牌青 `cyan` 唯一强调，`warn` 仅警告/连击，红色仅错误/低血。
   - **骨架**：HUD/Dock 左 4px 青识别线 + 刻度；菜单/结算/暂停用窗口壳（标题栏竖线、角标、断线边框、局部微型网格）；主 CTA 青底 `ink` 字。
@@ -88,10 +95,11 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: Preview 验收 v0.10.28 dark-tech UI——菜单/HUD/升级卡/暂停是否层级清楚、青色未泛滥、升级卡命中仍 168×300@cy530。顺带复测 v0.10.27 节奏与碎裂。禁止恢复 Astroon 蓝紫金、禁止改升级卡几何、禁止恢复召回。
+- likely_next_task: Preview 复测 v0.10.29——斜向高速弹是否还会穿格、命中格是否必出缺口+碎块。禁止恢复召回、禁止把编队改回动态体再每帧设最小角。不改权威 HP、XP、回收/拖拽、9:16 投影。
 - 相关文件: `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/VisualCatalog.lua`, `scripts/Presentation.lua`, `engine-docs/recipes/voxel-physics.md`
 
-## 本批次新增避雷（v0.10.28 dark-tech UI / v0.10.27 节奏/碰撞 / v0.10.26 静态编队体积）
+## 本批次新增避雷（v0.10.29 碰撞选最近格 / v0.10.28 dark-tech UI / v0.10.27 节奏）
+- ⚠️ 多格重叠不要按数组顺序 break（v0.10.29）：圆同时压住几格时，bricks 表顺序命中第一格会漏掉真正碰到的格（穿机翼/座舱无碰撞）。应收集本步重叠格、打距离最近的一格；挖空失败禁止一次性 consumed，必须按规则签名强制对齐网格。
 - ⚠️ UI 令牌契约（v0.10.28）：只用 `C.bg/panel/rail/card/widget/cyan/cyanDim/ink/text/dim/warn/error`。青色只表示焦点/激活/主操作/进度，禁止把标题、边框、图标全染青；金色不再是主 CTA（改青底 ink 字）；警告用 `warn`，错误/低血才用红。装饰限 2–3 种：角标 + 断线边框 + 局部微型网格/刻度，贴边不穿正文。
 - 升级卡几何仍 168×300/gap=8/cy=530/`HIT_PAD=4`，与 `main.lua:TryPickUpgradeAt` 同步；本次只换外观，禁止改命中常量。
 - HUD `y=0..92`、Dock `y=866..960`、四槽左右分组、letterbox 只填画布外：信息架构不变。

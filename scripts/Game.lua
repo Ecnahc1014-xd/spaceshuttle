@@ -455,6 +455,13 @@ local function GetAvailableTypes(waveNum)
     return keys
 end
 
+---@param aircraftKey string
+---@param x number
+---@param y number
+---@param brickSize number
+---@param brickHp integer
+---@param baseSpeed number
+---@param opts {swayAmp:number?, swayFreq:number?, phase:number?}?
 local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opts)
     local data = AircraftData[aircraftKey]
     if not data then
@@ -562,7 +569,7 @@ local function ComputeFormationSlots(kind, count, shipW, shipH)
 
     if kind == "line" then
         local startX, g = FitRow(count)
-        if startX then
+        if startX ~= nil then
             for i = 1, count do
                 slots[i] = { x = startX + (i - 1) * (shipW + g), y = entryY }
             end
@@ -573,7 +580,7 @@ local function ComputeFormationSlots(kind, count, shipW, shipH)
 
     if kind == "vee" or kind == "wedge" then
         local startX, g = FitRow(count)
-        if startX then
+        if startX ~= nil then
             local mid = (count + 1) * 0.5
             local maxRank = (count - 1) * 0.5
             local rowStep = shipH * 0.38 + 8
@@ -596,7 +603,7 @@ local function ComputeFormationSlots(kind, count, shipW, shipH)
         elseif count >= 5 then cols = 3 end
         local g = (kind == "swarm") and 4 or gap
         local startX, fittedG = FitRow(cols)
-        if startX and fittedG then
+        if startX ~= nil then
             g = fittedG
         else
             startX = margin
@@ -1278,9 +1285,9 @@ UpdateMarbles = function(dt)
     for i = #marbles, 1, -1 do
         local marble = marbles[i]
         local def = BALL_TYPES[marble.ballType]
-        -- v0.10.27：按本帧位移自适应子步进，高速弹不再 4 步打穿薄格。
+        -- v0.10.28：按本帧位移自适应子步进，高速弹不再打穿薄格。
         local move = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy) * dt
-        local steps = math.max(4, math.min(12, math.ceil(move / math.max(6, marble.radius * 0.4))))
+        local steps = math.max(6, math.min(16, math.ceil(move / math.max(4, marble.radius * 0.32))))
         local subDt = dt / steps
         local frameHitBricks = {}
 
@@ -1345,7 +1352,6 @@ UpdateMarbles = function(dt)
                 if not found then marble.ignoredBrick = nil end
             end
 
-            local hit = false
             local best = nil
             local bestDist = 1e12
             for _, enemy in ipairs(veggies) do
@@ -1430,8 +1436,6 @@ UpdateMarbles = function(dt)
                 elseif marble.ballType == "giant" and not marble.giantPiercing then
                     ArmGiantPiercing(marble)
                 end
-
-                hit = not marble.giantPiercing
             end
 
             -- 回收线在防线 DANGER_Y（车回落进入底部 Dock 安全层即回库补弹）。
@@ -1751,6 +1755,61 @@ function Game.Init(config)
     pendingEvents = {}
     gameState = "menu"
     print("[Game] core initialized at " .. DW .. "x" .. DH)
+end
+
+-- 验收用：两列排开全部 8 机型，冻结下落，供截图对照 8bit 剪影。
+function Game.DebugShowcaseRoster()
+    ResetGame()
+    gameState = "playing"
+    veggies = {}
+    waveCooldown = 999
+    local keys = {
+        "scout", "dart", "striker", "hive",
+        "manta", "bomber", "cruiser", "interceptor",
+    }
+    local brickSize = 14
+    local colX = { 48, 292 }
+    local y0 = 118
+    for i = 1, #keys do
+        local key = keys[i]
+        local col = ((i - 1) % 2) + 1
+        local row = math.floor((i - 1) / 2)
+        local x = colX[col]
+        local y = y0 + row * 168
+        local enemy = CreateEnemy(key, x, y, brickSize, 1, 0, {
+            swayAmp = 0, swayFreq = 0, phase = 0,
+        })
+        if enemy then
+            enemy.vy = 0
+            veggies[#veggies + 1] = enemy
+        end
+    end
+    print("[Game] roster showcase " .. tostring(#veggies) .. " aircraft")
+end
+
+-- 验收用：指定阵型冻结在可见战场中部。
+function Game.DebugShowcaseFormation(kind, aircraftKey, count)
+    ResetGame()
+    gameState = "playing"
+    veggies = {}
+    waveCooldown = 999
+    local brickSize = 14
+    local key = aircraftKey or "scout"
+    local n = count or 3
+    local shipW, shipH = GetAircraftSize(key, brickSize)
+    local slots, usedKind = ComputeFormationSlots(kind or "line", n, shipW, shipH)
+    local shift = 220 - (slots[1] and slots[1].y or 0)
+    for i = 1, #slots do
+        local enemy = CreateEnemy(key, slots[i].x, slots[i].y + shift, brickSize, 1, 0, {
+            swayAmp = 0, swayFreq = 0, phase = 0,
+        })
+        if enemy then
+            enemy.vy = 0
+            enemy.formation = usedKind
+            veggies[#veggies + 1] = enemy
+        end
+    end
+    print("[Game] formation showcase " .. usedKind .. " x" .. tostring(#veggies))
 end
 
 function Game.Update(dt)

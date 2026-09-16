@@ -2,30 +2,30 @@
     "version": 2,
     "script": "scripts/main.lua",
     "result": "FAIL",
-    "duration_ms": 3778,
-    "frames_completed": 200,
+    "duration_ms": 3392,
+    "frames_completed": 180,
     "phases": {
         "load": {
             "result": "FAIL",
             "errors": [
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_540][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_bc8ed3e2.vs] FileName[UI] Defines[DIFFMAP GAMMA_IN_SHADERING MIXCOLOR VERTEXCOLOR].",
+                    "message": "[2026-09-16 14_19_58_854][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_bc8ed3e2.vs] FileName[UI] Defines[DIFFMAP GAMMA_IN_SHADERING MIXCOLOR VERTEXCOLOR].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_541][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_41aaa44d.fs] FileName[UI] Defines[DIFFMAP GAMMA_IN_SHADERING MIXCOLOR OPACITY VERTEXCOLOR].",
+                    "message": "[2026-09-16 14_19_58_854][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_41aaa44d.fs] FileName[UI] Defines[DIFFMAP GAMMA_IN_SHADERING MIXCOLOR OPACITY VERTEXCOLOR].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_541][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_a7b9ddd7.vs] FileName[UI] Defines[DIFFMAP].",
+                    "message": "[2026-09-16 14_19_58_854][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_a7b9ddd7.vs] FileName[UI] Defines[DIFFMAP].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_541][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_7145e742.fs] FileName[UI] Defines[DIFFMAP OPACITY].",
+                    "message": "[2026-09-16 14_19_58_854][1] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/UI_7145e742.fs] FileName[UI] Defines[DIFFMAP OPACITY].",
                     "frame": 0
                 }
             ]
@@ -35,142 +35,142 @@
             "errors": [
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_605][3] ERROR: Could not create unknown component type ECEBFC51",
+                    "message": "[2026-09-16 14_19_58_887][3] ERROR: Could not create unknown component type ECEBFC51",
                     "frame": 0
                 },
                 {
                     "category": "resource",
-                    "message": "[2026-09-16 13_37_52_611][3] ERROR: Could not find resource Editor/Textures/Engine/Vignetting.png",
+                    "message": "[2026-09-16 14_19_58_890][3] ERROR: Could not find resource Editor/Textures/Engine/Vignetting.png",
                     "frame": 0
                 },
                 {
                     "category": "resource",
-                    "message": "[2026-09-16 13_37_52_912][3] ERROR: Could not find resource Textures/Skybox.xml",
+                    "message": "[2026-09-16 14_19_59_188][3] ERROR: Could not find resource Textures/Skybox.xml",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Unlit_432274f8.vs] FileName[Unlit] Defines[INSTANCED NOUV RENDER_QUALITY=2].",
+                    "message": "[2026-09-16 14_19_59_254][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Unlit_432274f8.vs] FileName[Unlit] Defines[INSTANCED NOUV RENDER_QUALITY=2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Unlit_507e707f.fs] FileName[Unlit] Defines[CLOUD_SHADOW ENVCUBE RENDER_QUALITY=2].",
+                    "message": "[2026-09-16 14_19_59_254][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Unlit_507e707f.fs] FileName[Unlit] Defines[CLOUD_SHADOW ENVCUBE RENDER_QUALITY=2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Unlit_44e03329.vs] FileName[Unlit] Defines[NOUV RENDER_QUALITY=2].",
+                    "message": "[2026-09-16 14_19_59_254][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Unlit_44e03329.vs] FileName[Unlit] Defines[NOUV RENDER_QUALITY=2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/PBRLitSolid_610c4e09.vs] FileName[PBRLitSolid] Defines[AO DIRLIGHT NOUV PERPIXEL RENDER_QUALITY=2].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/PBRLitSolid_610c4e09.vs] FileName[PBRLitSolid] Defines[AO DIRLIGHT NOUV PERPIXEL RENDER_QUALITY=2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/PBRLitSolid_55bf170c.fs] FileName[PBRLitSolid] Defines[AMBIENT AO CLOUD_SHADOW DIRLIGHT ENVCUBE IBL PBR PERPIXEL RENDER_QUALITY=2].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/PBRLitSolid_55bf170c.fs] FileName[PBRLitSolid] Defines[AMBIENT AO CLOUD_SHADOW DIRLIGHT ENVCUBE IBL PBR PERPIXEL RENDER_QUALITY=2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/LitSolid_9ee1afaa.vs] FileName[LitSolid] Defines[DIRLIGHT PERPIXEL RENDER_QUALITY=2 VERTEXCOLOR].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/LitSolid_9ee1afaa.vs] FileName[LitSolid] Defines[DIRLIGHT PERPIXEL RENDER_QUALITY=2 VERTEXCOLOR].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/LitSolid_51cbdb03.fs] FileName[LitSolid] Defines[AMBIENT CLOUD_SHADOW DIFFMAP DIRLIGHT ENVCUBE PERPIXEL RENDER_QUALITY=2 VERTEXCOLOR].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/LitSolid_51cbdb03.fs] FileName[LitSolid] Defines[AMBIENT CLOUD_SHADOW DIFFMAP DIRLIGHT ENVCUBE PERPIXEL RENDER_QUALITY=2 VERTEXCOLOR].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Skybox_451012cb.vs] FileName[Skybox] Defines[RENDER_QUALITY=2].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Skybox_451012cb.vs] FileName[Skybox] Defines[RENDER_QUALITY=2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Skybox_507e707f.fs] FileName[Skybox] Defines[CLOUD_SHADOW ENVCUBE RENDER_QUALITY=2].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/Skybox_507e707f.fs] FileName[Skybox] Defines[CLOUD_SHADOW ENVCUBE RENDER_QUALITY=2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_e0d765da.vs] FileName[BloomHDR] Defines[BRIGHT].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_e0d765da.vs] FileName[BloomHDR] Defines[BRIGHT].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_badc10d8.fs] FileName[BloomHDR] Defines[BRIGHT2].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_badc10d8.fs] FileName[BloomHDR] Defines[BRIGHT2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_badc10da.fs] FileName[BloomHDR] Defines[BRIGHT4].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_badc10da.fs] FileName[BloomHDR] Defines[BRIGHT4].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_badc10de.fs] FileName[BloomHDR] Defines[BRIGHT8].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_badc10de.fs] FileName[BloomHDR] Defines[BRIGHT8].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_988][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_0cff251f.fs] FileName[BloomHDR] Defines[BRIGHT16].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_0cff251f.fs] FileName[BloomHDR] Defines[BRIGHT16].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_0d012599.fs] FileName[BloomHDR] Defines[BRIGHT32].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_0d012599.fs] FileName[BloomHDR] Defines[BRIGHT32].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62354f3e.vs] FileName[BloomHDR] Defines[COMBINE32].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62354f3e.vs] FileName[BloomHDR] Defines[COMBINE32].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62354f3e.fs] FileName[BloomHDR] Defines[COMBINE32].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62354f3e.fs] FileName[BloomHDR] Defines[COMBINE32].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62334ec4.vs] FileName[BloomHDR] Defines[COMBINE16].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62334ec4.vs] FileName[BloomHDR] Defines[COMBINE16].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62334ec4.fs] FileName[BloomHDR] Defines[COMBINE16].",
+                    "message": "[2026-09-16 14_19_59_255][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_62334ec4.fs] FileName[BloomHDR] Defines[COMBINE16].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_5e4a2df9.vs] FileName[BloomHDR] Defines[COMBINE8].",
+                    "message": "[2026-09-16 14_19_59_256][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_5e4a2df9.vs] FileName[BloomHDR] Defines[COMBINE8].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_5e4a2df9.fs] FileName[BloomHDR] Defines[COMBINE8].",
+                    "message": "[2026-09-16 14_19_59_256][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_5e4a2df9.fs] FileName[BloomHDR] Defines[COMBINE8].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_5e4a2df3.vs] FileName[BloomHDR] Defines[COMBINE2].",
+                    "message": "[2026-09-16 14_19_59_256][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_5e4a2df3.vs] FileName[BloomHDR] Defines[COMBINE2].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_989][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_c2cb8628.fs] FileName[BloomHDR] Defines[COMBINE2 GAMMA_IN_SHADERING].",
+                    "message": "[2026-09-16 14_19_59_256][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/BloomHDR_c2cb8628.fs] FileName[BloomHDR] Defines[COMBINE2 GAMMA_IN_SHADERING].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_997][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/NanoVGFill_00000000.vs] FileName[NanoVGFill] Defines[].",
+                    "message": "[2026-09-16 14_19_59_264][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/NanoVGFill_00000000.vs] FileName[NanoVGFill] Defines[].",
                     "frame": 0
                 },
                 {
                     "category": "engine",
-                    "message": "[2026-09-16 13_37_52_997][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/NanoVGFill_00000000.fs] FileName[NanoVGFill] Defines[].",
+                    "message": "[2026-09-16 14_19_59_264][3] ERROR: [ShaderError] This Shader don't precompile. ShaderName[shadercache_runtime/dx9/NanoVGFill_00000000.fs] FileName[NanoVGFill] Defines[].",
                     "frame": 0
                 }
             ]
@@ -194,7 +194,7 @@
             "nodes": 20,
             "components": 19,
             "hash": 2718174510,
-            "frame_time_ms": 447.635986328125
+            "frame_time_ms": 398.5249938964844
         },
         {
             "frame": 10,
@@ -202,27 +202,27 @@
             "nodes": 20,
             "components": 19,
             "hash": 2718174510,
-            "frame_time_ms": 16.61199951171875
+            "frame_time_ms": 16.621999740600587
         },
         {
-            "frame": 100,
+            "frame": 90,
             "phase": "run",
             "nodes": 20,
             "components": 19,
             "hash": 2718174510,
-            "frame_time_ms": 16.618999481201173
+            "frame_time_ms": 16.62299919128418
         },
         {
-            "frame": 200,
+            "frame": 180,
             "phase": "run",
             "nodes": 20,
             "components": 19,
             "hash": 2718174510,
-            "frame_time_ms": 16.611000061035158
+            "frame_time_ms": 16.604000091552736
         }
     ],
     "scene_stalled": true,
-    "max_frame_time_ms": 17.014999389648439,
+    "max_frame_time_ms": 17.006999969482423,
     "update_defined": false,
     "component_census": {
         "Octree": 1,
