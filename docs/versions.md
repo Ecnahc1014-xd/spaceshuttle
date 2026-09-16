@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.38 | 2026-09-16 | 字号再抬一档：标签≥15、正文≥17、标题≥28；升级卡几何不变。LSP 0、build 成功 |
 | v0.10.37 | 2026-09-16 | 修存活机幽灵块：Update 在世界步进之后，只标脏区等不到本帧重建；挖空改 SetSolid + 同帧 RebuildGeometry。LSP 0、build 成功 |
 | v0.10.36 | 2026-09-16 | 物块刷新即时：挖空只 MarkRegionDirty、签名对齐不整网 RebuildGeometry、CustomGeometry 同帧重建缺口。LSP 0、build 成功 |
 | v0.10.35 | 2026-09-16 | 全面加大玩家 UI 字号：标签≥12、正文≥15、标题≥22；升级卡几何不变。LSP 0、build 成功 |

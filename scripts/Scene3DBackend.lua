@@ -367,7 +367,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.37"
+local BUILD_VERSION = "0.10.38"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -806,10 +806,10 @@ local function DrawAmmoSlots(ctx, game, presentation)
             C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         if selected then
             DrawRect(ctx, x + 8, slotY + 42, slotSize - 16, 16, C.cyan, 6)
-            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待发", 14, C.ink,
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待发", 15, C.ink,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         else
-            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待命", 14, C.dim,
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待命", 15, C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
         nvgBeginPath(ctx)
@@ -924,7 +924,7 @@ local function DrawHud(ctx, game, presentation)
         bestLine = bestLine .. " · 本地"
         bestColor = C.warn
     end
-    DrawPixelText(ctx, 14, 52, bestLine, 14, bestColor)
+    DrawPixelText(ctx, 14, 52, bestLine, 15, bestColor)
 
     local centerX = game.width * 0.5
     DrawPixelText(ctx, centerX, 4, "波次", 15, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -991,43 +991,43 @@ local function DrawMenu(ctx, game)
     local winX, winY = 18, 108
     local winW, winH = game.width - 36, 540
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
-    DrawPixelText(ctx, winX + 18, winY + 12, GAME_TITLE, 20, C.cyan)
-    DrawPixelText(ctx, winX + winW - 16, winY + 16, "v" .. BUILD_VERSION, 12, C.dim,
+    DrawPixelText(ctx, winX + 18, winY + 10, GAME_TITLE, 22, C.cyan)
+    DrawPixelText(ctx, winX + winW - 16, winY + 14, "v" .. BUILD_VERSION, 14, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawBrokenFrame(ctx, winX + 10, winY + 52, winW - 20, winH - 64, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 36)
     DrawEdgeTicks(ctx, winX + 18, winY + 50, winW - 36, 17, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80})
 
-    DrawPixelText(ctx, game.width * 0.5, 186, "击碎飞机", 32, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 184, "击碎飞机", 36, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 228, "拖拽发射重卡，一块一块打掉敌机", 16, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 228, "拖拽发射重卡，一块一块打掉敌机", 18, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 254, "别让飞机飞过底部防线", 16, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 254, "别让飞机飞过底部防线", 18, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     -- 主操作：青底深字胶囊。
-    DrawRect(ctx, 40, 292, game.width - 80, 72, C.cyan, 8)
-    DrawPixelText(ctx, game.width * 0.5, 304, "点击开始", 24, C.ink,
+    DrawRect(ctx, 40, 292, game.width - 80, 76, C.cyan, 8)
+    DrawPixelText(ctx, game.width * 0.5, 302, "点击开始", 28, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 336, "松手确认", 14, C.ink,
+    DrawPixelText(ctx, game.width * 0.5, 338, "松手确认", 16, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, 40, 384, "本局目标", 16, C.cyan)
+    DrawPixelText(ctx, 40, 384, "本局目标", 18, C.cyan)
     DrawBluePanel(ctx, 40, 404, game.width - 80, 112, C.rail, C.cyanDim, 6)
     DrawMicroGrid(ctx, 48, 412, game.width - 96, 96, 12, 18)
-    DrawPixelText(ctx, 58, 418, "防线生命", 13, C.dim)
-    DrawPixelText(ctx, 58, 438, "100", 26, C.text)
-    DrawPixelText(ctx, 132, 450, "点", 13, C.dim)
-    DrawPixelText(ctx, 292, 418, "弹种", 13, C.dim)
-    DrawPixelText(ctx, 292, 438, "4", 26, C.text)
-    DrawPixelText(ctx, 330, 450, "种轮换", 13, C.dim)
+    DrawPixelText(ctx, 58, 416, "防线生命", 15, C.dim)
+    DrawPixelText(ctx, 58, 436, "100", 30, C.text)
+    DrawPixelText(ctx, 138, 450, "点", 15, C.dim)
+    DrawPixelText(ctx, 292, 416, "弹种", 15, C.dim)
+    DrawPixelText(ctx, 292, 436, "4", 30, C.text)
+    DrawPixelText(ctx, 334, 450, "种轮换", 15, C.dim)
     DrawSegmentedRule(ctx, 58, 488, game.width - 116, 10, C.cyanDim)
 
-    DrawPixelText(ctx, 40, 534, "怎么玩", 16, C.cyan)
+    DrawPixelText(ctx, 40, 532, "怎么玩", 18, C.cyan)
     DrawBluePanel(ctx, 40, 554, game.width - 80, 86, C.card, C.cyanDim, 6)
-    DrawPixelText(ctx, 58, 566, "拖拽瞄准", 13, C.dim)
-    DrawPixelText(ctx, 58, 586, "松手发射", 16, C.text)
-    DrawPixelText(ctx, 292, 566, "按 P", 13, C.dim)
-    DrawPixelText(ctx, 292, 586, "暂停游戏", 16, C.text)
+    DrawPixelText(ctx, 58, 564, "拖拽瞄准", 15, C.dim)
+    DrawPixelText(ctx, 58, 584, "松手发射", 18, C.text)
+    DrawPixelText(ctx, 292, 564, "按 P", 15, C.dim)
+    DrawPixelText(ctx, 292, 584, "暂停游戏", 18, C.text)
     nvgRestore(ctx)
 end
 
@@ -1059,28 +1059,28 @@ local function DrawGameOver(ctx, game, presentation)
     local winX, winY = 24, 200
     local winW, winH = game.width - 48, 520
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
-    DrawPixelText(ctx, winX + 18, winY + 12, "防线失守", 20, C.cyan)
-    DrawPixelText(ctx, winX + winW - 16, winY + 16, "本局结束", 13, C.warn,
+    DrawPixelText(ctx, winX + 18, winY + 10, "防线失守", 22, C.cyan)
+    DrawPixelText(ctx, winX + winW - 16, winY + 14, "本局结束", 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width * 0.5, 282, "游戏结束", 32, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 278, "游戏结束", 36, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 322, "敌机突破了底部防线", 16, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 322, "敌机突破了底部防线", 18, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 348,
         string.format("分数 %d    最高 %d    第 %d 波",
-            game.score, game.highScore, game.wave), 16, C.text,
+            game.score, game.highScore, game.wave), 18, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     DrawBluePanel(ctx, 44, 370, game.width - 88, 92, C.rail, C.cyanDim, 6)
-    DrawPixelText(ctx, 60, 382, string.format("到达第 %d 波", game.wave), 15, C.text)
-    DrawPixelText(ctx, 60, 404, string.format("等级 %d", game.playerLevel), 15, C.text)
-    DrawPixelText(ctx, 60, 426, string.format("击碎 %d 块", game.bricksBroken or 0), 15, C.dim)
-    DrawPixelText(ctx, game.width - 60, 382, string.format("强化 %d 次", #(game.upgradePicks or {})), 15,
+    DrawPixelText(ctx, 60, 380, string.format("到达第 %d 波", game.wave), 17, C.text)
+    DrawPixelText(ctx, 60, 402, string.format("等级 %d", game.playerLevel), 17, C.text)
+    DrawPixelText(ctx, 60, 424, string.format("击碎 %d 块", game.bricksBroken or 0), 17, C.dim)
+    DrawPixelText(ctx, game.width - 60, 380, string.format("强化 %d 次", #(game.upgradePicks or {})), 17,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 60, 404, string.format("连击 %d", game.clearStreak or 0), 15,
+    DrawPixelText(ctx, game.width - 60, 402, string.format("连击 %d", game.clearStreak or 0), 17,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 60, 426, string.format("存活 %.0f 秒", game.elapsed or 0), 15,
+    DrawPixelText(ctx, game.width - 60, 424, string.format("存活 %.0f 秒", game.elapsed or 0), 17,
         C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     local reviveBtn, restartBtn = GetGameOverButtonLayout(game)
@@ -1090,30 +1090,30 @@ local function DrawGameOver(ctx, game, presentation)
         if adBusy then
             DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.widget, 8)
             DrawStroke(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyanDim, 8, 1)
-            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 14, "广告加载中…", 16, C.dim,
+            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 12, "广告加载中…", 18, C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         else
             DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyan, 8)
-            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 6, "看广告复活", 18, C.ink,
+            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 4, "看广告复活", 20, C.ink,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 28, "防线回 50 血 · 本局一次", 12, C.ink,
+            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 28, "防线回 50 血 · 本局一次", 15, C.ink,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
     else
         DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.widget, 8)
         DrawStroke(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyanDim, 8, 1)
-        DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 14, "本局已复活", 16, C.dim,
+        DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 12, "本局已复活", 18, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
     DrawRect(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.card, 8)
     DrawStroke(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.cyanDim, 8, 1)
-    DrawPixelText(ctx, game.width * 0.5, restartBtn.y + 14, "再来一局", 18, C.text,
+    DrawPixelText(ctx, game.width * 0.5, restartBtn.y + 12, "再来一局", 20, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
-        DrawPixelText(ctx, game.width * 0.5, restartBtn.y + restartBtn.h + 10, toast, 13, C.warn,
+        DrawPixelText(ctx, game.width * 0.5, restartBtn.y + restartBtn.h + 10, toast, 15, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
@@ -1149,48 +1149,48 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawCornerBrackets(ctx, x + 4, y + 4, cardW - 8, cardH - 8, accent, 10, 1.2)
     DrawRect(ctx, x, y, 3, cardH, accent, 0)
 
-    DrawPixelText(ctx, x + 12, y + 10, string.format("%02d", index), 12, C.dim)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 26, choice.name or "强化", 18, C.text,
+    DrawPixelText(ctx, x + 10, y + 8, string.format("%02d", index), 14, C.dim)
+    DrawPixelText(ctx, x + cardW * 0.5, y + 24, choice.name or "强化", 20, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, x + cardW * 0.5, y + 50,
-        (choice.kind == "word" and "特殊效果 · " or "") .. rare.tag, 13, accent,
+        (choice.kind == "word" and "特殊效果 · " or "") .. rare.tag, 15, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, x + 14, y + 72, cardW - 28, 6, C.cyanDim)
 
     local detailLines = WrapTextLines(ctx,
-        choice.detail or choice.desc or "提升当前弹珠性能", 13, cardW - 24)
-    local detailLineH = 20
+        choice.detail or choice.desc or "提升当前弹珠性能", 15, cardW - 20)
+    local detailLineH = 22
     local maxDetailLines = 5
     local detailCount = math.min(maxDetailLines, #detailLines)
-    local detailAreaTop = y + 84
-    local detailAreaBottom = y + cardH - 96
+    local detailAreaTop = y + 82
+    local detailAreaBottom = y + cardH - 98
     local detailTop = detailAreaTop
         + math.max(0, (detailAreaBottom - detailAreaTop - detailCount * detailLineH) * 0.5)
     for li = 1, detailCount do
         DrawPixelText(ctx, x + cardW * 0.5, detailTop + (li - 1) * detailLineH,
-            detailLines[li], 13, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            detailLines[li], 15, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    local footerTop = y + cardH - 88
+    local footerTop = y + cardH - 90
     if choice.tradeoff then
-        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 24, C.widget, C.warn)
-        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "高风险 / 高回报", 12,
+        DrawTechPanel(ctx, x + 10, footerTop, cardW - 20, 26, C.widget, C.warn)
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "高风险 / 高回报", 15,
             C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     elseif choice.kind == "word" then
-        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 24, C.widget, accent)
-        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "本局生效 · 只装一次", 12, accent,
+        DrawTechPanel(ctx, x + 10, footerTop, cardW - 20, 26, C.widget, accent)
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "本局生效 · 只装一次", 15, accent,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawRect(ctx, x + 16, y + cardH - 56, cardW - 32, 26, C.widget, 6)
-    DrawStroke(ctx, x + 16, y + cardH - 56, cardW - 32, 26, accent, 6, 1)
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 51, choice.value or "强化", 14, accent,
+    DrawRect(ctx, x + 14, y + cardH - 56, cardW - 28, 28, C.widget, 6)
+    DrawStroke(ctx, x + 14, y + cardH - 56, cardW - 28, 28, accent, 6, 1)
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 51, choice.value or "强化", 16, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local stacks = choice.stacks or 0
     local maxText = choice.maxStacks and choice.maxStacks >= 90 and "∞" or tostring(choice.maxStacks or "-")
     DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 22,
-        "已选 " .. tostring(stacks) .. " / " .. maxText, 12, C.dim,
+        "已选 " .. tostring(stacks) .. " / " .. maxText, 14, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
@@ -1200,13 +1200,13 @@ local function DrawLevelUp(ctx, game, presentation)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
-    DrawPixelText(ctx, 24, 108, "升级", 16, C.cyan)
-    DrawPixelText(ctx, game.width - 24, 108, "三选一", 16, C.warn,
+    DrawPixelText(ctx, 24, 106, "升级", 18, C.cyan)
+    DrawPixelText(ctx, game.width - 24, 106, "三选一", 18, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 132, "选择一项强化", 26, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 130, "选择一项强化", 30, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 166,
-        string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 15, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 168,
+        string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local choices = game.upgradeChoices or {}
@@ -1218,16 +1218,16 @@ local function DrawLevelUp(ctx, game, presentation)
         end
     else
         DrawBluePanel(ctx, 30, 365, game.width - 60, 100, C.rail, C.cyanDim, 6)
-        DrawPixelText(ctx, game.width * 0.5, 395, "暂无强化可选", 18, C.text,
+        DrawPixelText(ctx, game.width * 0.5, 395, "暂无强化可选", 20, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, game.width * 0.5, 423, "请稍后再试", 14, C.dim,
+        DrawPixelText(ctx, game.width * 0.5, 423, "请稍后再试", 16, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawPixelText(ctx, 24, 702, "战斗已暂停", 14, C.dim)
+    DrawPixelText(ctx, 24, 700, "战斗已暂停", 16, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
     local hintColor = C.warn
-    local hintSize = 14
+    local hintSize = 16
     if hintPulse > 0 then
         local p = hintPulse / 0.5
         hintColor = {
@@ -1236,9 +1236,9 @@ local function DrawLevelUp(ctx, game, presentation)
             C.warn[3] + math.floor((210 - C.warn[3]) * p),
             255,
         }
-        hintSize = 14 + math.floor(3 * p)
+        hintSize = 16 + math.floor(3 * p)
     end
-    DrawPixelText(ctx, game.width - 24, 702, "点选一张卡片", hintSize, hintColor,
+    DrawPixelText(ctx, game.width - 24, 700, "点选一张卡片", hintSize, hintColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
@@ -1250,12 +1250,12 @@ local function DrawPaused(ctx, game)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     DrawWindowShell(ctx, 54, 360, game.width - 108, 210, 46)
-    DrawPixelText(ctx, 72, 374, "已暂停", 16, C.cyan)
-    DrawPixelText(ctx, game.width * 0.5, 426, "休息一下", 30, C.text,
+    DrawPixelText(ctx, 72, 372, "已暂停", 18, C.cyan)
+    DrawPixelText(ctx, game.width * 0.5, 422, "休息一下", 34, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 470, "点击屏幕继续", 18, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 468, "点击屏幕继续", 20, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 498, "也可以按 P", 14, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 498, "也可以按 P", 16, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
@@ -1276,14 +1276,14 @@ local function DrawWaveBanner(ctx, game, presentation)
     if presentation.waveBannerBoss then
         local pulse = 220 + math.floor(35 * math.abs(math.sin(game.elapsed * 8)))
         local warn = {232, 76, 76}
-        DrawBluePanel(ctx, cx - 140, 142 + yOff, 280, 62, C.card, warn, 6)
-        DrawPixelText(ctx, cx, 148 + yOff, "首领来袭", 14, {pulse, 90, 90},
+        DrawBluePanel(ctx, cx - 156, 138 + yOff, 312, 70, C.card, warn, 6)
+        DrawPixelText(ctx, cx, 144 + yOff, "首领来袭", 16, {pulse, 90, 90},
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, cx, 170 + yOff, string.format("第 %d 波", game.wave), 18,
+        DrawPixelText(ctx, cx, 168 + yOff, string.format("第 %d 波", game.wave), 22,
             warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
-        DrawBluePanel(ctx, cx - 140, 146 + yOff, 280, 54, C.card, C.cyan, 6)
-        DrawPixelText(ctx, cx, 158 + yOff, string.format("第 %d 波来了", game.wave), 18,
+        DrawBluePanel(ctx, cx - 156, 142 + yOff, 312, 60, C.card, C.cyan, 6)
+        DrawPixelText(ctx, cx, 154 + yOff, string.format("第 %d 波来了", game.wave), 22,
             C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
