@@ -3,6 +3,7 @@
 
 local Renderer3D = require "Renderer3D"
 local SkyUtils = require "urhox-libs.Rendering.SkyUtils"
+local VisualCatalog = require "VisualCatalog"
 
 local Backend = {}
 
@@ -366,7 +367,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.30"
+local BUILD_VERSION = "0.10.31"
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -702,6 +703,53 @@ local function ModalIntro(game)
     return EaseOutCubic(t)
 end
 
+local AIRCRAFT_LABELS = {
+    scout = "侦察", dart = "飞镖", striker = "强袭", hive = "蜂群",
+    manta = "鳐鱼", bomber = "飞碟", cruiser = "巡洋", interceptor = "截击",
+}
+
+-- v0.10.31：底部 Dock 中央下一波小图。四弹药槽左右分组，中间 256px 留给预告。
+-- 只读 game.nextWave（规则层预抽），像素格来自 VisualCatalog，禁止再抽随机。
+local function DrawNextWavePreview(ctx, game)
+    local plan = game.nextWave
+    if not plan then return end
+    local preview = VisualCatalog.GetAircraftPreview(plan.aircraftKey)
+    local panelW, panelH = 156, 70
+    local px = DESIGN_W * 0.5 - panelW * 0.5
+    local py = BOTTOM_DOCK_Y + 18
+    local border = plan.isBoss and C.error or C.cyanDim
+    DrawTechPanel(ctx, px, py, panelW, panelH, C.card, border)
+    DrawRect(ctx, px, py, 3, panelH, plan.isBoss and C.error or C.cyan, 0)
+
+    local cooldown = game.waveCooldown or 0
+    local eta = string.format("%d", math.max(0, math.floor(cooldown + 0.999)))
+    DrawPixelText(ctx, px + 10, py + 5, plan.isBoss and "BOSS" or "NEXT", 8,
+        plan.isBoss and C.error or C.dim)
+    DrawPixelText(ctx, px + panelW - 8, py + 5, eta .. "s", 8, C.cyan,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    if preview and preview.cells then
+        local cell = math.max(2, math.floor(math.min(46 / preview.gridW, 38 / preview.gridH)))
+        local artW = preview.gridW * cell
+        local artH = preview.gridH * cell
+        local ax = px + math.floor((panelW - artW) * 0.5)
+        local ay = py + 20 + math.floor((42 - artH) * 0.5)
+        for i = 1, #preview.cells do
+            local c = preview.cells[i]
+            nvgBeginPath(ctx)
+            nvgRect(ctx, ax + (c.col - 1) * cell, ay + (c.row - 1) * cell, cell - 0.5, cell - 0.5)
+            nvgFillColor(ctx, nvgRGBA(c.r, c.g, c.b, 255))
+            nvgFill(ctx)
+        end
+    end
+
+    local label = AIRCRAFT_LABELS[plan.aircraftKey] or plan.aircraftKey
+    local countText = plan.isBoss and "BOSS" or ("x" .. tostring(plan.count or 0))
+    DrawPixelText(ctx, px + 10, py + panelH - 13, label, 8, C.text)
+    DrawPixelText(ctx, px + panelW - 8, py + panelH - 13, countText, 8,
+        plan.isBoss and C.error or C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+end
+
 local function DrawAmmoSlots(ctx, game, presentation)
     local queueCounts = {}
     for _, ballType in ipairs(game.ballQueue or {}) do
@@ -768,6 +816,8 @@ local function DrawAmmoSlots(ctx, game, presentation)
         nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], selected and 255 or 125))
         nvgFill(ctx)
     end
+
+    DrawNextWavePreview(ctx, game)
 end
 
 local function DrawLetterboxBackground(ctx, width, height)

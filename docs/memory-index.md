@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.30
-简述：8bit 街机剪影（蟹/蜂/蝶/飞碟/截击）+ 同波同机阵型（line/vee/grid/swarm/wedge/stream）。碰撞仍是 v0.10.29 最近格；UI 为 v0.10.28 dark-tech。
+当前版本：0.10.31
+简述：战斗底部中央显示下一波敌人像素小图（机型/数量/倒计时，与真实刷怪同源）。8bit 剪影与同波阵型仍是 v0.10.30。
 最后巩固：2026-09-16
 
 ## 项目概况
@@ -93,6 +93,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.31: 战斗 Dock 中央下一波预告。规则层 PlanWave 预抽 nextWavePlan，SpawnWave 消费同一份；VisualCatalog.GetAircraftPreview 给上色 occupied cells；DrawNextWavePreview 在四弹药槽中间画 156×70 像素小图+倒计时+机名/数量。LSP 0、build、截图、headless 200 帧 lua=0。
 - v0.10.30: 8bit 街机剪影 + 同波同机阵型。AircraftPixelData 8 机全部 ASCII 位图（蟹/黄蜂/蝴蝶/蜜蜂/宽翼/飞碟/双荚/菱形截击）；SpawnWave 抽一种机按 line/vee/grid/swarm/wedge/stream 排槽，hive 强制 swarm、宽机 3+ 用 2+1 grid，整队锁定横摆。前三波 3 机。LSP 0、build、roster/line/vee/swarm 截图、headless 200 帧 lua=0。
 - v0.10.29: 修剩余碰撞漏检与碎裂未完成。子步进改为收集本步所有重叠格再打最近格（不再按 bricks 顺序 break）；步进 6–16。体素 HollowBrick 失败每帧重试，规则签名强制 FillEnemyVolume，禁止一次性 consumed。碎块失败才画 CustomGeometry。LSP 0、build、headless 180 帧 lua=0。
 - v0.10.28: 按 ecnach-ui-skill 精细重构 UI。废弃 Astroon/Laterano 蓝紫金；HUD/Dock/菜单/结算/升级/暂停统一 dark-tech 令牌与窗口骨架（角标、断线边框、局部网格、刻度、青识别线）。升级卡外观换肤，几何/命中仍 168×300@cy530。玩法与 3D 未改。LSP 0、build 成功。

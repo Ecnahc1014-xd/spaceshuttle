@@ -124,6 +124,49 @@ function VisualCatalog.GetBrickStyle(aircraftKey, col, row)
     return style[tostring(col) .. ":" .. tostring(row)]
 end
 
+-- v0.10.31：HUD 下一波小图。返回上色 occupied cells，渲染层只画不重算槽位。
+---@class AircraftPreviewCell
+---@field col integer
+---@field row integer
+---@field r integer
+---@field g integer
+---@field b integer
+
+---@class AircraftPreview
+---@field gridW number
+---@field gridH number
+---@field cells AircraftPreviewCell[]
+
+---@param aircraftKey string
+---@return AircraftPreview|nil
+function VisualCatalog.GetAircraftPreview(aircraftKey)
+    local data = AircraftData[aircraftKey]
+    if not data then return nil end
+    local styleMap = aircraftStyles[aircraftKey] or BuildAircraftStyle(aircraftKey)
+    if not styleMap then return nil end
+    ---@type AircraftPreviewCell[]
+    local cells = {}
+    for entry in (data.data .. ";"):gmatch("(.-);") do
+        local colS, rowS = entry:match("(%d+),(%d+),%d+,%d+,%d+")
+        if colS then
+            ---@type integer
+            local col = math.floor(tonumber(colS) or 0)
+            ---@type integer
+            local row = math.floor(tonumber(rowS) or 0)
+            local style = styleMap[colS .. ":" .. rowS]
+            if style then
+                cells[#cells + 1] = {
+                    col = col, row = row,
+                    r = style.r, g = style.g, b = style.b,
+                }
+            end
+        end
+    end
+    ---@type AircraftPreview
+    local preview = { gridW = data.gridW, gridH = data.gridH, cells = cells }
+    return preview
+end
+
 -- v0.10.25：体素物理调色板槽位。手建体积占用 1-64（8 机型 × 4 槽 × 冻结/正常）。
 -- 渲染层按 (aircraftKey, slot, frozen) 取全局索引，禁止在 Renderer3D 里再发明一套编号。
 local AIRCRAFT_KEYS = {

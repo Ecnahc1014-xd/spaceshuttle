@@ -129,6 +129,8 @@ local baseHp = BASE_HP
 local wave = 1
 local elapsed = 0
 local waveCooldown = 0
+---@type NextWavePlan|nil
+local nextWavePlan = nil
 
 -- 幸存者成长状态
 local playerLevel = 1
@@ -246,6 +248,8 @@ local UpdateReload
 local UpdateWaveLogic
 local GainXp
 local RollUpgradeChoices
+local PlanWave
+local EnsureNextWavePlan
 
 local function Emit(eventType, data)
     data = data or {}
@@ -362,6 +366,7 @@ ResetGame = function()
     grabStartX = SLING_X
     grabStartY = SLING_Y
     waveCooldown = 3.2    -- v0.10.27：开局喘息再拉长，避免首波贴脸
+    nextWavePlan = nil
     nextEnemyId = 1
     nextMarbleId = 1
     -- 幸存者成长状态复位
@@ -391,6 +396,7 @@ local function StartGame()
     ResetGame()
     gameState = "playing"
     SpawnWave()
+    EnsureNextWavePlan()
     print("[Game] game started")
 end
 
@@ -528,6 +534,13 @@ local function PickWaveAircraft(pool)
     return pool[RandomInt(1, #pool)]
 end
 
+---@class NextWavePlan
+---@field wave integer
+---@field aircraftKey string
+---@field count integer
+---@field formation string
+---@field isBoss boolean
+
 local function PickFormation(waveNum, count, aircraftKey)
     if aircraftKey == "hive" then return "swarm" end
     if count <= 1 then return "line" end
@@ -539,6 +552,39 @@ local function PickFormation(waveNum, count, aircraftKey)
     end
     if kind == "grid" and count <= 2 then return "line" end
     return kind
+end
+
+---@param waveNum integer
+---@return NextWavePlan
+PlanWave = function(waveNum)
+    if waveNum % 10 == 0 then
+        return {
+            wave = waveNum,
+            aircraftKey = "interceptor",
+            count = 1,
+            formation = "line",
+            isBoss = true,
+        }
+    end
+    local pool = GetAvailableTypes(waveNum)
+    local count = GetWaveParams(waveNum)
+    local key = (#pool > 0) and PickWaveAircraft(pool) or "scout"
+    return {
+        wave = waveNum,
+        aircraftKey = key,
+        count = count,
+        formation = PickFormation(waveNum, count, key),
+        isBoss = false,
+    }
+end
+
+---@return NextWavePlan
+EnsureNextWavePlan = function()
+    local upcoming = wave + 1
+    if not nextWavePlan or nextWavePlan.wave ~= upcoming then
+        nextWavePlan = PlanWave(upcoming)
+    end
+    return nextWavePlan
 end
 
 ---@param kind string
@@ -661,10 +707,17 @@ local function LiftSlotsOffExisting(slots, shipW, shipH)
 end
 
 SpawnWave = function()
+    -- v0.10.31：优先消费预抽的 nextWavePlan，保证 Dock 小图与真实刷怪同源。
+    local plan = nextWavePlan
+    if not plan or plan.wave ~= wave then
+        plan = PlanWave(wave)
+    end
+    nextWavePlan = nil
+
     -- P11：Boss 波（每 10 波一次）。Boss 是单支高血量巨型编队，拥有阶段机；
     -- 仅规则（HP/阶段/vulnerable），视觉由表现层推迟消费 boss_phase 事件。
-    if wave % 10 == 0 then
-        local bossKey = "interceptor"
+    if plan.isBoss then
+        local bossKey = plan.aircraftKey
         if not AircraftData[bossKey] then
             for key in pairs(AircraftData) do bossKey = key; break end
         end
@@ -689,22 +742,20 @@ SpawnWave = function()
             Emit("boss_spawn", {enemyId = enemy.id, wave = wave})
             print("[Game] BOSS spawned at wave " .. wave)
         end
-        Emit("wave_started", {wave = wave, isBoss = true})
+        Emit("wave_started", {wave = wave, isBoss = true, aircraftKey = bossKey})
         print("[Game] wave " .. wave .. " (BOSS) spawned")
-        return
-    end
-
-    local pool = GetAvailableTypes(wave)
-    if #pool == 0 then
-        print("[Game] WARNING: empty aircraft pool")
         return
     end
 
     local count, baseSpeed, brickHp = GetWaveParams(wave)
     local brickSize = GetBrickSize(wave)
-    local aircraftKey = PickWaveAircraft(pool)
+    local aircraftKey = plan.aircraftKey
+    if not AircraftData[aircraftKey] then
+        print("[Game] WARNING: empty aircraft pool")
+        return
+    end
     local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
-    local formationKind = PickFormation(wave, count, aircraftKey)
+    local formationKind = plan.formation or PickFormation(wave, count, aircraftKey)
     local slots, usedKind = ComputeFormationSlots(formationKind, count, aircraftWidth, aircraftHeight)
     LiftSlotsOffExisting(slots, aircraftWidth, aircraftHeight)
 
@@ -1701,6 +1752,7 @@ UpdateWaveLogic = function(dt)
     -- 幸存者节奏（WO-12/P6）：持续涌出，间隔随波次收紧并呈「阶段呼吸」，
     -- 受同屏上限约束。升级期间（pendingLevelUps>0）不刷怪，既有编队继续下移。
     if gameState ~= "playing" or pendingLevelUps > 0 then return end
+    EnsureNextWavePlan()
 
     waveCooldown = waveCooldown - dt
     if waveCooldown > 0 then return end
@@ -1726,6 +1778,7 @@ UpdateWaveLogic = function(dt)
     if #veggies < concurrentCap then
         wave = wave + 1
         SpawnWave()
+        EnsureNextWavePlan()
     end
     waveCooldown = interval
 end
@@ -1953,6 +2006,9 @@ function Game.GetSnapshot()
     s.height = DH
     s.dangerY = DANGER_Y
     s.topBound = TOP_BOUND_Y
+    -- v0.10.31：下一波预告只读计划，渲染层画小图，不反向写规则。
+    s.nextWave = (gameState == "playing") and nextWavePlan or nil
+    s.waveCooldown = waveCooldown
     return s
 end
 

@@ -3,13 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.30（8bit 街机剪影 + 同波阵型）：
-  - **剪影**：8 机全部改 ASCII 位图。scout 蟹 / dart 尖头黄蜂 / striker 蝴蝶 / hive 蜜蜂 / manta 宽翼旗舰 / bomber 飞碟 / cruiser 双荚重甲 / interceptor 菱形截击。引擎在小 row（远离玩家），尖鼻/钳足朝玩家。
-  - **阵型**：同波同机。`line/vee/grid/swarm/wedge/stream` 循环；hive 强制 swarm；宽机 3+ 用 2+1 grid。整队锁定横摆。前三波固定 3 机。
-  - 渲染仍 data 驱动，不改 Renderer3D。验证：LSP 0、build、roster/line/vee/swarm 截图、headless 200 帧 lua=0。
-- 上次交付: v0.10.30 8bit 敌机剪影与编队阵型
+- 版本: 0.10.31（底部中央下一波敌人小图）：
+  - **规则**：`nextWavePlan` 预抽下一波（机型/数量/阵型/Boss），`SpawnWave` 消费同一份计划，Dock 小图与真实刷怪同源。
+  - **UI**：playing Dock 中央 156×70 面板，像素剪影 + NEXT/倒计时 + 机名/数量；Boss 红边。四弹药槽仍左右分组。
+  - 验证：LSP 0、build、战斗截图确认飞镖小图、headless 200 帧 lua=0。
+- 上次交付: v0.10.31 底部中央下一波敌人预告
 
 ## 历史
+- 版本: 0.10.30（8bit 街机剪影 + 同波阵型）：8 机 ASCII 位图（蟹/黄蜂/蝴蝶/蜜蜂/宽翼/飞碟/双荚/截击）；同波同机 line/vee/grid/swarm。
 - 版本: 0.10.29（修剩余碰撞漏检与碎裂未完成）：子步进收集重叠格打最近格、步进 6–16；挖空失败可重试并用规则签名强制对齐网格。
 - 版本: 0.10.28（按 ecnach-ui-skill 重构精细 UI）：
   - **令牌**：废弃 Astroon/Laterano 蓝紫+金色。全页改 dark-tech：`bg/panel/rail/card/widget` 深黑蓝层级，品牌青 `cyan` 唯一强调，`warn` 仅警告/连击，红色仅错误/低血。
@@ -96,10 +97,12 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: Preview 复测 v0.10.30——8 机剪影是否可辨、同波是否成阵、宽机是否被挤出左右边。禁止恢复随机散点刷怪，禁止改 Renderer3D 画飞机。不改权威 HP、AABB、XP、回收/拖拽、9:16 投影。
-- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/VisualCatalog.lua`
+- likely_next_task: Preview 复测 v0.10.31——底部中央下一波小图是否挡住车辆/瞄准，倒计时与真实刷怪是否一致。禁止预告再抽一次随机。不改权威 HP、AABB、XP、回收/拖拽、9:16 投影。
+- 相关文件: `scripts/Game.lua`, `scripts/VisualCatalog.lua`, `scripts/Scene3DBackend.lua`
 
-## 本批次新增避雷（v0.10.30 8bit 阵型 / v0.10.29 碰撞选最近格 / v0.10.28 dark-tech UI）
+## 本批次新增避雷（v0.10.31 下一波小图 / v0.10.30 8bit 阵型 / v0.10.29 碰撞选最近格）
+- ⚠️ 下一波预告必须同源（v0.10.31）：规则层 `PlanWave` 预抽并锁定 `nextWavePlan`，`SpawnWave` 消费同一份，禁止 UI 再 Random 一次。`GetSnapshot` 只读 `nextWavePlan`，不在快照里抽签。小图放 Dock 中央（四槽左右分组中间），只画 VisualCatalog 像素格，禁止新贴图。
+
 - ⚠️ 同波必须同机成阵（v0.10.30）：随机散点 + 混种会把 8bit 剪影拆成“一坨砖”。`SpawnWave` 抽一种机、按 `line/vee/grid/swarm/wedge/stream` 算槽位；宽机 3+ 走 2+1 grid，不要硬塞横排再退化成纵列。整队锁定 swayAmp/swayFreq/phase，opts 里 0 必须用 `~= nil` 判断。
 - 底座契约仍有效：位图小 row = 引擎/背侧（远离玩家），大 row = 朝玩家。新剪影禁止把推进器画到阵列底边。
 - ⚠️ 多格重叠不要按数组顺序 break（v0.10.29）：圆同时压住几格时，bricks 表顺序命中第一格会漏掉真正碰到的格（穿机翼/座舱无碰撞）。应收集本步重叠格、打距离最近的一格；挖空失败禁止一次性 consumed，必须按规则签名强制对齐网格。
