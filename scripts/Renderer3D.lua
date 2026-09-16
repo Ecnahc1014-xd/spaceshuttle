@@ -539,13 +539,24 @@ local function HollowBrick(record, col, row)
     if gx < 0 or gy < 0 or gx >= (math.tointeger(record.gridW) or 1) or gy >= dimY then
         return false
     end
+    -- 主循环订的是 Update：场景（含体素世界步进）先于脚本执行。
+    -- 只 MarkRegionDirty 会把网格重建推迟到下一帧世界步进；飞机还活着时
+    -- 看起来就是“幽灵块一直不刷新”。手改 occupancy 后必须同帧 RebuildGeometry。
     local ok = pcall(function()
-        grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, false)
-        -- 静态体积手改 occupancy 后只标脏区，由世界本帧驱动重建。
-        -- 每格 RebuildGeometry 会把整机网格拖到下一帧才刷新。
+        for z = 0, dimZ - 1 do
+            grid:SetSolid(gx, gy, z, false)
+        end
         volume:MarkRegionDirty(gx, gy, 0, gx, gy, dimZ - 1)
+        volume:RebuildGeometry()
     end)
-    return ok == true
+    if not ok then return false end
+    -- FillBox 在部分运行时只改内容不改 occupancy；用 IsSolid 确认格子真被挖掉。
+    for z = 0, dimZ - 1 do
+        if grid:IsSolid(gx, gy, z) then
+            return false
+        end
+    end
+    return true
 end
 
 local function SpawnVoxelDebris(record, event, visualCatalog)
@@ -658,7 +669,7 @@ local function SyncVoxelEnemies(game, presentation)
     end
 
     -- 必须先挖空再签名对齐：同一帧 alive=false 若先整网 Fill，刚挖的格会被填回去。
-    -- 挖空只 MarkRegionDirty；整网 Fill 只用于漏挖兜底，禁止每命中都 RebuildGeometry。
+    -- 挖空后立刻 RebuildGeometry：Update 发生在世界步进之后，MarkRegionDirty 等不到本帧重建。
     local boxes = presentation.ejectedBoxes or {}
     local liveEjectIds = {}
     local signatureById = {}
@@ -704,6 +715,7 @@ local function SyncVoxelEnemies(game, presentation)
                     FillEnemyVolume(record.volume, enemy, visualCatalog)
                     record.volume:MarkRegionDirty(0, 0, 0,
                         (record.gridW or 1) - 1, (record.gridH or 1) - 1, VoxelDepthCount() - 1)
+                    record.volume:RebuildGeometry()
                     record.signature = currentSig
                 end
             end

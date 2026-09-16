@@ -367,7 +367,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.36"
+local BUILD_VERSION = "0.10.37"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -575,7 +575,7 @@ local function DrawFloatTexts(ctx, game, presentation)
         -- 末段淡出 + 轻微放大，提升命中正反馈。
         local alpha = math.floor(235 * math.min(1, lifeT * 3))
         local pop = 1 + 0.18 * (1 - lifeT)
-        local size = math.floor((f.size or 20) * pop)
+        local size = math.floor((f.size or 32) * pop)
         local col = f.color or {255, 240, 180}
         nvgFontSize(ctx, size)
         UseTechFont(ctx)
@@ -715,26 +715,26 @@ local function DrawNextWavePreview(ctx, game)
     local plan = game.nextWave
     if not plan then return end
     local preview = VisualCatalog.GetAircraftPreview(plan.aircraftKey)
-    local panelW, panelH = 156, 70
+    local panelW, panelH = 168, 76
     local px = DESIGN_W * 0.5 - panelW * 0.5
-    local py = BOTTOM_DOCK_Y + 18
+    local py = BOTTOM_DOCK_Y + 12
     local border = plan.isBoss and C.error or C.cyanDim
     DrawTechPanel(ctx, px, py, panelW, panelH, C.card, border)
     DrawRect(ctx, px, py, 3, panelH, plan.isBoss and C.error or C.cyan, 0)
 
     local cooldown = game.waveCooldown or 0
     local eta = string.format("%d", math.max(0, math.floor(cooldown + 0.999)))
-    DrawPixelText(ctx, px + 10, py + 4, plan.isBoss and "首领" or "下一波", 12,
+    DrawPixelText(ctx, px + 8, py + 4, plan.isBoss and "首领" or "下一波", 15,
         plan.isBoss and C.error or C.dim)
-    DrawPixelText(ctx, px + panelW - 8, py + 4, eta .. "秒", 12, C.cyan,
+    DrawPixelText(ctx, px + panelW - 8, py + 4, eta .. "秒", 15, C.cyan,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     if preview and preview.cells then
-        local cell = math.max(2, math.floor(math.min(46 / preview.gridW, 38 / preview.gridH)))
+        local cell = math.max(2, math.floor(math.min(52 / preview.gridW, 36 / preview.gridH)))
         local artW = preview.gridW * cell
         local artH = preview.gridH * cell
         local ax = px + math.floor((panelW - artW) * 0.5)
-        local ay = py + 20 + math.floor((42 - artH) * 0.5)
+        local ay = py + 22 + math.floor((34 - artH) * 0.5)
         for i = 1, #preview.cells do
             local c = preview.cells[i]
             nvgBeginPath(ctx)
@@ -746,8 +746,8 @@ local function DrawNextWavePreview(ctx, game)
 
     local label = AIRCRAFT_LABELS[plan.aircraftKey] or plan.aircraftKey
     local countText = plan.isBoss and "首领" or (tostring(plan.count or 0) .. "架")
-    DrawPixelText(ctx, px + 10, py + panelH - 16, label, 12, C.text)
-    DrawPixelText(ctx, px + panelW - 8, py + panelH - 16, countText, 12,
+    DrawPixelText(ctx, px + 8, py + panelH - 20, label, 15, C.text)
+    DrawPixelText(ctx, px + panelW - 8, py + panelH - 20, countText, 15,
         plan.isBoss and C.error or C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 end
 
@@ -774,13 +774,13 @@ local function DrawAmmoSlots(ctx, game, presentation)
         DrawLine(ctx, sx, BOTTOM_DOCK_Y, DESIGN_W, BOTTOM_DOCK_Y, {C.cyan[1], C.cyan[2], C.cyan[3], a}, 2)
     end
 
-    DrawPixelText(ctx, 14, BOTTOM_DOCK_Y + 6, "弹药", 13, C.dim)
-    DrawPixelText(ctx, DESIGN_W - 14, BOTTOM_DOCK_Y + 6,
-        "拖拽发射", 13, C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, 14, BOTTOM_DOCK_Y + 4, "弹药", 16, C.dim)
+    DrawPixelText(ctx, DESIGN_W - 14, BOTTOM_DOCK_Y + 4,
+        "拖拽发射", 16, C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    local slotSize = 62
-    local slotGap = 8
-    local slotY = BOTTOM_DOCK_Y + 28
+    local slotSize = 64
+    local slotGap = 6
+    local slotY = BOTTOM_DOCK_Y + 26
     local leftStart = 10
     local rightStart = DESIGN_W - 10 - slotSize * 2 - slotGap
     for i, ballType in ipairs(SLOT_TYPES) do
@@ -798,18 +798,18 @@ local function DrawAmmoSlots(ctx, game, presentation)
         if selected then
             DrawRect(ctx, x, slotY, 3, slotSize, C.cyan, 0)
         end
-        DrawPixelText(ctx, x + 7, slotY + 4, string.format("%02d", i), 11, C.dim)
-        DrawPixelText(ctx, x + slotSize - 6, slotY + 4,
-            "x" .. tostring(queueCounts[ballType] or 0), 12, selected and C.cyan or color,
+        DrawPixelText(ctx, x + 6, slotY + 3, string.format("%d", i), 13, C.dim)
+        DrawPixelText(ctx, x + slotSize - 6, slotY + 3,
+            "x" .. tostring(queueCounts[ballType] or 0), 15, selected and C.cyan or color,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 20, SLOT_NAMES[ballType], 16,
+        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 20, SLOT_NAMES[ballType], 18,
             C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         if selected then
-            DrawRect(ctx, x + 8, slotY + 41, slotSize - 16, 14, C.cyan, 6)
-            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 42, "待发", 12, C.ink,
+            DrawRect(ctx, x + 8, slotY + 42, slotSize - 16, 16, C.cyan, 6)
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待发", 14, C.ink,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         else
-            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 42, "待命", 12, C.dim,
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待命", 14, C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
         nvgBeginPath(ctx)
@@ -852,7 +852,7 @@ local function DrawBossPhaseBar(ctx, game, boss)
     local barW = 220
     local x0 = cx - barW * 0.5
     local y = 84
-    DrawPixelText(ctx, cx, y - 16, "首领阶段", 13, C.warn,
+    DrawPixelText(ctx, cx, y - 18, "首领阶段", 16, C.warn,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     local segments = 3
     local segW = barW / segments
@@ -863,14 +863,14 @@ local function DrawBossPhaseBar(ctx, game, boss)
         DrawTechPanel(ctx, x0 + (s - 1) * segW + 2, y, segW - 4, 12,
             filled and C.widget or C.card, col)
         if filled then
-            DrawPixelText(ctx, x0 + (s - 1) * segW + segW * 0.5, y + 1, tostring(s), 12,
+            DrawPixelText(ctx, x0 + (s - 1) * segW + segW * 0.5, y + 1, tostring(s), 14,
                 col, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
     end
     if boss.bossPhase == 2 then
         local pulse = 0.5 + 0.5 * math.sin(game.elapsed * 6)
         DrawPixelText(ctx, cx, y + 16, "虚弱中 伤害×1.5",
-            13, {C.warn[1], C.warn[2], C.warn[3], 150 + math.floor(105 * pulse)},
+            15, {C.warn[1], C.warn[2], C.warn[3], 150 + math.floor(105 * pulse)},
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 end
@@ -910,8 +910,8 @@ local function DrawHud(ctx, game, presentation)
     DrawEdgeTicks(ctx, 16, HUD_HEIGHT - 8, game.width - 32, 21,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
 
-    DrawPixelText(ctx, 14, 6, "分数", 13, C.dim)
-    DrawPixelText(ctx, 14, 22, string.format("%d", game.score), 26, C.text)
+    DrawPixelText(ctx, 14, 4, "分数", 15, C.dim)
+    DrawPixelText(ctx, 14, 20, string.format("%d", game.score), 30, C.text)
     local cloud = presentation and presentation.cloudStatus
     local bestLine = "最高 " .. tostring(game.highScore)
     local bestColor = C.dim
@@ -924,38 +924,38 @@ local function DrawHud(ctx, game, presentation)
         bestLine = bestLine .. " · 本地"
         bestColor = C.warn
     end
-    DrawPixelText(ctx, 14, 52, bestLine, 12, bestColor)
+    DrawPixelText(ctx, 14, 52, bestLine, 14, bestColor)
 
     local centerX = game.width * 0.5
-    DrawPixelText(ctx, centerX, 6, "波次", 13, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, centerX, 22, string.format("%d", game.wave), 26, C.text,
+    DrawPixelText(ctx, centerX, 4, "波次", 15, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, centerX, 20, string.format("%d", game.wave), 30, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     -- v0.10.24：连击≥2 时整句转强调色并轻微脉冲放大，给连续清场正反馈。
     local combo = game.clearStreak or 0
     local comboColor = C.dim
-    local comboSize = 12
+    local comboSize = 14
     if combo >= 2 then
         comboColor = C.warn
-        comboSize = 12 + math.floor(2 * (0.5 + 0.5 * math.sin((game.elapsed or 0) * 8)))
+        comboSize = 14 + math.floor(2 * (0.5 + 0.5 * math.sin((game.elapsed or 0) * 8)))
     end
     DrawPixelText(ctx, centerX, 52,
         string.format("敌机 %d    连击 ×%d", game.concurrentCount or 0, combo),
         comboSize, comboColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width - 12, 6, "防线", 13, C.dim,
+    DrawPixelText(ctx, game.width - 12, 4, "防线", 15, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 12, 22,
-        string.format("%d / %d", game.baseHp, game.maxBaseHp), 22, hpColor,
+    DrawPixelText(ctx, game.width - 12, 20,
+        string.format("%d / %d", game.baseHp, game.maxBaseHp), 26, hpColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width - 12, 48, hpRatio > 0.35 and "正常" or "危险",
-        12, hpColor, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelBar(ctx, game.width - 164, 64, 152, 8, hpRatio, hpRatio > 0.35 and C.cyan or hpColor)
+        14, hpColor, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelBar(ctx, game.width - 168, 64, 156, 8, hpRatio, hpRatio > 0.35 and C.cyan or hpColor)
 
     local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
-    DrawPixelText(ctx, 14, 72, string.format("等级 %d", game.playerLevel), 13, C.cyan)
-    DrawPixelBar(ctx, 92, 76, 136, 8, xpRatio, C.cyan)
-    DrawPixelText(ctx, 236, 72,
-        string.format("经验 %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 13, C.dim)
+    DrawPixelText(ctx, 14, 70, string.format("等级 %d", game.playerLevel), 15, C.cyan)
+    DrawPixelBar(ctx, 100, 74, 128, 10, xpRatio, C.cyan)
+    DrawPixelText(ctx, 236, 70,
+        string.format("经验 %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 15, C.dim)
 
     local words = game.activeWords or {}
     -- 词条徽标：NanoVG 程序化绘制（不依赖外部 PNG），每个词条一个高亮方块 + 汉字。
@@ -964,7 +964,7 @@ local function DrawHud(ctx, game, presentation)
         chain = {label = "链", color = C.cyan},
         momentum = {label = "量", color = {255, 138, 101}},
     }
-    local iconSize = 18
+    local iconSize = 20
     local iconX = game.width - 176 - #words * (iconSize + 5)
     local iconY = 46
     for i, wordId in ipairs(words) do
@@ -973,7 +973,7 @@ local function DrawHud(ctx, game, presentation)
         local bc = badge and badge.color or C.dim
         DrawTechPanel(ctx, ix, iconY, iconSize, iconSize, C.card, bc)
         if badge then
-            DrawPixelText(ctx, ix + iconSize * 0.5, iconY + 2, badge.label, 13, bc,
+            DrawPixelText(ctx, ix + iconSize * 0.5, iconY + 2, badge.label, 15, bc,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
     end
