@@ -1,13 +1,13 @@
-# 太空飞机弹珠 — 项目核心记忆
+# 击碎，飞机大战 — 项目核心记忆
 
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.33（玩家向中文 UI）：
-  - HUD/Dock/菜单/结算/升级/暂停/波次横幅全部改中文可读文案，去掉驾驶舱黑话和英文状态码。
-  - 升级卡命中几何仍 168×300@cy530；dark-tech 骨架保留。
-  - 验证：LSP 0、build 成功。
-- 上次交付: v0.10.33 玩家向中文 UI
+- 版本: 0.10.34（正式名「击碎，飞机大战」）：
+  - 窗口标题、菜单主标题、TapTap `taptap_publish.title` 全部改成「击碎，飞机大战」。
+  - 菜单主视觉改「击碎飞机」；升级卡去掉「词条/已装配」术语，改成特殊效果/已选。
+  - 玩法、命中几何、广告复活、云高分未改。验证：LSP 0、build 成功。
+- 上次交付: v0.10.34 正式更名为击碎，飞机大战
 
 ## 历史
 - 版本: 0.10.32（激励广告复活 + clientCloud 云高分）：结算看广告回 50 血，本局一次；云高分 high_score。
@@ -99,11 +99,12 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: Preview 验收中文 UI 是否一眼能懂（菜单点开始、战斗分数/防线/下一波、结算看广告复活/再来一局）。禁止把英文黑话加回去。顺带真机测广告与云高分。
-- 相关文件: `scripts/main.lua`, `scripts/Game.lua`, `scripts/Scene3DBackend.lua`, `scripts/Presentation.lua`
+- likely_next_task: Preview 验收新名字「击碎，飞机大战」是否出现在菜单标题/窗口名；确认中文 UI 一眼能懂。禁止把旧名或英文黑话加回去。
+- 相关文件: `scripts/main.lua`, `scripts/Scene3DBackend.lua`, `.project/project.json`
 
-## 本批次新增避雷（v0.10.33 玩家向中文 UI / v0.10.32 广告/云存档）
-- ⚠️ 玩家 UI 必须中文优先（v0.10.33）：标题、按钮、HUD 标签、结算、升级提示用玩家能看懂的中文。dark-tech 装饰可以留，但禁止把 FLIGHT CONTROL / SESSION SEALED / HOSTILES 这类黑话当主文案。升级卡几何不要跟着文案一起改。
+## 本批次新增避雷（v0.10.34 正式名 / v0.10.33 玩家向中文 UI）
+- ⚠️ 对外游戏名必须是「击碎，飞机大战」（v0.10.34）：窗口标题、菜单主标题、`taptap_publish.title` 三处同步。内部代码注释/历史决策可保留旧名，玩家可见处禁止写「太空飞机弹珠」。
+- ⚠️ 玩家 UI 必须中文优先（v0.10.33）：标题、按钮、HUD 标签、结算、升级提示用玩家能看懂的中文。dark-tech 装饰可以留，但禁止把 FLIGHT CONTROL / SESSION SEALED / HOSTILES 这类黑话当主文案。升级卡几何不要跟着文案一起改。升级卡不要写「词条/已装配」，改成「特殊效果/已选」。
 
 - ⚠️ 激励广告契约（v0.10.32）：只接 `sdk:ShowRewardVideoAd`；`success==true` 才发奖。`accepted==false` 可能无回调，必须同时处理返回值与回调，并用一次性 `completed` 防重复。中途关闭不复活。广告/云 API 只在 `main.lua`。
 - 结算按钮几何必须与 `HitTestGameOverButton` 同源；禁止结算页全屏松手重开。每局只能复活一次。

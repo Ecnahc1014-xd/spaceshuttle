@@ -1,5 +1,5 @@
 -- Game.lua
--- 太空飞机弹珠核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
+-- 击碎，飞机大战核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
 
 local AircraftData = require "AircraftPixelData"
 
@@ -175,7 +175,7 @@ local UPGRADE_POOL = {
       apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
     { id = "repair", name = "前线维修", desc = "立即恢复 25 点基地生命",
       detail = "立即修复基地 25 点生命（不会超过 100 点上限），可反复选择。",
-      weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+25 HP",
+      weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+25 生命",
       apply = function(stacks) baseHp = math.min(BASE_HP, baseHp + 25) end },
     { id = "armor", name = "装甲强化", desc = "防线受创伤害 -1（最低 1）",
       detail = "敌机编队越过防线时，整次受创伤害降低 1 点；多行越线时也只在总计上减免。",
@@ -195,24 +195,24 @@ local UPGRADE_POOL = {
       end },
     { id = "overclock", name = "超载核心", desc = "速度 +15% 但基地 -8",
       detail = "弹珠飞行速度立即提高 15%，但引擎过载直接损失 8 点基地生命。",
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "速度+15% / HP-8",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "速度+15% / 生命-8",
       apply = function(stacks)
           BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
           baseHp = math.max(1, baseHp - 8)
       end },
     -- P11 词条系统：专属"词条"升级，apply 把对应 word 加入 activeWords（规则变量），
     -- 新生成弹珠自动携带；视觉染色推迟到表现层消费新事件。
-    { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带[贯穿]词条",
-      detail = "之后生成的弹珠附带[贯穿]：命中首块砖块附加电击并直线穿透，不被反弹。一次性。",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条·贯穿", kind = "word",
+    { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带贯穿效果",
+      detail = "之后发射的弹珠带贯穿：命中第一块后继续直线穿过去，不会被弹开。本局只装一次。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "贯穿", kind = "word",
       apply = function(stacks) activeWords.pierce = true end },
-    { id = "word_chain", name = "链能线圈", desc = "弹珠附带[连锁]词条",
-      detail = "之后生成的弹珠附带[连锁]：腐蚀命中砖块，并向最近的另一块追加一次溅射。一次性。",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条·连锁", kind = "word",
+    { id = "word_chain", name = "连锁弹", desc = "弹珠附带连锁溅射",
+      detail = "之后发射的弹珠带连锁：打中一块后，再溅射到最近的另一块。本局只装一次。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "连锁", kind = "word",
       apply = function(stacks) activeWords.chain = true end },
-    { id = "word_momentum", name = "动量储能", desc = "弹珠附带[动量]词条",
-      detail = "之后生成的弹珠附带[动量]：命中附加燃烧，弹珠速度越高造成的伤害越高。一次性。",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "词条·动量", kind = "word",
+    { id = "word_momentum", name = "动量加速", desc = "弹珠越快伤害越高",
+      detail = "之后发射的弹珠带动量：飞得越快，打出去的伤害越高。本局只装一次。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "动量", kind = "word",
       apply = function(stacks) activeWords.momentum = true end },
 }
 

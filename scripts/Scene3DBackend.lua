@@ -367,7 +367,8 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.33"
+local BUILD_VERSION = "0.10.34"
+local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -990,17 +991,17 @@ local function DrawMenu(ctx, game)
     local winX, winY = 18, 108
     local winW, winH = game.width - 36, 540
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
-    DrawPixelText(ctx, winX + 18, winY + 14, "太空飞机弹珠", 16, C.cyan)
+    DrawPixelText(ctx, winX + 18, winY + 14, GAME_TITLE, 16, C.cyan)
     DrawPixelText(ctx, winX + winW - 16, winY + 16, "v" .. BUILD_VERSION, 9, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawBrokenFrame(ctx, winX + 10, winY + 52, winW - 20, winH - 64, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 36)
     DrawEdgeTicks(ctx, winX + 18, winY + 50, winW - 36, 17, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80})
 
-    DrawPixelText(ctx, game.width * 0.5, 188, "守住防线", 28, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 188, "击碎飞机", 28, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 230, "拖拽发射重卡  击碎敌机方块", 13, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 230, "拖拽发射重卡，一块一块打掉敌机", 13, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 254, "别让飞机越过底部防线", 12, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 254, "别让飞机飞过底部防线", 12, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     -- 主操作：青底深字胶囊。
@@ -1152,7 +1153,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawPixelText(ctx, x + cardW * 0.5, y + 28, choice.name or "强化", 14, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, x + cardW * 0.5, y + 50,
-        (choice.kind == "word" and "词条 · " or "强化 · ") .. rare.tag, 10, accent,
+        (choice.kind == "word" and "特殊效果 · " or "") .. rare.tag, 10, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, x + 14, y + 72, cardW - 28, 6, C.cyanDim)
 
@@ -1177,7 +1178,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
             C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     elseif choice.kind == "word" then
         DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 22, C.widget, accent)
-        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "永久词条 · 一次性", 10, accent,
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "本局生效 · 只装一次", 10, accent,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
@@ -1189,7 +1190,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local stacks = choice.stacks or 0
     local maxText = choice.maxStacks and choice.maxStacks >= 90 and "∞" or tostring(choice.maxStacks or "-")
     DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 22,
-        "已装配 " .. tostring(stacks) .. " / " .. maxText, 9, C.dim,
+        "已选 " .. tostring(stacks) .. " / " .. maxText, 9, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 

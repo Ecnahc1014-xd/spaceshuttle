@@ -285,7 +285,7 @@ local FEEDBACK_HANDLERS = {
     pierceArmed = function(event)
         screenShake = math.max(screenShake, 0.16)
         SpawnParticles(event.x, event.y, {205, 145, 255}, math.random(2, 4), "spark")
-        SpawnFloatText(event.x, event.y - 22, "贯穿就绪", {225, 170, 255}, 0.9)
+        SpawnFloatText(event.x, event.y - 22, "可以贯穿", {225, 170, 255}, 0.9)
     end,
     giantBurst = function(event)
         screenShake = math.max(screenShake, 0.22)
@@ -295,7 +295,7 @@ local FEEDBACK_HANDLERS = {
             SpawnParticles(event.x, event.y, {190, 160, 210}, 1, "smoke")
         end
         SpawnFloatText(event.x, event.y - 28,
-            "范围贯穿", {235, 190, 255}, 1.0)
+            "范围击碎", {235, 190, 255}, 1.0)
     end,
     -- v0.10.24：主球回库补弹，Dock 轻闪一下。
     reloadPulse = function(event)
@@ -303,7 +303,7 @@ local FEEDBACK_HANDLERS = {
     end,
     -- v0.10.24：选中升级后的中心确认提示（飘字在恢复 playing 后显示）。
     upgradeConfirm = function(event)
-        SpawnFloatText(270, 430, (event.name or "强化") .. "  已装配", {140, 235, 255}, 1.1)
+        SpawnFloatText(270, 430, (event.name or "强化") .. "  已选择", {140, 235, 255}, 1.1)
         screenShake = math.max(screenShake, 0.05)
     end,
     reviveConfirm = function(event)

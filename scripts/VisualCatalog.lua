@@ -28,6 +28,16 @@ local BALL_STYLES = {
     },
 }
 
+---@class BrickVisualStyle
+---@field r integer
+---@field g integer
+---@field b integer
+---@field slot string
+---@field dr integer
+---@field dg integer
+---@field db integer
+
+---@type table<string, table<string, BrickVisualStyle>>
 local aircraftStyles = {}
 
 -- v0.10.9 敌机太空战机化：像素原色只作为“部件槽位”识别依据，
@@ -99,7 +109,13 @@ local function BuildAircraftStyle(aircraftKey)
         if col then
             local slot = ClassifySlot(tonumber(r), tonumber(g), tonumber(b))
             local c = palette[slot] or palette.hullMain
-            local rv, gv, bv = c[1], c[2], c[3]
+            ---@type integer
+            local rv = math.floor(tonumber(c[1]) or 255)
+            ---@type integer
+            local gv = math.floor(tonumber(c[2]) or 255)
+            ---@type integer
+            local bv = math.floor(tonumber(c[3]) or 255)
+            ---@type BrickVisualStyle
             style[col .. ":" .. row] = {
                 r = rv, g = gv, b = bv,
                 slot = slot,
@@ -155,10 +171,15 @@ function VisualCatalog.GetAircraftPreview(aircraftKey)
             local row = math.floor(tonumber(rowS) or 0)
             local style = styleMap[colS .. ":" .. rowS]
             if style then
-                cells[#cells + 1] = {
-                    col = col, row = row,
-                    r = style.r, g = style.g, b = style.b,
+                ---@type AircraftPreviewCell
+                local cell = {
+                    col = col,
+                    row = row,
+                    r = style.r,
+                    g = style.g,
+                    b = style.b,
                 }
+                cells[#cells + 1] = cell
             end
         end
     end

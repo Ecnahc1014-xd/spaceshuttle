@@ -176,7 +176,7 @@ local function HandleGameOverPointerUp(uiX, uiY)
 end
 
 function Start()
-    graphics.windowTitle = "太空飞机弹珠"
+    graphics.windowTitle = "击碎，飞机大战"
     input.mouseVisible = true
 
     if not RenderBackend.Init("HandleRender") then return end
