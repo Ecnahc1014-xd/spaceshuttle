@@ -367,7 +367,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.32"
+local BUILD_VERSION = "0.10.33"
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -723,9 +723,9 @@ local function DrawNextWavePreview(ctx, game)
 
     local cooldown = game.waveCooldown or 0
     local eta = string.format("%d", math.max(0, math.floor(cooldown + 0.999)))
-    DrawPixelText(ctx, px + 10, py + 5, plan.isBoss and "BOSS" or "NEXT", 8,
+    DrawPixelText(ctx, px + 10, py + 5, plan.isBoss and "首领" or "下一波", 8,
         plan.isBoss and C.error or C.dim)
-    DrawPixelText(ctx, px + panelW - 8, py + 5, eta .. "s", 8, C.cyan,
+    DrawPixelText(ctx, px + panelW - 8, py + 5, eta .. "秒", 8, C.cyan,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     if preview and preview.cells then
@@ -744,7 +744,7 @@ local function DrawNextWavePreview(ctx, game)
     end
 
     local label = AIRCRAFT_LABELS[plan.aircraftKey] or plan.aircraftKey
-    local countText = plan.isBoss and "BOSS" or ("x" .. tostring(plan.count or 0))
+    local countText = plan.isBoss and "首领" or (tostring(plan.count or 0) .. "架")
     DrawPixelText(ctx, px + 10, py + panelH - 13, label, 8, C.text)
     DrawPixelText(ctx, px + panelW - 8, py + panelH - 13, countText, 8,
         plan.isBoss and C.error or C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -773,9 +773,9 @@ local function DrawAmmoSlots(ctx, game, presentation)
         DrawLine(ctx, sx, BOTTOM_DOCK_Y, DESIGN_W, BOTTOM_DOCK_Y, {C.cyan[1], C.cyan[2], C.cyan[3], a}, 2)
     end
 
-    DrawPixelText(ctx, 14, BOTTOM_DOCK_Y + 8, "FIRE CONTROL", 9, C.dim)
+    DrawPixelText(ctx, 14, BOTTOM_DOCK_Y + 8, "弹药", 9, C.dim)
     DrawPixelText(ctx, DESIGN_W - 14, BOTTOM_DOCK_Y + 8,
-        "LINK ACTIVE", 8, C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        "拖拽发射", 8, C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     local slotSize = 62
     local slotGap = 8
@@ -805,10 +805,10 @@ local function DrawAmmoSlots(ctx, game, presentation)
             C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         if selected then
             DrawRect(ctx, x + 8, slotY + 42, slotSize - 16, 12, C.cyan, 6)
-            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "READY", 7, C.ink,
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待发", 8, C.ink,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         else
-            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "STANDBY", 7, C.dim,
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "待命", 8, C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
         nvgBeginPath(ctx)
@@ -851,7 +851,7 @@ local function DrawBossPhaseBar(ctx, game, boss)
     local barW = 220
     local x0 = cx - barW * 0.5
     local y = 84
-    DrawPixelText(ctx, cx, y - 14, "BOSS PHASE", 9, C.warn,
+    DrawPixelText(ctx, cx, y - 14, "首领阶段", 9, C.warn,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     local segments = 3
     local segW = barW / segments
@@ -868,8 +868,7 @@ local function DrawBossPhaseBar(ctx, game, boss)
     end
     if boss.bossPhase == 2 then
         local pulse = 0.5 + 0.5 * math.sin(game.elapsed * 6)
-        DrawPixelText(ctx, cx, y + 16,
-            string.format("VULNERABLE x1.5  (%.0f%%)", (boss.bossPhase or 1) / segments * 100),
+        DrawPixelText(ctx, cx, y + 16, "虚弱中 伤害×1.5",
             9, {C.warn[1], C.warn[2], C.warn[3], 150 + math.floor(105 * pulse)},
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
@@ -910,48 +909,52 @@ local function DrawHud(ctx, game, presentation)
     DrawEdgeTicks(ctx, 16, HUD_HEIGHT - 8, game.width - 32, 21,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
 
-    DrawPixelText(ctx, 14, 8, "FLIGHT CONTROL", 8, C.dim)
+    DrawPixelText(ctx, 14, 8, "分数", 8, C.dim)
+    DrawPixelText(ctx, 14, 24, string.format("%d", game.score), 22, C.text)
     local cloud = presentation and presentation.cloudStatus
+    local bestLine = "最高 " .. tostring(game.highScore)
+    local bestColor = C.dim
     if cloud == "ok" then
-        DrawPixelText(ctx, 128, 8, "CLOUD", 8, C.cyan)
+        bestLine = bestLine .. " · 已同步"
+        bestColor = C.cyan
     elseif cloud == "syncing" then
-        DrawPixelText(ctx, 128, 8, "SYNC", 8, C.dim)
+        bestLine = bestLine .. " · 同步中"
     elseif cloud == "offline" then
-        DrawPixelText(ctx, 128, 8, "LOCAL", 8, C.warn)
+        bestLine = bestLine .. " · 本地"
+        bestColor = C.warn
     end
-    DrawPixelText(ctx, 14, 24, string.format("%06d", game.score), 22, C.text)
-    DrawPixelText(ctx, 14, 54, "BEST " .. string.format("%06d", game.highScore), 8, C.dim)
+    DrawPixelText(ctx, 14, 54, bestLine, 8, bestColor)
 
     local centerX = game.width * 0.5
-    DrawPixelText(ctx, centerX, 8, "WAVE", 8, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, centerX, 22, string.format("%02d", game.wave), 24, C.text,
+    DrawPixelText(ctx, centerX, 8, "波次", 8, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, centerX, 22, string.format("%d", game.wave), 24, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     -- v0.10.24：连击≥2 时整句转强调色并轻微脉冲放大，给连续清场正反馈。
     local combo = game.clearStreak or 0
     local comboColor = C.dim
-    local comboSize = 7
+    local comboSize = 8
     if combo >= 2 then
         comboColor = C.warn
-        comboSize = 7 + math.floor(2 * (0.5 + 0.5 * math.sin((game.elapsed or 0) * 8)))
+        comboSize = 8 + math.floor(2 * (0.5 + 0.5 * math.sin((game.elapsed or 0) * 8)))
     end
     DrawPixelText(ctx, centerX, 52,
-        string.format("HOSTILES %02d  //  COMBO x%d", game.concurrentCount or 0, combo),
+        string.format("敌机 %d    连击 ×%d", game.concurrentCount or 0, combo),
         comboSize, comboColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width - 12, 8, "BASE INTEGRITY", 8, C.dim,
+    DrawPixelText(ctx, game.width - 12, 8, "防线", 8, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width - 12, 24,
-        string.format("%03d / %03d", game.baseHp, game.maxBaseHp), 18, hpColor,
+        string.format("%d / %d", game.baseHp, game.maxBaseHp), 18, hpColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 12, 50, hpRatio > 0.35 and "STABLE" or "CRITICAL",
-        7, hpColor, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 12, 50, hpRatio > 0.35 and "正常" or "危险",
+        8, hpColor, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelBar(ctx, game.width - 164, 64, 152, 8, hpRatio, hpRatio > 0.35 and C.cyan or hpColor)
 
     local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
-    DrawPixelText(ctx, 14, 74, string.format("LV %02d", game.playerLevel), 7, C.cyan)
-    DrawPixelBar(ctx, 54, 76, 168, 6, xpRatio, C.cyan)
-    DrawPixelText(ctx, 230, 74,
-        string.format("XP %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 7, C.dim)
+    DrawPixelText(ctx, 14, 74, string.format("等级 %d", game.playerLevel), 8, C.cyan)
+    DrawPixelBar(ctx, 78, 76, 148, 6, xpRatio, C.cyan)
+    DrawPixelText(ctx, 234, 74,
+        string.format("经验 %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 8, C.dim)
 
     local words = game.activeWords or {}
     -- 词条徽标：NanoVG 程序化绘制（不依赖外部 PNG），每个词条一个高亮方块 + 汉字。
@@ -987,48 +990,43 @@ local function DrawMenu(ctx, game)
     local winX, winY = 18, 108
     local winW, winH = game.width - 36, 540
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
-    DrawPixelText(ctx, winX + 18, winY + 14, "FLIGHT TRIAL", 15, C.cyan)
-    DrawPixelText(ctx, winX + winW - 16, winY + 16, "BUILD " .. BUILD_VERSION, 9, C.dim,
+    DrawPixelText(ctx, winX + 18, winY + 14, "太空飞机弹珠", 16, C.cyan)
+    DrawPixelText(ctx, winX + winW - 16, winY + 16, "v" .. BUILD_VERSION, 9, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawBrokenFrame(ctx, winX + 10, winY + 52, winW - 20, winH - 64, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 36)
     DrawEdgeTicks(ctx, winX + 18, winY + 50, winW - 36, 17, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80})
 
-    DrawPixelText(ctx, game.width * 0.5, 188, "太空飞机弹珠", 28, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 188, "守住防线", 28, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 226, "SPACECRAFT MARBLE", 11, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 230, "拖拽发射重卡  击碎敌机方块", 13, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 250, "轨道计算  /  碰撞反射  /  火控链接", 11, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 254, "别让飞机越过底部防线", 12, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     -- 主操作：青底深字胶囊。
     DrawRect(ctx, 40, 292, game.width - 80, 72, C.cyan, 8)
-    DrawPixelText(ctx, 58, 304, "PILOT LINK", 9, C.ink)
-    DrawPixelText(ctx, 58, 322, "点击屏幕开始飞行", 17, C.ink)
-    DrawPixelText(ctx, 58, 346, "INITIATE FLIGHT VECTOR", 8, {4, 8, 16, 180})
-    DrawPixelText(ctx, game.width - 58, 310, "01", 24, C.ink,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 58, 342, "READY", 8, C.ink,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 308, "点击开始", 20, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 338, "松手确认", 10, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, 40, 386, "MISSION PARAMETERS", 9, C.cyan)
+    DrawPixelText(ctx, 40, 386, "本局目标", 11, C.cyan)
     DrawBluePanel(ctx, 40, 404, game.width - 80, 112, C.rail, C.cyanDim, 6)
     DrawMicroGrid(ctx, 48, 412, game.width - 96, 96, 12, 18)
-    DrawPixelText(ctx, 58, 420, "BASE CORE", 8, C.dim)
+    DrawPixelText(ctx, 58, 420, "防线生命", 9, C.dim)
     DrawPixelText(ctx, 58, 440, "100", 22, C.text)
-    DrawPixelText(ctx, 126, 450, "INTEGRITY", 8, C.dim)
-    DrawPixelText(ctx, 292, 420, "ORDNANCE", 8, C.dim)
-    DrawPixelText(ctx, 292, 440, "04", 22, C.text)
-    DrawPixelText(ctx, 352, 450, "LOADOUTS", 8, C.dim)
+    DrawPixelText(ctx, 126, 450, "点", 9, C.dim)
+    DrawPixelText(ctx, 292, 420, "弹种", 9, C.dim)
+    DrawPixelText(ctx, 292, 440, "4", 22, C.text)
+    DrawPixelText(ctx, 330, 450, "种轮换", 9, C.dim)
     DrawSegmentedRule(ctx, 58, 488, game.width - 116, 10, C.cyanDim)
 
-    DrawPixelText(ctx, 40, 536, "CONTROLS", 9, C.cyan)
+    DrawPixelText(ctx, 40, 536, "怎么玩", 11, C.cyan)
     DrawBluePanel(ctx, 40, 554, game.width - 80, 86, C.card, C.cyanDim, 6)
-    DrawPixelText(ctx, 58, 568, "TOUCH / MOUSE", 9, C.dim)
-    DrawPixelText(ctx, 58, 588, "AIM + RELEASE", 12, C.text)
-    DrawPixelText(ctx, 292, 568, "P / ESC", 9, C.dim)
-    DrawPixelText(ctx, 292, 588, "PAUSE", 12, C.text)
-    DrawPixelText(ctx, game.width - 58, 608, "SYSTEM LINKED", 8, C.cyan,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, 58, 568, "拖拽瞄准", 9, C.dim)
+    DrawPixelText(ctx, 58, 588, "松手发射", 13, C.text)
+    DrawPixelText(ctx, 292, 568, "按 P", 9, C.dim)
+    DrawPixelText(ctx, 292, 588, "暂停游戏", 13, C.text)
     nvgRestore(ctx)
 end
 
@@ -1060,28 +1058,28 @@ local function DrawGameOver(ctx, game, presentation)
     local winX, winY = 24, 200
     local winW, winH = game.width - 48, 520
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
-    DrawPixelText(ctx, winX + 18, winY + 14, "SESSION SEALED", 15, C.cyan)
-    DrawPixelText(ctx, winX + winW - 16, winY + 16, "SEALED", 9, C.warn,
+    DrawPixelText(ctx, winX + 18, winY + 14, "防线失守", 16, C.cyan)
+    DrawPixelText(ctx, winX + winW - 16, winY + 16, "本局结束", 9, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width * 0.5, 286, "链接中断", 28, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 286, "游戏结束", 28, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 322, "FLIGHT CONTROL OFFLINE", 10, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 322, "敌机突破了底部防线", 12, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 350,
-        string.format("SCORE %d  /  BEST %d  /  WAVE %02d",
+        string.format("分数 %d    最高 %d    第 %d 波",
             game.score, game.highScore, game.wave), 12, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     DrawBluePanel(ctx, 44, 370, game.width - 88, 92, C.rail, C.cyanDim, 6)
-    DrawPixelText(ctx, 60, 384, string.format("到达波次 %02d", game.wave), 12, C.text)
-    DrawPixelText(ctx, 60, 406, string.format("等级 LV %02d", game.playerLevel), 12, C.text)
-    DrawPixelText(ctx, 60, 428, string.format("击碎砖块 %d", game.bricksBroken or 0), 12, C.dim)
+    DrawPixelText(ctx, 60, 384, string.format("到达第 %d 波", game.wave), 12, C.text)
+    DrawPixelText(ctx, 60, 406, string.format("等级 %d", game.playerLevel), 12, C.text)
+    DrawPixelText(ctx, 60, 428, string.format("击碎 %d 块", game.bricksBroken or 0), 12, C.dim)
     DrawPixelText(ctx, game.width - 60, 384, string.format("强化 %d 次", #(game.upgradePicks or {})), 12,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width - 60, 406, string.format("连击 %d", game.clearStreak or 0), 12,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 60, 428, string.format("存活 %.0fs", game.elapsed or 0), 12,
+    DrawPixelText(ctx, game.width - 60, 428, string.format("存活 %.0f 秒", game.elapsed or 0), 12,
         C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     local reviveBtn, restartBtn = GetGameOverButtonLayout(game)
@@ -1109,7 +1107,7 @@ local function DrawGameOver(ctx, game, presentation)
 
     DrawRect(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.card, 8)
     DrawStroke(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.cyanDim, 8, 1)
-    DrawPixelText(ctx, game.width * 0.5, restartBtn.y + 16, "重新建立链接", 14, C.text,
+    DrawPixelText(ctx, game.width * 0.5, restartBtn.y + 16, "再来一局", 14, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local toast = presentation and presentation.adToast
@@ -1151,7 +1149,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawRect(ctx, x, y, 3, cardH, accent, 0)
 
     DrawPixelText(ctx, x + 12, y + 12, string.format("%02d", index), 9, C.dim)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 28, choice.name or "强化协议", 14, C.text,
+    DrawPixelText(ctx, x + cardW * 0.5, y + 28, choice.name or "强化", 14, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, x + cardW * 0.5, y + 50,
         (choice.kind == "word" and "词条 · " or "强化 · ") .. rare.tag, 10, accent,
@@ -1159,7 +1157,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawSegmentedRule(ctx, x + 14, y + 72, cardW - 28, 6, C.cyanDim)
 
     local detailLines = WrapTextLines(ctx,
-        choice.detail or choice.desc or "提升当前火控系统性能", 11, cardW - 28)
+        choice.detail or choice.desc or "提升当前弹珠性能", 11, cardW - 28)
     local detailLineH = 17
     local maxDetailLines = 6
     local detailCount = math.min(maxDetailLines, #detailLines)
@@ -1201,13 +1199,13 @@ local function DrawLevelUp(ctx, game, presentation)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
-    DrawPixelText(ctx, 24, 108, "UPGRADE RITE", 9, C.cyan)
-    DrawPixelText(ctx, game.width - 24, 108, "SELECT ONE", 9, C.warn,
+    DrawPixelText(ctx, 24, 108, "升级", 11, C.cyan)
+    DrawPixelText(ctx, game.width - 24, 108, "三选一", 11, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 132, "升级 // 选择强化", 22, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 132, "选择一项强化", 22, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 164,
-        string.format("LEVEL %02d  /  CHOOSE ONE PROTOCOL", game.playerLevel), 9, C.dim,
+        string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 11, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local choices = game.upgradeChoices or {}
@@ -1219,13 +1217,13 @@ local function DrawLevelUp(ctx, game, presentation)
         end
     else
         DrawBluePanel(ctx, 30, 365, game.width - 60, 100, C.rail, C.cyanDim, 6)
-        DrawPixelText(ctx, game.width * 0.5, 395, "NO PROTOCOLS AVAILABLE", 12, C.text,
+        DrawPixelText(ctx, game.width * 0.5, 395, "暂无强化可选", 14, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, game.width * 0.5, 423, "WAITING FOR RULE TABLE", 8, C.dim,
+        DrawPixelText(ctx, game.width * 0.5, 423, "请稍后再试", 10, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawPixelText(ctx, 24, 704, "CHOOSE ONE  /  GAMEPLAY PAUSED", 9, C.dim)
+    DrawPixelText(ctx, 24, 704, "战斗已暂停", 10, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
     local hintColor = C.warn
     local hintSize = 9
@@ -1239,7 +1237,7 @@ local function DrawLevelUp(ctx, game, presentation)
         }
         hintSize = 9 + math.floor(3 * p)
     end
-    DrawPixelText(ctx, game.width - 24, 704, "TAP A CARD TO EQUIP", hintSize, hintColor,
+    DrawPixelText(ctx, game.width - 24, 704, "点选一张卡片", hintSize, hintColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
@@ -1251,12 +1249,12 @@ local function DrawPaused(ctx, game)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     DrawWindowShell(ctx, 54, 360, game.width - 108, 210, 46)
-    DrawPixelText(ctx, 72, 374, "HOLD", 13, C.cyan)
-    DrawPixelText(ctx, game.width * 0.5, 428, "暂停", 28, C.text,
+    DrawPixelText(ctx, 72, 374, "已暂停", 13, C.cyan)
+    DrawPixelText(ctx, game.width * 0.5, 428, "休息一下", 26, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 470, "点击屏幕或按 P 继续", 12, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 470, "点击屏幕继续", 14, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 496, "TAP ANYWHERE OR PRESS P", 8, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 496, "也可以按 P", 10, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
@@ -1278,13 +1276,13 @@ local function DrawWaveBanner(ctx, game, presentation)
         local pulse = 220 + math.floor(35 * math.abs(math.sin(game.elapsed * 8)))
         local warn = {232, 76, 76}
         DrawBluePanel(ctx, cx - 130, 146 + yOff, 260, 54, C.card, warn, 6)
-        DrawPixelText(ctx, cx, 153 + yOff, "!! WARNING !!", 10, {pulse, 90, 90},
+        DrawPixelText(ctx, cx, 153 + yOff, "首领来袭", 10, {pulse, 90, 90},
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, cx, 172 + yOff, string.format("WAVE %02d  //  BOSS", game.wave), 14,
+        DrawPixelText(ctx, cx, 172 + yOff, string.format("第 %d 波", game.wave), 14,
             warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         DrawBluePanel(ctx, cx - 120, 150 + yOff, 240, 46, C.card, C.cyan, 6)
-        DrawPixelText(ctx, cx, 160 + yOff, string.format("WAVE %02d INCOMING", game.wave), 14,
+        DrawPixelText(ctx, cx, 160 + yOff, string.format("第 %d 波来了", game.wave), 14,
             C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)

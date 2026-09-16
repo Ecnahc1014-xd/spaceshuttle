@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.32
-简述：激励广告复活（结算页看广告回 50 血，本局一次）+ clientCloud 云高分。下一波小图与 8bit 阵型仍在。
+当前版本：0.10.33
+简述：全页玩家向中文 UI。广告复活与云高分仍在。
 最后巩固：2026-09-16
 
 ## 项目概况
@@ -93,6 +93,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.33: 玩家向中文 UI。HUD/菜单/结算/升级/暂停/波次横幅去掉驾驶舱英文黑话，改成分数/防线/点击开始/再来一局等可读文案。升级卡几何不变。LSP 0、build 成功。
 - v0.10.32: 激励广告复活 + 云高分。结算「看广告复活」走 ShowRewardVideoAd，完整观看才 ReviveFromAd（50 血、编队抬回屏外、本局一次）；clientCloud 读写 high_score；结算按钮几何命中，不再全屏松手重开。LSP 0、build 成功。
 - v0.10.31: 战斗 Dock 中央下一波预告。规则层 PlanWave 预抽 nextWavePlan，SpawnWave 消费同一份；VisualCatalog.GetAircraftPreview 给上色 occupied cells；DrawNextWavePreview 在四弹药槽中间画 156×70 像素小图+倒计时+机名/数量。LSP 0、build、截图、headless 200 帧 lua=0。
 - v0.10.30: 8bit 街机剪影 + 同波同机阵型。AircraftPixelData 8 机全部 ASCII 位图（蟹/黄蜂/蝴蝶/蜜蜂/宽翼/飞碟/双荚/菱形截击）；SpawnWave 抽一种机按 line/vee/grid/swarm/wedge/stream 排槽，hive 强制 swarm、宽机 3+ 用 2+1 grid，整队锁定横摆。前三波 3 机。LSP 0、build、roster/line/vee/swarm 截图、headless 200 帧 lua=0。

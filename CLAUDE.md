@@ -3,14 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.32（激励广告复活 + clientCloud 云高分）：
-  - **广告**：`ad.status=1` 已开通。结算页「看广告复活」走 `sdk:ShowRewardVideoAd`，完整观看才 `Game.ReviveFromAd()`（回 50 血、编队抬回屏外、本局一次）。编排层处理 accepted/回调/防重复；规则层不碰 sdk。
-  - **云存档**：`clientCloud` 读写 `high_score`（iscores）。启动拉取、破纪录写入；失败标 LOCAL，不挡开局。
-  - **结算输入**：不再全屏松手重开。复活/重开按钮几何与 `HitTestGameOverButton` 同步。
+- 版本: 0.10.33（玩家向中文 UI）：
+  - HUD/Dock/菜单/结算/升级/暂停/波次横幅全部改中文可读文案，去掉驾驶舱黑话和英文状态码。
+  - 升级卡命中几何仍 168×300@cy530；dark-tech 骨架保留。
   - 验证：LSP 0、build 成功。
-- 上次交付: v0.10.32 广告复活与云高分
+- 上次交付: v0.10.33 玩家向中文 UI
 
 ## 历史
+- 版本: 0.10.32（激励广告复活 + clientCloud 云高分）：结算看广告回 50 血，本局一次；云高分 high_score。
 - 版本: 0.10.31（底部中央下一波敌人小图）：nextWavePlan 同源预抽；Dock 中央 156×70 像素剪影+倒计时。
 - 版本: 0.10.30（8bit 街机剪影 + 同波阵型）：8 机 ASCII 位图（蟹/黄蜂/蝴蝶/蜜蜂/宽翼/飞碟/双荚/截击）；同波同机 line/vee/grid/swarm。
 - 版本: 0.10.29（修剩余碰撞漏检与碎裂未完成）：子步进收集重叠格打最近格、步进 6–16；挖空失败可重试并用规则签名强制对齐网格。
@@ -99,10 +99,12 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: 真机扫码测广告复活（完整观看回 50 血、中途关闭不发、本局一次）和云高分跨设备同步。禁止把 sdk/clientCloud 写进 Game.lua。不接 Banner/插屏。
+- likely_next_task: Preview 验收中文 UI 是否一眼能懂（菜单点开始、战斗分数/防线/下一波、结算看广告复活/再来一局）。禁止把英文黑话加回去。顺带真机测广告与云高分。
 - 相关文件: `scripts/main.lua`, `scripts/Game.lua`, `scripts/Scene3DBackend.lua`, `scripts/Presentation.lua`
 
-## 本批次新增避雷（v0.10.32 广告/云存档 / v0.10.31 下一波小图）
+## 本批次新增避雷（v0.10.33 玩家向中文 UI / v0.10.32 广告/云存档）
+- ⚠️ 玩家 UI 必须中文优先（v0.10.33）：标题、按钮、HUD 标签、结算、升级提示用玩家能看懂的中文。dark-tech 装饰可以留，但禁止把 FLIGHT CONTROL / SESSION SEALED / HOSTILES 这类黑话当主文案。升级卡几何不要跟着文案一起改。
+
 - ⚠️ 激励广告契约（v0.10.32）：只接 `sdk:ShowRewardVideoAd`；`success==true` 才发奖。`accepted==false` 可能无回调，必须同时处理返回值与回调，并用一次性 `completed` 防重复。中途关闭不复活。广告/云 API 只在 `main.lua`。
 - 结算按钮几何必须与 `HitTestGameOverButton` 同源；禁止结算页全屏松手重开。每局只能复活一次。
 - 云高分用 `SetInt/Get` 的 `high_score`（iscores）。`clientCloud` 失败只标 LOCAL，不挡开局。

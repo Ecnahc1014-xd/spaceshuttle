@@ -222,7 +222,7 @@ local FEEDBACK_HANDLERS = {
         SpawnEjectedBox(event)
     end,
     clearBanner = function(event)
-        SpawnFloatText(event.x, event.y, "击破!", {120, 255, 160}, 1.2)
+        SpawnFloatText(event.x, event.y, "击破", {120, 255, 160}, 1.2)
     end,
     -- WO-15/P2：防线四位一体（震屏 + 危险带脉冲 + 冲击波 + 警示文字）由 base_hit 单点触发。
     baseShake = function(event)
@@ -273,19 +273,19 @@ local FEEDBACK_HANDLERS = {
     splitSpark = function(event)
         SpawnParticles(event.x, event.y, {255, 230, 140}, math.random(2, 4), "spark")
         SpawnFloatText(event.x, event.y - 18,
-            "分裂 G" .. event.generation, {255, 235, 150}, 0.8)
+            "分裂", {255, 235, 150}, 0.8)
     end,
     dashSpark = function(event)
         screenShake = math.max(screenShake, 0.08)
         SpawnParticles(event.x, event.y, {255, 160, 70}, 2, "spark")
         SpawnParticles(event.targetX, event.targetY, {255, 210, 80}, 1, "spark")
         SpawnFloatText(event.x, event.y - 18,
-            "追击 x" .. event.damage, {255, 170, 80}, 0.8)
+            "追击", {255, 170, 80}, 0.8)
     end,
     pierceArmed = function(event)
         screenShake = math.max(screenShake, 0.16)
         SpawnParticles(event.x, event.y, {205, 145, 255}, math.random(2, 4), "spark")
-        SpawnFloatText(event.x, event.y - 22, "贯穿就绪!", {225, 170, 255}, 0.9)
+        SpawnFloatText(event.x, event.y - 22, "贯穿就绪", {225, 170, 255}, 0.9)
     end,
     giantBurst = function(event)
         screenShake = math.max(screenShake, 0.22)
@@ -295,7 +295,7 @@ local FEEDBACK_HANDLERS = {
             SpawnParticles(event.x, event.y, {190, 160, 210}, 1, "smoke")
         end
         SpawnFloatText(event.x, event.y - 28,
-            "圆域 x" .. event.hitCount, {235, 190, 255}, 1.0)
+            "范围贯穿", {235, 190, 255}, 1.0)
     end,
     -- v0.10.24：主球回库补弹，Dock 轻闪一下。
     reloadPulse = function(event)
@@ -307,7 +307,7 @@ local FEEDBACK_HANDLERS = {
         screenShake = math.max(screenShake, 0.05)
     end,
     reviveConfirm = function(event)
-        SpawnFloatText(270, 430, "防线重构  +" .. tostring(event.hp or 50), {0, 229, 208}, 1.2)
+        SpawnFloatText(270, 430, "复活  +" .. tostring(event.hp or 50) .. " 血", {0, 229, 208}, 1.2)
         screenShake = math.max(screenShake, 0.12)
     end,
     -- marble_removed 无需维护拖尾状态。
