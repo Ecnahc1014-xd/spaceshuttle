@@ -274,10 +274,10 @@ local function GetBrickSize(waveNum)
 end
 
 local function GetWaveParams(waveNum)
+    -- v0.10.28：前三波固定 3 机，保证 8bit 阵型从开局可读。
     local count
-    if waveNum <= 1 then count = 1
-    elseif waveNum <= 3 then count = 2
-    elseif waveNum <= 6 then count = 3
+    if waveNum <= 3 then count = 3
+    elseif waveNum <= 6 then count = 4
     else count = math.min(5, 3 + math.floor((waveNum - 4) / 3)) end
 
     -- 敌方砖块保留隐藏 HP：前六波只需一次命中，之后再逐步增加耐久。
@@ -455,7 +455,7 @@ local function GetAvailableTypes(waveNum)
     return keys
 end
 
-local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
+local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opts)
     local data = AircraftData[aircraftKey]
     if not data then
         print("[Game] ERROR: no aircraft data for " .. tostring(aircraftKey))
@@ -463,11 +463,18 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
     end
 
     -- A3：行为分化——读取该型性格参数，使不同飞机横摆/节奏/下压感各异。
+    -- 同波阵型可锁定 sway，避免各自乱摆把阵型拆散。
     local beh = AircraftData.behavior and AircraftData.behavior[aircraftKey]
         or { swayAmp = 18, swayFreq = 0.4, descentMul = 1.0, agility = 0.8 }
     local swayAmp = beh.swayAmp + Random() * beh.swayAmp * 0.3
     local swayFreq = beh.swayFreq * (0.85 + Random() * 0.3)
     local descent = beh.descentMul
+    local spawnPhase = 0
+    if opts then
+        if opts.swayAmp then swayAmp = opts.swayAmp end
+        if opts.swayFreq then swayFreq = opts.swayFreq end
+        if opts.phase then spawnPhase = opts.phase end
+    end
 
     local bricks = {}
     for entry in (data.data .. ";"):gmatch("(.-);") do
@@ -493,7 +500,8 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         swayAmp = swayAmp,
         swayFreq = swayFreq,
         agility = beh.agility,    -- A3：节奏/反应质感标记（渲染层可读）
-        phase = 0,    -- 新编队从 phase=0 开始：首帧位置即 baseX，禁止生成瞬间横向突跳（“回撤”）。
+        -- 默认 phase=0：首帧位置即 baseX。阵型可传入统一相位，保证同波一起摆。
+        phase = spawnPhase,
         bricks = bricks,
         dead = false,
         frozen = 0,
