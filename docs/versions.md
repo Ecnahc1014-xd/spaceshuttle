@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.30 | 2026-09-16 | 8bit 街机剪影（蟹/蜂/蝶/飞碟/截击）+ 同波同机阵型 line/vee/grid/swarm/wedge/stream。LSP 0、build、roster/阵型截图、headless 200 帧 lua=0 |
 | v0.10.29 | 2026-09-16 | 碰撞选最近重叠格、步进 6–16；体素挖空失败可重试并用规则签名强制对齐网格。LSP 0、build、headless 180 帧 lua=0 |
 | v0.10.28 | 2026-09-16 | 按 ecnach-ui-skill 精细重构 UI：dark-tech 令牌+窗口壳+角标/断线/网格；升级卡几何仍 168×300@cy530。LSP 0、build 成功 |
 | v0.10.27 | 2026-09-16 | 波次基础间隔 18s/下限 9s/收紧 0.15/首波冷却 3.2s；全局下落 0.42、首波速度 28；高速弹自适应子步进+扫掠；体素碎块失败回退 CustomGeometry 飞散箱。LSP 0、build、headless 200 帧 lua=0 |

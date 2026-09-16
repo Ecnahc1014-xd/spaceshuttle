@@ -478,9 +478,9 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opt
     local descent = beh.descentMul
     local spawnPhase = 0
     if opts then
-        if opts.swayAmp then swayAmp = opts.swayAmp end
-        if opts.swayFreq then swayFreq = opts.swayFreq end
-        if opts.phase then spawnPhase = opts.phase end
+        if opts.swayAmp ~= nil then swayAmp = opts.swayAmp end
+        if opts.swayFreq ~= nil then swayFreq = opts.swayFreq end
+        if opts.phase ~= nil then spawnPhase = opts.phase end
     end
 
     local bricks = {}
@@ -719,6 +719,7 @@ SpawnWave = function()
         lockFreq = 0.22
     end
 
+    ---@type integer
     local spawned = 0
     for i = 1, #slots do
         local slot = slots[i]
@@ -1755,61 +1756,6 @@ function Game.Init(config)
     pendingEvents = {}
     gameState = "menu"
     print("[Game] core initialized at " .. DW .. "x" .. DH)
-end
-
--- 验收用：两列排开全部 8 机型，冻结下落，供截图对照 8bit 剪影。
-function Game.DebugShowcaseRoster()
-    ResetGame()
-    gameState = "playing"
-    veggies = {}
-    waveCooldown = 999
-    local keys = {
-        "scout", "dart", "striker", "hive",
-        "manta", "bomber", "cruiser", "interceptor",
-    }
-    local brickSize = 14
-    local colX = { 48, 292 }
-    local y0 = 118
-    for i = 1, #keys do
-        local key = keys[i]
-        local col = ((i - 1) % 2) + 1
-        local row = math.floor((i - 1) / 2)
-        local x = colX[col]
-        local y = y0 + row * 168
-        local enemy = CreateEnemy(key, x, y, brickSize, 1, 0, {
-            swayAmp = 0, swayFreq = 0, phase = 0,
-        })
-        if enemy then
-            enemy.vy = 0
-            veggies[#veggies + 1] = enemy
-        end
-    end
-    print("[Game] roster showcase " .. tostring(#veggies) .. " aircraft")
-end
-
--- 验收用：指定阵型冻结在可见战场中部。
-function Game.DebugShowcaseFormation(kind, aircraftKey, count)
-    ResetGame()
-    gameState = "playing"
-    veggies = {}
-    waveCooldown = 999
-    local brickSize = 14
-    local key = aircraftKey or "scout"
-    local n = count or 3
-    local shipW, shipH = GetAircraftSize(key, brickSize)
-    local slots, usedKind = ComputeFormationSlots(kind or "line", n, shipW, shipH)
-    local shift = 220 - (slots[1] and slots[1].y or 0)
-    for i = 1, #slots do
-        local enemy = CreateEnemy(key, slots[i].x, slots[i].y + shift, brickSize, 1, 0, {
-            swayAmp = 0, swayFreq = 0, phase = 0,
-        })
-        if enemy then
-            enemy.vy = 0
-            enemy.formation = usedKind
-            veggies[#veggies + 1] = enemy
-        end
-    end
-    print("[Game] formation showcase " .. usedKind .. " x" .. tostring(#veggies))
 end
 
 function Game.Update(dt)

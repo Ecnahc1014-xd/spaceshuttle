@@ -198,7 +198,7 @@ M.interceptor = {
     gridH = 11,
     data = bitmapToData({
         "....EEE....",
-        "....dCCd...",
+        "...dCCCd...",
         "...dCCCCd..",
         "..dMCCCCMd.",
         ".dMMCCCCMMd",

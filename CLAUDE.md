@@ -3,13 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.10.29（修剩余碰撞漏检与碎裂未完成）：
-  - **碰撞**：子步进不再按 bricks 数组顺序打第一格就 break，改为收集本步所有重叠格、打最近格；步进 6–16。擦边/对角穿格仍结算。
-  - **碎裂**：体素挖空失败不再一次性 `consumed=true`；HollowBrick 失败每帧重试，规则签名强制 FillEnemyVolume 对齐网格。碎块失败才画 CustomGeometry 飞散箱。
-  - 验证：LSP 0、build、headless 180 帧 lua=0。
-- 上次交付: v0.10.29 最近格碰撞 + 签名强制挖空
+- 版本: 0.10.30（8bit 街机剪影 + 同波阵型）：
+  - **剪影**：8 机全部改 ASCII 位图。scout 蟹 / dart 尖头黄蜂 / striker 蝴蝶 / hive 蜜蜂 / manta 宽翼旗舰 / bomber 飞碟 / cruiser 双荚重甲 / interceptor 菱形截击。引擎在小 row（远离玩家），尖鼻/钳足朝玩家。
+  - **阵型**：同波同机。`line/vee/grid/swarm/wedge/stream` 循环；hive 强制 swarm；宽机 3+ 用 2+1 grid。整队锁定横摆。前三波固定 3 机。
+  - 渲染仍 data 驱动，不改 Renderer3D。验证：LSP 0、build、roster/line/vee/swarm 截图、headless 200 帧 lua=0。
+- 上次交付: v0.10.30 8bit 敌机剪影与编队阵型
 
 ## 历史
+- 版本: 0.10.29（修剩余碰撞漏检与碎裂未完成）：子步进收集重叠格打最近格、步进 6–16；挖空失败可重试并用规则签名强制对齐网格。
 - 版本: 0.10.28（按 ecnach-ui-skill 重构精细 UI）：
   - **令牌**：废弃 Astroon/Laterano 蓝紫+金色。全页改 dark-tech：`bg/panel/rail/card/widget` 深黑蓝层级，品牌青 `cyan` 唯一强调，`warn` 仅警告/连击，红色仅错误/低血。
   - **骨架**：HUD/Dock 左 4px 青识别线 + 刻度；菜单/结算/暂停用窗口壳（标题栏竖线、角标、断线边框、局部微型网格）；主 CTA 青底 `ink` 字。
@@ -95,10 +96,12 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: Preview 复测 v0.10.29——斜向高速弹是否还会穿格、命中格是否必出缺口+碎块。禁止恢复召回、禁止把编队改回动态体再每帧设最小角。不改权威 HP、XP、回收/拖拽、9:16 投影。
-- 相关文件: `scripts/Renderer3D.lua`, `scripts/Scene3DBackend.lua`, `scripts/VisualCatalog.lua`, `scripts/Presentation.lua`, `engine-docs/recipes/voxel-physics.md`
+- likely_next_task: Preview 复测 v0.10.30——8 机剪影是否可辨、同波是否成阵、宽机是否被挤出左右边。禁止恢复随机散点刷怪，禁止改 Renderer3D 画飞机。不改权威 HP、AABB、XP、回收/拖拽、9:16 投影。
+- 相关文件: `scripts/AircraftPixelData.lua`, `scripts/Game.lua`, `scripts/VisualCatalog.lua`
 
-## 本批次新增避雷（v0.10.29 碰撞选最近格 / v0.10.28 dark-tech UI / v0.10.27 节奏）
+## 本批次新增避雷（v0.10.30 8bit 阵型 / v0.10.29 碰撞选最近格 / v0.10.28 dark-tech UI）
+- ⚠️ 同波必须同机成阵（v0.10.30）：随机散点 + 混种会把 8bit 剪影拆成“一坨砖”。`SpawnWave` 抽一种机、按 `line/vee/grid/swarm/wedge/stream` 算槽位；宽机 3+ 走 2+1 grid，不要硬塞横排再退化成纵列。整队锁定 swayAmp/swayFreq/phase，opts 里 0 必须用 `~= nil` 判断。
+- 底座契约仍有效：位图小 row = 引擎/背侧（远离玩家），大 row = 朝玩家。新剪影禁止把推进器画到阵列底边。
 - ⚠️ 多格重叠不要按数组顺序 break（v0.10.29）：圆同时压住几格时，bricks 表顺序命中第一格会漏掉真正碰到的格（穿机翼/座舱无碰撞）。应收集本步重叠格、打距离最近的一格；挖空失败禁止一次性 consumed，必须按规则签名强制对齐网格。
 - ⚠️ UI 令牌契约（v0.10.28）：只用 `C.bg/panel/rail/card/widget/cyan/cyanDim/ink/text/dim/warn/error`。青色只表示焦点/激活/主操作/进度，禁止把标题、边框、图标全染青；金色不再是主 CTA（改青底 ink 字）；警告用 `warn`，错误/低血才用红。装饰限 2–3 种：角标 + 断线边框 + 局部微型网格/刻度，贴边不穿正文。
 - 升级卡几何仍 168×300/gap=8/cy=530/`HIT_PAD=4`，与 `main.lua:TryPickUpgradeAt` 同步；本次只换外观，禁止改命中常量。
@@ -121,7 +124,7 @@
 - ⚠️ 模态切换必须取消拖拽（v0.10.24）：进入任何非 playing 模态（Pause、CheckLevelUp 进 levelup）都要 `aiming=false` 并把 activeBall 归位 SLING，否则拖拽蓄力中触发升级、选完回到 playing 会残留 aiming/grabStart 导致下一抬手误射。
 - 菜单/结算松手确认契约（v0.10.24）：menu/gameover 的 PointerDown 只置 startArmed=true（不立即 StartGame），PointerUp 在仍处于该态且 startArmed 时才 StartGame——防止死亡瞬间手指还按着、抬手即误重开。startArmed 在 ResetGame 清。键盘 SPACE/RETURN 仍走 HandleAction 不受影响。
 - 补弹/发射瞬时反馈契约（v0.10.24）：主球回收移除（UpdateMarbles，仅 isPrimary）Emit marble_reloaded{ballType}→Presentation.reloadFlash(.3s)→DrawAmmoSlots 顶边青色扫光+激活槽提亮；发射环直接在 launchFlash 处理器里 push 一个 shockRing（r8→26/.24s/随弹种色），复用 shockRings 通道，**禁止为单次反馈新建 BillboardSet/draw call**。这类纯瞬时状态只写 Presentation，不进规则层。
-- 敌机扩展契约（v0.10.20）：敌机=像素网格砖块（AircraftPixelData.M.xxx：hp/score/speedMul/gridW/gridH/data）+ behavior 表（swayAmp/swayFreq/descentMul/agility/accent）+ VisualCatalog.AIRCRAFT_PALETTES 一套四槽位色（hullMain/hullDark/canopy/engine）+ WAVE_ROSTER 一行解锁门槛，四处齐全且 key 一致；渲染完全 data 驱动（CreateEnemy 解析 data、Renderer3D 用 GetBrickStyle 按 col/row 取色），加新机**不改 Renderer3D**。新轮廓优先用 `bitmapToData`（M/d/C/E 字符位图），字符颜色必须落在 ClassifySlot 阈值内（canopy: b-r≥55且g≥100；engine: 亮度<80；hullMain: r-b≥18；其余 hullDark）。机型差异要同时体现在轮廓（gridW/H、剪影）+ 色相（调色板）+ 运动性格（behavior）三方面。验证新机用"屏幕内两列冻结排开全部机型"截图。Boss 仍复用 interceptor key。
+- 敌机扩展契约（v0.10.30 最新）：敌机=像素网格砖块（AircraftPixelData.M.xxx：hp/score/speedMul/gridW/gridH/data）+ behavior 表 + VisualCatalog 四槽位色 + WAVE_ROSTER 门槛，四处 key 一致；渲染完全 data 驱动，加新机**不改 Renderer3D**。轮廓一律 `bitmapToData`（M/d/C/E），字符必须落在 ClassifySlot 阈值内。差异要同时落在剪影+色相+运动。同波用阵型槽位而不是随机 x。验证用两列冻结排开全部机型 + 单独阵型截图。Boss 仍复用 interceptor。
 - 辅助瞄准线契约（v0.10.22 最新）：规则层 ComputeAimLine 只在 aiming 且 activeBall 且 pull 长>15 死区时返回射线，方向=-pull 归一化（与 LaunchMarble 同源），终点为射线与左(0+r)/右(DW-r)/顶(TOP_BOUND_Y+r) 三边最近正 t（不含底），x1,y1=activeBall.x/y，s.aimLine=nil 即不显示；渲染层只读 {x1,y1,x2,y2} 画线，禁止算弹道/反弹预测（用户只要一条直线）。视觉=14 个青色软圆 billboard，t 0→1 尺寸 ×(1-0.55t) 渐小；材质 DiffAlpha+烘焙青色软圆纹理（DiffVCol 忽略纹理 alpha 显示方块）。
 - ⚠️ 斜俯视正交相机的 z 投影契约（v0.10.22 实测，纠正 v0.10.19 旧结论）：相机是 46° 斜俯视正交，**不是纯俯视，z 会投影到屏幕 Y**——同一 XY、不同 z 的两个物体在屏幕上有 Y 偏移。因此辅助物若要贴在车辆/玩法对象上，**z 必须取该对象锚点的 z**（瞄准线起点用 GetVehicleAnchorWorld(activeBall)，整条线同一 z），不能用固定的近相机 z（旧 -6 相对车 z≈0.09 偏移 6 米，导致瞄准线脱离车辆）。仅当辅助物不需要贴任何对象（如全屏方向指示）时才可放独立近相机 z。火花粒子 z=-.95 是固定小值，因其从命中点迸出、不要求精确贴车中心；体素/车辆/碎片各自有正确 z。
 - ⚠️ 引擎显色契约（v0.10.19）：游戏 Zone 光照下动态 CustomGeometry 顶点色/NoTextureUnlit 不可靠；不透明彩色 billboard 用 DiffVCol+billboard.color，透明软粒子用 DiffAlpha+烘焙纹理（见下条）。
