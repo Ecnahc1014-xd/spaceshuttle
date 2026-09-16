@@ -54,6 +54,7 @@ local viewportHeight_ = 0
 -- WO-16/P9：FXAA 探测标志。当前验证环境不可启用 FXAA（ESSL shader cache 失败会吞掉整层 3D），
 -- 故默认 fxaaAvailable=false；仅当渲染路径真实存在 FXAA 命令且启用不报错时才置真。
 local fxaaAvailable_ = false
+local nvgFontZpix_ = -1
 
 -- A1/A2：模态与波次横幅的入场动画计时。记录当前玩法 state 的进入时刻，
 -- 渲染时据此计算淡入/滑入进度，避免硬切（不破坏酸性风格，纯透明度/位移 easing）。
@@ -87,6 +88,7 @@ CleanupFailedInit = function()
         nvgDelete(vg_)
         vg_ = nil
     end
+    nvgFontZpix_ = -1
     renderer:SetViewport(0, nil)
     viewport_ = nil
     if scene_ then
@@ -344,32 +346,27 @@ local SLOT_NAMES = {
     normal = "分裂", ice = "冰冻", speed = "加速", giant = "巨型",
 }
 local SLOT_COLORS = {
-    normal = {190, 160, 255}, ice = {154, 226, 255},
-    speed = {112, 176, 255}, giant = {226, 194, 255},
+    normal = {0, 229, 208}, ice = {154, 226, 255},
+    speed = {120, 176, 255}, giant = {255, 196, 72},
 }
 
-local ACID = {
-    void = {26, 17, 64, 255},
-    deepPurple = {42, 31, 94, 250},
-    purple = {100, 76, 194, 255},
-    brightPurple = {168, 85, 247, 255},
-    paleBlue = {61, 214, 232, 255},
-    coldBlue = {74, 139, 245, 255},
-    carbon = {42, 31, 94, 255},
-    muted = {255, 255, 255, 85},
+-- Dark-tech 令牌（ecnach-ui-skill）：深黑蓝层级 + 品牌青唯一强调。
+local C = {
+    bg      = {7, 11, 20, 255},
+    panel   = {10, 16, 28, 255},
+    rail    = {12, 20, 34, 255},
+    card    = {16, 26, 44, 255},
+    widget  = {22, 36, 56, 255},
+    cyan    = {0, 229, 208, 255},
+    cyanDim = {0, 150, 148, 220},
+    ink     = {4, 8, 16, 255},
+    text    = {240, 248, 252, 255},
+    dim     = {120, 148, 162, 255},
+    warn    = {255, 196, 72, 255},
+    error   = {232, 76, 76, 255},
 }
 
--- Astroon 蓝紫宇宙主题：深蓝紫背景、紫色分层表面、蓝/青强调、白色文字、金色唯一主 CTA。
-local UI_BLUE = {74, 139, 245, 255}
-local UI_CYAN = {61, 214, 232, 255}
-local UI_BLUE_DARK = {42, 31, 94, 255}
-local UI_SURFACE = {61, 42, 138, 255}
-local UI_WHITE = {255, 255, 255, 255}
-local UI_COLD = {255, 255, 255, 170}
-local UI_MUTED = {255, 255, 255, 85}
-local UI_GOLD = {255, 213, 79, 255}
-local UI_INK = {26, 17, 64, 255}
-local UI_BLACK = {12, 8, 32, 255}
+local BUILD_VERSION = "0.10.28"
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -402,37 +399,106 @@ local function ProjectGamePoint(x, y)
         projectionOffsetY_ + y * projectionScaleY_
 end
 
-local function DrawAcidGrid(ctx, width, height)
-    nvgStrokeWidth(ctx, 1)
-    nvgStrokeColor(ctx, nvgRGBA(137, 203, 255, 18))
-    for x = 0, width, 36 do
-        nvgBeginPath(ctx)
-        nvgMoveTo(ctx, x, 0)
-        nvgLineTo(ctx, x, height)
-        nvgStroke(ctx)
-    end
-    for y = 0, height, 36 do
-        nvgBeginPath(ctx)
-        nvgMoveTo(ctx, 0, y)
-        nvgLineTo(ctx, width, y)
-        nvgStroke(ctx)
+local function UseTechFont(ctx)
+    if nvgFontZpix_ and nvgFontZpix_ >= 0 then
+        nvgFontFace(ctx, "zpix")
+    else
+        nvgFontFace(ctx, "sans")
     end
 end
 
-local function DrawHalo(ctx, cx, cy, radius, alpha)
-    nvgStrokeColor(ctx, nvgRGBA(166, 229, 255, alpha))
-    nvgStrokeWidth(ctx, 1.5)
+local function DrawRect(ctx, x, y, w, h, color, radius)
     nvgBeginPath(ctx)
-    nvgCircle(ctx, cx, cy, radius)
+    nvgRoundedRect(ctx, x, y, w, h, radius or 4)
+    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    nvgFill(ctx)
+end
+
+local function DrawStroke(ctx, x, y, w, h, color, radius, width)
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, radius or 4)
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    nvgStrokeWidth(ctx, width or 1.2)
     nvgStroke(ctx)
-    for angle = 0, 350, 10 do
-        local radians = math.rad(angle)
-        local inner = radius - (angle % 30 == 0 and 11 or 5)
-        nvgBeginPath(ctx)
-        nvgMoveTo(ctx, cx + math.cos(radians) * inner, cy + math.sin(radians) * inner)
-        nvgLineTo(ctx, cx + math.cos(radians) * radius, cy + math.sin(radians) * radius)
-        nvgStroke(ctx)
+end
+
+local function DrawLine(ctx, x1, y1, x2, y2, color, width)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, x1, y1)
+    nvgLineTo(ctx, x2, y2)
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    nvgStrokeWidth(ctx, width or 1)
+    nvgStroke(ctx)
+end
+
+local function DrawCornerBrackets(ctx, x, y, w, h, color, length, width)
+    local l = length or 12
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, x, y + l); nvgLineTo(ctx, x, y); nvgLineTo(ctx, x + l, y)
+    nvgMoveTo(ctx, x + w - l, y); nvgLineTo(ctx, x + w, y); nvgLineTo(ctx, x + w, y + l)
+    nvgMoveTo(ctx, x, y + h - l); nvgLineTo(ctx, x, y + h); nvgLineTo(ctx, x + l, y + h)
+    nvgMoveTo(ctx, x + w - l, y + h); nvgLineTo(ctx, x + w, y + h); nvgLineTo(ctx, x + w, y + h - l)
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    nvgStrokeWidth(ctx, width or 1.4)
+    nvgStroke(ctx)
+end
+
+local function DrawBrokenFrame(ctx, x, y, w, h, color, gap)
+    local g = gap or 28
+    local c = nvgRGBA(color[1], color[2], color[3], color[4] or 255)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, x, y); nvgLineTo(ctx, x + w * 0.5 - g, y)
+    nvgMoveTo(ctx, x + w * 0.5 + g, y); nvgLineTo(ctx, x + w, y)
+    nvgMoveTo(ctx, x, y + h); nvgLineTo(ctx, x + w, y + h)
+    nvgMoveTo(ctx, x, y); nvgLineTo(ctx, x, y + h)
+    nvgMoveTo(ctx, x + w, y); nvgLineTo(ctx, x + w, y + h)
+    nvgStrokeColor(ctx, c)
+    nvgStrokeWidth(ctx, 1.0)
+    nvgStroke(ctx)
+end
+
+local function DrawMicroGrid(ctx, x, y, w, h, step, alpha)
+    local s = step or 12
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, x, y, w, h)
+    nvgBeginPath(ctx)
+    for gx = x, x + w, s do
+        nvgMoveTo(ctx, gx, y)
+        nvgLineTo(ctx, gx, y + h)
     end
+    for gy = y, y + h, s do
+        nvgMoveTo(ctx, x, gy)
+        nvgLineTo(ctx, x + w, gy)
+    end
+    nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], alpha or 28))
+    nvgStrokeWidth(ctx, 1.0)
+    nvgStroke(ctx)
+    nvgRestore(ctx)
+end
+
+local function DrawEdgeTicks(ctx, x, y, w, count, color)
+    if count < 2 then return end
+    local step = w / (count - 1)
+    for i = 0, count - 1 do
+        local tickH = (i % 5 == 0) and 6 or 3
+        DrawLine(ctx, x + i * step, y, x + i * step, y + tickH, color, 1)
+    end
+end
+
+local function DrawStatusDots(ctx, x, y, count, color)
+    for i = 0, count - 1 do
+        nvgBeginPath(ctx)
+        nvgRect(ctx, x + i * 8, y, 4, 4)
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 180))
+        nvgFill(ctx)
+    end
+end
+
+local function DrawWindowShell(ctx, x, y, w, h, titleH)
+    DrawRect(ctx, x, y, w, h, C.panel, 6)
+    DrawStroke(ctx, x, y, w, h, C.cyanDim, 6, 1.2)
+    DrawRect(ctx, x, y, 4, titleH or 46, C.cyan, 0)
+    DrawCornerBrackets(ctx, x + 4, y + 4, w - 8, h - 8, C.cyanDim, 14, 1.2)
 end
 
 local function DrawBaseImpactFeedback(ctx, game, presentation)
@@ -441,7 +507,8 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
     if flash > 0 then
         local alpha = math.floor(math.min(1, flash / 0.62) * 180)
         local glow = nvgLinearGradient(ctx, 0, dangerScreenY - 52, 0, dangerScreenY + 42,
-            nvgRGBA(103, 61, 166, 0), nvgRGBA(166, 229, 255, alpha))
+            nvgRGBA(C.error[1], C.error[2], C.error[3], 0),
+            nvgRGBA(C.error[1], C.error[2], C.error[3], alpha))
         nvgBeginPath(ctx)
         nvgRect(ctx, 0, dangerScreenY - 52, game.width, 94)
         nvgFillPaint(ctx, glow)
@@ -450,7 +517,7 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
         nvgBeginPath(ctx)
         nvgMoveTo(ctx, 0, dangerScreenY)
         nvgLineTo(ctx, game.width, dangerScreenY)
-        nvgStrokeColor(ctx, nvgRGBA(186, 229, 255, alpha))
+        nvgStrokeColor(ctx, nvgRGBA(C.error[1], C.error[2], C.error[3], alpha))
         nvgStrokeWidth(ctx, 4 + 7 * flash)
         nvgStroke(ctx)
     end
@@ -461,7 +528,7 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
         local alpha = math.floor(255 * (1 - progress))
         nvgBeginPath(ctx)
         nvgCircle(ctx, screenX, screenY, impact.radius * math.abs(projectionScaleX_))
-        nvgStrokeColor(ctx, nvgRGBA(184, 133, 255, alpha))
+        nvgStrokeColor(ctx, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], alpha))
         nvgStrokeWidth(ctx, 5 * (1 - progress) + 1)
         nvgStroke(ctx)
         for spoke = 1, 8 do
@@ -475,7 +542,7 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
             nvgLineTo(ctx,
                 screenX + math.cos(angle) * outer * projectionScaleX_,
                 screenY + math.sin(angle) * outer * projectionScaleY_)
-            nvgStrokeColor(ctx, nvgRGBA(166, 229, 255, math.floor(alpha * 0.8)))
+            nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], math.floor(alpha * 0.8)))
             nvgStrokeWidth(ctx, 2)
             nvgStroke(ctx)
         end
@@ -509,11 +576,11 @@ local function DrawFloatTexts(ctx, game, presentation)
         local size = math.floor((f.size or 20) * pop)
         local col = f.color or {255, 240, 180}
         nvgFontSize(ctx, size)
-        nvgFontFace(ctx, "zpix")
+        UseTechFont(ctx)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER)
         -- 深色描边保证亮字在亮色敌机/烟团上也可读。
         nvgStrokeWidth(ctx, 3)
-        nvgStrokeColor(ctx, nvgRGBA(12, 8, 32, math.min(220, alpha + 40)))
+        nvgStrokeColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], math.min(220, alpha + 40)))
         nvgText(ctx, sx, sy, f.text)
         nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], alpha))
         nvgText(ctx, sx, sy, f.text)
@@ -521,31 +588,13 @@ local function DrawFloatTexts(ctx, game, presentation)
 end
 
 local function DrawTechPanel(ctx, x, y, width, height, fill, border)
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x, y, width, height)
-    nvgFillColor(ctx, nvgRGBA(fill[1], fill[2], fill[3], fill[4] or 255))
-    nvgFill(ctx)
-    nvgStrokeColor(ctx, nvgRGBA(border[1], border[2], border[3], border[4] or 255))
-    nvgStrokeWidth(ctx, 2)
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x + 1, y + 1, width - 2, height - 2)
-    nvgStroke(ctx)
-    local corner = 10
-    nvgStrokeWidth(ctx, 1)
-    nvgBeginPath(ctx)
-    nvgMoveTo(ctx, x, y + corner)
-    nvgLineTo(ctx, x + corner, y)
-    nvgMoveTo(ctx, x + width - corner, y)
-    nvgLineTo(ctx, x + width, y + corner)
-    nvgMoveTo(ctx, x, y + height - corner)
-    nvgLineTo(ctx, x + corner, y + height)
-    nvgMoveTo(ctx, x + width - corner, y + height)
-    nvgLineTo(ctx, x + width, y + height - corner)
-    nvgStroke(ctx)
+    DrawRect(ctx, x, y, width, height, fill, 4)
+    DrawStroke(ctx, x, y, width, height, border, 4, 1.2)
+    DrawCornerBrackets(ctx, x + 1, y + 1, width - 2, height - 2, border, math.min(8, width * 0.22), 1)
 end
 
 local function DrawPixelText(ctx, x, y, text, size, color, align)
-    nvgFontFace(ctx, "zpix")
+    UseTechFont(ctx)
     nvgFontSize(ctx, size)
     nvgTextAlign(ctx, align or (NVG_ALIGN_LEFT + NVG_ALIGN_TOP))
     nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
@@ -557,7 +606,7 @@ end
 local function WrapTextLines(ctx, text, size, maxWidth)
     local lines = {}
     local line = ""
-    nvgFontFace(ctx, "zpix")
+    UseTechFont(ctx)
     nvgFontSize(ctx, size)
     -- 调用方处于 CONTAIN 缩放（高分屏 scale 可为 2/3）后的 transform 下，
     -- 测量期间临时重置 transform，保证按设计空间宽度折行。
@@ -598,25 +647,16 @@ local function WrapTextLines(ctx, text, size, maxWidth)
     return lines
 end
 
-local function DrawAstroonBackdrop(ctx, x, y, width, height)
-    local gradient = nvgLinearGradient(ctx, x, y, x, y + height,
-        nvgRGBA(26, 17, 64, 255), nvgRGBA(45, 27, 105, 255))
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x, y, width, height)
-    nvgFillPaint(ctx, gradient)
-    nvgFill(ctx)
+local function DrawModalBackdrop(ctx, x, y, width, height)
+    DrawRect(ctx, x, y, width, height, C.bg, 0)
+    DrawMicroGrid(ctx, x + 18, y + 18, 132, 168, 12, 22)
+    DrawMicroGrid(ctx, x + width - 150, y + height - 210, 120, 150, 12, 18)
+    DrawStatusDots(ctx, x + 22, y + height - 28, 4, C.cyanDim)
 end
 
 local function DrawBluePanel(ctx, x, y, width, height, fill, border, radius)
-    nvgBeginPath(ctx)
-    nvgRoundedRect(ctx, x, y, width, height, radius or 8)
-    nvgFillColor(ctx, nvgRGBA(fill[1], fill[2], fill[3], fill[4] or 255))
-    nvgFill(ctx)
-    nvgStrokeColor(ctx, nvgRGBA(border[1], border[2], border[3], border[4] or 255))
-    nvgStrokeWidth(ctx, 2)
-    nvgBeginPath(ctx)
-    nvgRoundedRect(ctx, x + 1, y + 1, width - 2, height - 2, radius or 8)
-    nvgStroke(ctx)
+    DrawRect(ctx, x, y, width, height, fill, radius or 6)
+    DrawStroke(ctx, x, y, width, height, border, radius or 6, 1.2)
 end
 
 local function DrawSegmentedRule(ctx, x, y, width, segments, color, activeCount)
@@ -624,31 +664,20 @@ local function DrawSegmentedRule(ctx, x, y, width, segments, color, activeCount)
     local segmentWidth = (width - gap * (segments - 1)) / segments
     for i = 1, segments do
         nvgBeginPath(ctx)
-        nvgRect(ctx, x + (i - 1) * (segmentWidth + gap), y, segmentWidth, 4)
+        nvgRect(ctx, x + (i - 1) * (segmentWidth + gap), y, segmentWidth, 2)
         local active = not activeCount or i <= activeCount
-        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], active and 255 or 55))
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], active and (color[4] or 220) or 55))
         nvgFill(ctx)
     end
 end
 
-local function DrawDotMatrix(ctx, x, y, columns, rows, spacing, color, radius)
-    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
-    for row = 0, rows - 1 do
-        for col = 0, columns - 1 do
-            nvgBeginPath(ctx)
-            nvgCircle(ctx, x + col * spacing, y + row * spacing, radius or 1.4)
-            nvgFill(ctx)
-        end
-    end
-end
-
 local function DrawPixelBar(ctx, x, y, width, height, value, color)
-    DrawTechPanel(ctx, x, y, width, height,
-        {10, 4, 28, 255}, {81, 105, 158, 255})
-    local fillWidth = math.max(0, (width - 6) * math.max(0, math.min(1, value)))
+    DrawRect(ctx, x, y, width, height, C.widget, 3)
+    DrawStroke(ctx, x, y, width, height, C.cyanDim, 3, 1)
+    local fillWidth = math.max(0, (width - 4) * math.max(0, math.min(1, value)))
     if fillWidth > 0 then
         nvgBeginPath(ctx)
-        nvgRect(ctx, x + 3, y + 3, fillWidth, height - 6)
+        nvgRoundedRect(ctx, x + 2, y + 2, fillWidth, height - 4, 2)
         nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
         nvgFill(ctx)
     end
@@ -682,16 +711,10 @@ local function DrawAmmoSlots(ctx, game, presentation)
         queueCounts[game.activeBall.ballType] = (queueCounts[game.activeBall.ballType] or 0) + 1
     end
 
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y)
-    nvgFillColor(ctx, nvgRGBA(UI_INK[1], UI_INK[2], UI_INK[3], 255))
-    nvgFill(ctx)
-    nvgBeginPath(ctx)
-    nvgMoveTo(ctx, 0, BOTTOM_DOCK_Y)
-    nvgLineTo(ctx, DESIGN_W, BOTTOM_DOCK_Y)
-    nvgStrokeColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 230))
-    nvgStrokeWidth(ctx, 2)
-    nvgStroke(ctx)
+    DrawRect(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y, C.panel, 0)
+    DrawLine(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, BOTTOM_DOCK_Y, C.cyanDim, 1)
+    DrawRect(ctx, 0, BOTTOM_DOCK_Y, 4, DESIGN_H - BOTTOM_DOCK_Y, C.cyan, 0)
+    DrawEdgeTicks(ctx, 16, BOTTOM_DOCK_Y + 1, DESIGN_W - 32, 21, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
 
     -- v0.10.24：主球回库补弹时 Dock 顶边一道青色轻扫光（0.3s 衰减）。
     local reload = presentation.reloadFlash or 0
@@ -699,17 +722,12 @@ local function DrawAmmoSlots(ctx, game, presentation)
         local a = math.floor(190 * (reload / 0.3))
         local sweep = reload / 0.3
         local sx = DESIGN_W * (1 - sweep)
-        nvgBeginPath(ctx)
-        nvgMoveTo(ctx, sx, BOTTOM_DOCK_Y)
-        nvgLineTo(ctx, DESIGN_W, BOTTOM_DOCK_Y)
-        nvgStrokeColor(ctx, nvgRGBA(120, 235, 255, a))
-        nvgStrokeWidth(ctx, 3)
-        nvgStroke(ctx)
+        DrawLine(ctx, sx, BOTTOM_DOCK_Y, DESIGN_W, BOTTOM_DOCK_Y, {C.cyan[1], C.cyan[2], C.cyan[3], a}, 2)
     end
 
-    DrawPixelText(ctx, 12, BOTTOM_DOCK_Y + 10, "ORDNANCE / FIRE CONTROL", 9, UI_COLD)
-    DrawPixelText(ctx, DESIGN_W - 12, BOTTOM_DOCK_Y + 10,
-        "SLOT LINK // ACTIVE", 8, UI_GOLD, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, 14, BOTTOM_DOCK_Y + 8, "FIRE CONTROL", 9, C.dim)
+    DrawPixelText(ctx, DESIGN_W - 14, BOTTOM_DOCK_Y + 8,
+        "LINK ACTIVE", 8, C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     local slotSize = 62
     local slotGap = 8
@@ -721,24 +739,30 @@ local function DrawAmmoSlots(ctx, game, presentation)
         local x = (i <= 2 and leftStart or rightStart) + pairIndex * (slotSize + slotGap)
         local color = SLOT_COLORS[ballType]
         local selected = game.activeBall and game.activeBall.ballType == ballType
-        local flash = presentation.truckLaunchFlash[ballType] or 0
-        local reload = presentation.reloadFlash or 0
-        local fill = selected and {23, 37, 112, 255} or {11, 16, 54, 255}
+        local fill = selected and C.widget or C.card
         if selected and reload > 0 then
-            local lift = math.floor(28 * (reload / 0.3))
-            fill = {23 + lift, 37 + lift, 112 + math.min(143, lift * 2), 255}
+            local lift = math.floor(18 * (reload / 0.3))
+            fill = {22 + lift, 36 + lift, 56 + lift, 255}
         end
-        local border = selected and UI_GOLD or {color[1], color[2], color[3], 220}
+        local border = selected and C.cyan or {color[1], color[2], color[3], 180}
         DrawTechPanel(ctx, x, slotY, slotSize, slotSize, fill, border)
-        DrawPixelText(ctx, x + 7, slotY + 6, string.format("%02d", i), 8, color)
+        if selected then
+            DrawRect(ctx, x, slotY, 3, slotSize, C.cyan, 0)
+        end
+        DrawPixelText(ctx, x + 8, slotY + 6, string.format("%02d", i), 8, C.dim)
         DrawPixelText(ctx, x + slotSize - 7, slotY + 6,
-            "x" .. tostring(queueCounts[ballType] or 0), 8, color,
+            "x" .. tostring(queueCounts[ballType] or 0), 8, selected and C.cyan or color,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
         DrawPixelText(ctx, x + slotSize * 0.5, slotY + 22, SLOT_NAMES[ballType], 12,
-            UI_WHITE, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43,
-            selected and "READY" or "STANDBY", 7, selected and UI_GOLD or UI_COLD,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        if selected then
+            DrawRect(ctx, x + 8, slotY + 42, slotSize - 16, 12, C.cyan, 6)
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "READY", 7, C.ink,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        else
+            DrawPixelText(ctx, x + slotSize * 0.5, slotY + 43, "STANDBY", 7, C.dim,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
         nvgBeginPath(ctx)
         nvgRect(ctx, x + 6, slotY + slotSize - 7, slotSize - 12, selected and 3 or 1)
         nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], selected and 255 or 125))
@@ -748,7 +772,7 @@ end
 
 local function DrawLetterboxBackground(ctx, width, height)
     -- NanoVG 位于 3D Viewport 之后：只填充设计画布外的 letterbox，绝不能覆盖画布内部。
-    nvgFillColor(ctx, nvgRGBA(UI_BLACK[1], UI_BLACK[2], UI_BLACK[3], 255))
+    nvgFillColor(ctx, nvgRGBA(C.bg[1], C.bg[2], C.bg[3], 255))
     if offsetY_ > 0 then
         nvgBeginPath(ctx)
         nvgRect(ctx, 0, 0, width, offsetY_)
@@ -761,21 +785,6 @@ local function DrawLetterboxBackground(ctx, width, height)
         nvgRect(ctx, offsetX_ + DESIGN_W, offsetY_, math.max(0, width - offsetX_ - DESIGN_W), DESIGN_H)
         nvgFill(ctx)
     end
-end
-
-local function DrawWaveThemeTint(ctx, width, height, game)
-    -- A5：背景主题色随波次缓慢轮转（酸性风格内，仅边缘渐变为冷/暖色相位移），
-    -- 让长局不单调。色调由 wave 驱动，不破坏深紫基调与工程线美学。
-    local phase = (game.wave or 1) * 0.18
-    local r = math.floor(40 + 22 * math.sin(phase))
-    local b = math.floor(90 + 26 * math.cos(phase * 0.7))
-    local g = math.floor(30 + 14 * math.sin(phase * 1.3 + 1.2))
-    local glow = nvgLinearGradient(ctx, 0, 0, 0, height,
-        nvgRGBA(r, g, b, 16), nvgRGBA(UI_BLUE_DARK[1], UI_BLUE_DARK[2], UI_BLUE_DARK[3], 0))
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, width, height)
-    nvgFillPaint(ctx, glow)
-    nvgFill(ctx)
 end
 
 local function FindBoss(game)
@@ -792,16 +801,16 @@ local function DrawBossPhaseBar(ctx, game, boss)
     local barW = 220
     local x0 = cx - barW * 0.5
     local y = 84
-    DrawPixelText(ctx, cx, y - 14, "BOSS // PHASE LOCK", 9, ACID.brightPurple,
+    DrawPixelText(ctx, cx, y - 14, "BOSS PHASE", 9, C.warn,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     local segments = 3
     local segW = barW / segments
     for s = 1, segments do
         local filled = s <= (boss.bossPhase or 1)
         local vul = (boss.bossPhase == 2)
-        local col = filled and (vul and {235, 190, 255} or {166, 229, 255}) or {81, 105, 158}
+        local col = filled and (vul and C.warn or C.cyan) or C.dim
         DrawTechPanel(ctx, x0 + (s - 1) * segW + 2, y, segW - 4, 12,
-            filled and {40, 18, 70, 255} or {16, 12, 35, 255}, col)
+            filled and C.widget or C.card, col)
         if filled then
             DrawPixelText(ctx, x0 + (s - 1) * segW + segW * 0.5, y + 1, tostring(s), 9,
                 col, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -811,7 +820,7 @@ local function DrawBossPhaseBar(ctx, game, boss)
         local pulse = 0.5 + 0.5 * math.sin(game.elapsed * 6)
         DrawPixelText(ctx, cx, y + 16,
             string.format("VULNERABLE x1.5  (%.0f%%)", (boss.bossPhase or 1) / segments * 100),
-            9, {235, 190, 255, 150 + math.floor(105 * pulse)},
+            9, {C.warn[1], C.warn[2], C.warn[3], 150 + math.floor(105 * pulse)},
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 end
@@ -840,75 +849,69 @@ local function DrawHud(ctx, game)
     -- v0.10.24：低血量（≤35%）基地读数与血条红色脉冲，强化危险提示。
     local hpColor
     if hpRatio > 0.35 then
-        hpColor = UI_COLD
+        hpColor = C.text
     else
         local pulse = 0.5 + 0.5 * math.sin((game.elapsed or 0) * 7)
         hpColor = {235 + math.floor(20 * pulse), 70 + math.floor(40 * pulse), 70}
     end
-    -- 重构后的战术仪表盘：左侧分数，中部波次，右侧基地状态，底部统一经验进度。
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, game.width, HUD_HEIGHT)
-    nvgFillColor(ctx, nvgRGBA(UI_INK[1], UI_INK[2], UI_INK[3], 255))
-    nvgFill(ctx)
-    nvgBeginPath(ctx)
-    nvgMoveTo(ctx, 0, HUD_HEIGHT - 1)
-    nvgLineTo(ctx, game.width, HUD_HEIGHT - 1)
-    nvgStrokeColor(ctx, nvgRGBA(UI_WHITE[1], UI_WHITE[2], UI_WHITE[3], 220))
-    nvgStrokeWidth(ctx, 2)
-    nvgStroke(ctx)
+    DrawRect(ctx, 0, 0, game.width, HUD_HEIGHT, C.panel, 0)
+    DrawRect(ctx, 0, 0, 4, HUD_HEIGHT, C.cyan, 0)
+    DrawLine(ctx, 0, HUD_HEIGHT - 1, game.width, HUD_HEIGHT - 1, C.cyanDim, 1)
+    DrawEdgeTicks(ctx, 16, HUD_HEIGHT - 8, game.width - 32, 21,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
 
-    DrawPixelText(ctx, 12, 9, "FLIGHT CONTROL", 8, UI_COLD)
-    DrawPixelText(ctx, 12, 25, string.format("%06d", game.score), 23, UI_WHITE)
-    DrawPixelText(ctx, 12, 57, "BEST " .. string.format("%06d", game.highScore), 8, ACID.muted)
+    DrawPixelText(ctx, 14, 8, "FLIGHT CONTROL", 8, C.dim)
+    DrawPixelText(ctx, 14, 24, string.format("%06d", game.score), 22, C.text)
+    DrawPixelText(ctx, 14, 54, "BEST " .. string.format("%06d", game.highScore), 8, C.dim)
 
     local centerX = game.width * 0.5
-    DrawPixelText(ctx, centerX, 8, "WAVE", 8, UI_GOLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, centerX, 22, string.format("%02d", game.wave), 25, UI_WHITE,
+    DrawPixelText(ctx, centerX, 8, "WAVE", 8, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, centerX, 22, string.format("%02d", game.wave), 24, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    -- v0.10.24：连击≥2 时整句转金色并轻微脉冲放大，给连续清场正反馈。
+    -- v0.10.24：连击≥2 时整句转强调色并轻微脉冲放大，给连续清场正反馈。
     local combo = game.clearStreak or 0
-    local comboColor = UI_COLD
+    local comboColor = C.dim
     local comboSize = 7
     if combo >= 2 then
-        comboColor = UI_GOLD
+        comboColor = C.warn
         comboSize = 7 + math.floor(2 * (0.5 + 0.5 * math.sin((game.elapsed or 0) * 8)))
     end
-    DrawPixelText(ctx, centerX, 53,
+    DrawPixelText(ctx, centerX, 52,
         string.format("HOSTILES %02d  //  COMBO x%d", game.concurrentCount or 0, combo),
         comboSize, comboColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width - 12, 9, "BASE INTEGRITY", 8, UI_COLD,
+    DrawPixelText(ctx, game.width - 12, 8, "BASE INTEGRITY", 8, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width - 12, 24,
-        string.format("%03d / %03d", game.baseHp, game.maxBaseHp), 19, hpColor,
+        string.format("%03d / %03d", game.baseHp, game.maxBaseHp), 18, hpColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 12, 52, "CORE STATUS / " .. (hpRatio > 0.35 and "STABLE" or "CRITICAL"),
+    DrawPixelText(ctx, game.width - 12, 50, hpRatio > 0.35 and "STABLE" or "CRITICAL",
         7, hpColor, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelBar(ctx, game.width - 164, 66, 152, 8, hpRatio, hpColor)
+    DrawPixelBar(ctx, game.width - 164, 64, 152, 8, hpRatio, hpRatio > 0.35 and C.cyan or hpColor)
 
     local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
-    DrawPixelText(ctx, 12, 76, string.format("LV %02d", game.playerLevel), 7, UI_GOLD)
-    DrawPixelBar(ctx, 52, 78, 220, 5, xpRatio, UI_BLUE)
-    DrawPixelText(ctx, 282, 76,
-        string.format("XP %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 7, ACID.muted)
+    DrawPixelText(ctx, 14, 74, string.format("LV %02d", game.playerLevel), 7, C.cyan)
+    DrawPixelBar(ctx, 54, 76, 168, 6, xpRatio, C.cyan)
+    DrawPixelText(ctx, 230, 74,
+        string.format("XP %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 7, C.dim)
 
     local words = game.activeWords or {}
     -- 词条徽标：NanoVG 程序化绘制（不依赖外部 PNG），每个词条一个高亮方块 + 汉字。
     local WORD_BADGE = {
-        pierce = {label = "贯", color = {255, 213, 79}},
-        chain = {label = "链", color = {120, 224, 168}},
+        pierce = {label = "贯", color = C.warn},
+        chain = {label = "链", color = C.cyan},
         momentum = {label = "量", color = {255, 138, 101}},
     }
-    local iconSize = 24
-    local iconX = game.width - 12 - #words * (iconSize + 5)
-    local iconY = 64
+    local iconSize = 18
+    local iconX = game.width - 176 - #words * (iconSize + 5)
+    local iconY = 46
     for i, wordId in ipairs(words) do
         local badge = WORD_BADGE[wordId]
         local ix = iconX + (i - 1) * (iconSize + 5)
-        local bc = badge and badge.color or UI_COLD
-        DrawTechPanel(ctx, ix, iconY, iconSize, iconSize, UI_BLUE_DARK, bc)
+        local bc = badge and badge.color or C.dim
+        DrawTechPanel(ctx, ix, iconY, iconSize, iconSize, C.card, bc)
         if badge then
-            DrawPixelText(ctx, ix + iconSize * 0.5, iconY + 5, badge.label, 13, bc,
+            DrawPixelText(ctx, ix + iconSize * 0.5, iconY + 2, badge.label, 11, bc,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
     end
@@ -921,55 +924,53 @@ local function DrawMenu(ctx, game)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     nvgGlobalAlpha(ctx, ModalIntro(game))
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAcidGrid(ctx, game.width, game.height)
-    DrawDotMatrix(ctx, 34, 142, 11, 8, 13, {61, 214, 232, 36}, 1.5)
-    DrawDotMatrix(ctx, 414, 318, 8, 13, 13, {28, 62, 224, 36}, 1.5)
+    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
-    DrawPixelText(ctx, 24, 112, "SANCTUARY / FLIGHT TRIAL", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 112, "BUILD 0.10.27", 8, UI_BLUE,
+    local winX, winY = 18, 108
+    local winW, winH = game.width - 36, 540
+    DrawWindowShell(ctx, winX, winY, winW, winH, 48)
+    DrawPixelText(ctx, winX + 18, winY + 14, "FLIGHT TRIAL", 15, C.cyan)
+    DrawPixelText(ctx, winX + winW - 16, winY + 16, "BUILD " .. BUILD_VERSION, 9, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 24, 132, game.width - 48, 8, UI_BLUE)
+    DrawBrokenFrame(ctx, winX + 10, winY + 52, winW - 20, winH - 64, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 36)
+    DrawEdgeTicks(ctx, winX + 18, winY + 50, winW - 36, 17, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80})
 
-    DrawHalo(ctx, game.width * 0.5, 270, 116, 150)
-    DrawHalo(ctx, game.width * 0.5, 270, 84, 95)
-    nvgBeginPath(ctx)
-    nvgCircle(ctx, game.width * 0.5, 270, 7)
-    nvgFillColor(ctx, nvgRGBA(UI_GOLD[1], UI_GOLD[2], UI_GOLD[3], 255))
-    nvgFill(ctx)
-    DrawPixelText(ctx, game.width * 0.5, 215, "太空飞机弹珠", 35, UI_BLUE,
+    DrawPixelText(ctx, game.width * 0.5, 188, "太空飞机弹珠", 28, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 320, "SPACECRAFT MARBLE", 11, UI_BLUE,
+    DrawPixelText(ctx, game.width * 0.5, 226, "SPACECRAFT MARBLE", 11, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 348, "轨道计算  /  碰撞反射  /  火控链接", 12, UI_INK,
+    DrawPixelText(ctx, game.width * 0.5, 250, "轨道计算  /  碰撞反射  /  火控链接", 11, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawBluePanel(ctx, 30, 414, game.width - 60, 92, UI_BLUE, UI_BLUE, 7)
-    DrawPixelText(ctx, 52, 432, "PILOT LINK", 9, UI_WHITE)
-    DrawPixelText(ctx, 52, 457, "点击屏幕开始飞行", 19, UI_WHITE)
-    DrawPixelText(ctx, 52, 484, "INITIATE FLIGHT VECTOR", 8, UI_COLD)
-    DrawPixelText(ctx, game.width - 52, 447, "01", 30, UI_GOLD,
+    -- 主操作：青底深字胶囊。
+    DrawRect(ctx, 40, 292, game.width - 80, 72, C.cyan, 8)
+    DrawPixelText(ctx, 58, 304, "PILOT LINK", 9, C.ink)
+    DrawPixelText(ctx, 58, 322, "点击屏幕开始飞行", 17, C.ink)
+    DrawPixelText(ctx, 58, 346, "INITIATE FLIGHT VECTOR", 8, {4, 8, 16, 180})
+    DrawPixelText(ctx, game.width - 58, 310, "01", 24, C.ink,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 52, 484, "READY", 8, UI_WHITE,
+    DrawPixelText(ctx, game.width - 58, 342, "READY", 8, C.ink,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, 30, 550, "MISSION PARAMETERS", 8, UI_BLUE)
-    DrawBluePanel(ctx, 30, 568, game.width - 60, 106, UI_BLUE_DARK, UI_BLUE, 10)
-    DrawPixelText(ctx, 48, 586, "BASE CORE", 8, UI_BLUE)
-    DrawPixelText(ctx, 48, 608, "100", 24, UI_WHITE)
-    DrawPixelText(ctx, 108, 615, "INTEGRITY", 8, UI_COLD)
-    DrawPixelText(ctx, 290, 586, "ORDNANCE", 8, UI_BLUE)
-    DrawPixelText(ctx, 290, 608, "04", 24, UI_WHITE)
-    DrawPixelText(ctx, 350, 615, "LOADOUTS", 8, UI_COLD)
-    DrawSegmentedRule(ctx, 48, 650, game.width - 96, 12, UI_BLUE)
+    DrawPixelText(ctx, 40, 386, "MISSION PARAMETERS", 9, C.cyan)
+    DrawBluePanel(ctx, 40, 404, game.width - 80, 112, C.rail, C.cyanDim, 6)
+    DrawMicroGrid(ctx, 48, 412, game.width - 96, 96, 12, 18)
+    DrawPixelText(ctx, 58, 420, "BASE CORE", 8, C.dim)
+    DrawPixelText(ctx, 58, 440, "100", 22, C.text)
+    DrawPixelText(ctx, 126, 450, "INTEGRITY", 8, C.dim)
+    DrawPixelText(ctx, 292, 420, "ORDNANCE", 8, C.dim)
+    DrawPixelText(ctx, 292, 440, "04", 22, C.text)
+    DrawPixelText(ctx, 352, 450, "LOADOUTS", 8, C.dim)
+    DrawSegmentedRule(ctx, 58, 488, game.width - 116, 10, C.cyanDim)
 
-    DrawPixelText(ctx, 30, 716, "TOUCH / MOUSE  :  AIM + RELEASE", 8, UI_BLUE)
-    DrawPixelText(ctx, 30, 739, "P / ESC          :  PAUSE", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 30, 786, "SYSTEM LINKED", 8, UI_GOLD,
+    DrawPixelText(ctx, 40, 536, "CONTROLS", 9, C.cyan)
+    DrawBluePanel(ctx, 40, 554, game.width - 80, 86, C.card, C.cyanDim, 6)
+    DrawPixelText(ctx, 58, 568, "TOUCH / MOUSE", 9, C.dim)
+    DrawPixelText(ctx, 58, 588, "AIM + RELEASE", 12, C.text)
+    DrawPixelText(ctx, 292, 568, "P / ESC", 9, C.dim)
+    DrawPixelText(ctx, 292, 588, "PAUSE", 12, C.text)
+    DrawPixelText(ctx, game.width - 58, 608, "SYSTEM LINKED", 8, C.cyan,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 30, 812, game.width - 60, 4, UI_GOLD)
     nvgRestore(ctx)
 end
 
@@ -977,46 +978,48 @@ local function DrawGameOver(ctx, game)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
-    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：结算缓入
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAcidGrid(ctx, game.width, game.height)
-    DrawHalo(ctx, game.width * 0.5, 390, 125, 180)
-    DrawPixelText(ctx, game.width * 0.5, 330, "链接中断", 36, UI_WHITE,
+    nvgGlobalAlpha(ctx, ModalIntro(game))
+    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+
+    local winX, winY = 24, 220
+    local winW, winH = game.width - 48, 460
+    DrawWindowShell(ctx, winX, winY, winW, winH, 48)
+    DrawPixelText(ctx, winX + 18, winY + 14, "SESSION SEALED", 15, C.cyan)
+    DrawPixelText(ctx, winX + winW - 16, winY + 16, "OFFLINE", 9, C.warn,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    DrawPixelText(ctx, game.width * 0.5, 286, "链接中断", 28, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 380, "FLIGHT CONTROL OFFLINE", 10,
-        UI_CYAN, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 430,
+    DrawPixelText(ctx, game.width * 0.5, 322, "FLIGHT CONTROL OFFLINE", 10, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 350,
         string.format("SCORE %d  /  BEST %d  /  WAVE %02d",
-            game.score, game.highScore, game.wave), 13, ACID.paleBlue,
+            game.score, game.highScore, game.wave), 12, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    -- WO-11/P8：结算回顾面板（只读快照统计，强化幸存者正反馈）。
-    DrawBluePanel(ctx, 24, 446, game.width - 48, 76, UI_BLUE_DARK, UI_BLUE, 10)
-    DrawPixelText(ctx, 40, 458, string.format("到达波次 %02d", game.wave), 12, ACID.paleBlue,
-        NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, 40, 478, string.format("等级 LV %02d", game.playerLevel), 12, ACID.brightPurple,
-        NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, 40, 498, string.format("击碎砖块 %d", game.bricksBroken or 0), 12, ACID.coldBlue,
-        NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 40, 458, string.format("强化 %d 次", #(game.upgradePicks or {})), 12,
-        ACID.paleBlue, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 40, 478, string.format("连击 %d", game.clearStreak or 0), 12,
-        ACID.brightPurple, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 40, 498, string.format("存活 %.0fs", game.elapsed or 0), 12,
-        ACID.coldBlue, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawTechPanel(ctx, 0, 530, game.width, 66, ACID.deepPurple, ACID.paleBlue)
-    DrawPixelText(ctx, game.width * 0.5, 548, "点击重新建立链接", 18,
-        ACID.paleBlue, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 614, "SESSION SEALED // AWAITING RESTART", 8,
-        ACID.muted, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    DrawBluePanel(ctx, 44, 386, game.width - 88, 92, C.rail, C.cyanDim, 6)
+    DrawPixelText(ctx, 60, 400, string.format("到达波次 %02d", game.wave), 12, C.text)
+    DrawPixelText(ctx, 60, 422, string.format("等级 LV %02d", game.playerLevel), 12, C.text)
+    DrawPixelText(ctx, 60, 444, string.format("击碎砖块 %d", game.bricksBroken or 0), 12, C.dim)
+    DrawPixelText(ctx, game.width - 60, 400, string.format("强化 %d 次", #(game.upgradePicks or {})), 12,
+        C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 60, 422, string.format("连击 %d", game.clearStreak or 0), 12,
+        C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width - 60, 444, string.format("存活 %.0fs", game.elapsed or 0), 12,
+        C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    DrawRect(ctx, 44, 500, game.width - 88, 54, C.cyan, 8)
+    DrawPixelText(ctx, game.width * 0.5, 516, "点击重新建立链接", 16, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 572, "AWAITING RESTART", 8, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
 
 local UPGRADE_RARITY = {
-    common = {tag = "标准", color = {120, 200, 245}},
-    rare = {tag = "稀有", color = {255, 213, 79}},
-    epic = {tag = "史诗", color = {214, 130, 255}},
+    common = {tag = "标准", color = C.cyanDim},
+    rare = {tag = "稀有", color = C.warn},
+    epic = {tag = "史诗", color = C.cyan},
 }
 
 local function GetUpgradeCardLayout(game)
@@ -1039,77 +1042,52 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local y = cy - cardH * 0.5
     local rare = UPGRADE_RARITY[choice.rarity] or UPGRADE_RARITY.common
     local accent = rare.color
-    local titleColor = UI_WHITE
-    DrawBluePanel(ctx, x, y, cardW, cardH, UI_SURFACE, accent, 12)
+    DrawBluePanel(ctx, x, y, cardW, cardH, C.card, C.cyanDim, 6)
+    DrawCornerBrackets(ctx, x + 4, y + 4, cardW - 8, cardH - 8, accent, 10, 1.2)
+    DrawRect(ctx, x, y, 3, cardH, accent, 0)
 
-    -- 顶部强调条 + 序号圆点。
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x + 10, y, cardW - 20, 6)
-    nvgFillColor(ctx, nvgRGBA(accent[1], accent[2], accent[3], 255))
-    nvgFill(ctx)
-    nvgBeginPath(ctx)
-    nvgCircle(ctx, x + cardW - 22, y + 30, 13)
-    nvgFillColor(ctx, nvgRGBA(UI_INK[1], UI_INK[2], UI_INK[3], 235))
-    nvgFill(ctx)
-    nvgStrokeColor(ctx, nvgRGBA(accent[1], accent[2], accent[3], 255))
-    nvgStrokeWidth(ctx, 1.5)
-    nvgStroke(ctx)
-    DrawPixelText(ctx, x + cardW - 22, y + 22, tostring(index), 13, accent,
+    DrawPixelText(ctx, x + 12, y + 12, string.format("%02d", index), 9, C.dim)
+    DrawPixelText(ctx, x + cardW * 0.5, y + 28, choice.name or "强化协议", 14, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    -- 标题：15px 单行（当前天赋名最长 7 个汉字，实测宽度收在卡片内）。
-    DrawPixelText(ctx, x + cardW * 0.5, y + 22, choice.name or "强化协议", 15, titleColor,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    -- 稀有度标签（居中一行）。
     DrawPixelText(ctx, x + cardW * 0.5, y + 50,
-        (choice.kind == "word" and "词条 · " or "强化 · ") .. rare.tag, 11, rare.color,
+        (choice.kind == "word" and "词条 · " or "强化 · ") .. rare.tag, 10, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawSegmentedRule(ctx, x + 14, y + 72, cardW - 28, 6, C.cyanDim)
 
-    -- 分隔线。
-    DrawSegmentedRule(ctx, x + 16, y + 74, cardW - 32, 6, accent)
-
-    -- 详情：12px 自动换行展示完整效果说明。文本块在分隔线与底部信息区之间垂直居中，
-    -- 避免 2-3 行短文案堆在卡片上部、中下部留空洞。
     local detailLines = WrapTextLines(ctx,
-        choice.detail or choice.desc or "提升当前火控系统性能", 12, cardW - 28)
-    local detailLineH = 18
+        choice.detail or choice.desc or "提升当前火控系统性能", 11, cardW - 28)
+    local detailLineH = 17
     local maxDetailLines = 6
     local detailCount = math.min(maxDetailLines, #detailLines)
-    local detailAreaTop = y + 88
-    local detailAreaBottom = y + cardH - 92     -- 底部标签/徽标区从 y+208 起
+    local detailAreaTop = y + 86
+    local detailAreaBottom = y + cardH - 92
     local detailTop = detailAreaTop
         + math.max(0, (detailAreaBottom - detailAreaTop - detailCount * detailLineH) * 0.5)
     for li = 1, detailCount do
         DrawPixelText(ctx, x + cardW * 0.5, detailTop + (li - 1) * detailLineH,
-            detailLines[li], 12, UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            detailLines[li], 11, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- 风险/词条说明（抉择型），固定在底部信息区，避免与详情重叠。
     local footerTop = y + cardH - 84
     if choice.tradeoff then
-        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 24, {38, 20, 58}, {255, 138, 101})
-        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 5, "高风险 / 高回报", 11,
-            {255, 168, 130}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 22, C.widget, C.warn)
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "高风险 / 高回报", 10,
+            C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     elseif choice.kind == "word" then
-        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 24, {24, 34, 66}, accent)
-        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 5, "永久词条 · 一次性", 11, accent,
+        DrawTechPanel(ctx, x + 12, footerTop, cardW - 24, 22, C.widget, accent)
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "永久词条 · 一次性", 10, accent,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- 增量徽标。
-    nvgBeginPath(ctx)
-    nvgRoundedRect(ctx, x + 16, y + cardH - 52, cardW - 32, 26, 6)
-    nvgFillColor(ctx, nvgRGBA(accent[1], accent[2], accent[3], 38))
-    nvgFill(ctx)
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 46, choice.value or "强化", 13, accent,
+    DrawRect(ctx, x + 16, y + cardH - 52, cardW - 32, 24, C.widget, 6)
+    DrawStroke(ctx, x + 16, y + cardH - 52, cardW - 32, 24, accent, 6, 1)
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 47, choice.value or "强化", 12, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    -- 已选层数 / 上限（无上限的维修显示 ∞）。提亮并上移，不再贴住卡底圆角边。
     local stacks = choice.stacks or 0
     local maxText = choice.maxStacks and choice.maxStacks >= 90 and "∞" or tostring(choice.maxStacks or "-")
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 21,
-        "已装配 " .. tostring(stacks) .. " / " .. maxText, 9, {184, 196, 226, 255},
+    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 22,
+        "已装配 " .. tostring(stacks) .. " / " .. maxText, 9, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
@@ -1117,21 +1095,15 @@ local function DrawLevelUp(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     nvgGlobalAlpha(ctx, ModalIntro(game))
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAcidGrid(ctx, game.width, game.height)
-    DrawDotMatrix(ctx, 28, 152, 10, 7, 14, {61, 214, 232, 28}, 1.3)
-    DrawDotMatrix(ctx, 414, 700, 8, 8, 14, {74, 139, 245, 36}, 1.3)
+    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
-    DrawPixelText(ctx, 24, 104, "SANCTUARY / UPGRADE RITE", 8, UI_BLUE)
-    DrawPixelText(ctx, game.width - 24, 104, "PAUSED / SELECT ONE", 8, UI_GOLD,
+    DrawPixelText(ctx, 24, 108, "UPGRADE RITE", 9, C.cyan)
+    DrawPixelText(ctx, game.width - 24, 108, "SELECT ONE", 9, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 24, 124, game.width - 48, 8, UI_BLUE)
-    DrawPixelText(ctx, game.width * 0.5, 150, "升级 // 选择强化", 29, UI_BLUE,
+    DrawPixelText(ctx, game.width * 0.5, 132, "升级 // 选择强化", 22, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 196,
-        string.format("LEVEL %02d  /  CHOOSE ONE PROTOCOL", game.playerLevel), 9, UI_COLD,
+    DrawPixelText(ctx, game.width * 0.5, 164,
+        string.format("LEVEL %02d  /  CHOOSE ONE PROTOCOL", game.playerLevel), 9, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local choices = game.upgradeChoices or {}
@@ -1142,31 +1114,29 @@ local function DrawLevelUp(ctx, game, presentation)
                 startX + (i - 1) * (cardW + gap), cy, cardW, cardH)
         end
     else
-        DrawBluePanel(ctx, 30, 365, game.width - 60, 100, UI_BLUE_DARK, UI_BLUE, 8)
-        DrawPixelText(ctx, game.width * 0.5, 395, "NO PROTOCOLS AVAILABLE", 12, UI_WHITE,
+        DrawBluePanel(ctx, 30, 365, game.width - 60, 100, C.rail, C.cyanDim, 6)
+        DrawPixelText(ctx, game.width * 0.5, 395, "NO PROTOCOLS AVAILABLE", 12, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, game.width * 0.5, 423, "WAITING FOR RULE TABLE", 8, UI_COLD,
+        DrawPixelText(ctx, game.width * 0.5, 423, "WAITING FOR RULE TABLE", 8, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawPixelText(ctx, 24, 704, "CHOOSE ONE  /  GAMEPLAY PAUSED", 9, UI_BLUE)
-    -- v0.10.24：空白点击时"点选卡片"提示轻脉冲，明确告知必须三选一。
+    DrawPixelText(ctx, 24, 704, "CHOOSE ONE  /  GAMEPLAY PAUSED", 9, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
-    local hintColor = UI_GOLD
+    local hintColor = C.warn
     local hintSize = 9
     if hintPulse > 0 then
         local p = hintPulse / 0.5
         hintColor = {
-            UI_GOLD[1] + math.floor((255 - UI_GOLD[1]) * p),
-            UI_GOLD[2] + math.floor((248 - UI_GOLD[2]) * p),
-            UI_GOLD[3] + math.floor((210 - UI_GOLD[3]) * p),
+            C.warn[1] + math.floor((255 - C.warn[1]) * p),
+            C.warn[2] + math.floor((248 - C.warn[2]) * p),
+            C.warn[3] + math.floor((210 - C.warn[3]) * p),
             255,
         }
         hintSize = 9 + math.floor(3 * p)
     end
     DrawPixelText(ctx, game.width - 24, 704, "TAP A CARD TO EQUIP", hintSize, hintColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 24, 726, game.width - 48, 4, UI_GOLD)
     nvgRestore(ctx)
 end
 
@@ -1174,18 +1144,16 @@ local function DrawPaused(ctx, game)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
-    nvgGlobalAlpha(ctx, ModalIntro(game))    -- A1：暂停缓入
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAstroonBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawAcidGrid(ctx, game.width, game.height)
-    DrawHalo(ctx, game.width * 0.5, 470, 120, 160)
-    DrawPixelText(ctx, game.width * 0.5, 430, "暂停", 34, UI_WHITE,
+    nvgGlobalAlpha(ctx, ModalIntro(game))
+    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    DrawWindowShell(ctx, 54, 360, game.width - 108, 210, 46)
+    DrawPixelText(ctx, 72, 374, "HOLD", 13, C.cyan)
+    DrawPixelText(ctx, game.width * 0.5, 428, "暂停", 28, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 482, "点击屏幕或按 P 继续", 12,
-        UI_WHITE, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 506, "TAP ANYWHERE OR PRESS P TO RESUME", 8,
-        UI_COLD, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 470, "点击屏幕或按 P 继续", 12, C.text,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, 496, "TAP ANYWHERE OR PRESS P", 8, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
 
@@ -1205,15 +1173,15 @@ local function DrawWaveBanner(ctx, game, presentation)
     if presentation.waveBannerBoss then
         local pulse = 220 + math.floor(35 * math.abs(math.sin(game.elapsed * 8)))
         local warn = {232, 76, 76}
-        DrawBluePanel(ctx, cx - 130, 146 + yOff, 260, 54, {46, 14, 22}, warn, 10)
+        DrawBluePanel(ctx, cx - 130, 146 + yOff, 260, 54, C.card, warn, 6)
         DrawPixelText(ctx, cx, 153 + yOff, "!! WARNING !!", 10, {pulse, 90, 90},
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawPixelText(ctx, cx, 172 + yOff, string.format("WAVE %02d  //  BOSS", game.wave), 14,
             warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
-        DrawBluePanel(ctx, cx - 120, 150 + yOff, 240, 46, UI_BLUE_DARK, UI_CYAN, 10)
+        DrawBluePanel(ctx, cx - 120, 150 + yOff, 240, 46, C.card, C.cyan, 6)
         DrawPixelText(ctx, cx, 160 + yOff, string.format("WAVE %02d INCOMING", game.wave), 14,
-            UI_CYAN, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
 end
@@ -1228,19 +1196,8 @@ local function RenderOverlay(game, presentation)
     DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgSave(vg_)
-    nvgBeginPath(vg_)
-    nvgRect(vg_, 0, 0, DESIGN_W, DESIGN_H)
-    nvgStrokeColor(vg_, nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 180))
-    nvgStrokeWidth(vg_, 2)
-    nvgStroke(vg_)
-    nvgBeginPath(vg_)
-    nvgMoveTo(vg_, 0, 0)
-    nvgLineTo(vg_, 0, DESIGN_H)
-    nvgLineTo(vg_, DESIGN_W, DESIGN_H)
-    nvgLineTo(vg_, DESIGN_W, 0)
-    nvgStrokeColor(vg_, nvgRGBA(UI_CYAN[1], UI_CYAN[2], UI_CYAN[3], 150))
-    nvgStrokeWidth(vg_, 3)
-    nvgStroke(vg_)
+    DrawCornerBrackets(vg_, 2, 2, DESIGN_W - 4, DESIGN_H - 4, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 140}, 18, 1.4)
+    DrawBrokenFrame(vg_, 0.5, 0.5, DESIGN_W - 1, DESIGN_H - 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 42)
     if game.state == "playing" then
         if presentation.screenShake > 0 then
             local amplitude = presentation.screenShake * 13
@@ -1373,9 +1330,11 @@ function Backend.Init(renderHandlerName)
         print("[Scene3DBackend] ERROR: failed to load Fonts/Zpix.ttf")
         nvgDelete(vg_)
         vg_ = nil
+        nvgFontZpix_ = -1
         CleanupFailedInit()
         return false
     end
+    nvgFontZpix_ = fontId
 
     if not Renderer3D.Init(scene_, voxelWorld_) then
         print("[Scene3DBackend] ERROR: Renderer3D initialization failed")
@@ -1383,7 +1342,7 @@ function Backend.Init(renderHandlerName)
         return false
     end
     SubscribeToEvent(vg_, "NanoVGRender", renderHandlerName)
-    print("[Scene3DBackend] initialized: 9:16 locked viewport, orthographic 46-degree aircraft camera, spacecraft aircraft UI")
+    print("[Scene3DBackend] initialized: 9:16 locked viewport, dark-tech HUD, orthographic 46-degree aircraft camera")
     return true
 end
 
@@ -1393,6 +1352,7 @@ function Backend.Shutdown()
         nvgDelete(vg_)
         vg_ = nil
     end
+    nvgFontZpix_ = -1
     renderer:SetViewport(0, nil)
     ReleaseScene()
 end

@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：太空飞机弹珠
-当前版本：0.10.27
-简述：波次基础间隔 18s/下限 9s、首波冷却 3.2s、全局下落 0.42、首波基础速度 28；高速弹自适应子步进+扫掠；体素碎块失败回退 CustomGeometry 飞散箱。编队静态体积、碎块 1×1×1。Linux CLI 回退 CustomGeometry。8敌机、青色软圆瞄准线、无召回全屏拖拽。
+当前版本：0.10.28
+简述：按 ecnach-ui-skill 把 HUD/菜单/结算/升级/暂停重做为 dark-tech（深黑蓝层级 + 品牌青强调）。升级卡几何仍 168×300@cy530。玩法节奏与体素路径沿用 v0.10.27。
 最后巩固：2026-09-16
 
 ## 项目概况
@@ -28,7 +28,7 @@
 | `scripts/VisualCatalog.lua` | 当前 2D 后端的弹珠样式和飞机采样砖块颜色映射 |
 | `scripts/AircraftPixelData.lua` | 独立低像素飞机 occupied cells、分数、速度倍率与采样 RGB 数据源 |
 | `scripts/Renderer3D.lua` | 只读同步四类采样飞机（每个 occupied cell 对应一个可破坏体素，单 `CustomGeometry` 双 section）、官方木箱材质、放大大运式平头重卡、撞飞独立箱体；每敌人/车辆各一个 `CustomGeometry` |
-| `scripts/Scene3DBackend.lua` | 3D Scene/Camera/Viewport、46° 正交斜俯视与 `orthoSize=18.0`、固定 9:16 `IntRect` CONTAIN、相机投影标定、3 批动态视差星层、深空底板、深紫/淡蓝 Laterano 酸性 HUD/四弹药槽/菜单和撞线反馈覆盖层 |
+| `scripts/Scene3DBackend.lua` | 3D Scene/Camera/Viewport、46° 正交斜俯视与 `orthoSize=18.0`、固定 9:16 `IntRect` CONTAIN、相机投影标定、3 批动态视差星层、深空底板、dark-tech HUD/四弹药槽/菜单和撞线反馈覆盖层 |
 | `assets/model/6d5f1062-5bea-5cf8-a404-280333d4d4c8/` | 低多边形越野皮卡 MDL、LOD、diffuse/normal 纹理和材质资源 |
 
 ## 有效决策
@@ -71,6 +71,7 @@
 - D-040: 3D 消失根因是 NanoVG 渲染事件位于 3D Viewport 之后，旧 `DrawFullFrameBackground` 用整屏不透明填充覆盖设计画布；修复为 `DrawLetterboxBackground`，只填充 CONTAIN 画布外区域，`Backend.Render` 保持 `Renderer3D.Render` → `RenderOverlay` 顺序。
 - D-041: 主循环必须在 `Game.Update` 后重新获取快照，再把同一更新后快照传给 `Presentation.Update` 和渲染；升级触发后 `Game.Update` 立即状态中断；升级同帧新增 XP 使用 `deferredXp` 原值缓冲，最后一张升级卡后只结算一次倍率。
 - D-042: UI 统一 Astroon 蓝紫主题，不允许首页蓝白、升级白卡、结算深紫、暂停黑 overlay 混搭；token 为深蓝紫渐变、紫色 surface、蓝/青强调、白字、金色焦点。升级点击使用 `ScreenToUi`，玩法瞄准使用 `ScreenToGame`。
+- D-044: v0.10.28 按 `ecnach-ui-skill` 将全页 UI 改为 dark-tech：深黑蓝层级底、品牌青唯一强调、青底 ink 字主 CTA、角标/断线边框/局部网格装饰。升级卡命中几何保持 168×300/gap8/cy530。禁止恢复 Astroon 蓝紫金或 Laterano 蓝白。
 - D-043: v0.10.25 接入引擎 `VoxelPhysicsWorld` 仅作表现：规则层继续 AABB；模块探测失败必须回退 CustomGeometry，禁止 Init 失败。编队体积零重力传送、命中挖空+独立碎块，禁止对编队 ApplyDamage（连通性会撕机翼）。Linux CLI 当前未编译该模块。
 
 ## 活跃系统契约
@@ -92,6 +93,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.28: 按 ecnach-ui-skill 精细重构 UI。废弃 Astroon/Laterano 蓝紫金；HUD/Dock/菜单/结算/升级/暂停统一 dark-tech 令牌与窗口骨架（角标、断线边框、局部网格、刻度、青识别线）。升级卡外观换肤，几何/命中仍 168×300@cy530。玩法与 3D 未改。LSP 0、build 成功。
 - v0.10.27: 波次再放慢+首波加快+修碰撞/碎裂丢失。基础间隔 14→18s、下限 7.5→9s、收紧 0.18→0.15、首波冷却 2.5→3.2s；全局下落 0.25→0.42、首波基础速度 18→28。高速弹自适应子步进 4–12 + 线段 AABB 扫掠。体素碎块/挖空失败时 needVisualFallback 走 CustomGeometry 飞散箱，碎块 vz 朝相机。LSP 0、build、headless 200 帧 lua=0。
 - v0.10.26: Preview 体素路径修敌机消失+碎块 1:1:2。根因：编队 FinalizeVolumeAsDynamic 后 Node 在质心，每帧设回网格最小角把整机平移出视野；碎块 CreateVolume(1,1,2) 是扁长条。现编队 FinalizeVolume 静态、每帧只改 GetNode().position；碎块 1×1×1。LSP 0、build、headless 200 帧 lua=0。
 - v0.10.25: 接入引擎 VoxelPhysicsWorld（探测+回退）。Scene3DBackend 创建体素世界失败则 voxel_physics=false 走 CustomGeometry；模块可用时每敌机一个 VoxelVolume（gridW×gridH×2、voxelSize=brickSize*WORLD_SCALE、原点对齐阵列底边）、VisualCatalog 调色板 1-64、命中 HollowBrick+独立动态碎块（禁止 ApplyDamage）、碎块上限 24、模态暂停求解。Linux CLI 未知组件 ECEBFC51 回退成功。LSP 0、build、400/200 帧 lua=0。
