@@ -3,6 +3,7 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.10.27 | 2026-09-16 | 波次基础间隔 18s/下限 9s/收紧 0.15/首波冷却 3.2s；全局下落 0.42、首波速度 28；高速弹自适应子步进+扫掠；体素碎块失败回退 CustomGeometry 飞散箱。LSP 0、build、headless 200 帧 lua=0 |
 | v0.10.26 | 2026-09-16 | 修 Preview 体素路径：编队改 FinalizeVolume 静态体（动态体质心 vs 最小角导致敌机消失）；碎块 1×1×2 扁条改 1×1×1 立方；Node 改 GetNode()。LSP 0、build、headless 200 帧 lua=0 |
 | v0.10.25 | 2026-09-15 | 接入引擎 VoxelPhysicsWorld：探测 CreateComponent，失败回退 CustomGeometry（Linux CLI 未知类型 ECEBFC51）；规则层仍 AABB；模块可用时每敌机一体积网格+挖空当前格+独立动态碎块（禁止 ApplyDamage 撕编队）、调色板 1-64、碎块上限 24、模态暂停求解。LSP 0、build、400/200 帧 lua=0 |
 | v0.10.24 | 2026-09-14 | 第2轮10项自主优化（移动端触摸闭环/输入防穿透/正反馈补全）：①PointerDown paused态直接Resume（移动端恢复暂停）；②Pause与进levelup都aiming=false+待发车归位SLING防残留蓄力；③基地血≤35%时血条文字红色sin脉冲；④COMBO≥2金色sin放大；⑤upgrade_picked→upgradeConfirm中心青色"已装配"飘字+轻震屏；⑥主球回收Emit marble_reloaded(仅isPrimary)→reloadFlash(.3s)→Dock顶边右→左青色扫光+激活槽提亮；⑦发射launchFlash追加shockRing(r8→26/.24s/弹种色)复用冲击环通道零新增draw call；⑧levelup态Mouse/Touch的Up/Move全拦截防穿透，空白点击不关面板改触发PulseUpgradeHint金色提示脉冲；⑨menu/gameover改松手确认(startArmed按下武装、PointerUp才StartGame)防死亡抬手误重开；⑩版本号→0.10.24。LSP 0、build、surfaceless 2503帧lua=0、自动开局+发射+选卡探针截图验证后探针已删 |

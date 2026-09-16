@@ -528,24 +528,29 @@ end
 -- 挖空只改当前格 occupancy；碎块是另建的 1×1×1 立方动态体积。
 local function HollowBrick(record, col, row)
     local volume = record.volume
-    if not volume then return end
+    if not volume then return false end
     local grid = volume:GetGrid()
     local colI = math.tointeger(col)
     local rowI = math.tointeger(row)
     local dimY = math.tointeger(record.gridH) or 1
-    if not colI or not rowI then return end
+    if not colI or not rowI then return false end
     local gx = colI - 1
     local gy = dimY - rowI
     local dimZ = VoxelDepthCount()
-    if gx < 0 or gy < 0 then return end
-    grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, false)
-    volume:MarkRegionDirty(gx, gy, 0, gx, gy, dimZ - 1)
-    -- 编队是静态体积，手改 grid 后只重网格，不要 RebuildDynamicProxy。
-    volume:RebuildGeometry()
+    if gx < 0 or gy < 0 or gx >= (math.tointeger(record.gridW) or 1) or gy >= dimY then
+        return false
+    end
+    local ok = pcall(function()
+        grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, false)
+        volume:MarkRegionDirty(gx, gy, 0, gx, gy, dimZ - 1)
+        -- 编队是静态体积，手改 grid 后只重网格，不要 RebuildDynamicProxy。
+        volume:RebuildGeometry()
+    end)
+    return ok == true
 end
 
 local function SpawnVoxelDebris(record, event, visualCatalog)
-    if not voxelWorld_ or not visualCatalog or not visualCatalog.GetVoxelMatIndex then return end
+    if not voxelWorld_ or not visualCatalog or not visualCatalog.GetVoxelMatIndex then return false end
     local worldPos = BrickWorldCenter(record, event.col, event.row)
         or GameToWorld(event.x, event.y, VOXEL_FRONT_OFFSET)
     local size = record.voxelSize
@@ -554,33 +559,43 @@ local function SpawnVoxelDebris(record, event, visualCatalog)
         worldPos.x - size * 0.5,
         worldPos.y - size * 0.5,
         worldPos.z - size * dimZ * 0.5)
-    local debris = voxelWorld_:CreateVolume(1, 1, dimZ, size, origin)
-    if not debris then return end
+    local okCreate, debris = pcall(function()
+        return voxelWorld_:CreateVolume(1, 1, dimZ, size, origin)
+    end)
+    if not okCreate or not debris then return false end
     local style = visualCatalog.GetBrickStyle
         and visualCatalog.GetBrickStyle(record.aircraftKey, event.col, event.row)
     local slot = style and style.slot or "hullMain"
     local mat = visualCatalog.GetVoxelMatIndex(record.aircraftKey, slot, false)
-    local grid = debris:GetGrid()
-    grid:FillBox(0, 0, 0, 0, 0, dimZ - 1, true)
-    grid:PaintBox(0, 0, 0, 0, 0, dimZ - 1, mat)
-    debris.density = 280.0
-    debris.evictable = true
-    debris.destructible = true
-    debris.gravityFactor = 1.0
-    debris.linearDamping = 0.18
-    debris.angularDamping = 0.22
-    debris.material = voxelWorld_:GetPaletteMaterial()
-    voxelWorld_:FinalizeVolumeAsDynamic(debris)
-    debris:RebuildGeometry()
-    local vx = (event.vx or 0) * WORLD_SCALE
-    local vy = -(event.vy or 0) * WORLD_SCALE
-    local vz = -2.2
-    debris:SetLinearVelocity(Vector3(vx, vy, vz))
-    debris:SetAngularVelocity(Vector3(
-        event.axisPitchSpeed or 0,
-        event.axisRollSpeed or 0,
-        event.angularVelocity or 0))
+    local okFill = pcall(function()
+        local grid = debris:GetGrid()
+        grid:FillBox(0, 0, 0, 0, 0, dimZ - 1, true)
+        grid:PaintBox(0, 0, 0, 0, 0, dimZ - 1, mat)
+        debris.density = 280.0
+        debris.evictable = true
+        debris.destructible = true
+        debris.gravityFactor = 1.0
+        debris.linearDamping = 0.18
+        debris.angularDamping = 0.22
+        debris.material = voxelWorld_:GetPaletteMaterial()
+        voxelWorld_:FinalizeVolumeAsDynamic(debris)
+        debris:RebuildGeometry()
+        local vx = (event.vx or 0) * WORLD_SCALE
+        local vy = -(event.vy or 0) * WORLD_SCALE
+        -- 朝相机抛一点，避免碎块卡在编队厚度里看不见。
+        local vz = -3.4
+        debris:SetLinearVelocity(Vector3(vx, vy, vz))
+        debris:SetAngularVelocity(Vector3(
+            event.axisPitchSpeed or 0,
+            event.axisRollSpeed or 0,
+            event.angularVelocity or 0))
+    end)
+    if not okFill then
+        pcall(function() voxelWorld_:RemoveVolume(debris) end)
+        return false
+    end
     voxelDebrisCount_ = voxelDebrisCount_ + 1
+    return true
 end
 
 local function ForEachVolume(fn)
@@ -626,6 +641,7 @@ local function SyncVoxelEnemies(game, presentation)
                         volume = volume,
                         signature = GetEnemySignature(enemy),
                         voxelSize = enemy.brickSize * WORLD_SCALE,
+                        gridW = math.tointeger(enemy.gridW) or 1,
                         gridH = math.tointeger(enemy.gridH) or 1,
                         aircraftKey = enemy.aircraftKey,
                     }
@@ -656,9 +672,16 @@ local function SyncVoxelEnemies(game, presentation)
             consumedEjectIds_[box.id] = true
             local record = enemyMeshes_[box.enemyId]
             if record and record.volume then
-                SpawnVoxelDebris(record, box, visualCatalog)
-                HollowBrick(record, box.col, box.row)
+                -- 挖空与碎块各自独立：碎块失败仍要挖空，挖空失败也要尝试碎块。
+                local hollowedOk = HollowBrick(record, box.col, box.row)
+                local debrisOk = SpawnVoxelDebris(record, box, visualCatalog)
+                if not hollowedOk or not debrisOk then
+                    -- 体素碎块/挖空失败时走 CustomGeometry 飞散箱，避免“命中无特效”。
+                    box.needVisualFallback = true
+                end
                 hollowed[box.enemyId] = true
+            else
+                box.needVisualFallback = true
             end
         end
     end
@@ -1108,7 +1131,7 @@ local function BuildEjectedBoxGeometry(geometry, rgb)
     geometry:SetMaterial(0, GetCrateMaterial())
 end
 
-local function SyncEjectedBoxes(presentation)
+local function SyncEjectedBoxes(presentation, voxelFallbackOnly)
     local active = {}
     local boxes = presentation.ejectedBoxes or {}
     local visualCatalog = presentation.visualCatalog
@@ -1125,28 +1148,31 @@ local function SyncEjectedBoxes(presentation)
     local MAX_RENDERED_BOXES = 28
     for i = 1, math.min(#boxes, MAX_RENDERED_BOXES) do
         local box = boxes[i]
-        active[box.id] = true
-        local node = ejectedBoxNodes_[box.id]
-        if not node then
-            node = scene_:CreateChild("EjectedCrate_" .. tostring(box.id))
-            local geometry = node:CreateComponent("CustomGeometry")
-            geometry.castShadows = false
-            BuildEjectedBoxGeometry(geometry, ResolveBoxColor(box))
-            ejectedBoxNodes_[box.id] = node
+        -- 体素路径下只画创建失败的飞散箱，避免和立方碎块叠两份。
+        if not voxelFallbackOnly or box.needVisualFallback then
+            active[box.id] = true
+            local node = ejectedBoxNodes_[box.id]
+            if not node then
+                node = scene_:CreateChild("EjectedCrate_" .. tostring(box.id))
+                local geometry = node:CreateComponent("CustomGeometry")
+                geometry.castShadows = false
+                BuildEjectedBoxGeometry(geometry, ResolveBoxColor(box))
+                ejectedBoxNodes_[box.id] = node
+            end
+            -- 独立箱体始终放在敌体朝向相机的一侧，避免主体网格遮挡刚脱离的第一帧。
+            node.position = GameToWorld(box.x, box.y, VOXEL_FRONT_OFFSET - 0.24 + box.z * WORLD_SCALE)
+            node.enabled = true
+            -- 前 0.10 秒保持完整尺寸，确保命中瞬间能读到“整块脱离”；末段再缩放消散。
+            local fade = 1.0
+            if box.age > 0.10 and box.lifetime - box.age < 0.45 then
+                fade = math.max(0, (box.lifetime - box.age) / 0.45)
+            end
+            local size = math.max(0.01, box.size * WORLD_SCALE * 1.28)
+            node.scale = Vector3(size * fade, size * fade, size * fade)
+            local rotation = Quaternion()
+            rotation:FromEulerAngles(math.deg(box.pitch), math.deg(box.roll), math.deg(box.rotation))
+            node.rotation = rotation
         end
-        -- 独立箱体始终放在敌体朝向相机的一侧，避免主体网格遮挡刚脱离的第一帧。
-        node.position = GameToWorld(box.x, box.y, VOXEL_FRONT_OFFSET - 0.24 + box.z * WORLD_SCALE)
-        node.enabled = true
-        -- 前 0.10 秒保持完整尺寸，确保命中瞬间能读到“整块脱离”；末段再缩放消散。
-        local fade = 1.0
-        if box.age > 0.10 and box.lifetime - box.age < 0.45 then
-            fade = math.max(0, (box.lifetime - box.age) / 0.45)
-        end
-        local size = math.max(0.01, box.size * WORLD_SCALE * 1.28)
-        node.scale = Vector3(size * fade, size * fade, size * fade)
-        local rotation = Quaternion()
-        rotation:FromEulerAngles(math.deg(box.pitch), math.deg(box.roll), math.deg(box.rotation))
-        node.rotation = rotation
     end
     for id, node in pairs(ejectedBoxNodes_) do
         if not active[id] then
@@ -1438,6 +1464,10 @@ function Renderer3D.Render(game, presentation)
             end
             SyncEnemyMeshes(game, presentation)
             SyncEjectedBoxes(presentation)
+        else
+            -- 体素碎块失败或编队体积尚未建好时，仍画 CustomGeometry 飞散箱，
+            -- 避免部分命中只有缺口没有碎裂特效。
+            SyncEjectedBoxes(presentation, true)
         end
     else
         SyncEnemyMeshes(game, presentation)

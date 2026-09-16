@@ -23,8 +23,8 @@ local BRICK_BASE_DAMAGE = 0.5      -- 每行方块越过目标线时的基础伤
 local XP_PER_BRICK = 1             -- 击碎一个方块获得的经验
 local XP_PER_CLEAR = 8             -- 清掉整支飞船的额外经验
 local BASE_XP_TO_NEXT = 26         -- 第一次升级所需经验（单架侦察机约 50 格，约两架升一级）
-local WAVE_INTERVAL = 14.0          -- 持续刷新波次的基础间隔（秒，v0.10.14 放慢）
-local WAVE_INTERVAL_MIN = 7.5      -- 后期最快刷新间隔（v0.10.14 上调）
+local WAVE_INTERVAL = 18.0          -- 持续刷新波次的基础间隔（秒，v0.10.27 再放慢）
+local WAVE_INTERVAL_MIN = 9.0      -- 后期最快刷新间隔
 local MAX_CONCURRENT = 8           -- 同屏飞船数量上限，避免无限叠加
 
 -- 数值平衡表（WO-01/P1）：局内不可变数值集中管理，便于调参与离线模拟。
@@ -38,7 +38,7 @@ local BALANCE = {
     xpToNextGrowth = 1.26,          -- WO-02/P1：每级经验阈值指数乘子（v0.10.10 随基础阈值上调重调）
     waveInterval = WAVE_INTERVAL,
     waveIntervalMin = WAVE_INTERVAL_MIN,
-    waveTightenStep = 0.18,         -- 波次间隔随波次收紧步长（v0.10.14 随基础间隔上调一并放缓）
+    waveTightenStep = 0.15,         -- 波次间隔随波次收紧步长（v0.10.27 随基础间隔上调一并放缓）
     maxConcurrent = MAX_CONCURRENT,
     clearStreakBonusCap = 5,        -- WO-03/P1：连击经验加成封顶（原写死 5）
     -- 以下为批次2（P6 WO-12）预留字段，当前 UpdateWaveLogic 尚未使用
@@ -281,7 +281,8 @@ local function GetWaveParams(waveNum)
     else count = math.min(5, 3 + math.floor((waveNum - 4) / 3)) end
 
     -- 敌方砖块保留隐藏 HP：前六波只需一次命中，之后再逐步增加耐久。
-    local speed = 18 + (waveNum - 1) * 4
+    -- v0.10.27：首波基础速度从 18 提到 28，入场不再贴着屏顶蠕动。
+    local speed = 28 + (waveNum - 1) * 4
     local hp = 1
     if waveNum >= 7 then hp = 2 end
     if waveNum >= 12 then hp = 3 end
@@ -360,7 +361,7 @@ ResetGame = function()
     aimY = SLING_Y
     grabStartX = SLING_X
     grabStartY = SLING_Y
-    waveCooldown = 2.5    -- v0.10.14：开局喘息拉长，避免首波贴脸
+    waveCooldown = 3.2    -- v0.10.27：开局喘息再拉长，避免首波贴脸
     nextEnemyId = 1
     nextMarbleId = 1
     -- 幸存者成长状态复位
@@ -487,7 +488,8 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
         gridH = data.gridH,
         brickSize = brickSize,
         x = x, y = y, baseX = x,
-        vy = baseSpeed * data.speedMul * 0.25 * descent,
+        -- v0.10.27：全局下落 0.25→0.42，首波入场不再贴着屏顶蠕动。
+        vy = baseSpeed * data.speedMul * 0.42 * descent,
         swayAmp = swayAmp,
         swayFreq = swayFreq,
         agility = beh.agility,    -- A3：节奏/反应质感标记（渲染层可读）
@@ -610,13 +612,41 @@ end
 --       +----------+
 --
 -- 目的：圆与 AABB 重叠时，按归一化穿透较大的轴反射速度并推出表面。
--- 边界：相切不算命中；推出 0.5 设计单位避免重复卡碰；高速球由四次子步进降低穿透。
+-- 边界：相切不算命中；推出 0.5 设计单位避免重复卡碰。
+-- v0.10.27：高速球除分子步进，还对本帧位移做线段-AABB 扫掠，避免擦边/对角穿格丢失碰撞。
 local function IntersectsBrick(marble, rx, ry, rw, rh)
     local closestX = math.max(rx, math.min(marble.x, rx + rw))
     local closestY = math.max(ry, math.min(marble.y, ry + rh))
     local dx = marble.x - closestX
     local dy = marble.y - closestY
     return dx * dx + dy * dy < marble.radius * marble.radius
+end
+
+-- 圆沿 (px,py)→(cx,cy) 扫过膨胀后的砖块 AABB。用于本帧位移漏检。
+local function SweptHitsBrick(px, py, cx, cy, radius, rx, ry, rw, rh)
+    local minX = rx - radius
+    local minY = ry - radius
+    local maxX = rx + rw + radius
+    local maxY = ry + rh + radius
+    if cx >= minX and cx <= maxX and cy >= minY and cy <= maxY then
+        return true
+    end
+    local dx = cx - px
+    local dy = cy - py
+    local steps = 1
+    local dist = math.sqrt(dx * dx + dy * dy)
+    if dist > radius * 0.5 then
+        steps = math.max(2, math.ceil(dist / math.max(4, radius * 0.45)))
+    end
+    for s = 1, steps do
+        local t = s / steps
+        local x = px + dx * t
+        local y = py + dy * t
+        if x >= minX and x <= maxX and y >= minY and y <= maxY then
+            return true
+        end
+    end
+    return false
 end
 
 local function CollideBrick(marble, rx, ry, rw, rh)
@@ -1118,7 +1148,9 @@ UpdateMarbles = function(dt)
     for i = #marbles, 1, -1 do
         local marble = marbles[i]
         local def = BALL_TYPES[marble.ballType]
-        local steps = 4
+        -- v0.10.27：按本帧位移自适应子步进，高速弹不再 4 步打穿薄格。
+        local move = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy) * dt
+        local steps = math.max(4, math.min(12, math.ceil(move / math.max(6, marble.radius * 0.4))))
         local subDt = dt / steps
         local frameHitBricks = {}
 
@@ -1129,6 +1161,8 @@ UpdateMarbles = function(dt)
                 marble.redirectCooldown = marble.redirectCooldown - subDt
             end
 
+            local prevX = marble.x
+            local prevY = marble.y
             marble.x = marble.x + marble.vx * subDt
             marble.y = marble.y + marble.vy * subDt
 
@@ -1175,12 +1209,24 @@ UpdateMarbles = function(dt)
 
                             if marble.giantPiercing then
                                 collided = IntersectsBrick(marble, rx, ry, rw, rh)
+                                    or SweptHitsBrick(prevX, prevY, marble.x, marble.y,
+                                        marble.radius, rx, ry, rw, rh)
                                 if collided then
                                     marble.x = marble.x + marble.vx * subDt * 0.5
                                     marble.y = marble.y + marble.vy * subDt * 0.5
                                 end
                             else
                                 collided = CollideBrick(marble, rx, ry, rw, rh)
+                                if not collided and SweptHitsBrick(prevX, prevY, marble.x, marble.y,
+                                    marble.radius, rx, ry, rw, rh) then
+                                    marble.x = prevX
+                                    marble.y = prevY
+                                    collided = CollideBrick(marble, rx, ry, rw, rh)
+                                    if not collided then
+                                        -- 扫掠命中但终点已越过：仍结算伤害，避免擦边穿格无反馈。
+                                        collided = true
+                                    end
+                                end
                             end
 
                             if collided then
