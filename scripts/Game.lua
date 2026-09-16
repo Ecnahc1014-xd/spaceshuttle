@@ -511,6 +511,148 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opt
     return enemy
 end
 
+-- v0.10.28：8bit 街机阵型。同波同机、整队锁定横摆，避免随机散点把剪影拆散。
+local FORMATION_CYCLE = { "line", "vee", "grid", "swarm", "wedge", "stream" }
+
+local function PickWaveAircraft(pool)
+    if #pool == 1 then return pool[1] end
+    -- 新解锁机型优先露脸，其余波次仍可抽到老机型。
+    if Random() < 0.6 then return pool[#pool] end
+    return pool[RandomInt(1, #pool)]
+end
+
+local function PickFormation(waveNum, count, aircraftKey)
+    if aircraftKey == "hive" then return "swarm" end
+    if count <= 1 then return "line" end
+    local kind = FORMATION_CYCLE[((waveNum - 1) % #FORMATION_CYCLE) + 1]
+    -- 宽机横排塞不下 540 宽，3 机改 2+1 网格，避免退化成纵列。
+    if (aircraftKey == "manta" or aircraftKey == "cruiser" or aircraftKey == "bomber")
+        and count >= 3 then
+        return "grid"
+    end
+    if kind == "grid" and count <= 2 then return "line" end
+    return kind
+end
+
+---@param kind string
+---@param count integer
+---@param shipW number
+---@param shipH number
+---@return {x:number, y:number}[]
+---@return string
+local function ComputeFormationSlots(kind, count, shipW, shipH)
+    local margin = 20
+    local gap = ENEMY_SPACING
+    local visibleTopY = -102
+    local entryY = visibleTopY - shipH - 24
+    local maxW = DW - margin * 2
+    ---@type {x:number, y:number}[]
+    local slots = {}
+
+    local function FitRow(n)
+        local g = gap
+        local total = n * shipW + (n - 1) * g
+        if total > maxW then
+            g = math.max(4, math.floor((maxW - n * shipW) / math.max(1, n - 1)))
+            total = n * shipW + (n - 1) * g
+        end
+        if total > maxW then return nil, g end
+        return (DW - total) * 0.5, g
+    end
+
+    if kind == "line" then
+        local startX, g = FitRow(count)
+        if startX then
+            for i = 1, count do
+                slots[i] = { x = startX + (i - 1) * (shipW + g), y = entryY }
+            end
+            return slots, "line"
+        end
+        kind = "vee"
+    end
+
+    if kind == "vee" or kind == "wedge" then
+        local startX, g = FitRow(count)
+        if startX then
+            local mid = (count + 1) * 0.5
+            local maxRank = (count - 1) * 0.5
+            local rowStep = shipH * 0.38 + 8
+            for i = 1, count do
+                local rank = math.abs(i - mid)
+                local y = (kind == "vee")
+                    and (entryY - rank * rowStep)
+                    or (entryY - (maxRank - rank) * rowStep)
+                slots[i] = { x = startX + (i - 1) * (shipW + g), y = y }
+            end
+            return slots, kind
+        end
+        kind = "grid"
+    end
+
+    if kind == "grid" or kind == "swarm" then
+        local cols = count
+        if count == 3 then cols = 2
+        elseif count == 4 then cols = 2
+        elseif count >= 5 then cols = 3 end
+        local g = (kind == "swarm") and 4 or gap
+        local startX, fittedG = FitRow(cols)
+        if startX and fittedG then
+            g = fittedG
+        else
+            startX = margin
+            g = 4
+        end
+        local rowGap = shipH + ((kind == "swarm") and 4 or gap)
+        local stagger = (kind == "swarm") and (shipW * 0.22) or 0
+        local fullW = cols * shipW + (cols - 1) * g
+        for i = 1, count do
+            local row = math.floor((i - 1) / cols)
+            local col = (i - 1) % cols
+            local remain = count - row * cols
+            local rowCount = math.min(cols, remain)
+            local rowW = rowCount * shipW + (rowCount - 1) * g
+            local rowStart = startX + (fullW - rowW) * 0.5
+            local x = rowStart + col * (shipW + g)
+            if row % 2 == 1 then x = x + stagger end
+            if x < margin then x = margin end
+            if x + shipW > DW - margin then x = DW - margin - shipW end
+            slots[i] = { x = x, y = entryY - row * rowGap }
+        end
+        return slots, kind
+    end
+
+    local cx = DW * 0.5 - shipW * 0.5
+    for i = 1, count do
+        local side = (i % 2 == 0) and 1 or -1
+        local x = cx + side * math.min(28, shipW * 0.18)
+        if x < margin then x = margin end
+        if x + shipW > DW - margin then x = DW - margin - shipW end
+        slots[i] = { x = x, y = entryY - (i - 1) * (shipH + gap) }
+    end
+    return slots, "stream"
+end
+
+local function LiftSlotsOffExisting(slots, shipW, shipH)
+    local lift = 0
+    local step = shipH + ENEMY_SPACING
+    for _ = 1, 80 do
+        local blocked = false
+        for i = 1, #slots do
+            if FleetPositionOccupied(slots[i].x, slots[i].y - lift, shipW, shipH, {}) then
+                blocked = true
+                break
+            end
+        end
+        if not blocked then break end
+        lift = lift + step
+    end
+    if lift > 0 then
+        for i = 1, #slots do
+            slots[i].y = slots[i].y - lift
+        end
+    end
+end
+
 SpawnWave = function()
     -- P11：Boss 波（每 10 波一次）。Boss 是单支高血量巨型编队，拥有阶段机；
     -- 仅规则（HP/阶段/vulnerable），视觉由表现层推迟消费 boss_phase 事件。
@@ -553,61 +695,41 @@ SpawnWave = function()
 
     local count, baseSpeed, brickHp = GetWaveParams(wave)
     local brickSize = GetBrickSize(wave)
-    local margin = 20
-    local placed = {}
+    local aircraftKey = PickWaveAircraft(pool)
+    local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
+    local formationKind = PickFormation(wave, count, aircraftKey)
+    local slots, usedKind = ComputeFormationSlots(formationKind, count, aircraftWidth, aircraftHeight)
+    LiftSlotsOffExisting(slots, aircraftWidth, aircraftHeight)
 
-    -- 候选检查同时覆盖本批次与场上存活飞机，gap 统一使用 ENEMY_SPACING。
-    local function Overlaps(candidateX, candidateY, candidateW, candidateH)
-        return FleetPositionOccupied(candidateX, candidateY, candidateW, candidateH, placed)
+    -- 同波锁定横摆：整队一起轻轻横移，阵型不会被各自乱摆拆散。
+    local lockSway = 10
+    local lockFreq = 0.34
+    if usedKind == "swarm" then
+        lockSway = 16
+        lockFreq = 0.55
+    elseif usedKind == "stream" then
+        lockSway = 6
+        lockFreq = 0.22
     end
 
-    for i = 1, count do
-        local aircraftKey = pool[RandomInt(1, #pool)]
-        local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
-        -- 所有新编队必须“整机”位于可见战场顶之上的屏外区。
-        -- 可见战场顶约 gameY=-102（HUD 下沿投影），故按飞机自身高度上推，
-        -- 再留 24px 余量；同波后续飞机继续向上排队，禁止任何像素在屏幕内生成。
-        local VISIBLE_TOP_Y = -102
-        local SPAWN_ENTRY_Y = VISIBLE_TOP_Y - aircraftHeight - 24
-        local baseY = SPAWN_ENTRY_Y - (i - 1) * (aircraftHeight + ENEMY_SPACING)
-        local x, y = margin, baseY
-        local found = false
-        -- 先在同一屏外层做随机横向候选（y 始终是屏外 baseY，禁止落到屏幕内）。
-        for _ = 1, 80 do
-            local candidateX = margin + Random() * math.max(1, DW - aircraftWidth - margin * 2)
-            if not Overlaps(candidateX, baseY, aircraftWidth, aircraftHeight) then
-                x, y, found = candidateX, baseY, true
-                break
-            end
+    local spawned = 0
+    for i = 1, #slots do
+        local slot = slots[i]
+        local enemy = CreateEnemy(aircraftKey, slot.x, slot.y, brickSize, brickHp, baseSpeed, {
+            swayAmp = lockSway,
+            swayFreq = lockFreq,
+            phase = 0,
+        })
+        if enemy then
+            enemy.formation = usedKind
+            table.insert(veggies, enemy)
+            spawned = spawned + 1
         end
-        if not found then
-            -- 确定性 fallback：继续向上逐层排开，每层扫描均匀 X 槽，绝不进入可见区。
-            local slotSpan = math.max(1, DW - margin * 2 - aircraftWidth)
-            local slotCount = math.min(8, math.max(1, math.floor(slotSpan / 40) + 1))
-            for layer = 0, 60 do
-                local tryY = baseY - (layer + 1) * (aircraftHeight + ENEMY_SPACING)
-                for slot = 0, slotCount - 1 do
-                    local tryX = margin
-                        + (slotCount == 1 and 0
-                            or slot * slotSpan / (slotCount - 1))
-                    if not Overlaps(tryX, tryY, aircraftWidth, aircraftHeight) then
-                        x, y, found = tryX, tryY, true
-                        break
-                    end
-                end
-                if found then break end
-            end
-            if not found then
-                y = baseY - 62 * (aircraftHeight + ENEMY_SPACING)
-            end
-        end
-        placed[#placed + 1] = {x = x, y = y, w = aircraftWidth, h = aircraftHeight}
-        local enemy = CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed)
-        if enemy then table.insert(veggies, enemy) end
     end
 
-    Emit("wave_started", {wave = wave})
-    print("[Game] wave " .. wave .. " spawned " .. #veggies .. " aircraft")
+    Emit("wave_started", {wave = wave, formation = usedKind, aircraftKey = aircraftKey})
+    print("[Game] wave " .. wave .. " spawned " .. spawned .. " " .. aircraftKey
+        .. " in " .. usedKind)
 end
 
 -- 碰撞区域设计：圆形弹珠对单个方形砖块。
@@ -1197,98 +1319,119 @@ UpdateMarbles = function(dt)
                 ArmGiantPiercing(marble)
             end
 
-            local hit = false
-            for _, enemy in ipairs(veggies) do
-                if not enemy.dead then
-                    for _, brick in ipairs(enemy.bricks) do
-                        if marble.ignoredBrick == brick then
-                            local irx = enemy.x + (brick.col - 1) * enemy.brickSize + 1
-                            local iry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
-                            if not IntersectsBrick(marble, irx, iry,
-                                enemy.brickSize - 2, enemy.brickSize - 2) then
-                                marble.ignoredBrick = nil
-                            end
-                        elseif brick.alive and not brick.ejected and not frameHitBricks[brick] then
-                            local rx = enemy.x + (brick.col - 1) * enemy.brickSize + 1
-                            local ry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
-                            local rw = enemy.brickSize - 2
-                            local rh = enemy.brickSize - 2
-                            local collided = false
-
-                            if marble.giantPiercing then
-                                collided = IntersectsBrick(marble, rx, ry, rw, rh)
-                                    or SweptHitsBrick(prevX, prevY, marble.x, marble.y,
-                                        marble.radius, rx, ry, rw, rh)
-                                if collided then
-                                    marble.x = marble.x + marble.vx * subDt * 0.5
-                                    marble.y = marble.y + marble.vy * subDt * 0.5
+            -- v0.10.28：先收集本步所有重叠格，再打最近的一格。
+            -- 旧逻辑按 bricks 数组顺序命中第一格就 break，会漏掉真正碰到的格，
+            -- 表现为“球穿过机翼/座舱无碰撞、碎裂不完整”。
+            if marble.ignoredBrick then
+                local ib = marble.ignoredBrick
+                local found = false
+                for _, enemy in ipairs(veggies) do
+                    if not enemy.dead then
+                        for _, brick in ipairs(enemy.bricks) do
+                            if brick == ib then
+                                found = true
+                                local irx = enemy.x + (brick.col - 1) * enemy.brickSize + 1
+                                local iry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
+                                if not IntersectsBrick(marble, irx, iry,
+                                    enemy.brickSize - 2, enemy.brickSize - 2) then
+                                    marble.ignoredBrick = nil
                                 end
-                            else
-                                collided = CollideBrick(marble, rx, ry, rw, rh)
-                                if not collided and SweptHitsBrick(prevX, prevY, marble.x, marble.y,
-                                    marble.radius, rx, ry, rw, rh) then
-                                    marble.x = prevX
-                                    marble.y = prevY
-                                    collided = CollideBrick(marble, rx, ry, rw, rh)
-                                    if not collided then
-                                        -- 扫掠命中但终点已越过：仍结算伤害，避免擦边穿格无反馈。
-                                        collided = true
-                                    end
-                                end
-                            end
-
-                            if collided then
-                                if marble.ballType == "speed" then
-                                    BoostSpeedMarble(marble)
-                                end
-
-                                if marble.giantPiercing then
-                                    -- WO-07/P4：巨型弹每次有效反弹只武装一次贯穿。本次圆范围伤害结算后
-                                    -- 立即解除武装，继续直线飞行，下次反弹由 ArmGiantPiercing 重新武装一次。
-                                    DamageGiantArea(enemy, brick,
-                                        GetMarbleDamage(marble, def), frameHitBricks)
-                                    marble.giantPiercing = false
-                                    Emit("giant_pierce_consumed", {x = marble.x, y = marble.y})
-                                else
-                                    frameHitBricks[brick] = true
-                                    DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
-                                end
-                                if def.freezeDuration then enemy.frozen = def.freezeDuration + BALL_TUNING.iceBonus end
-
-                                -- P11：命中时按弹珠词条/类型施加异常状态（仅记录，视觉推迟）。
-                                if marble.words and marble.words.pierce then
-                                    ApplyBrickStatus(brick, "shock", 1.2, 1)
-                                end
-                                if marble.words and marble.words.chain then
-                                    ApplyBrickStatus(brick, "corrode", 2.0, 1)
-                                end
-                                if marble.words and marble.words.momentum then
-                                    ApplyBrickStatus(brick, "burn", 1.5, 1)
-                                end
-                                if marble.ballType == "giant" then
-                                    ApplyBrickStatus(brick, "volatile", 1.5, 1.5)
-                                end
-                                if def.freezeDuration then
-                                    ApplyBrickStatus(brick, "freeze",
-                                        def.freezeDuration + BALL_TUNING.iceBonus, 1)
-                                end
-
-                                if marble.ballType == "normal" then
-                                    TrySplitNormal(marble, brick, pendingMarbles)
-                                elseif marble.ballType == "speed" then
-                                    RedirectSpeedMarble(marble, enemy, brick)
-                                elseif marble.ballType == "giant" and not marble.giantPiercing then
-                                    hit = true
-                                    ArmGiantPiercing(marble)
-                                end
-
-                                if not marble.giantPiercing then hit = true end
                                 break
                             end
                         end
                     end
-                    if hit or not marble.alive then break end
+                    if found then break end
                 end
+                if not found then marble.ignoredBrick = nil end
+            end
+
+            local hit = false
+            local best = nil
+            local bestDist = 1e12
+            for _, enemy in ipairs(veggies) do
+                if not enemy.dead then
+                    for _, brick in ipairs(enemy.bricks) do
+                        if brick ~= marble.ignoredBrick
+                            and brick.alive and not brick.ejected
+                            and not frameHitBricks[brick] then
+                            local rx = enemy.x + (brick.col - 1) * enemy.brickSize + 1
+                            local ry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
+                            local rw = enemy.brickSize - 2
+                            local rh = enemy.brickSize - 2
+                            local overlap = IntersectsBrick(marble, rx, ry, rw, rh)
+                                or SweptHitsBrick(prevX, prevY, marble.x, marble.y,
+                                    marble.radius, rx, ry, rw, rh)
+                            if overlap then
+                                local cx = rx + rw * 0.5
+                                local cy = ry + rh * 0.5
+                                local dx = marble.x - cx
+                                local dy = marble.y - cy
+                                local dist = dx * dx + dy * dy
+                                if dist < bestDist then
+                                    bestDist = dist
+                                    best = {
+                                        enemy = enemy, brick = brick,
+                                        rx = rx, ry = ry, rw = rw, rh = rh,
+                                    }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if best then
+                local enemy = best.enemy
+                local brick = best.brick
+                if marble.giantPiercing then
+                    -- 贯穿本步只结算圆域，不反弹；武装保持到本步结束再卸，
+                    -- 避免同帧只打一格就提前解除。
+                    DamageGiantArea(enemy, brick,
+                        GetMarbleDamage(marble, def), frameHitBricks)
+                    Emit("giant_pierce_consumed", {x = marble.x, y = marble.y})
+                    marble.giantPiercing = false
+                else
+                    local resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
+                    if not resolved then
+                        marble.x = prevX
+                        marble.y = prevY
+                        resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
+                    end
+                    frameHitBricks[brick] = true
+                    DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
+                end
+
+                if marble.ballType == "speed" then
+                    BoostSpeedMarble(marble)
+                end
+                if def.freezeDuration then enemy.frozen = def.freezeDuration + BALL_TUNING.iceBonus end
+
+                if marble.words and marble.words.pierce then
+                    ApplyBrickStatus(brick, "shock", 1.2, 1)
+                end
+                if marble.words and marble.words.chain then
+                    ApplyBrickStatus(brick, "corrode", 2.0, 1)
+                end
+                if marble.words and marble.words.momentum then
+                    ApplyBrickStatus(brick, "burn", 1.5, 1)
+                end
+                if marble.ballType == "giant" then
+                    ApplyBrickStatus(brick, "volatile", 1.5, 1.5)
+                end
+                if def.freezeDuration then
+                    ApplyBrickStatus(brick, "freeze",
+                        def.freezeDuration + BALL_TUNING.iceBonus, 1)
+                end
+
+                if marble.ballType == "normal" then
+                    TrySplitNormal(marble, brick, pendingMarbles)
+                elseif marble.ballType == "speed" then
+                    RedirectSpeedMarble(marble, enemy, brick)
+                elseif marble.ballType == "giant" and not marble.giantPiercing then
+                    ArmGiantPiercing(marble)
+                end
+
+                hit = not marble.giantPiercing
             end
 
             -- 回收线在防线 DANGER_Y（车回落进入底部 Dock 安全层即回库补弹）。

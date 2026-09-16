@@ -662,35 +662,50 @@ local function SyncVoxelEnemies(game, presentation)
     end
 
     -- 必须先挖碎块再按签名重建：同一帧 alive=false 若先整网 Fill，刚挖的格会被填回去。
+    -- v0.10.28：挖空失败不再一次性消费；签名对齐前每帧重试，避免“规则已碎、网格还在”。
     local boxes = presentation.ejectedBoxes or {}
     local liveEjectIds = {}
     local hollowed = {}
     for i = 1, #boxes do
         local box = boxes[i]
         liveEjectIds[box.id] = true
-        if box.enemyId and not consumedEjectIds_[box.id] then
-            consumedEjectIds_[box.id] = true
+        local consumed = consumedEjectIds_[box.id]
+        if box.enemyId and consumed ~= "done" then
             local record = enemyMeshes_[box.enemyId]
             if record and record.volume then
-                -- 挖空与碎块各自独立：碎块失败仍要挖空，挖空失败也要尝试碎块。
                 local hollowedOk = HollowBrick(record, box.col, box.row)
-                local debrisOk = SpawnVoxelDebris(record, box, visualCatalog)
+                local debrisOk = true
+                if consumed ~= "debris" then
+                    debrisOk = SpawnVoxelDebris(record, box, visualCatalog)
+                    if debrisOk then
+                        consumedEjectIds_[box.id] = "debris"
+                    end
+                end
+                if hollowedOk then
+                    consumedEjectIds_[box.id] = "done"
+                    hollowed[box.enemyId] = true
+                end
                 if not hollowedOk or not debrisOk then
-                    -- 体素碎块/挖空失败时走 CustomGeometry 飞散箱，避免“命中无特效”。
                     box.needVisualFallback = true
                 end
-                hollowed[box.enemyId] = true
             else
                 box.needVisualFallback = true
             end
         end
     end
     for _, enemy in ipairs(game.veggies) do
-        if hollowed[enemy.id] then
-            local record = enemyMeshes_[enemy.id]
-            if record then
-                record.signature = GetEnemySignature(enemy)
+        local record = enemyMeshes_[enemy.id]
+        if record and record.volume then
+            -- 以规则层签名为准强制对齐网格，防止漏挖格子一直实心。
+            local currentSig = GetEnemySignature(enemy)
+            if record.signature ~= currentSig then
+                FillEnemyVolume(record.volume, enemy, visualCatalog)
+                record.volume:RebuildGeometry()
+                record.signature = currentSig
+                hollowed[enemy.id] = true
             end
+        elseif hollowed[enemy.id] and record then
+            record.signature = GetEnemySignature(enemy)
         end
     end
     for id in pairs(consumedEjectIds_) do
@@ -698,22 +713,7 @@ local function SyncVoxelEnemies(game, presentation)
     end
     TrimVoxelDebris()
 
-    -- 冻结换色等非挖空脏记录才整网重建。
-    local budget = REBUILD_BUDGET
-    local rebuilt = 0
-    for i = 1, #dirty do
-        local item = dirty[i]
-        local currentSig = GetEnemySignature(item.enemy)
-        if item.record.signature ~= currentSig and rebuilt < budget then
-            FillEnemyVolume(item.record.volume, item.enemy, visualCatalog)
-            item.record.volume:RebuildGeometry()
-            item.record.signature = currentSig
-            rebuilt = rebuilt + 1
-        end
-    end
-    if #dirty - rebuilt > 0 and rebuilt >= budget then
-        print("[Renderer3D] voxel rebuild budget hit: " .. #dirty .. " dirty, " .. rebuilt .. " rebuilt")
-    end
+    -- 签名对齐已在上方按规则层强制完成；这里不再用预算推迟挖空。
 
     for id, record in pairs(enemyMeshes_) do
         if not active[id] then
