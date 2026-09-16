@@ -34,6 +34,22 @@
       "persistent_world": {
         "enabled": false
       }
+    },
+    "ad": {
+      "status": 0,
+      "url": "https://developer.taptap.cn/forge/336024/app/937191/operation/ad-monetization",
+      "ad_spaces": [
+        {
+          "id": "1054323",
+          "type": 1
+        },
+        {
+          "id": "1054324",
+          "type": 2
+        }
+      ],
+      "top_on_placements": [],
+      "synced_at": "2026-09-16T07:06:00.686Z"
     }
   }
 }

@@ -7,15 +7,17 @@
   "entry": "main.lua",
   "version": "1.0.0",
   "taptap_publish": {
-    "title": "<game title, required>",
-    "description": "<game description>",
-    "category": "<game category: rpg, casual, action, strategy, simulation, trivia, arcade, adventure, card, sports, racing, puzzle, educational, music, word, board>",
+    "title": "太空飞机弹珠",
+    "description": "竖屏弹弓载具弹珠：拖拽发射重卡撞击像素敌机，逐块碎裂、波次推进、三选一强化的肉鸽幸存者。",
+    "category": "arcade",
     "screen_orientation": "portrait",
     "collection_type": "sce",
-    "trial_note": "<developer's note>",
+    "trial_note": "拖拽蓄力发射，守住底部防线。",
     "transparent": false,
     "app_platforms": "1,2",
-    "developer_id": 336024
+    "developer_id": 336024,
+    "app_id": 937191,
+    "miniapp_id": "tapmcl8lq6jmqiv437"
   },
   "assets": {
     "icon": "",
@@ -23,6 +25,10 @@
     "promotional_image": ""
   },
   "metadata": {
-    "updated_at": "2026-08-02T08:31:15.629Z"
+    "updated_at": "2026-09-16T07:05:31.529Z"
+  },
+  "test_qrcode": {
+    "url": "https://tapcode-sce.spark.xd.com/qrcode/p_q74c_1789542331371.png",
+    "generated_at": "2026-09-16T07:05:31.529Z"
   }
 }
