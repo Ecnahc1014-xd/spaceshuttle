@@ -112,7 +112,7 @@ local function SpawnFloatText(x, y, text, color, sizeMul)
     f.life = 0.9; f.maxLife = 0.9
     f.text = text
     f.color = color or {255, 255, 255}
-    f.size = (sizeMul or 1) * 20
+    f.size = (sizeMul or 1) * 26
     floatTexts[#floatTexts + 1] = f
 end
 

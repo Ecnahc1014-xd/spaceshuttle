@@ -49,8 +49,7 @@ local voxelDebrisDepth_ = 1
 local MAX_VOXEL_DEBRIS = 24
 local voxelDebrisCount_ = 0
 local consumedEjectIds_ = {}
--- WO-04/P9：单帧体素重建预算。必须在 SyncVoxelEnemies 之前声明，避免 Lua 把它解析成全局。
-local REBUILD_BUDGET = 4
+-- 命中缺口必须同帧重建，不再用每帧 4 架预算把缺口拖到后续帧。
 local particleSets_ = nil    -- {spark=..., shard=..., smoke=...}
 local particleMaterials_ = nil
 local particleNodes_ = nil
@@ -542,9 +541,9 @@ local function HollowBrick(record, col, row)
     end
     local ok = pcall(function()
         grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, false)
+        -- 静态体积手改 occupancy 后只标脏区，由世界本帧驱动重建。
+        -- 每格 RebuildGeometry 会把整机网格拖到下一帧才刷新。
         volume:MarkRegionDirty(gx, gy, 0, gx, gy, dimZ - 1)
-        -- 编队是静态体积，手改 grid 后只重网格，不要 RebuildDynamicProxy。
-        volume:RebuildGeometry()
     end)
     return ok == true
 end
@@ -658,11 +657,15 @@ local function SyncVoxelEnemies(game, presentation)
         end
     end
 
-    -- 必须先挖碎块再按签名重建：同一帧 alive=false 若先整网 Fill，刚挖的格会被填回去。
-    -- v0.10.28：挖空失败不再一次性消费；签名对齐前每帧重试，避免“规则已碎、网格还在”。
+    -- 必须先挖空再签名对齐：同一帧 alive=false 若先整网 Fill，刚挖的格会被填回去。
+    -- 挖空只 MarkRegionDirty；整网 Fill 只用于漏挖兜底，禁止每命中都 RebuildGeometry。
     local boxes = presentation.ejectedBoxes or {}
     local liveEjectIds = {}
-    local hollowed = {}
+    local signatureById = {}
+    local hollowedThisFrame = {}
+    for _, enemy in ipairs(game.veggies) do
+        signatureById[enemy.id] = GetEnemySignature(enemy)
+    end
     for i = 1, #boxes do
         local box = boxes[i]
         liveEjectIds[box.id] = true
@@ -680,7 +683,8 @@ local function SyncVoxelEnemies(game, presentation)
                 end
                 if hollowedOk then
                     consumedEjectIds_[box.id] = "done"
-                    hollowed[box.enemyId] = true
+                    record.signature = signatureById[box.enemyId] or record.signature
+                    hollowedThisFrame[box.enemyId] = true
                 end
                 if not hollowedOk or not debrisOk then
                     box.needVisualFallback = true
@@ -690,19 +694,19 @@ local function SyncVoxelEnemies(game, presentation)
             end
         end
     end
+    -- 漏挖兜底只处理本帧没挖过的机：刚 HollowBrick 的格子立刻整网 Fill 会把 occupancy 冲掉。
     for _, enemy in ipairs(game.veggies) do
-        local record = enemyMeshes_[enemy.id]
-        if record and record.volume then
-            -- 以规则层签名为准强制对齐网格，防止漏挖格子一直实心。
-            local currentSig = GetEnemySignature(enemy)
-            if record.signature ~= currentSig then
-                FillEnemyVolume(record.volume, enemy, visualCatalog)
-                record.volume:RebuildGeometry()
-                record.signature = currentSig
-                hollowed[enemy.id] = true
+        if not hollowedThisFrame[enemy.id] then
+            local record = enemyMeshes_[enemy.id]
+            if record and record.volume then
+                local currentSig = signatureById[enemy.id]
+                if currentSig and record.signature ~= currentSig then
+                    FillEnemyVolume(record.volume, enemy, visualCatalog)
+                    record.volume:MarkRegionDirty(0, 0, 0,
+                        (record.gridW or 1) - 1, (record.gridH or 1) - 1, VoxelDepthCount() - 1)
+                    record.signature = currentSig
+                end
             end
-        elseif hollowed[enemy.id] and record then
-            record.signature = GetEnemySignature(enemy)
         end
     end
     for id in pairs(consumedEjectIds_) do
@@ -724,9 +728,7 @@ local function SyncVoxelEnemies(game, presentation)
     end
 end
 
--- WO-04/P9：单帧体素重建预算护栏。极端同屏 + 批量冻结切换时，
--- 限制每帧实际重建数量，超额脏记录顺延到下一帧（signature 仍不同会被再次命中）。
--- 触发条件维持「仅拓扑或冻结态改变」（GetEnemySignature），预算只限频次不放松语义。
+-- CustomGeometry 回退路径：签名变化（拓扑/冻结档）同帧重建，保证缺口即时可见。
 local function SyncEnemyMeshes(game, presentation)
     local active = {}
     local visualCatalog = presentation.visualCatalog
@@ -749,11 +751,9 @@ local function SyncEnemyMeshes(game, presentation)
         end
     end
 
-    for i = 1, math.min(REBUILD_BUDGET, #dirty) do
+    -- 命中缺口必须同帧消失；预算推迟会让玩家看到“物块刷新不及时”。
+    for i = 1, #dirty do
         RebuildEnemyMesh(dirty[i].record, dirty[i].enemy, visualCatalog)
-    end
-    if #dirty > REBUILD_BUDGET then
-        print("[Renderer3D] rebuild budget hit: " .. #dirty .. " dirty, " .. REBUILD_BUDGET .. " rebuilt this frame (deferred)")
     end
 
     for id, record in pairs(enemyMeshes_) do
