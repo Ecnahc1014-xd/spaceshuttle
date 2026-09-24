@@ -3,6 +3,8 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 变现盘点（2026-09-24）：单机只走激励视频；`ad.status=1`，但**唯一触点是复活（每局 1 次）**，无软货币、无 meta 层，IAP 被单机架构阻断。发布资产仍为空（icon/screenshots/promo），未补齐前发布会被拦。
+- 商业化设计稿 v0.11.0-design：30 张 UI mockup 落在 `assets/image/com_*.png`（主菜单 `com_menu_*` 10 张 / 局内 `com_ingame_*` 10 张 / 升级三选一 `com_lvup_*` 10 张）。**纯设计产出，未改任何玩法代码**。
 - 版本: 0.10.40（体素更新时序与幽灵块修复）：
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
@@ -112,7 +114,10 @@
 - likely_next_task: Preview 验收三选一卡片详情是否一眼读完。卡片几何不要跟着文案改。
 - 相关文件: `scripts/Game.lua`（UPGRADE_POOL.detail）, `scripts/Scene3DBackend.lua`
 
-## 本批次新增避雷（v0.10.39 文案 / v0.10.38 字号）
+## 本批次新增避雷（v0.11.0-design 商业化设计稿 / v0.10.39 文案 / v0.10.38 字号）
+- ⚠️ 商业化三色语义契约（v0.11.0-design）：设计稿起手确立、落地实现时不得混用——**绿色=看广告（免费获取）、金色=付费/稀有、青色=既有 dark-tech 强调色（焦点/主操作/进度）**。红色仍只留给错误/低血/危险预警，禁止拿红当促销色。
+- ⚠️ 商业化设计稿不是实现（v0.11.0-design）：30 张 mockup 只是方向候选，`assets/image/com_*.png` 不参与构建逻辑。落地任一方案前必须重新对齐既有契约——升级卡几何仍 168×300/gap8/cy530 且与 `main.lua:TryPickUpgradeAt` 同源，新增按钮（重抽/升阶/解锁）**不得压掉卡片命中区**，HUD `y=0..92`、Dock `y=866..960` 也不得被商业化元素顶开。
+- ⚠️ 广告触点密度上限（v0.11.0-design）：单局激励视频触点建议 ≤3–5 个，且禁止在死亡瞬间连弹两个广告（复活 + 结算双倍）。引擎侧只有 `sdk:ShowRewardVideoAd`，横幅/插屏无 API，设计稿里不要按插屏方案出图。
 - ⚠️ 升级卡详情必须一句话（v0.10.39）：玩家把长描述称“小作文”。`UPGRADE_POOL.detail` 保持 ≤14 字左右、单句、含数字结果；具体数值交给 `value` 徽标，不要再在 detail 里重复解释机制。字号加大后卡片最多容 3 行。
 - ⚠️ 玩家 UI 字号下限（v0.10.38）：标签/辅助≥15，正文≥17，标题≥28。v0.10.35 的 12/15/22 仍会被判定“不够”。加大字号时 HUD/Dock 高度与升级卡几何不要改。
 - ⚠️ 体素渲染时序（v0.10.40，覆盖 v0.10.37 的事件式 HollowBrick）：`Update` 在物理步后但 3D Viewport 绘制前，Game.Update → Presentation.Update → Backend.UpdateScene（逐格以权威快照对齐 SetSolid/冻色、每机一次 RebuildGeometry）→ 3D 渲染 → `NanoVGRender` 只画 overlay。飞散箱有寿命/上限，仅用于碎块，不得用其事件挖主体后直接把整机签名对齐（同帧漏事件会留下永久幽灵块）。日志 `[Renderer3D][voxel-repair]` 记录 removed/added/rebuilt/grid；Linux 无体素模块时只可验回退，Preview 仍需命中目视验收。
