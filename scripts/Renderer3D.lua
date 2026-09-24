@@ -461,7 +461,9 @@ local function FillEnemyVolume(volume, enemy, visualCatalog)
                 local gx = col - 1
                 local gy = dimY - row
                 if gx >= 0 and gx < dimX and gy >= 0 and gy < dimY then
-                    grid:FillBox(gx, gy, 0, gx, gy, dimZ - 1, true)
+                    for z = 0, dimZ - 1 do
+                        grid:SetSolid(gx, gy, z, true)
+                    end
                     grid:PaintBox(gx, gy, 0, gx, gy, dimZ - 1, mat)
                 end
             end
@@ -523,40 +525,73 @@ local function BrickWorldCenter(record, col, row)
         origin.z + (gz + 0.5) * size)
 end
 
--- 禁止对编队主体走 ApplyDamage：连通性会把机翼撕成独立刚体，和规则层整机编队冲突。
--- 挖空只改当前格 occupancy；碎块是另建的 1×1×1 立方动态体积。
-local function HollowBrick(record, col, row)
+-- 主体网格以规则快照为准，不依赖有寿命/数量上限的飞散箱事件。
+-- 同帧多个格子变化只重建一次；Update 晚于物理步，必须在本帧渲染前完成重建。
+local function SyncEnemyVolumeCells(record, enemy, visualCatalog, signature)
+    if record.signature == signature then return end
     local volume = record.volume
-    if not volume then return false end
     local grid = volume:GetGrid()
-    local colI = math.tointeger(col)
-    local rowI = math.tointeger(row)
-    local dimY = math.tointeger(record.gridH) or 1
-    if not colI or not rowI then return false end
-    local gx = colI - 1
-    local gy = dimY - rowI
     local dimZ = VoxelDepthCount()
-    if gx < 0 or gy < 0 or gx >= (math.tointeger(record.gridW) or 1) or gy >= dimY then
-        return false
-    end
-    -- 主循环订的是 Update：场景（含体素世界步进）先于脚本执行。
-    -- 只 MarkRegionDirty 会把网格重建推迟到下一帧世界步进；飞机还活着时
-    -- 看起来就是“幽灵块一直不刷新”。手改 occupancy 后必须同帧 RebuildGeometry。
-    local ok = pcall(function()
-        for z = 0, dimZ - 1 do
-            grid:SetSolid(gx, gy, z, false)
+    local frozen = (enemy.freezeRatio or 0) > 0.35
+    local recolor = record.frozen ~= frozen
+    local removed, added = 0, 0
+    local minX, minY = record.gridW, record.gridH
+    local maxX, maxY = -1, -1
+
+    local ok, err = pcall(function()
+        for _, brick in ipairs(enemy.bricks) do
+            local gx = brick.col - 1
+            local gy = record.gridH - brick.row
+            local changed = false
+            for z = 0, dimZ - 1 do
+                if grid:IsSolid(gx, gy, z) ~= brick.alive then
+                    grid:SetSolid(gx, gy, z, brick.alive)
+                    changed = true
+                end
+            end
+            if changed then
+                if brick.alive then added = added + 1 else removed = removed + 1 end
+            end
+            if brick.alive and (changed or recolor) then
+                local style = visualCatalog.GetBrickStyle
+                    and visualCatalog.GetBrickStyle(enemy.aircraftKey, brick.col, brick.row)
+                local slot = style and style.slot or "hullMain"
+                local mat = visualCatalog.GetVoxelMatIndex(enemy.aircraftKey, slot, frozen)
+                grid:PaintBox(gx, gy, 0, gx, gy, dimZ - 1, mat)
+            end
+            if changed or recolor then
+                minX, minY = math.min(minX, gx), math.min(minY, gy)
+                maxX, maxY = math.max(maxX, gx), math.max(maxY, gy)
+            end
         end
-        volume:MarkRegionDirty(gx, gy, 0, gx, gy, dimZ - 1)
-        volume:RebuildGeometry()
+        if maxX >= 0 then
+            volume:MarkRegionDirty(minX, minY, 0, maxX, maxY, dimZ - 1)
+            volume:RebuildGeometry()
+        end
+        for _, brick in ipairs(enemy.bricks) do
+            local gx = brick.col - 1
+            local gy = record.gridH - brick.row
+            for z = 0, dimZ - 1 do
+                if grid:IsSolid(gx, gy, z) ~= brick.alive then
+                    error("grid mismatch col=" .. tostring(brick.col)
+                        .. " row=" .. tostring(brick.row) .. " z=" .. tostring(z))
+                end
+            end
+        end
     end)
-    if not ok then return false end
-    -- FillBox 在部分运行时只改内容不改 occupancy；用 IsSolid 确认格子真被挖掉。
-    for z = 0, dimZ - 1 do
-        if grid:IsSolid(gx, gy, z) then
-            return false
-        end
+    if not ok then
+        print("[Renderer3D][voxel-repair] FAILED enemy=" .. tostring(enemy.id)
+            .. " removed=" .. tostring(removed) .. " added=" .. tostring(added)
+            .. " error=" .. tostring(err))
+        error(err)
     end
-    return true
+    record.signature = signature
+    record.frozen = frozen
+    if removed > 0 or added > 0 then
+        print("[Renderer3D][voxel-repair] enemy=" .. tostring(enemy.id)
+            .. " removed=" .. tostring(removed) .. " added=" .. tostring(added)
+            .. " rebuilt=true grid=ok")
+    end
 end
 
 local function SpawnVoxelDebris(record, event, visualCatalog)
@@ -653,6 +688,7 @@ local function SyncVoxelEnemies(game, presentation)
                         gridW = math.tointeger(enemy.gridW) or 1,
                         gridH = math.tointeger(enemy.gridH) or 1,
                         aircraftKey = enemy.aircraftKey,
+                        frozen = (enemy.freezeRatio or 0) > 0.35,
                     }
                     enemyMeshes_[enemy.id] = record
                 else
@@ -668,56 +704,33 @@ local function SyncVoxelEnemies(game, presentation)
         end
     end
 
-    -- 必须先挖空再签名对齐：同一帧 alive=false 若先整网 Fill，刚挖的格会被填回去。
-    -- 挖空后立刻 RebuildGeometry：Update 发生在世界步进之后，MarkRegionDirty 等不到本帧重建。
+    -- 权威规则快照决定全部主体占用；飞散事件仅用于独立碎块，丢事件不会留下幽灵块。
+    -- 先对齐网格，后生成碎块；每架飞机一帧最多重建一次。
+    for _, enemy in ipairs(game.veggies) do
+        local record = enemyMeshes_[enemy.id]
+        if record and record.volume and not enemy.dead then
+            SyncEnemyVolumeCells(record, enemy, visualCatalog, GetEnemySignature(enemy))
+        end
+    end
+
     local boxes = presentation.ejectedBoxes or {}
     local liveEjectIds = {}
-    local signatureById = {}
-    local hollowedThisFrame = {}
-    for _, enemy in ipairs(game.veggies) do
-        signatureById[enemy.id] = GetEnemySignature(enemy)
-    end
     for i = 1, #boxes do
         local box = boxes[i]
         liveEjectIds[box.id] = true
-        local consumed = consumedEjectIds_[box.id]
-        if box.enemyId and consumed ~= "done" then
+        if box.enemyId and not consumedEjectIds_[box.id] then
             local record = enemyMeshes_[box.enemyId]
             if record and record.volume then
-                local hollowedOk = HollowBrick(record, box.col, box.row)
-                local debrisOk = true
-                if consumed ~= "debris" then
-                    debrisOk = SpawnVoxelDebris(record, box, visualCatalog)
-                    if debrisOk then
-                        consumedEjectIds_[box.id] = "debris"
-                    end
-                end
-                if hollowedOk then
-                    consumedEjectIds_[box.id] = "done"
-                    record.signature = signatureById[box.enemyId] or record.signature
-                    hollowedThisFrame[box.enemyId] = true
-                end
-                if not hollowedOk or not debrisOk then
+                if SpawnVoxelDebris(record, box, visualCatalog) then
+                    consumedEjectIds_[box.id] = true
+                else
                     box.needVisualFallback = true
+                    print("[Renderer3D][voxel-repair] debris fallback enemy="
+                        .. tostring(box.enemyId) .. " col=" .. tostring(box.col)
+                        .. " row=" .. tostring(box.row))
                 end
             else
                 box.needVisualFallback = true
-            end
-        end
-    end
-    -- 漏挖兜底只处理本帧没挖过的机：刚 HollowBrick 的格子立刻整网 Fill 会把 occupancy 冲掉。
-    for _, enemy in ipairs(game.veggies) do
-        if not hollowedThisFrame[enemy.id] then
-            local record = enemyMeshes_[enemy.id]
-            if record and record.volume then
-                local currentSig = signatureById[enemy.id]
-                if currentSig and record.signature ~= currentSig then
-                    FillEnemyVolume(record.volume, enemy, visualCatalog)
-                    record.volume:MarkRegionDirty(0, 0, 0,
-                        (record.gridW or 1) - 1, (record.gridH or 1) - 1, VoxelDepthCount() - 1)
-                    record.volume:RebuildGeometry()
-                    record.signature = currentSig
-                end
             end
         end
     end
@@ -725,8 +738,6 @@ local function SyncVoxelEnemies(game, presentation)
         if not liveEjectIds[id] then consumedEjectIds_[id] = nil end
     end
     TrimVoxelDebris()
-
-    -- 签名对齐已在上方按规则层强制完成；这里不再用预算推迟挖空。
 
     for id, record in pairs(enemyMeshes_) do
         if not active[id] then

@@ -367,7 +367,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.38"
+local BUILD_VERSION = "0.10.39"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -1149,26 +1149,26 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawCornerBrackets(ctx, x + 4, y + 4, cardW - 8, cardH - 8, accent, 10, 1.2)
     DrawRect(ctx, x, y, 3, cardH, accent, 0)
 
-    DrawPixelText(ctx, x + 10, y + 8, string.format("%02d", index), 14, C.dim)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 24, choice.name or "强化", 20, C.text,
+    DrawPixelText(ctx, x + 10, y + 8, string.format("%02d", index), 15, C.dim)
+    DrawPixelText(ctx, x + cardW * 0.5, y + 24, choice.name or "强化", 22, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 50,
-        (choice.kind == "word" and "特殊效果 · " or "") .. rare.tag, 15, accent,
+    DrawPixelText(ctx, x + cardW * 0.5, y + 52,
+        (choice.kind == "word" and "特殊效果 · " or "") .. rare.tag, 16, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, x + 14, y + 72, cardW - 28, 6, C.cyanDim)
+    DrawSegmentedRule(ctx, x + 14, y + 76, cardW - 28, 6, C.cyanDim)
 
     local detailLines = WrapTextLines(ctx,
-        choice.detail or choice.desc or "提升当前弹珠性能", 15, cardW - 20)
-    local detailLineH = 22
-    local maxDetailLines = 5
+        choice.detail or choice.desc or "提升当前弹珠性能", 17, cardW - 18)
+    local detailLineH = 25
+    local maxDetailLines = 3
     local detailCount = math.min(maxDetailLines, #detailLines)
-    local detailAreaTop = y + 82
+    local detailAreaTop = y + 88
     local detailAreaBottom = y + cardH - 98
     local detailTop = detailAreaTop
         + math.max(0, (detailAreaBottom - detailAreaTop - detailCount * detailLineH) * 0.5)
     for li = 1, detailCount do
         DrawPixelText(ctx, x + cardW * 0.5, detailTop + (li - 1) * detailLineH,
-            detailLines[li], 15, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            detailLines[li], 17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
     local footerTop = y + cardH - 90
@@ -1495,7 +1495,9 @@ function Backend.ScreenToGame(screenX, screenY)
         (canvasY - projectionOffsetY_) / projectionScaleY_
 end
 
-function Backend.Render(gameSnapshot, presentationSnapshot)
+-- 游戏快照在 Update 结束后已经稳定；在本帧 3D 绘制之前同步场景与体素。
+-- NanoVGRender 晚于 3D Viewport，不能在其中才 RebuildGeometry，否则必然看到旧网格。
+function Backend.UpdateScene(gameSnapshot, presentationSnapshot)
     UpdateUiState(gameSnapshot)
     UpdateSpaceEnvironment(gameSnapshot.elapsed)
     local shake = presentationSnapshot.screenShake or 0
@@ -1539,6 +1541,9 @@ function Backend.Render(gameSnapshot, presentationSnapshot)
         voxelWorld_:SetSimulationPaused(not playing)
     end
     Renderer3D.Render(gameSnapshot, presentationSnapshot)
+end
+
+function Backend.RenderOverlay(gameSnapshot, presentationSnapshot)
     RenderOverlay(gameSnapshot, presentationSnapshot)
 end
 

@@ -217,6 +217,7 @@ function HandleUpdate(eventType, eventData)
     Presentation.Update(dt, snapshot, Game.DrainEvents())
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
+    RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot)
     if snapshot.highScore and snapshot.highScore > lastSavedHighScore then
         SaveHighScoreToCloud(snapshot.highScore)
     end
@@ -224,7 +225,7 @@ end
 
 function HandleRender()
     if gameSnapshot and presentationSnapshot then
-        RenderBackend.Render(gameSnapshot, presentationSnapshot)
+        RenderBackend.RenderOverlay(gameSnapshot, presentationSnapshot)
     end
 end
 
