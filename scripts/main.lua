@@ -4,14 +4,18 @@
 local Game = require "Game"
 local Presentation = require "Presentation"
 local RenderBackend = require "Scene3DBackend"
+local PlayerData = require "PlayerData"
+local AdService = require "AdService"
 
 local gameSnapshot = nil
 local presentationSnapshot = nil
 local lastSavedHighScore = 0
-local adInFlight = false
 local reviveArmed = false
+local doubleArmed = false
 local restartArmed = false
 local CLOUD_HIGH_SCORE_KEY = "high_score"
+local CLOUD_META_KEY = "player_meta"
+local metaCloudSynced = false
 
 local function RefreshSnapshots()
     gameSnapshot = Game.GetSnapshot()
@@ -72,78 +76,144 @@ local function LoadHighScoreFromCloud()
     end
 end
 
+-- v0.11.0 商业化：玩家元数据（零件/图鉴/签到/任务）云同步。
+-- 云变量只在编排层读写；PlayerData 只负责编解码。
+local function SavePlayerDataToCloud()
+    local payload = PlayerData.ExportForCloud()
+    pcall(function()
+        clientCloud:Set(CLOUD_META_KEY, payload, {
+            ok = function()
+                metaCloudSynced = true
+            end,
+            error = function(code, reason)
+                print("[Main] meta cloud save failed: " .. tostring(reason) .. " code=" .. tostring(code))
+            end,
+        })
+    end)
+end
+
+local function LoadPlayerDataFromCloud()
+    pcall(function()
+        clientCloud:Get(CLOUD_META_KEY, {
+            ok = function(values, _)
+                local raw = nil
+                if values then raw = values[CLOUD_META_KEY] end
+                if type(raw) == "table" then raw = cjson.encode(raw) end
+                if type(raw) == "string" and raw ~= "" then
+                    PlayerData.ImportFromCloud(raw)
+                    PlayerData.Save()
+                    RefreshSnapshots()
+                    print("[Main] player meta merged from cloud")
+                end
+                metaCloudSynced = true
+            end,
+            error = function(code, reason)
+                print("[Main] meta cloud load failed: " .. tostring(reason) .. " code=" .. tostring(code))
+            end,
+        })
+    end)
+end
+
+-- v0.11.0 商业化：所有激励视频统一走 AdService，保证一次性完成与防重复发奖。
+---@param onReward fun()
+local function ShowAd(onReward)
+    local function fail(msg)
+        Presentation.SetAdStatus(nil)
+        Presentation.SetAdToast(msg)
+        RefreshSnapshots()
+    end
+    Presentation.SetAdStatus("loading")
+    AdService.Show({
+        onReward = function()
+            Presentation.SetAdStatus(nil)
+            Presentation.SetAdToast(nil)
+            onReward()
+            RefreshSnapshots()
+        end,
+        onFail = fail,
+        onBusy = fail,
+    })
+end
+
 local function ShowReviveAd()
-    if adInFlight then return end
     if not Game.CanRevive() then
         Presentation.SetAdToast("本局已复活")
         return
     end
-
-    adInFlight = true
-    local completed = false
-    local callbackFired = false
-    Presentation.SetAdStatus("loading")
-
-    local function finish(result)
-        if completed then return end
-        completed = true
-        adInFlight = false
-        Presentation.SetAdStatus(nil)
-        if result and result.success == true then
-            if Game.ReviveFromAd() then
-                Presentation.SetAdToast(nil)
-            else
-                Presentation.SetAdToast("复活未能生效")
-            end
-            RefreshSnapshots()
-            return
+    ShowAd(function()
+        if not Game.ReviveFromAd() then
+            Presentation.SetAdToast("复活未能生效")
         end
-        local msg = result and result.msg or "广告暂不可用"
-        if msg == "embed manual close" then
-            Presentation.SetAdToast("需完整观看才能复活")
-        else
-            Presentation.SetAdToast("广告未完成，请稍后重试")
-        end
-        print("[Main] revive ad failed: " .. tostring(msg))
-        RefreshSnapshots()
-    end
-
-    local accepted = false
-    local okCall, acceptedOrErr = pcall(function()
-        return sdk:ShowRewardVideoAd(function(result)
-            callbackFired = true
-            finish(result)
-        end)
     end)
-    if okCall then
-        accepted = acceptedOrErr
-    else
-        print("[Main] ShowRewardVideoAd error: " .. tostring(acceptedOrErr))
-    end
-    if accepted == false and not callbackFired then
-        finish({ success = false, msg = "广告暂不可用，请稍后重试" })
-    end
 end
 
--- 升级面板点击命中：玩家在三选一卡片内点击即装备该强化。
+local function ShowDoublePartsAd()
+    ShowAd(function()
+        local extra = Game.DoubleSettlement()
+        if extra > 0 then
+            PlayerData.AddParts(extra)
+            PlayerData.Save()
+            SavePlayerDataToCloud()
+            Presentation.SetAdToast(string.format("双倍到账 +%d 零件", extra))
+        end
+    end)
+end
+
+-- 升级面板点击命中（v0.11.0 商业化）。
+-- 几何完全由 Scene3DBackend.HitTestUpgradePanel 提供，与绘制同源，禁止在此另写常量。
 local function TryPickUpgradeAt(uiX, uiY)
     local snapshot = Game.GetSnapshot()
-    local choices = snapshot.upgradeChoices
-    if not choices or #choices == 0 then return false end
-    -- v0.10.17：与 Scene3DBackend:GetUpgradeCardLayout 的视觉几何保持一致。
-    local cardW, cardH, gap = 168, 300, 8
-    -- 这里接收 UI 画布坐标，不是玩法平面坐标。
-    local HIT_PAD = 4
-    local totalW = #choices * cardW + (#choices - 1) * gap
-    local startX = snapshot.width * 0.5 - totalW * 0.5 + cardW * 0.5
-    local cy = 530
-    for i = 1, #choices do
-        local cx = startX + (i - 1) * (cardW + gap)
-        if math.abs(uiX - cx) <= cardW * 0.5 + HIT_PAD
-            and math.abs(uiY - cy) <= cardH * 0.5 + HIT_PAD then
-            Game.PickUpgrade(i)
+    local kind, index = RenderBackend.HitTestUpgradePanel(uiX, uiY, snapshot)
+    if kind == "card" and index then
+        Game.PickUpgrade(index)
+        return true
+    elseif kind == "boost" and index then
+        if not Game.CanBoostUpgrade(index) then
+            Presentation.SetAdToast("该卡已升格")
             return true
         end
+        ShowAd(function()
+            if Game.BoostUpgrade(index) then
+                Presentation.SetAdToast("已升格：该卡生效 ×2")
+            end
+        end)
+        return true
+    elseif kind == "reroll_free" then
+        if Game.CanFreeReroll() then
+            Game.RerollUpgrades("free")
+            Presentation.SetAdToast("已免费重抽")
+        else
+            Presentation.SetAdToast("本局免费重抽已用完")
+        end
+        return true
+    elseif kind == "reroll_ad" then
+        ShowAd(function()
+            Game.RerollUpgrades("ad")
+            Presentation.SetAdToast("已重抽")
+        end)
+        return true
+    elseif kind == "fourth" then
+        if Game.CanUnlockFourthChoice() then
+            ShowAd(function()
+                if Game.UnlockFourthChoice() then
+                    Presentation.SetAdToast("已解锁第 4 张")
+                end
+            end)
+        else
+            Presentation.SetAdToast("第 4 张已解锁")
+        end
+        return true
+    elseif kind == "extra_pick" then
+        if Game.CanArmExtraPick() then
+            ShowAd(function()
+                if Game.ArmExtraPick() then
+                    Presentation.SetAdToast("本次可多选一张")
+                end
+            end)
+        else
+            Presentation.SetAdToast("本次已启用额外选卡")
+        end
+        return true
     end
     return false
 end
@@ -151,6 +221,7 @@ end
 local function HandleGameOverPointerDown(uiX, uiY)
     local hit = RenderBackend.HitTestGameOverButton(uiX, uiY, Game.GetSnapshot())
     reviveArmed = (hit == "revive")
+    doubleArmed = (hit == "double")
     restartArmed = (hit == "restart")
     return hit ~= nil
 end
@@ -159,18 +230,32 @@ local function HandleGameOverPointerUp(uiX, uiY)
     local hit = RenderBackend.HitTestGameOverButton(uiX, uiY, Game.GetSnapshot())
     if reviveArmed and hit == "revive" then
         reviveArmed = false
+        doubleArmed = false
         restartArmed = false
         ShowReviveAd()
         return true
     end
+    if doubleArmed and hit == "double" then
+        reviveArmed = false
+        doubleArmed = false
+        restartArmed = false
+        if Game.CanDoubleSettle() then
+            ShowDoublePartsAd()
+        else
+            Presentation.SetAdToast("本局零件已翻倍")
+        end
+        return true
+    end
     if restartArmed and hit == "restart" then
         reviveArmed = false
+        doubleArmed = false
         restartArmed = false
         Game.RestartFromOver()
         RefreshSnapshots()
         return true
     end
     reviveArmed = false
+    doubleArmed = false
     restartArmed = false
     return false
 end
@@ -181,11 +266,17 @@ function Start()
 
     if not RenderBackend.Init("HandleRender") then return end
 
+    PlayerData.Load()
+
     local width, height = RenderBackend.GetDesignSize()
-    Game.Init({width = width, height = height, seed = os.time(), highScore = 0})
+    Game.Init({
+        width = width, height = height, seed = os.time(),
+        highScore = PlayerData.GetHighScore(),
+    })
     Presentation.Init()
     RefreshSnapshots()
     LoadHighScoreFromCloud()
+    LoadPlayerDataFromCloud()
 
     SubscribeToEvent("Update", "HandleUpdate")
     SubscribeToEvent("MouseButtonDown", "HandleMouseDown")
@@ -209,6 +300,7 @@ end
 ---@param eventData UpdateEventData
 function HandleUpdate(eventType, eventData)
     local dt = math.min(eventData:GetFloat("TimeStep"), 0.05)
+    AdService.Update(dt)
     local hitStop = Presentation.GetSnapshot().hitStop or 0
     local gameDt = dt
     if hitStop > 0 then gameDt = dt * 0.15 end
@@ -220,6 +312,20 @@ function HandleUpdate(eventType, eventData)
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot)
     if snapshot.highScore and snapshot.highScore > lastSavedHighScore then
         SaveHighScoreToCloud(snapshot.highScore)
+    end
+    -- v0.11.0 商业化：结算页一出现就按 ×1 把本局零件入库（幂等，同帧只结算一次）。
+    if snapshot.state == "gameover" then
+        local granted = Game.SettleParts(1)
+        if granted > 0 then
+            PlayerData.AddParts(granted)
+            PlayerData.AddDailyProgress("break_bricks", math.floor(snapshot.bricksBroken or 0))
+            PlayerData.AddDailyProgress("reach_wave", math.floor(snapshot.wave or 1), true)
+            PlayerData.AddDailyProgress("play_runs", 1)
+            PlayerData.SetHighScore(math.floor(snapshot.highScore or 0))
+            PlayerData.Save()
+            SavePlayerDataToCloud()
+            print("[Main] run settled, parts +" .. granted)
+        end
     end
 end
 

@@ -364,10 +364,12 @@ local C = {
     text    = {240, 248, 252, 255},
     dim     = {120, 148, 162, 255},
     warn    = {255, 196, 72, 255},
+    -- v0.11.0 商业化：付费/稀有语义的「未激活」态（金色降饱和，不与 warn 抢焦点）。
+    warnDim = {170, 128, 48, 220},
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.10.39"
+local BUILD_VERSION = "0.11.0"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -1031,22 +1033,33 @@ local function DrawMenu(ctx, game)
     nvgRestore(ctx)
 end
 
+-- v0.11.0 商业化：结算页三按钮（复活 / 看广告双倍零件 / 再来一局）。
+-- 视觉几何与命中判定共用此处，禁止在 main.lua 再写一套常量。
 local function GetGameOverButtonLayout(game)
     local w = game.width or DESIGN_W
-    local btnW, btnH, gap = 216, 48, 12
+    local btnH, gap = 48, 12
+    local rowW = 216
+    local rowPairW = rowW * 2 + gap
+    local rowX = (w - rowPairW) * 0.5
     local revive = {
-        x = (w - btnW) * 0.5,
+        x = (w - rowW) * 0.5,
         y = 496,
-        w = btnW,
+        w = rowW,
+        h = btnH,
+    }
+    local double = {
+        x = rowX,
+        y = revive.y + btnH + gap,
+        w = rowW,
         h = btnH,
     }
     local restart = {
-        x = (w - btnW) * 0.5,
-        y = revive.y + btnH + gap,
-        w = btnW,
+        x = rowX + rowW + gap,
+        y = double.y,
+        w = rowW,
         h = btnH,
     }
-    return revive, restart
+    return revive, double, restart
 end
 
 local function DrawGameOver(ctx, game, presentation)
@@ -1082,8 +1095,12 @@ local function DrawGameOver(ctx, game, presentation)
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width - 60, 424, string.format("存活 %.0f 秒", game.elapsed or 0), 17,
         C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    -- v0.11.0 商业化：本局零件产出（结算页最直观的变现锚点）。
+    DrawPixelText(ctx, game.width * 0.5, 446,
+        string.format("本局获得  零件 ×%d", game.runParts or 0), 18, C.warn,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    local reviveBtn, restartBtn = GetGameOverButtonLayout(game)
+    local reviveBtn, doubleBtn, restartBtn = GetGameOverButtonLayout(game)
     local canRevive = game.canRevive
     local adBusy = presentation and presentation.adStatus == "loading"
     if canRevive then
@@ -1106,9 +1123,25 @@ local function DrawGameOver(ctx, game, presentation)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawRect(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.card, 8)
-    DrawStroke(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.cyanDim, 8, 1)
-    DrawPixelText(ctx, game.width * 0.5, restartBtn.y + 12, "再来一局", 20, C.text,
+    -- 看广告双倍零件：已翻倍后置灰，不可重复领取。
+    if game.canDoubleSettle then
+        DrawRect(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.card, 8)
+        DrawStroke(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.warn, 8, 1.5)
+        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 5, "看广告 双倍零件", 18, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 28,
+            string.format("再得 %d 零件", game.runParts or 0), 15, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        DrawRect(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.widget, 8)
+        DrawStroke(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.cyanDim, 8, 1)
+        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 12,
+            game.partsDoubled and "零件已翻倍" or "零件已入库", 17, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
+    DrawRect(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.cyan, 8)
+    DrawPixelText(ctx, restartBtn.x + restartBtn.w * 0.5, restartBtn.y + 12, "再来一局", 20, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local toast = presentation and presentation.adToast
@@ -1139,6 +1172,19 @@ local function GetUpgradeCardLayout(game)
 end
 
 -- 卡片序号圆点渲染在 DrawUpgradeCard 内。
+
+---@class UiRect
+---@field x number
+---@field y number
+---@field w number
+---@field h number
+
+-- 升格角标：卡片右上角，未升格时是入口、已升格时是状态标识。
+---@return UiRect
+local function GetBoostBadgeRect(cx, cardTop, cardW)
+    local w, h = 46, 22
+    return { x = cx + cardW * 0.5 - w - 6, y = cardTop + 6, w = w, h = h }
+end
 
 local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local x = cx - cardW * 0.5
@@ -1192,6 +1238,139 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 22,
         "已选 " .. tostring(stacks) .. " / " .. maxText, 14, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    -- v0.11.0 商业化：广告升格角标 / 升格入口（同位置切换，不额外占版面）。
+    local badge = GetBoostBadgeRect(cx, y, cardW)
+    if choice.boosted then
+        DrawRect(ctx, badge.x, badge.y, badge.w, badge.h, C.widget, 4)
+        DrawStroke(ctx, badge.x, badge.y, badge.w, badge.h, C.warn, 4, 1.2)
+        DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "已升格", 14, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        DrawStroke(ctx, badge.x, badge.y, badge.w, badge.h, C.warnDim, 4, 1)
+        DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "升格", 14, C.warnDim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+end
+
+-- ============================================================================
+-- v0.11.0 商业化：升级面板变现区（第 4 张宽卡 + 底部动作按钮）。
+-- 视觉几何与命中判定共用 GetUpgradePanelLayout，禁止在 main.lua 另写常量。
+-- ============================================================================
+
+---@class UpgradePanelLayout
+---@field cardW number
+---@field cardH number
+---@field gap number
+---@field startX number
+---@field cy number
+---@field cardCount integer
+---@field extra UiRect
+---@field rerollFree UiRect
+---@field rerollAd UiRect
+---@field fourth UiRect
+---@field extraPick UiRect
+---@field hintY number
+
+---@return UpgradePanelLayout
+local function GetUpgradePanelLayout(game)
+    local cardW, cardH, gap, startX, cy = GetUpgradeCardLayout(game)
+    local w = game.width or DESIGN_W
+    local margin = 24
+    local innerW = w - margin * 2
+    local btnGap = 12
+    local btnW = math.floor((innerW - btnGap * 2) / 3)
+    local btnY = 806
+    local btnH = 50
+    local rowX = margin
+    local choices = game.upgradeChoices or {}
+    return {
+        cardW = cardW,
+        cardH = cardH,
+        gap = gap,
+        startX = startX,
+        cy = cy,
+        cardCount = math.min(3, #choices),
+        extra = { x = margin, y = 692, w = innerW, h = 104 },
+        rerollFree = { x = rowX, y = btnY, w = btnW, h = btnH },
+        rerollAd = { x = rowX + btnW + btnGap, y = btnY, w = btnW, h = btnH },
+        fourth = { x = rowX + (btnW + btnGap) * 2, y = btnY, w = btnW, h = btnH },
+        extraPick = { x = margin, y = btnY + btnH + 10, w = innerW, h = 42 },
+        hintY = btnY + btnH + 10 + 42 + 12,
+    }
+end
+
+-- 第 4 张宽卡：未解锁时是金色锁条，解锁后展示追加候选。
+local function DrawExtraChoiceCard(ctx, choice, rect)
+    local x, y, w, h = rect.x, rect.y, rect.w, rect.h
+    if choice.locked then
+        DrawRect(ctx, x, y, w, h, C.widget, 6)
+        DrawStroke(ctx, x, y, w, h, C.warnDim, 6, 1.2)
+        DrawPixelText(ctx, x + 18, y + 14, "??", 26, C.warnDim)
+        DrawPixelText(ctx, x + 66, y + 14, "看广告 解锁第 4 张", 20, C.warn)
+        DrawPixelText(ctx, x + 66, y + 46, "神秘词条优先 · 本局多一个选择", 16, C.dim)
+        DrawPixelText(ctx, x + w - 18, y + 30, "广告", 16, C.warnDim,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        return
+    end
+    local rare = UPGRADE_RARITY[choice.rarity] or UPGRADE_RARITY.common
+    local accent = rare.color
+    DrawBluePanel(ctx, x, y, w, h, C.card, accent, 6)
+    DrawCornerBrackets(ctx, x + 4, y + 4, w - 8, h - 8, accent, 10, 1.2)
+    DrawRect(ctx, x, y, 3, h, accent, 0)
+    DrawPixelText(ctx, x + 16, y + 12, "04", 15, C.dim)
+    DrawPixelText(ctx, x + 48, y + 8, choice.name or "强化", 22, C.text)
+    DrawPixelText(ctx, x + 48, y + 38,
+        (choice.kind == "word" and "神秘词条 · " or "") .. rare.tag, 16, accent)
+    local lines = WrapTextLines(ctx, choice.detail or choice.desc or "", 17, w - 190)
+    if #lines > 0 then
+        DrawPixelText(ctx, x + w - 16, y + 20, lines[1], 17, C.dim,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        if #lines > 1 then
+            DrawPixelText(ctx, x + w - 16, y + 46, lines[2], 17, C.dim,
+                NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        end
+    end
+    DrawRect(ctx, x + w - 16 - 130, y + h - 36, 130, 26, C.widget, 6)
+    DrawStroke(ctx, x + w - 16 - 130, y + h - 36, 130, 26, accent, 6, 1)
+    DrawPixelText(ctx, x + w - 16 - 65, y + h - 31, choice.value or "强化", 16, accent,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+end
+
+---@param rect UiRect
+---@param label string
+---@param sub string
+---@param enabled boolean
+---@param accent table
+local function DrawPanelButton(ctx, rect, label, sub, enabled, accent)
+    local border = enabled and accent or C.cyanDim
+    local labelColor = enabled and accent or C.dim
+    DrawRect(ctx, rect.x, rect.y, rect.w, rect.h, enabled and C.card or C.widget, 6)
+    DrawStroke(ctx, rect.x, rect.y, rect.w, rect.h, border, 6, enabled and 1.4 or 1)
+    DrawPixelText(ctx, rect.x + rect.w * 0.5, rect.y + (sub ~= "" and 6 or 14), label, 17,
+        labelColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if sub ~= "" then
+        DrawPixelText(ctx, rect.x + rect.w * 0.5, rect.y + 28, sub, 14, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+end
+
+local function DrawUpgradeActions(ctx, game, layout)
+    local freeLabel = game.rerollFreeAvailable and "免费重抽 1/1" or "免费重抽 已用"
+    DrawPanelButton(ctx, layout.rerollFree, freeLabel, "",
+        game.rerollFreeAvailable == true, C.cyan)
+    DrawPanelButton(ctx, layout.rerollAd, "看广告 重抽", "或升格卡池", true, C.warn)
+    DrawPanelButton(ctx, layout.fourth,
+        game.fourthChoiceUnlocked and "已解锁第 4 张" or "看广告 四选一",
+        game.fourthChoiceUnlocked and "本局有效" or "多一个选择",
+        game.fourthChoiceUnlocked ~= true, C.warn)
+
+    local extraRect = layout.extraPick
+    if game.canArmExtraPick then
+        DrawPanelButton(ctx, extraRect, "看广告 · 本次额外再选一张", "", true, C.warn)
+    else
+        DrawPanelButton(ctx, extraRect, "已启用额外选卡", "选完后会再开一次面板", false, C.cyan)
+    end
 end
 
 local function DrawLevelUp(ctx, game, presentation)
@@ -1200,8 +1379,12 @@ local function DrawLevelUp(ctx, game, presentation)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
+    local choices = game.upgradeChoices or {}
+    local layout = GetUpgradePanelLayout(game)
+
     DrawPixelText(ctx, 24, 106, "升级", 18, C.cyan)
-    DrawPixelText(ctx, game.width - 24, 106, "三选一", 18, C.warn,
+    DrawPixelText(ctx, game.width - 24, 106,
+        string.format("%d 选一", math.max(3, #choices)), 18, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 130, "选择一项强化", 30, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -1209,12 +1392,14 @@ local function DrawLevelUp(ctx, game, presentation)
         string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    local choices = game.upgradeChoices or {}
-    local cardW, cardH, gap, startX, cy = GetUpgradeCardLayout(game)
     if #choices > 0 then
-        for i, choice in ipairs(choices) do
-            DrawUpgradeCard(ctx, i, choice,
-                startX + (i - 1) * (cardW + gap), cy, cardW, cardH)
+        for i = 1, layout.cardCount do
+            DrawUpgradeCard(ctx, i, choices[i],
+                layout.startX + (i - 1) * (layout.cardW + layout.gap),
+                layout.cy, layout.cardW, layout.cardH)
+        end
+        if choices[4] then
+            DrawExtraChoiceCard(ctx, choices[4], layout.extra)
         end
     else
         DrawBluePanel(ctx, 30, 365, game.width - 60, 100, C.rail, C.cyanDim, 6)
@@ -1224,7 +1409,9 @@ local function DrawLevelUp(ctx, game, presentation)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawPixelText(ctx, 24, 700, "战斗已暂停", 16, C.dim)
+    DrawUpgradeActions(ctx, game, layout)
+
+    DrawPixelText(ctx, 24, layout.hintY, "战斗已暂停", 16, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
     local hintColor = C.warn
     local hintSize = 16
@@ -1238,7 +1425,7 @@ local function DrawLevelUp(ctx, game, presentation)
         }
         hintSize = 16 + math.floor(3 * p)
     end
-    DrawPixelText(ctx, game.width - 24, 700, "点选一张卡片", hintSize, hintColor,
+    DrawPixelText(ctx, game.width - 24, layout.hintY, "点选一张卡片", hintSize, hintColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 end
@@ -1548,14 +1735,54 @@ function Backend.RenderOverlay(gameSnapshot, presentationSnapshot)
 end
 
 function Backend.HitTestGameOverButton(uiX, uiY, game)
-    local revive, restart = GetGameOverButtonLayout(game or {})
+    local revive, double, restart = GetGameOverButtonLayout(game or {})
     local function inside(btn)
         return uiX >= btn.x and uiX <= btn.x + btn.w
             and uiY >= btn.y and uiY <= btn.y + btn.h
     end
     if inside(revive) then return "revive" end
+    if inside(double) then return "double" end
     if inside(restart) then return "restart" end
     return nil
+end
+
+-- v0.11.0 商业化：升级面板命中判定。
+-- 与 DrawLevelUp 共用 GetUpgradePanelLayout，视觉与命中永远同源。
+---@param uiX number
+---@param uiY number
+---@param game table
+---@return string|nil kind
+---@return integer|nil index
+function Backend.HitTestUpgradePanel(uiX, uiY, game)
+    local layout = GetUpgradePanelLayout(game or {})
+    local function inside(rect)
+        return uiX >= rect.x and uiX <= rect.x + rect.w
+            and uiY >= rect.y and uiY <= rect.y + rect.h
+    end
+
+    if inside(layout.rerollFree) then return "reroll_free", nil end
+    if inside(layout.rerollAd) then return "reroll_ad", nil end
+    if inside(layout.fourth) then return "fourth", nil end
+    if inside(layout.extraPick) then return "extra_pick", nil end
+
+    local choices = (game and game.upgradeChoices) or {}
+    local cardTop = layout.cy - layout.cardH * 0.5
+    for i = 1, layout.cardCount do
+        local cx = layout.startX + (i - 1) * (layout.cardW + layout.gap)
+        -- 升格角标优先于卡片本体，避免点角标被当成选卡。
+        if inside(GetBoostBadgeRect(cx, cardTop, layout.cardW)) then
+            return "boost", i
+        end
+        if math.abs(uiX - cx) <= layout.cardW * 0.5 + 4
+            and math.abs(uiY - layout.cy) <= layout.cardH * 0.5 + 4 then
+            return "card", i
+        end
+    end
+    if choices[4] and inside(layout.extra) then
+        if choices[4].locked then return "fourth", nil end
+        return "card", 4
+    end
+    return nil, nil
 end
 
 function Backend.GetDesignSize()

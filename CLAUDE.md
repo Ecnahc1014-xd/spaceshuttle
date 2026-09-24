@@ -3,8 +3,15 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 变现盘点（2026-09-24）：单机只走激励视频；`ad.status=1`，但**唯一触点是复活（每局 1 次）**，无软货币、无 meta 层，IAP 被单机架构阻断。发布资产仍为空（icon/screenshots/promo），未补齐前发布会被拦。
-- 商业化设计稿 v0.11.0-design：30 张 UI mockup 落在 `assets/image/com_*.png`（主菜单 `com_menu_*` 10 张 / 局内 `com_ingame_*` 10 张 / 升级三选一 `com_lvup_*` 10 张）。**纯设计产出，未改任何玩法代码**。
+- 版本: 0.11.0（商业化 P1：地基 + 升级面板 + 结算）：
+  - **新增 `PlayerData.lua`**：软货币「零件」、每日签到、每日任务、敌机图鉴、皮肤、统计；本地 `player_data.json` 存档 + `clientCloud` 字符串云同步（合并取大值）。
+  - **新增 `AdService.lua`**：激励视频统一调度（在途锁 + 3s 冷却 + 一次性完成 + `embed manual close` 归失败）。`main.lua` 所有广告改走此处。
+  - **升级面板变现**：免费重抽 1 次/局、看广告重抽（含「卡池升格」保底稀有）、看广告解锁第 4 张（优先神秘词条卡）、单卡「升格」角标（生效 ×2）、本次额外再选一张。
+  - **结算变现**：击碎方块 +1 / 清机 +10 / 过波 +25 零件；结算页出现即按 ×1 入库，「看广告双倍零件」补发等额；已复活后重新开放结算。
+  - **命中几何同源**：新增 `Backend.HitTestUpgradePanel` / 三按钮 `GetGameOverButtonLayout`，`main.lua` 不再自持卡片常量。
+  - 验证：Lua LSP 0 Error、官方 build 成功、headless 90 帧无 Lua 报错（报告文件未落盘为该环境已知现象）。
+- 商业化设计稿 v0.11.0-design：30 张 UI mockup 落在 `assets/image/com_*.png`（主菜单 `com_menu_*` 10 张 / 局内 `com_ingame_*` 10 张 / 升级三选一 `com_lvup_*` 10 张）。
+- **待做**：P2 主菜单（货币栏/签到/每日任务/每日补给）、P3 收集层（图鉴/全服排行榜/商城/皮肤/转盘）、P4 局内（零件计数×2/暂停补给站/道具槽/轨道支援）。
 - 版本: 0.10.40（体素更新时序与幽灵块修复）：
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
@@ -114,7 +121,12 @@
 - likely_next_task: Preview 验收三选一卡片详情是否一眼读完。卡片几何不要跟着文案改。
 - 相关文件: `scripts/Game.lua`（UPGRADE_POOL.detail）, `scripts/Scene3DBackend.lua`
 
-## 本批次新增避雷（v0.11.0-design 商业化设计稿 / v0.10.39 文案 / v0.10.38 字号）
+## 本批次新增避雷（v0.11.0 商业化 P1 / v0.11.0-design 设计稿）
+- ⚠️ **升级面板命中必须走 `Backend.HitTestUpgradePanel`（v0.11.0）**：`main.lua:TryPickUpgradeAt` 已删除自持的 cardW/cardH/gap/cy/HIT_PAD 常量，改为消费后端返回的 `kind,index`。kind ∈ `card|boost|reroll_free|reroll_ad|fourth|extra_pick`。⚠️ 升格角标**必须先于**卡片本体判定，否则点角标会被当成选卡。新增面板按钮时只改 `GetUpgradePanelLayout`，禁止在 main.lua 再写第二套几何。
+- ⚠️ **第 4 张卡是「宽卡」不是第 4 列（v0.11.0）**：3 张主线卡仍是 168×300/gap8/cy530（y 380..680，视觉与命中都不变）；第 4 张画在下方 `extra` 矩形（x24,y692,w492,h104）。4 张卡横排会 696px 超出 540 画布，禁止把 `GetUpgradeCardLayout` 改成按 `#choices` 均分宽度。
+- ⚠️ **广告只能走 `AdService`（v0.11.0）**：所有 `sdk:ShowRewardVideoAd` 调用集中在 `AdService.Show`（在途锁 + 3s 冷却 + 一次性 completed + `embed manual close` 归失败 + 未受理且无回调时自行收尾）。禁止在业务代码里再写裸 `ShowRewardVideoAd`，否则返回值和迟到回调两条路径会漏处理出重复发奖。
+- ⚠️ **云变量只在编排层（v0.11.0）**：`PlayerData` 只提供 `ExportForCloud/ImportFromCloud` 字符串编解码，`clientCloud:Set/Get` 全部写在 `main.lua`。云合并取大值（parts/totalParts/highScore/codex/skins 并集），避免换设备回退进度。
+- ⚠️ **零件结算幂等 + 复活重开（v0.11.0）**：`SettleParts` 有 `partsSettled` 守卫，`main.HandleUpdate` 每帧调用安全。⚠️ `ReviveFromAd` **必须**把 `partsSettled/partsDoubled/lastSettledParts` 复位，否则复活后继续赚的零件会被守卫吞掉。
 - ⚠️ 商业化三色语义契约（v0.11.0-design）：设计稿起手确立、落地实现时不得混用——**绿色=看广告（免费获取）、金色=付费/稀有、青色=既有 dark-tech 强调色（焦点/主操作/进度）**。红色仍只留给错误/低血/危险预警，禁止拿红当促销色。
 - ⚠️ 商业化设计稿不是实现（v0.11.0-design）：30 张 mockup 只是方向候选，`assets/image/com_*.png` 不参与构建逻辑。落地任一方案前必须重新对齐既有契约——升级卡几何仍 168×300/gap8/cy530 且与 `main.lua:TryPickUpgradeAt` 同源，新增按钮（重抽/升阶/解锁）**不得压掉卡片命中区**，HUD `y=0..92`、Dock `y=866..960` 也不得被商业化元素顶开。
 - ⚠️ 广告触点密度上限（v0.11.0-design）：单局激励视频触点建议 ≤3–5 个，且禁止在死亡瞬间连弹两个广告（复活 + 结算双倍）。引擎侧只有 `sdk:ShowRewardVideoAd`，横幅/插屏无 API，设计稿里不要按插屏方案出图。

@@ -94,6 +94,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.11.0（商业化 P1）: 单机激励广告变现从「只有复活」扩到完整闭环。新增 `PlayerData.lua`（软货币零件/签到/每日任务/图鉴/皮肤 + 本地 `player_data.json` + clientCloud 字符串云同步，合并取大值）与 `AdService.lua`（在途锁 + 3s 冷却 + 一次性完成 + embed manual close 归失败；main 所有广告统一走此处）。升级面板新增：免费重抽 1 次/局、看广告重抽（含卡池升格保底稀有）、看广告解锁第 4 张（优先神秘词条卡）、单卡升格角标（生效 ×2）、本次额外再选一张；第 4 张是下方宽卡而非第 4 列，3 张主线卡几何 168×300@cy530 不变。命中几何改为 `Backend.HitTestUpgradePanel` 单一来源，main 不再自持常量。结算：击碎 +1 / 清机 +10 / 过波 +25 零件，页面出现即 ×1 入库，看广告双倍补发等额；ReviveFromAd 复位结算守卫。验证：LSP 0、build 成功、headless 90 帧无 Lua 报错。待做 P2 主菜单 / P3 收集层 / P4 局内。
 - v0.11.0-design: 商业化界面设计稿 30 张（无玩法代码变更）。先做变现盘点：单机只走激励视频，`ad.status=1` 但唯一触点是复活且每局限 1 次；无软货币、无 meta 层，IAP 因单机架构不可用，发布资产（icon/截图/宣传图）仍为空。随后按商业化思路出 3 页 ×10 张 mockup，存 `assets/image/com_*.png`：`com_menu_*`（签到/首充礼包/每日任务/商城/图鉴/排行榜/转盘/通行证/每日补给/综合）、`com_ingame_*`（局内双倍/暂停补给站/增益/复活/限时横幅/道具槽/Boss 支援/弹药/结算/新纪录）、`com_lvup_*`（重抽/升阶/四选一解锁/双按钮/锁定/额外选/卡池升格/倒计时/神秘词条/综合）。确立三色语义：绿=看广告、金=付费/稀有、青=既有强调色。设计稿仅为方向候选，落地前须重新对齐升级卡 168×300@cy530 命中契约。
 - v0.10.40: 修体素更新延迟/幽灵块。根因：NanoVGRender 晚于 3D 绘制，且短命飞散事件挖一格即把整架机签名对齐导致同帧其余格漏挖。Update 中游戏/表现快照就绪后同步 3D 场景；NanoVGRender 只画覆盖层。逐格以 Game 快照对齐实心占用和冻色，按机合批单次 MarkRegionDirty + RebuildGeometry，复验 IsSolid；飞散事件仅产生碎块。修理日志 `[Renderer3D][voxel-repair] enemy=... removed=... added=... rebuilt=true grid=ok`（失败含 error，碎块回退有 fallback）。LSP 0、官方 build 成功；Linux 运行时无体素模块且 validate 报告/截图未落盘，Preview 待验收。
 - v0.10.39: 升级卡文案压缩。玩家嫌“小作文太长”，12 张卡 detail 全部改成一句短话；详情字号 15→17、行距 22→25、最多 3 行，卡名 20→22。卡片几何不变。LSP 0、build 成功。
