@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.10.39
-简述：升级卡详情压成一句话，字号再加大。正式名「击碎，飞机大战」。
-最后巩固：2026-09-16
+当前版本：0.10.40
+简述：体素主体按规则快照逐格同步，Update 同帧重建并在 3D 渲染前提交；提供修理日志。
+最后巩固：2026-09-24
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -94,6 +94,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.10.40: 修体素更新延迟/幽灵块。根因：NanoVGRender 晚于 3D 绘制，且短命飞散事件挖一格即把整架机签名对齐导致同帧其余格漏挖。Update 中游戏/表现快照就绪后同步 3D 场景；NanoVGRender 只画覆盖层。逐格以 Game 快照对齐实心占用和冻色，按机合批单次 MarkRegionDirty + RebuildGeometry，复验 IsSolid；飞散事件仅产生碎块。修理日志 `[Renderer3D][voxel-repair] enemy=... removed=... added=... rebuilt=true grid=ok`（失败含 error，碎块回退有 fallback）。LSP 0、官方 build 成功；Linux 运行时无体素模块且 validate 报告/截图未落盘，Preview 待验收。
 - v0.10.39: 升级卡文案压缩。玩家嫌“小作文太长”，12 张卡 detail 全部改成一句短话；详情字号 15→17、行距 22→25、最多 3 行，卡名 20→22。卡片几何不变。LSP 0、build 成功。
 - v0.10.38: 玩家仍反馈字号不够，再抬一档。标签/辅助≥15，正文≥17，标题≥28；分数/波次 30，卡名 20，详情 15；飘字 32。HUD/Dock 高度与升级卡几何不变。LSP 0、build 成功。
 - v0.10.37: 修存活机幽灵块。玩法订 Update，体素世界本帧已步进完毕；只 MarkRegionDirty 要等下一帧，飞机还活着时缺口永不刷新。HollowBrick 改 SetSolid(false)+同帧 RebuildGeometry，IsSolid 确认挖空。漏挖兜底仍避开本帧已挖机，整网对齐后立刻重建。LSP 0、build 成功。

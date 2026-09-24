@@ -724,10 +724,12 @@ local function SyncVoxelEnemies(game, presentation)
                 if SpawnVoxelDebris(record, box, visualCatalog) then
                     consumedEjectIds_[box.id] = true
                 else
+                    if not box.needVisualFallback then
+                        print("[Renderer3D][voxel-repair] debris fallback enemy="
+                            .. tostring(box.enemyId) .. " col=" .. tostring(box.col)
+                            .. " row=" .. tostring(box.row))
+                    end
                     box.needVisualFallback = true
-                    print("[Renderer3D][voxel-repair] debris fallback enemy="
-                        .. tostring(box.enemyId) .. " col=" .. tostring(box.col)
-                        .. " row=" .. tostring(box.row))
                 end
             else
                 box.needVisualFallback = true
