@@ -39,7 +39,7 @@ local ReleaseScene
 local vg_ = nil
 -- v0.11.4：新手下拉手势图（dark-tech 青色线稿），只在 Backend.Init 里加载一次。
 local handImage_ = -1
-local HAND_IMAGE_PATH = "image/ui_hand_pull2_20260925121117.png"
+local HAND_IMAGE_PATH = "image/ui_hand_pull3_20260925153601.png"
 local physicalWidth_ = 0
 local physicalHeight_ = 0
 local dpr_ = 1

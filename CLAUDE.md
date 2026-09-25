@@ -4,7 +4,7 @@
 
 ## 当前状态
 - 版本: 0.11.4（新手下拉手势提示）：
-  - **手势图**：`assets/image/ui_hand_pull2_20260925121117.png`（256×384 RGBA，dark-tech 青色线稿，食指向上握拳）。`Scene3DBackend` 用 `nvgCreateImage(vg_, "image/...png", 0)` 在 Init 加载一次，**可选资源**——失败只打日志跳过提示，绝不纳入初始化成功条件。
+  - **手势图**：`assets/image/ui_hand_pull3_20260925153601.png`（256×384 RGBA，dark-tech 青色线稿，**右手握拳、食指斜朝左上**）。`Scene3DBackend` 用 `nvgCreateImage(vg_, "image/...png", 0)` 在 Init 加载一次，**可选资源**——失败只打日志跳过提示，绝不纳入初始化成功条件。⚠️ 手指方向必须是斜朝左上（下拉起手的姿态）；垂直向上或带向上箭头都与「向下拖拽」语义冲突，第一版即因箭头+垂直被弃用。
   - **触发条件**：规则层 `Game.lua` 新增 `hasLaunched`（`LaunchMarble` 置 true、`ResetGame` 复位），快照输出 `s.showPullHint = playing and not hasLaunched and not aiming`。玩家一拖拽就消失，发射过就永不出现。
   - **动画**：`DrawPullHint` 在弹弓车辆上方循环 1.6s——手沿 9 点青色虚线从上方下移到发射位（已滑过的点更亮更大），淡入/淡出，末尾跟一行「向下拖拽 松手发射」。
   - 验证：LSP 0 Error、多人 build 成功、资源已打进 dist manifest（uuid 与 .meta 一致）。⚠️ 环境 HDR Bloom shader 编译失败致离屏截图发白，需 Preview 验收动画。
