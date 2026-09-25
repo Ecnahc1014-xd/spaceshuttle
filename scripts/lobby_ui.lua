@@ -292,10 +292,10 @@ local function buildMain()
 
     -- 浏览房间 / 创建房间：本作不做多人同场，直接藏掉，避免玩家误入。
     if LobbyUI.main.browse_button then
-        LobbyUI.main.browse_button.style.display = "none"
+        LobbyUI.main.browse_button.style.visible = false   -- ⚠️ style 只支持 visible，没有 display
     end
     if LobbyUI.main.create_button then
-        LobbyUI.main.create_button.style.display = "none"
+        LobbyUI.main.create_button.style.visible = false
     end
     if LobbyUI.main.exit_button then
         skinButton(LobbyUI.main.exit_button,
@@ -317,6 +317,26 @@ local function buildMain()
     end
 end
 
+-- 匹配超时兜底句柄（重新进屏时要取消上一个，避免叠加定时器）
+local waitTimer = nil
+
+-- 5 秒还没匹配上 → 取消匹配并尝试直接开局（等价于"自动加入单机模式"）。
+-- 沙箱里没有「直接起本地游戏」的动作，能用的只有 Lobby.StartGame()；
+-- 它失败时退回主界面，让玩家自己点「开始游戏」，不会卡在等待页。
+local function onMatchTimeout()
+    waitTimer = nil
+    if Lobby.IsMatching() then
+        pcall(function() Lobby.CancelMatch() end)
+    end
+    local ok, err = pcall(function() Lobby.StartGame() end)
+    if ok then
+        print("[lobby_ui] match timeout -> StartGame (solo)")
+    else
+        print("[lobby_ui] match timeout, StartGame failed: " .. tostring(err))
+        pcall(function() Lobby.GotoMain() end)
+    end
+end
+
 local function buildQuickMatchWaiting()
     local elapsed = (LobbyState.matchmaking and LobbyState.matchmaking.elapsed) or 0
     skinBackground(LobbyUI.quick_match_waiting.background, TechBackground {
@@ -328,6 +348,13 @@ local function buildQuickMatchWaiting()
     skinButton(LobbyUI.quick_match_waiting.cancel_button,
         { left = "50%", marginLeft = -80, top = "78%", width = 160, height = 48 },
         GhostButtonVisual { label = "取消" })
+
+    -- 5 秒兜底：到点仍未匹配成功就自动进单机，不再无限等下去。
+    if waitTimer then
+        pcall(function() Timer.cancel(waitTimer) end)
+        waitTimer = nil
+    end
+    waitTimer = Timer.after(5000, onMatchTimeout)
 end
 
 local function buildConnecting()
