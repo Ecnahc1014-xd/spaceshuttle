@@ -33,8 +33,7 @@
       },
       "persistent_world": {
         "enabled": false
-      },
-      "lobby_runtime": "scripts/lobby_runtime.lua"
+      }
     },
     "ad": {
       "status": 1,
