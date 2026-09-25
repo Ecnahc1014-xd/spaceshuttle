@@ -8,7 +8,8 @@
 --    游戏本身的 NanoVG 标题/HUD/战斗界面零迁移，退出大厅后由引擎回收 ctx.root。
 -- ⚠️ stop 里只退订自己订阅的事件，禁止 UnsubscribeFromAllEvents（会误伤即将启动的游戏）。
 
-local UI = require("urhox-libs.UI")
+local UI = require "urhox-libs.UI"
+local DarkTechTheme = require "ui.DarkTechTheme"
 local GameMode = require "GameMode"
 
 local MATCH_TIMEOUT_SEC = 5
@@ -28,6 +29,8 @@ end
 
 local function BuildLobby(ctx)
     local client, root = ctx.client, ctx.root
+    -- ⚠️ 必须用项目自己的 dark-tech 主题初始化，否则联机界面会是一套陌生风格。
+    UI.Init({ theme = DarkTechTheme, scale = UI.Scale.DEFAULT })
     UI.SetRoot(root)
 
     local elapsed = 0
@@ -44,13 +47,20 @@ local function BuildLobby(ctx)
         text = "匹配到的服务端用于内购发货与余额校验",
         fontSize = 13,
     }
+    local titleLabel = UI.Label {
+        text = "击碎，飞机大战",
+        fontSize = 26,
+    }
+    -- 深海军底 + 酸青焦点：与游戏内 NanoVG 界面同一套 dark-tech 令牌。
     local screen = UI.Panel {
         width = "100%", height = "100%",
+        backgroundColor = "background",
         justifyContent = "center", alignItems = "center",
-        children = { statusLabel, hintLabel },
+        gap = 16,
+        children = { titleLabel, statusLabel, hintLabel },
     }
-    UI.SetRoot(root)
-    root.children = { screen }
+    -- 用换根的方式挂载，而不是直接改 root.children（组件树由 UI 库持有）。
+    UI.SetRoot(screen, true)
 
     local function setStatus(text, hint)
         statusLabel:SetText(text)
@@ -73,8 +83,10 @@ local function BuildLobby(ctx)
             setStatus("本地游戏加载失败", tostring(mod))
             return
         end
-        -- 本地游戏独占 root：先清掉大厅这一屏。
-        root.children = {}
+        -- ⚠️ 关键：必须**销毁** UI 根节点，而不是只清 children。
+        -- 组件树被 urhox-libs/UI 持有，仅置空 children 不会停掉它的渲染层，
+        -- 结果是全屏面板一直盖住游戏自己的 NanoVG 界面（表现为「2D 页面全没了」）。
+        UI.SetRoot(nil, true)
         localGame = mod.start({
             root = root,
             onExit = function()
@@ -82,7 +94,7 @@ local function BuildLobby(ctx)
                 localGame = nil
                 resolved = false
                 elapsed = 0
-                root.children = { screen }
+                UI.SetRoot(screen, true)
                 setStatus("正在匹配对局…")
                 beginMatch()
             end,
@@ -103,6 +115,8 @@ local function BuildLobby(ctx)
                 resolved = true
                 print("[Lobby] match found, engine will connect and switch to game script")
                 setStatus("已匹配，正在进入…", "")
+                -- 交给引擎前先拆掉组件层，避免残留渲染层盖住游戏界面。
+                UI.SetRoot(nil, true)
             end,
             onProgress = function(progress, status)
                 if resolved then return end

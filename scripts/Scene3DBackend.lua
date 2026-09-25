@@ -296,13 +296,21 @@ local function UpdateSpaceEnvironment(elapsed)
     end
 end
 
+-- 扣血线（防线基准线）：规则层越线判定是 Game.lua 的 `brickBottom > DANGER_Y`，
+-- 渲染必须画在同一条 game y 上。位置每帧由 Backend.UpdateScene 按快照 dangerY 刷新；
+-- z 固定 0，与敌机体素同一平面——斜俯视正交相机下 z 会投影到屏幕 Y，
+-- 旧的硬编码 z=0.9 会把线整体抬高约一行砖，看起来“方块过了紫线还没掉血”。
 local function CreateDangerBand()
     dangerBandNode_ = scene_:CreateChild("DangerBand")
-    dangerBandNode_.position = Vector3(0, -8.0, 0.9)
-    dangerBandNode_.scale = Vector3(11.0, 0.06, 0.06)
+    -- 初值取 DANGER_Y=900 的世界坐标，避免首帧出现在原点。
+    dangerBandNode_.position = Vector3(0, (DESIGN_H * 0.5 - 900) * 0.018, 0)
+    dangerBandNode_.scale = Vector3(11.0, 0.09, 0.09)
     local model = dangerBandNode_:CreateComponent("StaticModel")
     model:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
-    dangerBandMaterial_ = CreateMaterial({0.39, 0.19, 0.67}, 0.45)
+    dangerBandMaterial_ = CreateMaterial({0.62, 0.26, 0.92}, 0.45)
+    -- 常驻自发光：深空场景很暗，纯漫反射几乎看不见，扣血线必须一眼可辨。
+    dangerBandMaterial_:SetShaderParameter("MatEmissiveColor",
+        Variant(Color(0.40, 0.13, 0.70, 1)))
     model:SetMaterial(dangerBandMaterial_)
     model.castShadows = false
 end
@@ -374,7 +382,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.11.0"
+local BUILD_VERSION = "0.11.1"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -1793,23 +1801,31 @@ function Backend.UpdateScene(gameSnapshot, presentationSnapshot)
     end
     if dangerBandNode_ then
         local flash = presentationSnapshot.baseBarrierFlash or 0
+        -- 与规则层越线判定同源：Game.lua 用 brickBottom > DANGER_Y 扣血，
+        -- 线就画在同一个 game y（z=0，与敌机体素同平面）。
+        local dangerY = gameSnapshot.dangerY
+        if dangerY then
+            -- 只取 y：横线要横跨整个场地，x 必须居中在 0（不能用 WorldFromGame(0,..) 的 x=-4.86）。
+            dangerBandNode_.position = Vector3(0, (DESIGN_H * 0.5 - dangerY) * 0.018, 0)
+        end
         -- A6：Boss 波期间危险带常驻染成紫色警示，与普通波区分。
         local bossActive = false
         for _, enemy in ipairs(gameSnapshot.veggies or {}) do
             if enemy.isBoss then bossActive = true; break end
         end
-        local baseR, baseG, baseB = 0.39, 0.19, 0.67
-        if bossActive then baseR, baseG, baseB = 0.62, 0.20, 0.74 end
-        dangerBandNode_.scale = Vector3(11.0, 0.06 + flash * 0.18, 0.06 + flash * 0.12)
+        local baseR, baseG, baseB = 0.62, 0.26, 0.92
+        if bossActive then baseR, baseG, baseB = 0.80, 0.24, 0.98 end
+        dangerBandNode_.scale = Vector3(11.0, 0.09 + flash * 0.18, 0.09 + flash * 0.12)
         if dangerBandMaterial_ then
             dangerBandMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(
                 math.min(1.0, baseR + flash * 0.20),
                 math.min(1.0, baseG + flash * 0.48),
                 math.min(1.0, baseB + flash * 0.33), 1)))
+            -- 常驻自发光（深空场景纯漫反射看不见），受击 / Boss 时再叠加。
             dangerBandMaterial_:SetShaderParameter("MatEmissiveColor", Variant(Color(
-                flash * 1.7 + (bossActive and 1.2 or 0),
-                flash * 3.1 + (bossActive and 0.6 or 0),
-                flash * 4.0 + (bossActive and 2.4 or 0), 1)))
+                math.min(1.0, 0.40 + flash * 1.7 + (bossActive and 0.30 or 0)),
+                math.min(1.0, 0.13 + flash * 3.1 + (bossActive and 0.10 or 0)),
+                math.min(1.0, 0.70 + flash * 4.0 + (bossActive and 0.60 or 0)), 1)))
         end
     end
     -- 升级/暂停/菜单时停体素求解，避免碎块在模态下继续飞。
