@@ -19,6 +19,7 @@ local MetaUI = {}
 
 ---@class MetaState
 ---@field parts integer
+---@field gems integer 氪金代币（钻石）余额，来自服务端权威
 ---@field highScore integer
 ---@field screen string|nil 当前打开的功能面板："tasks"|"codex"|"rank"|"shop"|"wheel"
 ---@field supplyOpen boolean 每日补给弹窗是否显示
@@ -210,11 +211,16 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     local C = Colors()
     local L = GetMenuBarLayout()
 
-    -- 货币栏：只放软货币「零件」，右侧显示图鉴收集进度。
+    -- 货币栏：软货币「零件」+ 氪金代币「钻石」。整条可点，进钻石商店。
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
     D.text(ctx, L.wallet.x + 16, L.wallet.y + 6, "零件", 15, C.dim)
     D.text(ctx, L.wallet.x + 16, L.wallet.y + 22, string.format("%d", meta.parts or 0), 24, C.warn)
+    -- 钻石：金色＝付费货币；余额由服务端权威记账。
+    D.text(ctx, L.wallet.x + 156, L.wallet.y + 6, "钻石", 15, C.dim)
+    D.text(ctx, L.wallet.x + 156, L.wallet.y + 22,
+        meta.offline and "—" or string.format("%d", meta.gems or 0), 24, C.warn)
+    D.text(ctx, L.wallet.x + 236, L.wallet.y + 22, "充值 ›", 15, C.warn)
     D.text(ctx, L.wallet.x + L.wallet.w - 16, L.wallet.y + 8,
         string.format("图鉴 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0), 15, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -276,6 +282,7 @@ end
 ---@return string|nil action
 function MetaUI.HitTestMenuBar(uiX, uiY, meta)
     local L = GetMenuBarLayout()
+    if Inside(L.wallet, uiX, uiY) then return "open_recharge" end
     for i, def in ipairs(ENTRY_DEFS) do
         if Inside(L.entries[i], uiX, uiY) then return def.action end
     end
@@ -642,11 +649,36 @@ end
 -- 分发
 -- ============================================================================
 
+-- 插件式注册：额外面板（如充值弹层）由编排层注册，避免 meta-ui 反向依赖业务模块。
+---@class MetaScreenPlugin
+---@field draw fun(ctx:any, w:number, meta:MetaState)
+---@field hit fun(uiX:number, uiY:number, w:number, meta:MetaState):(string|nil, integer|nil)
+
+---@type table<string, MetaScreenPlugin>
+local extraScreens_ = {}
+
+---@param name string
+---@param drawer fun(ctx:any, w:number, meta:MetaState)
+---@param hitTester fun(uiX:number, uiY:number, w:number, meta:MetaState):(string|nil, integer|nil)
+function MetaUI.RegisterScreen(name, drawer, hitTester)
+    extraScreens_[name] = { draw = drawer, hit = hitTester }
+end
+
+---@return table 绘制依赖（供外部弹层复用同一套令牌）
+function MetaUI.GetDeps()
+    return D
+end
+
 ---@param ctx any
 ---@param w number
 ---@param meta MetaState
 function MetaUI.DrawScreen(ctx, w, meta)
     local screen = meta.screen
+    local plugin = screen and extraScreens_[screen] or nil
+    if plugin then
+        plugin.draw(ctx, w, meta)
+        return
+    end
     if screen == "tasks" then
         DrawTasks(ctx, w, meta)
     elseif screen == "codex" then
@@ -664,6 +696,10 @@ end
 ---@return integer|nil index
 function MetaUI.HitTestScreen(uiX, uiY, w, meta)
     local screen = meta.screen
+    local plugin = screen and extraScreens_[screen] or nil
+    if plugin then
+        return plugin.hit(uiX, uiY, w, meta)
+    end
     if screen == "tasks" then
         return HitTestTasks(uiX, uiY, w, meta)
     elseif screen == "codex" then

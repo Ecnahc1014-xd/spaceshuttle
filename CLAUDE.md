@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.0（单机间接联机骨架 + 氪金代币）：
+  - **架构**：`main.lua` 变成纯分流入口（`IsServerMode()` → `network.Server`；否则 → `game.client_main`）。原 929 行玩法编排整体搬到 `scripts/game/client_main.lua`，`HandleUpdate/HandleRender/HandleMouse*/HandleTouch*/HandleKey*` 保持**文件级全局 function**（`SubscribeToEvent` 按名字解析，加 `local` 会静默失效）。
+  - **服务端只做两件事**：IAP 发货（`Shop.onDeliver` → `serverCloud:BatchCommit` + `orderId` 幂等/离线补发）+ 钻石余额（`serverCloud.money`）。不做场景复制、不跑战斗。`scripts/network/Server.lua` 用 `.meta {c_or_s:"s"}` 标记，不打进客户端包。
+  - **氪金代币「钻石」**：唯一服务端权威货币。客户端只申请（`IAPGemSpend`），扣款在服务端 `MoneyCost`，成功后才由客户端发本地软货币。余额经 `IAPBalanceSync` / `IAPBalanceDirty` 推送。
+  - **大厅**：`scripts/lobby_runtime.lua`（urhox-libs/UI，1 人秒开 + 5s 超时）→ 成功由引擎切游戏脚本；超时/失败 `GameMode.SetOffline(true)` → `local_game.lua` → `ClientMain.Start{offline=true}`。⚠️ `stop` 只 `UnsubscribeFromEvent` 自己订阅的，禁止 `UnsubscribeFromAllEvents`。
+  - **离线只认 `GameMode.IsOffline()`**：禁止用 `IsNetworkMode()`（大厅启动后恒为 true）。云存档/云高分/排行榜/充值在离线路径全部短路。
+  - **UI 无污染**：大厅用 urhox-libs/UI（进游戏后 `root.children={}` 拆掉）；标题/战斗/HUD/充值弹层全部沿用原 NanoVG dark-tech 令牌。充值弹层 `scripts/ui/RechargeShop.lua` 通过 `MetaUI.RegisterScreen` 插件注册，复用 `MetaUI.GetDeps()` 的令牌与原语，不反向 require。
+  - 验证：Lua LSP 0 Error、官方 build 成功（多人模式 1 人秒开）。⚠️ 待 Preview/真机验收：大厅流程、内购商品开通。
 - 版本: 0.11.0（商业化 P1+P2+P3+部分 P4）：
   - **三色语义落地**：新增 `C.ad` / `C.adDim`（绿＝看广告），与青（主操作/进度）、金（稀有）三分。所有「看广告」按钮一律绿色，免费领取一律青色。
   - **`PlayerData.lua`**：软货币「零件」、每日签到（7 天递增 100→300）、每日任务（击碎 300 / 抵达第 8 波 / 完成 3 局）、敌机图鉴、皮肤、统计；本地 `player_data.json` + `clientCloud` 字符串云同步（合并取大值）。新增通用每日计数器 `GetDailyCount/AddDailyCount`（转盘/补给/广告礼包限次）。
@@ -125,6 +133,16 @@
 ## 预测下一步
 - likely_next_task: Preview 验收三选一卡片详情是否一眼读完。卡片几何不要跟着文案改。
 - 相关文件: `scripts/Game.lua`（UPGRADE_POOL.detail）, `scripts/Scene3DBackend.lua`
+
+## 本批次新增避雷（v0.12.0 单机间接联机 / v0.11.0 商业化）
+- ⚠️ **`SubscribeToEvent` 的处理器按名字解析，必须是文件级全局 function（v0.12.0）**：写成 `local function HandleXxx` 或在闭包内声明，订阅会**静默失效**（不报错、不触发）。大厅里需要转发时用「模块级引用 + 文件级 `function HandleLobbyUpdate`」的模式。
+- ⚠️ **离线判断只认 `GameMode.IsOffline()`（v0.12.0）**：`IsNetworkMode()` 在大厅启动后**恒为 true**，即使匹配超时降级本地也仍是 true。用它判离线必然出错。
+- ⚠️ **服务端脚本必须用 `.meta {c_or_s:"s"}` 标记（v0.12.0）**：`scripts/network/Server.lua.meta`。否则服务端专属代码会打进客户端包。服务端禁止 require 任何渲染/HUD/商店 UI/玩法模块。
+- ⚠️ **氪金代币的扣款只能在服务端（v0.12.0）**：客户端 `IAPGemSpend` 只是「申请」，服务端 `serverCloud.money:Cost` 才是权威；扣款成功后才由客户端发本地奖励。发货必须 `serverCloud:BatchCommit` + `orderId`（幂等 + 离线补发），禁止用 `clientCloud` 发货。
+- ⚠️ **两套云职责分离（v0.12.0）**：`clientCloud` = 自己的排行榜/成就/养成存档（客户端读写自己）；`serverCloud` = 钻石发货与余额（服务端读写任意 userId）。**禁止**因为「已经联机了」就把排行榜/成就搬到服务端——本作没有防作弊/售卖绑定/代写他分的需求。
+- ⚠️ **大厅的 `stop` 只退订自己的事件（v0.12.0）**：`UnsubscribeFromEvent(name)`，**禁止** `UnsubscribeFromAllEvents()`（会误伤即将启动的游戏）。大厅进游戏时用 `root.children = {}` 交出界面，不是销毁 root。
+- ⚠️ **服务端专属全局要走 `_G` 取（v0.12.0）**：`Shop` / `SERVER_MAX_PLAYERS` / `SERVER_REGISTERED_PLAYERS` / `SERVER_TICK_RATE` 只在服务端脚本环境注入，直接引用会让 LSP 报未定义全局、也让「客户端打包同文件」时语义不清。用 `local g = _G --[[@as table]]; g.Shop` 取用。
+- ⚠️ **面板的插件式注册（v0.12.0）**：`MetaUI.RegisterScreen(name, draw, hit)` 让外部弹层（如 `ui/RechargeShop.lua`）接入既有 screen 分发，靠 `MetaUI.GetDeps()` 复用颜色令牌与绘制原语。这样 MetaUI 不需要反向 require 业务模块，避免循环依赖与样式漂移。
 
 ## 本批次新增避雷（v0.11.0 商业化 P1+P2+P3 / v0.11.0-design 设计稿）
 - ⚠️ **绿色＝看广告，青色＝免费/主操作，金色＝稀有（v0.11.0 落地）**：`C.ad / C.adDim` 是新增令牌。所有 `sdk` 激励视频入口（复活/双倍/重抽/四选一/升格/额外选/防线急救/稀有保底/广告礼包/转盘/补给双倍）必须用 `C.ad`；免费领取（签到/任务领取/直接领补给）用 `C.cyan`；稀有度与数值徽标才用 `C.warn`。⚠️ 禁止再用金色画广告按钮——玩家分不清「哪个要花钱、哪个看广告就行」。
