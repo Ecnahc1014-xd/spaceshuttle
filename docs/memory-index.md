@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.10.40（玩法）/ v0.11.0-design（商业化设计稿）
-简述：玩法侧体素主体按规则快照逐格同步，Update 同帧重建并在 3D 渲染前提交。商业化侧完成变现盘点并输出 30 张 UI 设计稿候选。
-最后巩固：2026-09-24
+当前版本：0.11.1
+简述：扣血线（防线基准线）与规则越线判定同源——每帧按快照 dangerY 刷位置、z=0 与敌机同平面、加常驻自发光使其可见。
+最后巩固：2026-09-25
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，单机模式，raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -94,6 +94,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.11.1（扣血线位置 + 可见性）: 玩家反馈「扣分那条线不可见，而且方块过了紫线才掉血」。根因两层：①位置——规则层越线判定是 `Game.lua` 的 `brickBottom > DANGER_Y(900)`，而 3D 紫线写死 `Vector3(0,-8.0,0.9)`；46° 斜俯视**正交**相机下 z 会投影到屏幕 Y，z=0.9 把线整体抬高约一行砖。改为 `CreateDangerBand` 初值 `(DESIGN_H*0.5-900)*0.018`、z=0（与敌机体素同平面），并在 `Backend.UpdateScene` 每帧按快照 `gameSnapshot.dangerY` 刷位置，与规则同源；横线 x 必须居中 0，不能用 `WorldFromGame(0,y)`（x=-4.86 会把线左移）。②可见性——深空场景纯漫反射细盒几乎看不见，加常驻 `MatEmissiveColor(0.40,0.13,0.70)`、线体 0.06→0.09、底色提亮 (0.39,0.19,0.67)→(0.62,0.26,0.92)，受击/Boss 在其上叠加。LSP 0、多人 build 成功。⚠️ 本环境 llvmpipe 下 `BloomHDR(...TONEMAP_LUT)` 编译失败（`texture3DLod`），HDR 链断导致离屏截图整屏纯白，无法目视验收，需 Preview 确认。
 - v0.12.0（单机间接联机 + 氪金代币）: 为了接内购（单机架构原先做不了 IAP），按「单机间接联机」把项目改成 client+server 双入口。`main.lua` 退化成纯分流（`IsServerMode()` → `network.Server`，否则 `game.client_main`），929 行玩法编排整体搬到 `scripts/game/client_main.lua`，HandleXxx 保持文件级全局（SubscribeToEvent 按名字解析）。服务端 headless 只承载两件事：IAP 发货（`Shop.onDeliver` → `serverCloud:BatchCommit` + orderId 幂等/离线补发）与氪金代币「钻石」余额（`serverCloud.money`，`.meta c_or_s=s`）；不复制场景、不跑战斗。客户端加 `network/Client.lua`：连上上报 ready、收 `IAPBalanceSync`/`IAPBalanceDirty` 推余额、`IAPGemSpend` 只申请扣款（权威在服务端）。`GameMode.lua` 是唯一离线标志（禁止用 `IsNetworkMode()`，大厅启动后恒 true），离线时云存档/云高分/排行榜/充值全部短路。`lobby_runtime.lua`（urhox-libs/UI）1 人秒开 + 5s 超时 → `SetOffline(true)` → `local_game.lua` → `ClientMain.Start{offline=true}`；stop 只退订自己的事件。`ui/RechargeShop.lua` 是 NanoVG 充值弹层，靠 `MetaUI.RegisterScreen` 插件接入，复用 `MetaUI.GetDeps()` 令牌，UI 无污染。settings.json 开 `multiplayer.enabled=true` + `lobby_runtime` + `player_number:1/immediately_start`。LSP 0、多人 build 成功。待 Preview/真机验收大厅与内购开通。
 - v0.11.0（商业化 P1+P2+P3+部分 P4）: 单机激励广告变现从「只有复活」扩成完整闭环。**三色语义落地**：新增 `C.ad/C.adDim` 绿＝看广告，青＝免费/主操作，金＝稀有，所有广告按钮一律绿色。新增 `PlayerData.lua`（零件/签到/每日任务/图鉴/皮肤/统计 + 本地存档 + clientCloud 云合并取大值 + 通用每日计数器 `GetDailyCount/AddDailyCount`）、`AdService.lua`（激励视频统一调度）、`MetaCatalog.lua`（图鉴文案/皮肤/商城/转盘奖池静态数据）、`MetaUI.lua`（元层界面绘制+命中，依赖注入拿后端颜色令牌与绘制原语）。主菜单商业区＝货币栏+四入口（商城/图鉴/任务/排行）+每日签到+每日补给弹窗；五个面板＝任务/图鉴/全服排行榜（`GetRankList`+`GetUserNickname`）/商城（5 款程序化车辆皮肤+广告礼包）/幸运转盘（raw NanoVG 扇形）。升级面板＝免费重抽 1/局、看广告重抽（卡池升格保底稀有）、看广告四选一（优先神秘词条，画成下方宽卡）、单卡升格（生效×2）、额外再选一张。结算＝击碎+1/清机+10/过波+25 零件，出现即×1入库+看广告双倍，三按钮。局内 P4＝HUD 右上「零件 +N」+ 暂停面板战场补给站（看广告防线+25血 / 下个强化必出稀有，各 1 次/局）。图鉴靠 `Game.runAircraft` 记录本局清掉的机型，结算解锁并发收录奖励。命中几何全部收敛到 `Backend.HitTest*` 单一来源。验证：LSP 0、build 成功、截图对照设计稿（菜单商业区/商城/转盘/补给弹窗）。待做：道具槽/轨道支援/零件×2 增益。
 - v0.11.0-p1（商业化 P1）: 单机激励广告变现从「只有复活」扩到完整闭环。新增 `PlayerData.lua`（软货币零件/签到/每日任务/图鉴/皮肤 + 本地 `player_data.json` + clientCloud 字符串云同步，合并取大值）与 `AdService.lua`（在途锁 + 3s 冷却 + 一次性完成 + embed manual close 归失败；main 所有广告统一走此处）。升级面板新增：免费重抽 1 次/局、看广告重抽（含卡池升格保底稀有）、看广告解锁第 4 张（优先神秘词条卡）、单卡升格角标（生效 ×2）、本次额外再选一张；第 4 张是下方宽卡而非第 4 列，3 张主线卡几何 168×300@cy530 不变。命中几何改为 `Backend.HitTestUpgradePanel` 单一来源，main 不再自持常量。结算：击碎 +1 / 清机 +10 / 过波 +25 零件，页面出现即 ×1 入库，看广告双倍补发等额；ReviveFromAd 复位结算守卫。验证：LSP 0、build 成功、headless 90 帧无 Lua 报错。待做 P2 主菜单 / P3 收集层 / P4 局内。
