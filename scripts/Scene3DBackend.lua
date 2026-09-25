@@ -37,6 +37,9 @@ local voxelWorld_ = nil
 local CleanupFailedInit
 local ReleaseScene
 local vg_ = nil
+-- v0.11.4：新手下拉手势图（dark-tech 青色线稿），只在 Backend.Init 里加载一次。
+local handImage_ = -1
+local HAND_IMAGE_PATH = "image/ui_hand_pull2_20260925121117.png"
 local physicalWidth_ = 0
 local physicalHeight_ = 0
 local dpr_ = 1
@@ -402,7 +405,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.11.2"
+local BUILD_VERSION = "0.11.4"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -854,6 +857,68 @@ local function DrawAmmoSlots(ctx, game, presentation)
     end
 
     DrawNextWavePreview(ctx, game)
+end
+
+-- v0.11.4：新手下拉提示。玩家本局还没发射过、也没在拖拽时，在弹弓车辆上方
+-- 循环播放「手从上往下拉」的动画：手沿一条虚线从高处下移到发射位，再淡出重来。
+-- 纯表现层，只读快照 showPullHint / slingX / slingY，不触达规则层。
+local function DrawPullHint(ctx, game)
+    if not game.showPullHint then return end
+    if not handImage_ or handImage_ <= 0 then return end
+
+    local slingX = game.slingX or DESIGN_W * 0.5
+    local slingY = game.slingY or (BOTTOM_DOCK_Y - 16)
+    -- 循环周期 1.6s：前 0.15 淡入 → 0.75 下滑 → 0.35 停在低位 → 0.35 淡出。
+    local period = 1.6
+    local t = (game.elapsed or 0) % period
+    local progress = math.min(1, t / 0.9)
+    local eased = 1 - (1 - progress) * (1 - progress)
+    -- 手部从上往下：起点在车辆上方 ~120px，终点贴近车辆。
+    local handW, handH = 92, 138
+    local topY = slingY - 150
+    local bottomY = slingY - handH + 26
+    local handX = slingX - handW * 0.5
+    local handY = topY + (bottomY - topY) * eased
+
+    local alpha = 1.0
+    if t < 0.15 then
+        alpha = t / 0.15
+    elseif t > period - 0.35 then
+        alpha = math.max(0, (period - t) / 0.35)
+    end
+
+    nvgSave(ctx)
+    nvgGlobalAlpha(ctx, alpha)
+
+    -- 拖拽轨迹：从手起点到终点的一条青色点状虚线。
+    local trackX = slingX
+    local trackTop = topY + 8
+    local trackBottom = bottomY + handH - 20
+    local dots = 9
+    for i = 1, dots do
+        local dt = (i - 1) / (dots - 1)
+        local dy = trackTop + (trackBottom - trackTop) * dt
+        -- 已滑过的位置更亮，未到的更暗，形成方向感。
+        local passed = dt <= eased + 0.02
+        local a = passed and 210 or 70
+        local r = passed and 3.0 or 2.2
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, trackX, dy, r)
+        nvgFillColor(ctx, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], a))
+        nvgFill(ctx)
+    end
+
+    -- 手势图（青色线稿，直接用原图）。
+    nvgBeginPath(ctx)
+    nvgRect(ctx, handX, handY, handW, handH)
+    nvgFillPaint(ctx, nvgImagePattern(ctx, handX, handY, handW, handH, 0, handImage_, 1))
+    nvgFill(ctx)
+
+    -- 文案：放在手下方，跟着手一起走。
+    DrawPixelText(ctx, slingX, bottomY + handH - 8, "向下拖拽 松手发射",
+        15, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    nvgRestore(ctx)
 end
 
 local function DrawLetterboxBackground(ctx, width, height)
@@ -1605,6 +1670,7 @@ local function RenderOverlay(game, presentation, meta)
     nvgGlobalAlpha(vg_, 1.0)
     DrawHud(vg_, game, presentation)
     if game.state == "playing" then
+        DrawPullHint(vg_, game)
         DrawAmmoSlots(vg_, game, presentation)
         DrawDamageVignette(vg_, game, presentation)
     elseif game.state == "menu" then
@@ -1787,6 +1853,13 @@ function Backend.Init()
     end
     nvgFontZpix_ = fontId
 
+    -- 手势图是可选资源：缺失时只跳过提示，绝不纳入初始化成功条件。
+    handImage_ = nvgCreateImage(vg_, HAND_IMAGE_PATH, 0)
+    if not handImage_ or handImage_ <= 0 then
+        handImage_ = -1
+        print("[Scene3DBackend] hand hint image unavailable: " .. HAND_IMAGE_PATH)
+    end
+
     if not Renderer3D.Init(scene_, voxelWorld_) then
         print("[Scene3DBackend] ERROR: Renderer3D initialization failed")
         CleanupFailedInit()
@@ -1805,6 +1878,7 @@ function Backend.Shutdown()
         vg_ = nil
     end
     nvgFontZpix_ = -1
+    handImage_ = -1
     renderer:SetViewport(0, nil)
     ReleaseScene()
 end

@@ -133,6 +133,8 @@ local baseHp = BASE_HP
 local wave = 1
 local elapsed = 0
 local waveCooldown = 0
+-- 本局是否成功发射过弹珠。用于「新手下拉手势提示」：玩家还没做过任何操作时循环播放。
+local hasLaunched = false
 ---@type NextWavePlan|nil
 local nextWavePlan = nil
 
@@ -401,6 +403,7 @@ ResetGame = function()
     veggies = {}
     marbles = {}
     aiming = false
+    hasLaunched = false
     startArmed = false
     reviveUsed = false
     -- v0.11.0 商业化：局内零件与升级面板变现状态复位
@@ -1585,6 +1588,7 @@ local function LaunchMarble(dx, dy, power)
     activeBall.vy = -dy / length * speed
     activeBall.speed = speed
     activeBall.onSling = false
+    hasLaunched = true
     table.insert(marbles, activeBall)
     Emit("marble_launched", {
         id = activeBall.id,
@@ -2371,6 +2375,8 @@ function Game.GetSnapshot()
     s.veggies = veggies
     s.marbles = marbles
     s.aiming = aiming
+    -- v0.11.4：新手下拉提示只在「本局还没发射过、也没正在拖拽」时显示。
+    s.showPullHint = (gameState == "playing") and (not hasLaunched) and (not aiming)
     s.aimX = aimX
     s.aimY = aimY
     s.slingX = SLING_X

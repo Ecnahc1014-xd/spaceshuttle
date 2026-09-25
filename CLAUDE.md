@@ -3,6 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.11.4（新手下拉手势提示）：
+  - **手势图**：`assets/image/ui_hand_pull2_20260925121117.png`（256×384 RGBA，dark-tech 青色线稿，食指向上握拳）。`Scene3DBackend` 用 `nvgCreateImage(vg_, "image/...png", 0)` 在 Init 加载一次，**可选资源**——失败只打日志跳过提示，绝不纳入初始化成功条件。
+  - **触发条件**：规则层 `Game.lua` 新增 `hasLaunched`（`LaunchMarble` 置 true、`ResetGame` 复位），快照输出 `s.showPullHint = playing and not hasLaunched and not aiming`。玩家一拖拽就消失，发射过就永不出现。
+  - **动画**：`DrawPullHint` 在弹弓车辆上方循环 1.6s——手沿 9 点青色虚线从上方下移到发射位（已滑过的点更亮更大），淡入/淡出，末尾跟一行「向下拖拽 松手发射」。
+  - 验证：LSP 0 Error、多人 build 成功、资源已打进 dist manifest（uuid 与 .meta 一致）。⚠️ 环境 HDR Bloom shader 编译失败致离屏截图发白，需 Preview 验收动画。
 - 版本: 0.11.3（修复联网客户端敌机体素失色）：
   - `Renderer3D.lua` 将敌机主体和飞散碎块显式创建为 `LOCAL` Volume；`SetPaletteEntry`/`SetPaletteEntryPBR`/`SetPaletteCutColor` 与 `GetPaletteMaterial` 统一指定 `VOXEL_PALETTE_LOCAL`，避免客户端本地体素从空的 Local 色板取色。规则层和逐格修复日志未改。
   - 验证：Lua LSP 0 Error、官方多人构建成功、色板/体积/材质域静态契约通过；Linux 本地无体素模块且多人模式不适用单机离屏验证，**Preview 战斗态色彩尚待目视确认**。
@@ -37,7 +42,11 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.11.3 联网客户端敌机体素颜色域修复（Preview 待验）
+- 上次交付: v0.11.4 新手下拉手势提示（循环动画）
+
+## 本批次新增避雷（v0.11.4 新手引导）
+- ⚠️ **新手提示必须由规则层给"是否已操作过"的标志，别让渲染层猜（v0.11.4）**：`Game.lua` 的 `hasLaunched` 在 `LaunchMarble` 置 true、`ResetGame` 复位，快照出 `s.showPullHint = playing and not hasLaunched and not aiming`。渲染层只读，不自行判断"玩家是否操作过"。玩家一拖拽（`aiming`）提示即消失，发射过就永不出现。
+- ⚠️ **UI 用的图片资源是可选依赖（v0.11.4）**：`nvgCreateImage(vg_, "image/xxx.png", 0)` 失败只打日志并跳过该 UI 元素，**绝不**能进 `Backend.Init` 的成功条件——否则缺图会导致整个后端启动失败（UI 全没 + 卡死）。图片放 `assets/image/`，路径从 assets 根写起（`image/...`），且必须同时有 `.meta`（uuid），构建才会打进 manifest。
 
 ## 历史
 - 版本: 0.11.1（扣血线同源修正）：紫线曾一度改为跟规则线，见下条避雷的「z 投影」根因。
