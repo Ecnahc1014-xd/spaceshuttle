@@ -1653,14 +1653,21 @@ local function HandleBackendNanoVGRender(eventType, eventData)
         return
     end
     -- 首帧兜底：覆盖层要等第一次 Update 之后才有快照可画，这中间恰好空掉一帧。
-    -- 不兜的话会露出引擎默认清屏色——玩家看到的就是「进游戏时闪一下灰」。
-    -- 这里先铺满我们自己的深色底，保证任何一帧都不会出现非主题色。
+    -- 不兜的话会露出引擎默认清屏色——玩家看到的就是「切进游戏时闪一下灰」。
+    --
+    -- ⚠️ 这里必须**整屏实心填充**，不能调用 DrawLetterboxBackground：
+    --    那个函数只填设计画布**外**的 letterbox（画布内部要留给 3D），
+    --    而 9:16 屏幕上 offsetX_/offsetY_ 都是 0 → 它一笔都不画 → 灰帧照旧。
     nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
     nvgResetTransform(vg_)
     nvgResetScissor(vg_)
     nvgGlobalAlpha(vg_, 1.0)
     nvgScale(vg_, scale_, scale_)
-    DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
+    nvgTranslate(vg_, offsetX_ or 0, offsetY_ or 0)
+    nvgBeginPath(vg_)
+    nvgRect(vg_, 0, 0, DESIGN_W, DESIGN_H)
+    nvgFillColor(vg_, nvgRGBA(C.bg[1], C.bg[2], C.bg[3], 255))
+    nvgFill(vg_)
     nvgEndFrame(vg_)
 end
 
