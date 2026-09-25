@@ -274,6 +274,21 @@ end
 -- 各屏构建
 -- ============================================================================
 
+-- 匹配超时兜底句柄（重新进屏时要取消上一个，避免叠加定时器）
+local waitTimer = nil
+local verifyTimer = nil       -- 兜底事后校验句柄
+local matchFailed = false     -- 上一次兜底是否也没能开局，用于主界面给出明确提示
+
+---@param fn fun()
+---@return boolean
+local function tryCall(fn)
+    local ok, err = pcall(fn)
+    if not ok then
+        print("[lobby_ui] call failed: " .. tostring(err))
+    end
+    return ok
+end
+
 -- 自动快速匹配：玩家不需要点任何东西。
 -- 用一次性标志，避免从「取消匹配」返回主界面后又被立刻拽回匹配队列。
 local autoMatched = false
@@ -292,10 +307,10 @@ local function buildMain()
 
     -- 浏览房间 / 创建房间：本作不做多人同场，直接藏掉，避免玩家误入。
     if LobbyUI.main.browse_button then
-        LobbyUI.main.browse_button.style.visible = false   -- ⚠️ style 只支持 visible，没有 display
+        LobbyUI.main.browse_button.visible = false   -- ⚠️ visible 在控件本体上，不在 style 代理里
     end
     if LobbyUI.main.create_button then
-        LobbyUI.main.create_button.style.visible = false
+        LobbyUI.main.create_button.visible = false
     end
     if LobbyUI.main.exit_button then
         skinButton(LobbyUI.main.exit_button,
@@ -304,37 +319,69 @@ local function buildMain()
     end
 
     -- 自动发起快速匹配：player_number=1 + immediately_start → 每人独占一房，秒开。
+    if matchFailed and not Lobby.IsMatching() then
+        -- 兜底都失败过：允许再次自动尝试（玩家重进主界面时给一条活路）
+        matchFailed = false
+        autoMatched = false
+    end
+    -- 连续失败时把副标题换成明确状态，玩家不会以为"卡住了"
+    if matchFailed then
+        skinBackground(LobbyUI.main.background, TechBackground {
+            title = "击碎，飞机大战",
+            line1 = "连接失败",
+            line2 = "点「开始游戏」重试",
+        })
+    end
     if not autoMatched then
         autoMatched = true
-        local ok, err = pcall(function()
-            Lobby.QuickMatch()
-        end)
-        if ok then
+        if tryCall(function() Lobby.QuickMatch() end) then
             print("[lobby_ui] auto QuickMatch fired")
         else
-            print("[lobby_ui] auto QuickMatch failed: " .. tostring(err))
+            print("[lobby_ui] auto QuickMatch failed, stay on main")
         end
     end
 end
 
--- 匹配超时兜底句柄（重新进屏时要取消上一个，避免叠加定时器）
-local waitTimer = nil
-
 -- 5 秒还没匹配上 → 取消匹配并尝试直接开局（等价于"自动加入单机模式"）。
 -- 沙箱里没有「直接起本地游戏」的动作，能用的只有 Lobby.StartGame()；
 -- 它失败时退回主界面，让玩家自己点「开始游戏」，不会卡在等待页。
+-- 前向声明：onMatchTimeout 里要调用它；不先声明会被 Lua 当成全局查找 → nil
+local escalate
+
 local function onMatchTimeout()
     waitTimer = nil
     if Lobby.IsMatching() then
-        pcall(function() Lobby.CancelMatch() end)
+        tryCall(function() Lobby.CancelMatch() end)
     end
-    local ok, err = pcall(function() Lobby.StartGame() end)
-    if ok then
+
+    -- 兜底 1：直接开局（等价于进单机）
+    if tryCall(function() Lobby.StartGame() end) then
         print("[lobby_ui] match timeout -> StartGame (solo)")
-    else
-        print("[lobby_ui] match timeout, StartGame failed: " .. tostring(err))
-        pcall(function() Lobby.GotoMain() end)
+        -- ⚠️ StartGame 返回成功**不等于**真的进了游戏。挂一次事后校验：
+        --    2 秒后若仍在匹配/房间态，判定为软失败，继续走下一级兜底。
+        if verifyTimer then pcall(function() Timer.cancel(verifyTimer) end) end
+        verifyTimer = Timer.after(2000, function()
+            verifyTimer = nil
+            if Lobby.IsMatching() or Lobby.IsInRoom() then
+                print("[lobby_ui] StartGame soft-failed, escalating")
+                escalate()
+            end
+        end)
+        return
     end
+
+    escalate()
+end
+
+-- 下一级兜底：再试一次快速匹配；仍不行就回主界面给出明确状态。
+escalate = function()
+    if tryCall(function() Lobby.QuickMatch() end) then
+        print("[lobby_ui] -> retry QuickMatch")
+        return
+    end
+    matchFailed = true
+    print("[lobby_ui] all fallbacks failed, back to main")
+    tryCall(function() Lobby.GotoMain() end)
 end
 
 local function buildQuickMatchWaiting()
