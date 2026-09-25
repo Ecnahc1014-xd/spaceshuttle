@@ -22,7 +22,9 @@ local upgradeHintPulse = 0    -- v0.10.24：升级面板空白点击时的提示
 local adStatus = nil          -- v0.10.32：nil / "loading"
 local adToast = nil
 local adToastTimer = 0
-local cloudStatus = "idle"    -- idle / syncing / ok / offline
+-- 云存档状态（**只描述云存档**，不描述联机模式；两者是不同服务，禁止混用文案）：
+-- idle / syncing / ok / unavailable
+local cloudStatus = "idle"
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,

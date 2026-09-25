@@ -57,20 +57,20 @@ local function SaveHighScoreToCloud(score)
                 print("[Main] cloud high_score saved=" .. tostring(n))
             end,
             error = function(code, reason)
-                Presentation.SetCloudStatus("offline")
+                Presentation.SetCloudStatus("unavailable")
                 print("[Main] cloud save failed: " .. tostring(reason) .. " code=" .. tostring(code))
             end,
         })
     end)
     if not okCall then
-        Presentation.SetCloudStatus("offline")
+        Presentation.SetCloudStatus("unavailable")
         print("[Main] clientCloud unavailable, keep local high score")
     end
 end
 
 local function LoadHighScoreFromCloud()
     if GameMode.IsOffline() then
-        Presentation.SetCloudStatus("offline")
+        Presentation.SetCloudStatus("unavailable")
         print("[Main] offline: skip cloud high score")
         return
     end
@@ -89,13 +89,13 @@ local function LoadHighScoreFromCloud()
                 print("[Main] cloud high_score loaded=" .. tostring(cloudScore))
             end,
             error = function(code, reason)
-                Presentation.SetCloudStatus("offline")
+                Presentation.SetCloudStatus("unavailable")
                 print("[Main] cloud load failed: " .. tostring(reason) .. " code=" .. tostring(code))
             end,
         })
     end)
     if not okCall then
-        Presentation.SetCloudStatus("offline")
+        Presentation.SetCloudStatus("unavailable")
         print("[Main] clientCloud unavailable at start")
     end
 end

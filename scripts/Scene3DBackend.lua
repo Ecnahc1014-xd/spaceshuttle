@@ -1020,8 +1020,10 @@ local function DrawHud(ctx, game, presentation)
         bestColor = C.cyan
     elseif cloud == "syncing" then
         bestLine = bestLine .. " · 同步中"
-    elseif cloud == "offline" then
-        bestLine = bestLine .. " · 本地"
+    elseif cloud == "unavailable" then
+        -- ⚠️ 这里只描述「云存档」不可用，**不能写「本地」**——那会被读成
+        --    「整个游戏是单机模式」，而匹配成功时游戏服其实是连上的。
+        bestLine = bestLine .. " · 云未连接"
         bestColor = C.warn
     end
     DrawPixelText(ctx, 14, 52, bestLine, 15, bestColor)
