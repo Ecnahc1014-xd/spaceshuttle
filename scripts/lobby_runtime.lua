@@ -87,9 +87,12 @@ local function BuildLobby(ctx)
                 onMatchFound = function(serverInfo)
                     resolved = true
                     print("[Lobby] match found, engine will connect and switch to game script")
-                    -- ⚠️ 这里**故意不拆**加载画面：拆掉到游戏首帧之间会出现一帧
-                    --    「引擎默认清屏色」（玩家看到的“变灰一下”）。让它一直盖到本入口
-                    --    被引擎停止（stop）为止，游戏自己的覆盖层会在它之后绘制并接管。
+                    -- ⚠️ 必须在这里拆掉加载画面的 NanoVG 上下文：
+                    --    游戏会创建自己的上下文，两者同时在世会抢同一帧、合成顺序不稳定
+                    --    （表现为游戏 UI 只剩零星元素）。
+                    --    拆掉后到游戏首帧之间的空档，由 Scene3DBackend 的「首帧兜底
+                    --    深色底」接住，不会露出引擎清屏色。
+                    LoadingScreen.Stop()
                 end,
                 onProgress = function(progress, status)
                     if resolved then return end

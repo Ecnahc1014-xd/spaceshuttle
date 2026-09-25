@@ -386,6 +386,10 @@ local function RebuildEnemyMesh(record, enemy, visualCatalog)
     record.signature = GetEnemySignature(enemy)
 end
 
+-- 敌机只在客户端表现，不参与场景复制；颜色必须写进 LOCAL 色板，
+-- 否则客户端 LOCAL Volume 会从空色板取色，显示为无色方块。
+local VOXEL_COLOR_DOMAIN = VOXEL_PALETTE_LOCAL
+
 -- v0.10.25：体素物理调色板。8 机型 × 4 槽位 × 正常/冻结，全部落在 bank 0 的 1-64。
 -- 必须在任何 CreateVolume 之前设完；颜色来自 VisualCatalog，硬度低到弹珠伤害能挖掉。
 local function EnsureVoxelPalette(visualCatalog)

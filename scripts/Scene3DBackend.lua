@@ -303,23 +303,36 @@ local function UpdateSpaceEnvironment(elapsed)
     end
 end
 
--- 扣血线（防线基准线）：规则层越线判定是 Game.lua 的 `brickBottom > DANGER_Y`，
--- 渲染必须画在同一条 game y 上。位置每帧由 Backend.UpdateScene 按快照 dangerY 刷新；
--- z 固定 0，与敌机体素同一平面——斜俯视正交相机下 z 会投影到屏幕 Y，
--- 旧的硬编码 z=0.9 会把线整体抬高约一行砖，看起来“方块过了紫线还没掉血”。
+-- 防线两条基准线，各司其职：
+--   · 紫线 DangerBand —— 原位置（z=0.9 近相机视觉层），保留既有观感；
+--   · 红线 BreachLine —— 与规则层 `Game.lua` 的 `brickBottom > DANGER_Y` 完全同源：
+--     每帧按快照 dangerY 刷 y、z=0 与敌机体素同平面。
+--     46° 斜俯视正交相机下 z 会投影到屏幕 Y，所以只有红线才精确落在“开始扣血”的瞬间。
 local function CreateDangerBand()
     dangerBandNode_ = scene_:CreateChild("DangerBand")
-    -- 初值取 DANGER_Y=900 的世界坐标，避免首帧出现在原点。
-    dangerBandNode_.position = Vector3(0, (DESIGN_H * 0.5 - 900) * 0.018, 0)
-    dangerBandNode_.scale = Vector3(11.0, 0.09, 0.09)
+    -- 紫线保持旧世界坐标（原位置），玩家已经习惯它作为防线视觉标记。
+    dangerBandNode_.position = Vector3(0, -8.0, 0.9)
+    dangerBandNode_.scale = Vector3(11.0, 0.06, 0.06)
     local model = dangerBandNode_:CreateComponent("StaticModel")
     model:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
-    dangerBandMaterial_ = CreateMaterial({0.62, 0.26, 0.92}, 0.45)
-    -- 常驻自发光：深空场景很暗，纯漫反射几乎看不见，扣血线必须一眼可辨。
+    dangerBandMaterial_ = CreateMaterial({0.39, 0.19, 0.67}, 0.45)
+    -- 常驻自发光：深空场景很暗，纯漫反射几乎看不见，防线必须一眼可辨。
     dangerBandMaterial_:SetShaderParameter("MatEmissiveColor",
-        Variant(Color(0.40, 0.13, 0.70, 1)))
+        Variant(Color(0.26, 0.09, 0.46, 1)))
     model:SetMaterial(dangerBandMaterial_)
     model.castShadows = false
+
+    -- 红线：真正的扣血判定线，初值取 DANGER_Y=900 的世界坐标。
+    breachLineNode_ = scene_:CreateChild("BreachLine")
+    breachLineNode_.position = Vector3(0, (DESIGN_H * 0.5 - 900) * 0.018, 0)
+    breachLineNode_.scale = Vector3(11.0, 0.055, 0.055)
+    local breachModel = breachLineNode_:CreateComponent("StaticModel")
+    breachModel:SetModel(cache:GetResource("Model", "Models/Box.mdl"))
+    breachLineMaterial_ = CreateMaterial({0.95, 0.16, 0.20}, 0.45)
+    breachLineMaterial_:SetShaderParameter("MatEmissiveColor",
+        Variant(Color(0.85, 0.10, 0.14, 1)))
+    breachModel:SetMaterial(breachLineMaterial_)
+    breachModel.castShadows = false
 end
 
 -- 世界反弹边缘：左右上三边作为可见的边界框，渲染在背景层之后、玩法物体之前。
@@ -389,7 +402,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.11.1"
+local BUILD_VERSION = "0.11.2"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -1634,9 +1647,21 @@ local lastMeta_ = nil
 ---@param eventType string
 ---@param eventData any
 local function HandleBackendNanoVGRender(eventType, eventData)
+    if not vg_ then return end
     if lastGame_ and lastPresentation_ then
         RenderOverlay(lastGame_, lastPresentation_, lastMeta_)
+        return
     end
+    -- 首帧兜底：覆盖层要等第一次 Update 之后才有快照可画，这中间恰好空掉一帧。
+    -- 不兜的话会露出引擎默认清屏色——玩家看到的就是「进游戏时闪一下灰」。
+    -- 这里先铺满我们自己的深色底，保证任何一帧都不会出现非主题色。
+    nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
+    nvgResetTransform(vg_)
+    nvgResetScissor(vg_)
+    nvgGlobalAlpha(vg_, 1.0)
+    nvgScale(vg_, scale_, scale_)
+    DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
+    nvgEndFrame(vg_)
 end
 
 function Backend.Init()
@@ -1835,33 +1860,46 @@ function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
         end
         UpdateProjectionMetrics(false)
     end
+    -- A6：Boss 波期间危险带常驻染成紫色警示，与普通波区分。
+    local bossActive = false
+    for _, enemy in ipairs(gameSnapshot.veggies or {}) do
+        if enemy.isBoss then bossActive = true; break end
+    end
+    local flash = presentationSnapshot.baseBarrierFlash or 0
+    -- 紫线：固定原位置，只做受击 / Boss 的视觉警示，不跟规则线走。
     if dangerBandNode_ then
-        local flash = presentationSnapshot.baseBarrierFlash or 0
-        -- 与规则层越线判定同源：Game.lua 用 brickBottom > DANGER_Y 扣血，
-        -- 线就画在同一个 game y（z=0，与敌机体素同平面）。
-        local dangerY = gameSnapshot.dangerY
-        if dangerY then
-            -- 只取 y：横线要横跨整个场地，x 必须居中在 0（不能用 WorldFromGame(0,..) 的 x=-4.86）。
-            dangerBandNode_.position = Vector3(0, (DESIGN_H * 0.5 - dangerY) * 0.018, 0)
-        end
-        -- A6：Boss 波期间危险带常驻染成紫色警示，与普通波区分。
-        local bossActive = false
-        for _, enemy in ipairs(gameSnapshot.veggies or {}) do
-            if enemy.isBoss then bossActive = true; break end
-        end
-        local baseR, baseG, baseB = 0.62, 0.26, 0.92
-        if bossActive then baseR, baseG, baseB = 0.80, 0.24, 0.98 end
-        dangerBandNode_.scale = Vector3(11.0, 0.09 + flash * 0.18, 0.09 + flash * 0.12)
+        local baseR, baseG, baseB = 0.39, 0.19, 0.67
+        if bossActive then baseR, baseG, baseB = 0.62, 0.20, 0.74 end
+        dangerBandNode_.scale = Vector3(11.0, 0.06 + flash * 0.18, 0.06 + flash * 0.12)
         if dangerBandMaterial_ then
             dangerBandMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(
                 math.min(1.0, baseR + flash * 0.20),
                 math.min(1.0, baseG + flash * 0.48),
                 math.min(1.0, baseB + flash * 0.33), 1)))
-            -- 常驻自发光（深空场景纯漫反射看不见），受击 / Boss 时再叠加。
             dangerBandMaterial_:SetShaderParameter("MatEmissiveColor", Variant(Color(
-                math.min(1.0, 0.40 + flash * 1.7 + (bossActive and 0.30 or 0)),
-                math.min(1.0, 0.13 + flash * 3.1 + (bossActive and 0.10 or 0)),
-                math.min(1.0, 0.70 + flash * 4.0 + (bossActive and 0.60 or 0)), 1)))
+                math.min(1.0, 0.26 + flash * 1.7 + (bossActive and 0.22 or 0)),
+                math.min(1.0, 0.09 + flash * 3.1 + (bossActive and 0.08 or 0)),
+                math.min(1.0, 0.46 + flash * 4.0 + (bossActive and 0.45 or 0)), 1)))
+        end
+    end
+    -- 红线：与规则层越线判定同源（Game.lua 的 brickBottom > DANGER_Y），
+    -- 每帧按快照 dangerY 刷 y，z=0 与敌机体素同平面，精确落在扣血瞬间。
+    if breachLineNode_ then
+        local dangerY = gameSnapshot.dangerY
+        if dangerY then
+            -- 只取 y：横线要横跨整个场地，x 必须居中 0（不能用 WorldFromGame(0,..) 的 x=-4.86）。
+            breachLineNode_.position = Vector3(0, (DESIGN_H * 0.5 - dangerY) * 0.018, 0)
+        end
+        breachLineNode_.scale = Vector3(11.0, 0.055 + flash * 0.16, 0.055 + flash * 0.10)
+        if breachLineMaterial_ then
+            breachLineMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(
+                math.min(1.0, 0.95 + flash * 0.05),
+                math.max(0.0, 0.16 - flash * 0.10),
+                math.max(0.0, 0.20 - flash * 0.12), 1)))
+            breachLineMaterial_:SetShaderParameter("MatEmissiveColor", Variant(Color(
+                math.min(1.0, 0.85 + flash * 1.4),
+                math.min(1.0, 0.10 + flash * 2.2),
+                math.min(1.0, 0.14 + flash * 2.6), 1)))
         end
     end
     -- 升级/暂停/菜单时停体素求解，避免碎块在模态下继续飞。

@@ -3,11 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.11.1（扣血线位置修正 + 可见性）：
-  - **根因**：规则层越线判定是 `Game.lua` 的 `brickBottom > DANGER_Y(900)`，而 3D 紫线写死在 `Vector3(0, -8.0, 0.9)`。46° 斜俯视正交相机下 **z 会投影到屏幕 Y**，z=0.9 把线整体抬高约一行砖 → 看起来「方块过了紫线还没掉血」。
-  - **修正**：`CreateDangerBand` 初值改 `(DESIGN_H*0.5 - 900)*0.018`、z=0（与敌机体素同平面）；`Backend.UpdateScene` 每帧按快照 `gameSnapshot.dangerY` 刷新位置，与规则同源。横线 x 必须居中 0（不能用 `WorldFromGame(0,..)` 的 x=-4.86）。
-  - **可见性**：深空场景纯漫反射几乎看不见 → 加常驻 `MatEmissiveColor(0.40,0.13,0.70)`，线体加粗到 0.09，底色提亮到 (0.62,0.26,0.92)；受击/Boss 在其上叠加。
-  - 验证：LSP 0 Error、多人模式 build 成功。⚠️ 离屏截图受环境 HDR Bloom shader 编译失败影响整屏发白，未能目视验收，需 Preview 确认。
+- 版本: 0.11.2（防线双线：紫线回原位 + 新增红线标扣血点）：
+  - **两条线各司其职**：`DangerBand` 紫线回到**原位置** `Vector3(0, -8.0, 0.9)`（保留既有观感，不跟规则走，只做受击/Boss 警示）；新增 `BreachLine` 红线，每帧按快照 `gameSnapshot.dangerY` 刷 y、z=0（与敌机体素同平面），精确落在 `brickBottom > DANGER_Y` 的扣血瞬间。
+  - **红线样式**：Diff (0.95,0.16,0.20) + 常驻自发光 (0.85,0.10,0.14)，线体 0.055；受击时加粗变亮。
+  - **紫线常驻自发光**下调到 (0.26,0.09,0.46)，避免抢红线的注意力。
+  - 验证：LSP 0 Error、多人模式 build 成功。⚠️ 离屏截图受环境 HDR Bloom shader 编译失败影响整屏发白，需 Preview 确认两条线的相对位置。
 - 版本: 0.12.0（单机间接联机骨架 + 氪金代币）：
   - **架构**：`main.lua` 变成纯分流入口（`IsServerMode()` → `network.Server`；否则 → `game.client_main`）。原 929 行玩法编排整体搬到 `scripts/game/client_main.lua`，`HandleUpdate/HandleRender/HandleMouse*/HandleTouch*/HandleKey*` 保持**文件级全局 function**（`SubscribeToEvent` 按名字解析，加 `local` 会静默失效）。
   - **服务端只做两件事**：IAP 发货（`Shop.onDeliver` → `serverCloud:BatchCommit` + `orderId` 幂等/离线补发）+ 钻石余额（`serverCloud.money`）。不做场景复制、不跑战斗。`scripts/network/Server.lua` 用 `.meta {c_or_s:"s"}` 标记，不打进客户端包。
@@ -34,7 +34,10 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.11.1 扣血线位置与可见性修正
+- 上次交付: v0.11.2 防线紫线回原位 + 新增红线标扣血点
+
+## 历史
+- 版本: 0.11.1（扣血线同源修正）：紫线曾一度改为跟规则线，见下条避雷的「z 投影」根因。
 
 ## 历史
 - 版本: 0.10.40 体素权威占用与渲染时序修复。
@@ -142,9 +145,10 @@
 - likely_next_task: Preview 验收扣血线是否与「方块开始扣血」的瞬间对齐、且一眼可见。
 - 相关文件: `scripts/Scene3DBackend.lua`（CreateDangerBand / UpdateScene dangerBand 段）, `scripts/Game.lua`（DANGER_Y）
 
-## 本批次新增避雷（v0.11.1 扣血线 / v0.12.0 单机间接联机）
-- ⚠️ **扣血线必须与规则判定同源、且与敌机同 z 平面（v0.11.1）**：规则越线是 `Game.lua` 的 `brickBottom > DANGER_Y(900)`；3D 那条紫线**禁止写死世界坐标**。46° 斜俯视正交相机下 **z 会投影到屏幕 Y**——旧代码 `z=0.9` 让线比真实扣血线高约一行砖，玩家看到「方块过了紫线还没掉血」。做法：每帧用 `gameSnapshot.dangerY` 刷 `y = (DESIGN_H*0.5 - dangerY) * 0.018`、`z = 0`（与敌机体素同平面）；横线 x 必须居中 0，**不能**用 `WorldFromGame(0, y)`（它的 x = (0-270)*0.018 = -4.86，会把线整体左移）。
-- ⚠️ **深空场景的细线要常驻自发光（v0.11.1）**：本场景很暗，纯漫反射的细长盒几乎不可见（玩家报「那条线是不可见的」）。扣血线这类必须一眼可辨的元素要加 `MatEmissiveColor` 常驻底光，受击/Boss 再在其上叠加，而不是只在 flash 时才有亮度。
+## 本批次新增避雷（v0.11.2 防线双线 / v0.12.0 单机间接联机）
+- ⚠️ **视觉警示线与规则判定线是两条线，别合并（v0.11.2）**：玩家要的是「紫线留在原位置当防线标记 + 另加一条红线标真正的扣血点」。**禁止**为了“对齐”把既有紫线挪走——那会破坏玩家已习惯的观感。正确做法是两条并存：紫线固定原坐标只做警示（受击/Boss 变亮），红线每帧按规则值刷新。
+- ⚠️ **规则基准线必须与判定同源、且与敌机同 z 平面（v0.11.2）**：46° 斜俯视正交相机下 **z 会投影到屏幕 Y**——同 XY 不同 z 屏幕 Y 不同。红线用 `z=0`（与敌机体素同平面）、`y = (DESIGN_H*0.5 - dangerY) * 0.018`，才精确落在 `Game.lua` 的 `brickBottom > DANGER_Y` 瞬间；写死近相机 z（如 0.9）会偏移约一行砖。横线 x 必须居中 0，**不能**用 `WorldFromGame(0, y)`（它的 x=-4.86 会把线整体左移）。
+- ⚠️ **深空场景的细线要常驻自发光（v0.11.1）**：本场景很暗，纯漫反射的细长盒几乎不可见（玩家报「那条线是不可见的」）。基准线这类必须一眼可辨的元素要加 `MatEmissiveColor` 常驻底光，受击/Boss 再在其上叠加，而不是只在 flash 时才有亮度。两条线并存时，次要那条的底光要压暗，避免抢焦点。
 - ⚠️ **离屏截图整屏发白 ≠ 你的改动有问题（v0.11.1 实测）**：本环境 llvmpipe 下 `BloomHDR(... TONEMAP_LUT)` 编译失败（`texture3DLod` no matching overload），HDR 渲染链断掉导致截图为纯白，与业务代码无关。判断时先看日志有没有该 shader 编译错误，别拿白图当回归证据；这类改动最终要靠 Preview 目视验收。
 
 ## 本批次新增避雷（v0.12.0 单机间接联机 / v0.11.0 商业化）
