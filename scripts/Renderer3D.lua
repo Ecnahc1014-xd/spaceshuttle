@@ -408,7 +408,7 @@ local function EnsureVoxelPalette(visualCatalog)
                     b = math.min(1.0, b * 0.45 + 0.55)
                 end
                 local index = visualCatalog.GetVoxelMatIndex(key, slot, frozen)
-                voxelWorld_:SetPaletteEntry(index, Color(r, g, b), 0.2)
+                voxelWorld_:SetPaletteEntry(index, Color(r, g, b), 0.2, 0, VOXEL_COLOR_DOMAIN)
                 local metallic = (slot == "hullMain" or slot == "hullDark") and 0.55 or 0.08
                 local roughness = slot == "canopy" and 0.18 or 0.42
                 local emissive = nil
@@ -418,16 +418,19 @@ local function EnsureVoxelPalette(visualCatalog)
                     emissive = Color(r, g, b, 1.2)
                 end
                 if emissive then
-                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5, emissive)
+                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5, emissive,
+                        VOXEL_COLOR_DOMAIN)
                 else
-                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5)
+                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5, nil,
+                        VOXEL_COLOR_DOMAIN)
                 end
-                voxelWorld_:SetPaletteCutColor(index, Color(r * 0.55, g * 0.55, b * 0.55))
+                voxelWorld_:SetPaletteCutColor(index, Color(r * 0.55, g * 0.55, b * 0.55),
+                    VOXEL_COLOR_DOMAIN)
             end
         end
     end
     voxelPaletteReady_ = true
-    print("[Renderer3D] voxel palette ready (8 aircraft x 4 slots x freeze)")
+    print("[Renderer3D] voxel palette ready (LOCAL, 8 aircraft x 4 slots x freeze)")
 end
 
 ---@return integer
@@ -498,7 +501,7 @@ local function CreateEnemyVolume(enemy, visualCatalog)
     volume.evictable = false
     volume.collisionLayer = 1
     volume.collisionMask = 0
-    volume.material = voxelWorld_:GetPaletteMaterial()
+    volume.material = voxelWorld_:GetPaletteMaterial(0, VOXEL_COLOR_DOMAIN)
     voxelWorld_:FinalizeVolume(volume)
     volume:RebuildGeometry()
     local node = volume:GetNode()
