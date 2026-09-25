@@ -421,8 +421,8 @@ local function EnsureVoxelPalette(visualCatalog)
                     voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5, emissive,
                         VOXEL_COLOR_DOMAIN)
                 else
-                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5, nil,
-                        VOXEL_COLOR_DOMAIN)
+                    voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5,
+                        Color(0, 0, 0, 0), VOXEL_COLOR_DOMAIN)
                 end
                 voxelWorld_:SetPaletteCutColor(index, Color(r * 0.55, g * 0.55, b * 0.55),
                     VOXEL_COLOR_DOMAIN)
@@ -487,7 +487,7 @@ local function CreateEnemyVolume(enemy, visualCatalog)
     local dimZ = VoxelDepthCount()
     local origin = EnemyVolumeWorldOrigin(enemy, voxelSize)
     local okCreate, volume = pcall(function()
-        return voxelWorld_:CreateVolume(dimX, dimY, dimZ, voxelSize, origin)
+        return voxelWorld_:CreateVolume(dimX, dimY, dimZ, voxelSize, origin, Quaternion(), LOCAL)
     end)
     if not okCreate or not volume then
         print("[Renderer3D] CreateVolume failed: " .. tostring(volume))
@@ -612,7 +612,7 @@ local function SpawnVoxelDebris(record, event, visualCatalog)
         worldPos.y - size * 0.5,
         worldPos.z - size * dimZ * 0.5)
     local okCreate, debris = pcall(function()
-        return voxelWorld_:CreateVolume(1, 1, dimZ, size, origin)
+        return voxelWorld_:CreateVolume(1, 1, dimZ, size, origin, Quaternion(), LOCAL)
     end)
     if not okCreate or not debris then return false end
     local style = visualCatalog.GetBrickStyle
@@ -629,7 +629,7 @@ local function SpawnVoxelDebris(record, event, visualCatalog)
         debris.gravityFactor = 1.0
         debris.linearDamping = 0.18
         debris.angularDamping = 0.22
-        debris.material = voxelWorld_:GetPaletteMaterial()
+        debris.material = voxelWorld_:GetPaletteMaterial(0, VOXEL_COLOR_DOMAIN)
         voxelWorld_:FinalizeVolumeAsDynamic(debris)
         debris:RebuildGeometry()
         local vx = (event.vx or 0) * WORLD_SCALE

@@ -3,6 +3,9 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.11.3（修复联网客户端敌机体素失色）：
+  - `Renderer3D.lua` 将敌机主体和飞散碎块显式创建为 `LOCAL` Volume；`SetPaletteEntry`/`SetPaletteEntryPBR`/`SetPaletteCutColor` 与 `GetPaletteMaterial` 统一指定 `VOXEL_PALETTE_LOCAL`，避免客户端本地体素从空的 Local 色板取色。规则层和逐格修复日志未改。
+  - 验证：Lua LSP 0 Error、官方多人构建成功、色板/体积/材质域静态契约通过；Linux 本地无体素模块且多人模式不适用单机离屏验证，**Preview 战斗态色彩尚待目视确认**。
 - 版本: 0.11.2（防线双线：紫线回原位 + 新增红线标扣血点）：
   - **两条线各司其职**：`DangerBand` 紫线回到**原位置** `Vector3(0, -8.0, 0.9)`（保留既有观感，不跟规则走，只做受击/Boss 警示）；新增 `BreachLine` 红线，每帧按快照 `gameSnapshot.dangerY` 刷 y、z=0（与敌机体素同平面），精确落在 `brickBottom > DANGER_Y` 的扣血瞬间。
   - **红线样式**：Diff (0.95,0.16,0.20) + 常驻自发光 (0.85,0.10,0.14)，线体 0.055；受击时加粗变亮。
@@ -34,7 +37,7 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.11.2 防线紫线回原位 + 新增红线标扣血点
+- 上次交付: v0.11.3 联网客户端敌机体素颜色域修复（Preview 待验）
 
 ## 历史
 - 版本: 0.11.1（扣血线同源修正）：紫线曾一度改为跟规则线，见下条避雷的「z 投影」根因。
@@ -142,8 +145,11 @@
 - 倾向"全部执行别停下"的批量推进风格，要求逐批 LSP+构建+契约+提交 [observed]
 
 ## 预测下一步
-- likely_next_task: Preview 验收扣血线是否与「方块开始扣血」的瞬间对齐、且一眼可见。
-- 相关文件: `scripts/Scene3DBackend.lua`（CreateDangerBand / UpdateScene dangerBand 段）, `scripts/Game.lua`（DANGER_Y）
+- likely_next_task: 在多人 Preview 战斗态确认敌机主体与飞散体素碎块恢复各机型原色（冻结颜色也需确认），并验收扣血红线与紫线。
+- 相关文件: `scripts/Renderer3D.lua`（EnsureVoxelPalette / CreateEnemyVolume / SpawnVoxelDebris）, `scripts/VisualCatalog.lua`（GetVoxelMatIndex）。
+
+## 本批次新增避雷（v0.11.3 客户端本地体素颜色）
+- ⚠️ **体素色板域必须匹配 Volume 的有效 CreateMode**：本项目战斗只在客户端本地运行；`LOCAL` 的敌机 Volume 读取 `VOXEL_PALETTE_LOCAL`，而 `SetPaletteEntry*`/`GetPaletteMaterial` 省略 domain 时默认 `VOXEL_PALETTE_REPLICATED`，会导致机身与碎块失色。敌机主体/碎块 `CreateVolume(..., Quaternion(), LOCAL)`，色板基础色第五参、PBR 第六参（无自发光要先传 `Color(0,0,0,0)`）、断面色第三参、材质第二参均须显式指定 Local 域；bank 仍为 0、格子材质仍为 VisualCatalog 的 1–64 槽位。LSP/构建不能证明多人 Preview 颜色已恢复，需在真机看战斗态。
 
 ## 本批次新增避雷（v0.11.2 防线双线 / v0.12.0 单机间接联机）
 - ⚠️ **视觉警示线与规则判定线是两条线，别合并（v0.11.2）**：玩家要的是「紫线留在原位置当防线标记 + 另加一条红线标真正的扣血点」。**禁止**为了“对齐”把既有紫线挪走——那会破坏玩家已习惯的观感。正确做法是两条并存：紫线固定原坐标只做警示（受击/Boss 变亮），红线每帧按规则值刷新。

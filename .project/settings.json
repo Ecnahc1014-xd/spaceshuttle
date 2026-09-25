@@ -28,8 +28,8 @@
       "match_info": {
         "desc_name": "free_match",
         "immediately_start": true,
-        "player_number": 1,
-        "match_timeout": 5
+        "match_timeout": 5,
+        "player_number": 1
       },
       "persistent_world": {
         "enabled": false
