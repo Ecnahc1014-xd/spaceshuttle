@@ -6,9 +6,9 @@
 
 local GameMode = {}
 
--- 默认 true：background_match 下游戏立即启动，服务端还没就绪时按离线处理，
--- 收到 ServerReady 再置 false 启用云能力。
-local offline_ = true
+-- 默认 false（在线假定）：由自建大厅在「匹配超时 / 发起异常」时显式置 true。
+-- ⚠️ 禁止用 IsNetworkMode() 判断离线——大厅启动后它恒为 true。
+local offline_ = false
 
 ---@return boolean
 function GameMode.IsOffline()
