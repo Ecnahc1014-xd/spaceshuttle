@@ -3,7 +3,7 @@
 --
 -- ⚠️ 引擎通过脚本名解析事件处理器，所以 HandleUpdate / HandleRender / HandleMouse* /
 --    HandleTouch* / HandleKey* 必须保持**文件级全局** function（不能加 local），
---    否则 SubscribeToEvent("Update", "HandleUpdate") 会静默失效。
+--    否则 SubscribeToEvent("Update", HandleUpdate) 会静默失效。
 -- ⚠️ 本文件不做联机权威：战斗、排行榜、养成存档都在客户端（clientCloud + 本地存档）；
 --    服务端只管 IAP 发货与氪金代币余额（见 network/Server.lua）。
 
@@ -798,7 +798,7 @@ function ClientMain.Start(opts)
     graphics.windowTitle = "击碎，飞机大战"
     input.mouseVisible = true
 
-    if not RenderBackend.Init("HandleRender") then return end
+    if not RenderBackend.Init() then return end
 
     -- v0.11.0 联机：充值弹层复用游戏 UI 的令牌与原语（UI 无污染）。
     RechargeShop.Init(MetaUI.GetDeps())
@@ -807,11 +807,20 @@ function ClientMain.Start(opts)
     PlayerData.Load()
 
     -- 联机层（余额同步）只在非离线路径启动；离线时整层不加载。
+    -- ⚠️ 全程 pcall：联机层任何异常都不允许中断游戏启动
+    --    （曾经因为 NetClient.Start 为 nil，在这里抛出，导致后面的事件订阅全部没执行，
+    --     真机表现为「3D 正常但 2D 界面全没」）。
     if not GameMode.IsOffline() then
-        NetClient.SetGemsListener(function(gems)
-            metaState.gems = gems
+        local okNet, errNet = pcall(function()
+            NetClient.SetGemsListener(function(gems)
+                metaState.gems = gems
+            end)
+            NetClient.Start()
         end)
-        NetClient.Start()
+        if not okNet then
+            print("[ClientMain] network layer failed, degrade to offline: " .. tostring(errNet))
+            GameMode.SetOffline(true)
+        end
     else
         print("[ClientMain] offline mode: network layer not started")
     end
@@ -827,16 +836,16 @@ function ClientMain.Start(opts)
     LoadHighScoreFromCloud()
     LoadPlayerDataFromCloud()
 
-    SubscribeToEvent("Update", "HandleUpdate")
-    SubscribeToEvent("MouseButtonDown", "HandleMouseDown")
-    SubscribeToEvent("MouseButtonUp", "HandleMouseUp")
-    SubscribeToEvent("MouseMove", "HandleMouseMove")
-    SubscribeToEvent("TouchBegin", "HandleTouchBegin")
-    SubscribeToEvent("TouchMove", "HandleTouchMove")
-    SubscribeToEvent("TouchEnd", "HandleTouchEnd")
-    SubscribeToEvent("KeyDown", "HandleKeyDown")
-    SubscribeToEvent("KeyUp", "HandleKeyUp")
-    SubscribeToEvent("ScreenMode", "HandleScreenMode")
+    SubscribeToEvent("Update", HandleUpdate)
+    SubscribeToEvent("MouseButtonDown", HandleMouseDown)
+    SubscribeToEvent("MouseButtonUp", HandleMouseUp)
+    SubscribeToEvent("MouseMove", HandleMouseMove)
+    SubscribeToEvent("TouchBegin", HandleTouchBegin)
+    SubscribeToEvent("TouchMove", HandleTouchMove)
+    SubscribeToEvent("TouchEnd", HandleTouchEnd)
+    SubscribeToEvent("KeyDown", HandleKeyDown)
+    SubscribeToEvent("KeyUp", HandleKeyUp)
+    SubscribeToEvent("ScreenMode", HandleScreenMode)
 
     print("[Main] rendering, ads and cloud save connected")
 end
@@ -866,7 +875,7 @@ function HandleUpdate(eventType, eventData)
     Presentation.Update(dt, snapshot, Game.DrainEvents())
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
-    RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot)
+    RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
     if snapshot.highScore and snapshot.highScore > lastSavedHighScore then
         SaveHighScoreToCloud(snapshot.highScore)
     end
@@ -911,12 +920,6 @@ function HandleUpdate(eventType, eventData)
             RefreshMeta()
             print("[Main] run settled, parts +" .. granted .. ", codex bonus +" .. bonus)
         end
-    end
-end
-
-function HandleRender()
-    if gameSnapshot and presentationSnapshot then
-        RenderBackend.RenderOverlay(gameSnapshot, presentationSnapshot, metaState)
     end
 end
 

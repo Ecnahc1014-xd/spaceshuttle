@@ -15,18 +15,6 @@ local GameMode = require "GameMode"
 local MATCH_TIMEOUT_SEC = 5
 local LOCAL_GAME_MODULE = "local_game"
 
--- ⚠️ SubscribeToEvent 的处理器是**按名字解析的文件级全局函数**，
--- 闭包内的 local 函数订阅不上去（会静默失效）。所以这里用一个模块级引用转发。
----@type table|nil
-local activeLobby_ = nil
-
----@param eventType string
----@param eventData any
-function HandleLobbyUpdate(eventType, eventData)
-    local lobby = activeLobby_
-    if lobby and lobby.onUpdate then lobby.onUpdate(eventType, eventData) end
-end
-
 local function BuildLobby(ctx)
     local client, root = ctx.client, ctx.root
     -- ⚠️ 必须用项目自己的 dark-tech 主题初始化，否则联机界面会是一套陌生风格。
@@ -145,10 +133,9 @@ local function BuildLobby(ctx)
             startLocalGame("匹配超时，已降级单机")
         end
     end
-    activeLobby_ = { onUpdate = tickUpdate }
-
-    SubscribeToEvent("Update", "HandleLobbyUpdate")
-    updateSub = "HandleLobbyUpdate"
+    -- 传函数值订阅：字符串名按文件作用域解析，跨文件/闭包会静默失效。
+    SubscribeToEvent("Update", tickUpdate)
+    updateSub = tickUpdate
 
     -- 未登录 / 平台离线时直接走单机，不必等超时。
     if client.IsOnline and not client:IsOnline() then
@@ -161,10 +148,10 @@ local function BuildLobby(ctx)
         stop = function()
             -- 只退订自己订阅的事件；禁止 UnsubscribeFromAllEvents（会误伤即将启动的游戏）。
             if updateSub then
-                UnsubscribeFromEvent(updateSub)
+                local handler = updateSub --[[@as any]]
+                UnsubscribeFromEvent("Update", handler)
                 updateSub = nil
             end
-            activeLobby_ = nil
             if localGame and localGame.stop then
                 localGame.stop()
                 localGame = nil

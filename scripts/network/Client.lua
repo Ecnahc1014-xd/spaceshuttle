@@ -214,7 +214,7 @@ end
 -- 生命周期
 -- ============================================================================
 
-function Start()
+function Client.Start()
     if GameMode.IsOffline() then
         print("[Client] offline mode, network layer idle")
         return
@@ -225,16 +225,16 @@ function Start()
     network:RegisterRemoteEvent(Shared.EVENTS.BALANCE_DIRTY)
     network:RegisterRemoteEvent(Shared.EVENTS.SPEND_RESULT)
 
-    SubscribeToEvent(Shared.EVENTS.BALANCE_SYNC, "HandleIapBalanceSync")
-    SubscribeToEvent(Shared.EVENTS.BALANCE_DIRTY, "HandleIapBalanceDirty")
-    SubscribeToEvent(Shared.EVENTS.SPEND_RESULT, "HandleIapSpendResult")
+    SubscribeToEvent(Shared.EVENTS.BALANCE_SYNC, HandleIapBalanceSync)
+    SubscribeToEvent(Shared.EVENTS.BALANCE_DIRTY, HandleIapBalanceDirty)
+    SubscribeToEvent(Shared.EVENTS.SPEND_RESULT, HandleIapSpendResult)
 
     -- 报到：服务端收到后推一次余额。
     Client.RequestBalance()
     ready_ = true
 end
 
-function Stop()
+function Client.Stop()
     print("[Client] network layer stopping")
     UnsubscribeFromEvent(Shared.EVENTS.BALANCE_SYNC)
     UnsubscribeFromEvent(Shared.EVENTS.BALANCE_DIRTY)

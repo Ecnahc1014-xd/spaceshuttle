@@ -201,7 +201,7 @@ end
 -- 生命周期
 -- ============================================================================
 
-function Start()
+function Server.Start()
     print("[Server] single-player-adjacent authority server booting")
     print("  max players: " .. tostring(MaxPlayers())
         .. ", registered: " .. tostring(RegisteredPlayers())
@@ -212,9 +212,9 @@ function Start()
     network:RegisterRemoteEvent(Shared.EVENTS.REQUEST_BALANCE)
     network:RegisterRemoteEvent(Shared.EVENTS.GEM_SPEND)
 
-    SubscribeToEvent(Shared.EVENTS.CLIENT_READY, "HandleIapClientReady")
-    SubscribeToEvent(Shared.EVENTS.REQUEST_BALANCE, "HandleIapClientReady")
-    SubscribeToEvent(Shared.EVENTS.GEM_SPEND, "HandleIapGemSpend")
+    SubscribeToEvent(Shared.EVENTS.CLIENT_READY, HandleIapClientReady)
+    SubscribeToEvent(Shared.EVENTS.REQUEST_BALANCE, HandleIapClientReady)
+    SubscribeToEvent(Shared.EVENTS.GEM_SPEND, HandleIapGemSpend)
 
     -- 发货入口：幂等、离线补发都由 orderId + serverCloud 事务保证。
     local shop = ServerShop()
@@ -226,7 +226,7 @@ function Start()
     end
 end
 
-function Stop()
+function Server.Stop()
     print("[Server] stop")
 end
 

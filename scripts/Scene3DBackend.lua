@@ -1608,7 +1608,31 @@ local function RenderOverlay(game, presentation, meta)
     nvgEndFrame(vg_)
 end
 
-function Backend.Init(renderHandlerName)
+-- ============================================================================
+-- v0.12.1：NanoVG 覆盖层用**函数引用**订阅，不再依赖字符串函数名。
+--
+-- ⚠️ `SubscribeToEvent(event, "HandleXxx")` 的字符串形式按「文件作用域」解析：
+--    处理器定义在别的文件、或入口搬迁之后，订阅会**静默失效**（不报错、不触发），
+--    表现为「3D 正常但 2D 界面全部消失」。
+--    这里的做法是让后端自己闭环：订阅与处理器、快照都在本文件内，不依赖任何外部函数名。
+-- ============================================================================
+
+---@type table|nil
+local lastGame_ = nil
+---@type table|nil
+local lastPresentation_ = nil
+---@type table|nil
+local lastMeta_ = nil
+
+---@param eventType string
+---@param eventData any
+local function HandleBackendNanoVGRender(eventType, eventData)
+    if lastGame_ and lastPresentation_ then
+        RenderOverlay(lastGame_, lastPresentation_, lastMeta_)
+    end
+end
+
+function Backend.Init()
     if scene_ then
         Renderer3D.Shutdown()
         if vg_ then
@@ -1729,7 +1753,8 @@ function Backend.Init(renderHandlerName)
         CleanupFailedInit()
         return false
     end
-    SubscribeToEvent(vg_, "NanoVGRender", renderHandlerName)
+    -- 传函数值而非函数名：不受「处理器定义在哪个文件」影响。
+    SubscribeToEvent(vg_, "NanoVGRender", HandleBackendNanoVGRender)
     print("[Scene3DBackend] initialized: 9:16 locked viewport, dark-tech HUD, orthographic 46-degree aircraft camera")
     return true
 end
@@ -1782,7 +1807,11 @@ end
 
 -- 游戏快照在 Update 结束后已经稳定；在本帧 3D 绘制之前同步场景与体素。
 -- NanoVGRender 晚于 3D Viewport，不能在其中才 RebuildGeometry，否则必然看到旧网格。
-function Backend.UpdateScene(gameSnapshot, presentationSnapshot)
+function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
+    -- 缓存本帧快照，供本文件内的 NanoVGRender 处理器直接使用（不依赖外部调用）。
+    lastGame_ = gameSnapshot
+    lastPresentation_ = presentationSnapshot
+    lastMeta_ = metaState
     UpdateUiState(gameSnapshot)
     UpdateSpaceEnvironment(gameSnapshot.elapsed)
     local shake = presentationSnapshot.screenShake or 0
