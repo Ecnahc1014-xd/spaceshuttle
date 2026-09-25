@@ -798,6 +798,12 @@ function ClientMain.Start(opts)
     graphics.windowTitle = "击碎，飞机大战"
     input.mouseVisible = true
 
+    -- 启动盖板：用自绘深色底盖住「引擎清屏 → 游戏首帧覆盖层」之间的空档。
+    -- 不自绘的话，这段空档会露出引擎默认清屏色（玩家看到的“变灰一下”）。
+    -- 0.4s 后自动关闭；期间游戏自己的覆盖层会在它之前/之后正常接管。
+    local BootCover = require "ui.LoadingScreen"
+    BootCover.Start({ autoStopAfter = 0.4 })
+
     if not RenderBackend.Init() then return end
 
     -- v0.11.0 联机：充值弹层复用游戏 UI 的令牌与原语（UI 无污染）。
