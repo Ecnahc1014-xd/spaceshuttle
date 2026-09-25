@@ -3,15 +3,20 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.11.0（商业化 P1：地基 + 升级面板 + 结算）：
-  - **新增 `PlayerData.lua`**：软货币「零件」、每日签到、每日任务、敌机图鉴、皮肤、统计；本地 `player_data.json` 存档 + `clientCloud` 字符串云同步（合并取大值）。
-  - **新增 `AdService.lua`**：激励视频统一调度（在途锁 + 3s 冷却 + 一次性完成 + `embed manual close` 归失败）。`main.lua` 所有广告改走此处。
-  - **升级面板变现**：免费重抽 1 次/局、看广告重抽（含「卡池升格」保底稀有）、看广告解锁第 4 张（优先神秘词条卡）、单卡「升格」角标（生效 ×2）、本次额外再选一张。
-  - **结算变现**：击碎方块 +1 / 清机 +10 / 过波 +25 零件；结算页出现即按 ×1 入库，「看广告双倍零件」补发等额；已复活后重新开放结算。
-  - **命中几何同源**：新增 `Backend.HitTestUpgradePanel` / 三按钮 `GetGameOverButtonLayout`，`main.lua` 不再自持卡片常量。
-  - 验证：Lua LSP 0 Error、官方 build 成功、headless 90 帧无 Lua 报错（报告文件未落盘为该环境已知现象）。
-- 商业化设计稿 v0.11.0-design：30 张 UI mockup 落在 `assets/image/com_*.png`（主菜单 `com_menu_*` 10 张 / 局内 `com_ingame_*` 10 张 / 升级三选一 `com_lvup_*` 10 张）。
-- **待做**：P2 主菜单（货币栏/签到/每日任务/每日补给）、P3 收集层（图鉴/全服排行榜/商城/皮肤/转盘）、P4 局内（零件计数×2/暂停补给站/道具槽/轨道支援）。
+- 版本: 0.11.0（商业化 P1+P2+P3+部分 P4）：
+  - **三色语义落地**：新增 `C.ad` / `C.adDim`（绿＝看广告），与青（主操作/进度）、金（稀有）三分。所有「看广告」按钮一律绿色，免费领取一律青色。
+  - **`PlayerData.lua`**：软货币「零件」、每日签到（7 天递增 100→300）、每日任务（击碎 300 / 抵达第 8 波 / 完成 3 局）、敌机图鉴、皮肤、统计；本地 `player_data.json` + `clientCloud` 字符串云同步（合并取大值）。新增通用每日计数器 `GetDailyCount/AddDailyCount`（转盘/补给/广告礼包限次）。
+  - **`AdService.lua`**：激励视频统一调度（在途锁 + 3s 冷却 + 一次性完成 + `embed manual close` 归失败）。`main.lua` 所有广告走此处。
+  - **`MetaCatalog.lua`**：元层静态数据（8 机型图鉴文案与收录奖励、5 款车辆皮肤配色与售价、商城广告礼包、转盘奖池与权重、每日补给基数 150）。
+  - **`MetaUI.lua`**：元层界面绘制 + 命中（依赖注入拿 `Scene3DBackend` 的颜色令牌与绘制原语，样式同源）。主菜单商业区（货币栏/四入口/签到/每日补给）+ 任务/图鉴/排行榜/商城/转盘 5 个面板 + 每日补给弹窗。
+  - **升级面板**：免费重抽 1 次/局、看广告重抽（含卡池升格保底稀有）、看广告解锁第 4 张（优先神秘词条，画成下方宽卡）、单卡升格（生效 ×2）、本次额外再选一张。
+  - **结算**：击碎 +1 / 清机 +10 / 过波 +25 零件，出现即 ×1 入库 + 看广告双倍；结算页三按钮（复活/双倍/再来一局）。
+  - **局内 P4（部分）**：HUD 右上「零件 +N」实时计数；暂停面板「战场补给站」——看广告防线急救 +25 血（1 次/局）、看广告下个强化必出稀有（1 次/局）。
+  - **图鉴解锁**：`Game` 记录本局清掉的机型（`runAircraft`），结算时写入 PlayerData 并发放首次收录奖励。
+  - **命中几何同源**：`Backend.HitTestUpgradePanel` / `HitTestPausePanel` / `HitTestMenuBar` / `HitTestMetaScreen` / `HitTestSupplyPopup`，`main.lua` 不再自持任何 UI 几何常量。
+  - 验证：Lua LSP 0 Error、官方 build 成功、截图对照设计稿确认（菜单商业区/商城/转盘/每日补给弹窗）。
+- **待做（P4 剩余）**：局内道具槽（看广告获取即时道具）、轨道支援（Boss 战广告支援）、局内零件 ×2 增益卡。
+- 商业化设计稿 v0.11.0-design：30 张 UI mockup 落在 `assets/image/com_*.png`（主菜单 `com_menu_*` / 局内 `com_ingame_*` / 升级三选一 `com_lvup_*` 各 10 张）。
 - 版本: 0.10.40（体素更新时序与幽灵块修复）：
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
@@ -121,7 +126,12 @@
 - likely_next_task: Preview 验收三选一卡片详情是否一眼读完。卡片几何不要跟着文案改。
 - 相关文件: `scripts/Game.lua`（UPGRADE_POOL.detail）, `scripts/Scene3DBackend.lua`
 
-## 本批次新增避雷（v0.11.0 商业化 P1 / v0.11.0-design 设计稿）
+## 本批次新增避雷（v0.11.0 商业化 P1+P2+P3 / v0.11.0-design 设计稿）
+- ⚠️ **绿色＝看广告，青色＝免费/主操作，金色＝稀有（v0.11.0 落地）**：`C.ad / C.adDim` 是新增令牌。所有 `sdk` 激励视频入口（复活/双倍/重抽/四选一/升格/额外选/防线急救/稀有保底/广告礼包/转盘/补给双倍）必须用 `C.ad`；免费领取（签到/任务领取/直接领补给）用 `C.cyan`；稀有度与数值徽标才用 `C.warn`。⚠️ 禁止再用金色画广告按钮——玩家分不清「哪个要花钱、哪个看广告就行」。
+- ⚠️ **元层面板的命中必须用纯几何函数（v0.11.0）**：`MetaUI` 里 `GetShellLayout(w)` / `GetBoostBadgeRect` 等是**不画图**的；`Shell(ctx,...)` 才画。⚠️ 命中函数里**禁止**调 `Shell(ctx=nil,...)`——它内部会调 `D.backdrop/D.text`，ctx 为 nil 直接崩。新增面板时照 `GetShellLayout` 的写法拆。
+- ⚠️ **MetaUI 依赖注入（v0.11.0）**：`MetaUI` 不 require `Scene3DBackend`，靠 `MetaUI.Init{deps}` 拿颜色令牌与绘制原语（在 `Backend.Init` 里注入）。禁止在 MetaUI 里自己再定义一套颜色常量，否则样式必然漂移。
+- ⚠️ **HUD 可用空位只有 y=74..90 的右侧带（v0.11.0）**：HUD 三行已满——(14,4/20/52) 分数与最高、(270,4/20/52) 波次与敌机连击、(528,4/20/48/64) 防线与血条、(14,70)+(100,74)+(236,70) 等级/经验条/经验。新增 HUD 读数只能放**血条下方 y≥74 且 x 靠右**（左半边被等级行占着）。⚠️ 曾把「零件 +N」放在 (14,70) 与「等级」重叠。
+- ⚠️ **headless 截图文件大小恒定（v0.11.0 实测）**：`-screenshot` 输出的 PNG 是 1080×1920 未压缩存储（固定 8,305,983 字节），**文件大小与画面内容无关**，不能用大小判断截图是否更新或两次渲染是否相同。要看效果只能真的读图。
 - ⚠️ **升级面板命中必须走 `Backend.HitTestUpgradePanel`（v0.11.0）**：`main.lua:TryPickUpgradeAt` 已删除自持的 cardW/cardH/gap/cy/HIT_PAD 常量，改为消费后端返回的 `kind,index`。kind ∈ `card|boost|reroll_free|reroll_ad|fourth|extra_pick`。⚠️ 升格角标**必须先于**卡片本体判定，否则点角标会被当成选卡。新增面板按钮时只改 `GetUpgradePanelLayout`，禁止在 main.lua 再写第二套几何。
 - ⚠️ **第 4 张卡是「宽卡」不是第 4 列（v0.11.0）**：3 张主线卡仍是 168×300/gap8/cy530（y 380..680，视觉与命中都不变）；第 4 张画在下方 `extra` 矩形（x24,y692,w492,h104）。4 张卡横排会 696px 超出 540 画布，禁止把 `GetUpgradeCardLayout` 改成按 `#choices` 均分宽度。
 - ⚠️ **广告只能走 `AdService`（v0.11.0）**：所有 `sdk:ShowRewardVideoAd` 调用集中在 `AdService.Show`（在途锁 + 3s 冷却 + 一次性 completed + `embed manual close` 归失败 + 未受理且无回调时自行收尾）。禁止在业务代码里再写裸 `ShowRewardVideoAd`，否则返回值和迟到回调两条路径会漏处理出重复发奖。

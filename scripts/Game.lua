@@ -153,6 +153,7 @@ local bricksBroken = 0            -- 累计击碎砖块数（WO-11/P8 gameover �
 
 -- v0.11.0 商业化：局内零件产出与升级面板变现状态（均为单局生命周期）。
 local partsEarned = 0              -- 本局累计获得的「零件」，结算时由编排层入库
+local runAircraft = {}             -- 本局清掉过的机型和唯一列表（结算时解锁图鉴）
 local partsSettled = false         -- 本局零件是否已入库（防止重复发放）
 local partsDoubled = false         -- 结算是否已用广告翻倍（每局一次）
 local lastSettledParts = 0         -- 已入库的零件数（广告双倍时按此数补发）
@@ -161,6 +162,13 @@ local extraPanelArmed = 0          -- 广告「额外再选一张」剩余次数
 local fourthChoiceUnlocked = false -- 本次面板是否已解锁第 4 张（神秘词条优先）
 local boostedChoiceIds = {}        -- 本次面板被广告升格的卡 id -> true（结算时生效 2 层）
 local PANEL_CARD_COUNT = 3         -- 常规候选数（解锁后为 4）
+-- 暂停补给站（看广告，单局限量）
+local pauseHealUsed = 0            -- 已用「防线急救」次数
+local pauseRareUsed = 0            -- 已用「下次强化保底稀有」次数
+local pendingRareRoll = false      -- 下次抽卡强制稀有（由暂停补给站购买）
+local PAUSE_HEAL_MAX = 1
+local PAUSE_HEAL_AMOUNT = 25
+local PAUSE_RARE_MAX = 1
 
 -- 幸存者升级强化池（WO-09/P5）：
 -- weight 抽卡权重；rarity 稀有度（common/rare/epic）；maxStacks 叠加上限；
@@ -400,10 +408,14 @@ ResetGame = function()
     partsSettled = false
     partsDoubled = false
     lastSettledParts = 0
+    runAircraft = {}
     upgradeRerollFreeUsed = false
     extraPanelArmed = 0
     fourthChoiceUnlocked = false
     boostedChoiceIds = {}
+    pauseHealUsed = 0
+    pauseRareUsed = 0
+    pendingRareRoll = false
     aimX = SLING_X
     aimY = SLING_Y
     grabStartX = SLING_X
@@ -1073,6 +1085,11 @@ RollUpgradeChoices = function(opts)
     opts = opts or {}
     local cardCount = math.max(1, math.floor(opts.count or PANEL_CARD_COUNT))
     local forceRare = opts.forceRare == true
+    -- 暂停补给站买的「保底稀有」一次性生效后即清空。
+    if pendingRareRoll then
+        forceRare = true
+        pendingRareRoll = false
+    end
     upgradeChoices = {}
     local sinceRare = 0
     local forcedRareDone = false
@@ -1346,6 +1363,51 @@ function Game.ArmExtraPick()
     extraPanelArmed = 1
     Emit("upgrade_extra_armed", {})
     print("[Game] extra pick armed for this level")
+    return true
+end
+
+-- ============================================================================
+-- 暂停补给站（看广告，单局限量）。规则层只判定「能不能用」，广告由编排层播。
+-- ============================================================================
+
+---@return boolean
+function Game.CanPauseHeal()
+    return gameState == "paused" and pauseHealUsed < PAUSE_HEAL_MAX and baseHp < BASE_HP
+end
+
+---@return integer 剩余可用次数
+function Game.GetPauseHealLeft()
+    return math.max(0, PAUSE_HEAL_MAX - pauseHealUsed)
+end
+
+---@return boolean ok
+function Game.PauseHeal()
+    if not Game.CanPauseHeal() then return false end
+    pauseHealUsed = pauseHealUsed + 1
+    baseHp = math.min(BASE_HP, baseHp + PAUSE_HEAL_AMOUNT)
+    Emit("base_healed", {amount = PAUSE_HEAL_AMOUNT, hp = baseHp})
+    print("[Game] pause supply: base healed to " .. baseHp)
+    return true
+end
+
+---@return boolean
+function Game.CanPauseRarePick()
+    return gameState == "paused" and pauseRareUsed < PAUSE_RARE_MAX
+end
+
+---@return integer
+function Game.GetPauseRareLeft()
+    return math.max(0, PAUSE_RARE_MAX - pauseRareUsed)
+end
+
+-- 买「下一个强化面板保底出稀有」。
+---@return boolean ok
+function Game.PauseRarePick()
+    if not Game.CanPauseRarePick() then return false end
+    pauseRareUsed = pauseRareUsed + 1
+    pendingRareRoll = true
+    Emit("rare_roll_armed", {})
+    print("[Game] pause supply: next upgrade roll guaranteed rare")
     return true
 end
 
@@ -1949,6 +2011,7 @@ UpdateEnemies = function(dt)
             enemy.dead = true
             score = score + 50
             partsEarned = partsEarned + PARTS_PER_CLEAR
+            runAircraft[enemy.aircraftKey] = true
             clearStreak = clearStreak + 1
             -- 连续清空的连击经验加成，鼓励连续压制。
             local bonus = math.min(clearStreak - 1, BALANCE.clearStreakBonusCap)
@@ -2330,6 +2393,9 @@ function Game.GetSnapshot()
     s.reviveUsed = reviveUsed
     -- v0.11.0 商业化：局内零件与升级面板变现状态（渲染层只读）。
     s.partsEarned = partsEarned
+    local aircraftList = {}
+    for key in pairs(runAircraft) do aircraftList[#aircraftList + 1] = key end
+    s.runAircraft = aircraftList
     s.runParts = Game.GetRunParts()
     s.partsSettled = partsSettled
     s.partsDoubled = partsDoubled
@@ -2339,6 +2405,11 @@ function Game.GetSnapshot()
     s.canArmExtraPick = Game.CanArmExtraPick()
     s.extraPanelArmed = extraPanelArmed
     s.fourthChoiceUnlocked = fourthChoiceUnlocked
+    -- 暂停补给站（只读，供暂停面板画按钮）
+    s.canPauseHeal = Game.CanPauseHeal()
+    s.pauseHealLeft = Game.GetPauseHealLeft()
+    s.canPauseRarePick = Game.CanPauseRarePick()
+    s.pauseRareLeft = Game.GetPauseRareLeft()
     return s
 end
 

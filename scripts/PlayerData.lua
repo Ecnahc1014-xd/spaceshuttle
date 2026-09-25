@@ -315,6 +315,27 @@ function PlayerData.GetDailyProgress(id)
     return state.dailyProgress[id] or 0
 end
 
+-- 通用每日计数器（跨天自动清零），用于转盘/补给/广告礼包等「每日 N 次」限制。
+---@param key string
+---@return integer
+function PlayerData.GetDailyCount(key)
+    return state.dailyProgress["__cnt_" .. key] or 0
+end
+
+---@param key string
+---@param amount integer
+function PlayerData.AddDailyCount(key, amount)
+    PlayerData.RollDaily()
+    local full = "__cnt_" .. key
+    state.dailyProgress[full] = (state.dailyProgress[full] or 0) + math.floor(amount)
+end
+
+---@param id string
+---@return boolean
+function PlayerData.IsDailyClaimed(id)
+    return state.dailyClaimed[id] == true
+end
+
 ---@param id string
 ---@return boolean
 function PlayerData.CanClaimDaily(id)
