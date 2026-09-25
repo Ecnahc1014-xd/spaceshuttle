@@ -157,7 +157,14 @@
 - ⚠️ **深空场景的细线要常驻自发光（v0.11.1）**：本场景很暗，纯漫反射的细长盒几乎不可见（玩家报「那条线是不可见的」）。基准线这类必须一眼可辨的元素要加 `MatEmissiveColor` 常驻底光，受击/Boss 再在其上叠加，而不是只在 flash 时才有亮度。两条线并存时，次要那条的底光要压暗，避免抢焦点。
 - ⚠️ **离屏截图整屏发白 ≠ 你的改动有问题（v0.11.1 实测）**：本环境 llvmpipe 下 `BloomHDR(... TONEMAP_LUT)` 编译失败（`texture3DLod` no matching overload），HDR 渲染链断掉导致截图为纯白，与业务代码无关。判断时先看日志有没有该 shader 编译错误，别拿白图当回归证据；这类改动最终要靠 Preview 目视验收。
 
-## 本批次新增避雷（v0.12.0 单机间接联机 / v0.11.0 商业化）
+## 本批次新增避雷（v0.12.2 后台匹配 / v0.12.0 单机间接联机 / v0.11.0 商业化）
+- 🔴 **能不用大厅就不要用大厅（v0.12.2）**：`lobby_runtime` 只在「进游戏前必须等匹配」时才有必要。本作战斗全在客户端跑，为了拿一个服务端进程去承载 `Shop.onDeliver`，用「1 人匹配 + 大厅」是**代价远大于收益**——前几轮所有问题（灰帧、主题不匹配、双 NanoVG 上下文抢帧、启动等待）都源于这一层。正确做法是 `background_match: true`：游戏脚本立即加载、匹配在后台跑、`ServerReady` 到了再启用联机层。**判断标准：需要游戏服（玩法服务端权威）才要大厅；只需要一个发货进程，就用后台匹配。**
+- 🔴 **同一帧只允许一个 NanoVG 上下文（v0.12.2）**：两个上下文（如大厅的和游戏的）同时在世会各画各的 `nvgBeginFrame/EndFrame` 到同一帧，合成顺序不稳定，表现为「UI 只剩零星几个元素」。切换时必须先 `nvgDelete` 旧的再建新的。
+- 🔴 **`DrawLetterboxBackground` 只填画布外，不能当全屏兜底（v0.12.2）**：它按设计只在 `offsetX_/offsetY_ > 0` 时填 letterbox，9:16 屏幕上偏移为 0 → **一笔都不画**。要盖住「引擎清屏 → 覆盖层就绪」之间那一帧的默认清屏色（玩家看到的“灰一下”），必须**整屏实心填** `nvgRect(0,0,DESIGN_W,DESIGN_H)`。
+- ⚠️ **灰帧类问题的排查输入是「时刻」而不是「描述」（v0.12.2 教训）**：「变灰了一下」会让人去猜主题或渲染层；「**倒计时到 3 之后**变灰」直接钉死是「切换那一帧」。遇到这类反馈先问清**时刻 / 时长 / 触发动作**，能省好几轮。
+- ⚠️ **内购只走 serverCloud 是对的，但 serverCloud 需要服务端进程（v0.12.2）**：`Shop.onDeliver` → `serverCloud:BatchCommit` + `orderId`（原子幂等 + 离线补发）是官方唯一正确做法，客户端不能写别人的钱。但**发货回调必须有一个服务端进程在跑**——这才是在单机游戏里接入服务端的唯一理由。
+
+
 - 🔴 **「3D 正常但 2D 界面全没」的头号原因是启动期崩溃，不是渲染层（v0.12.1 实测）**：`ClientMain.Start` 在中途抛错（本次是 `NetClient.Start` 为 nil）会**中断后续所有 `SubscribeToEvent`**，而 3D 场景是 `RenderBackend.Init()` 建好的静态画面，于是看起来「3D 在、2D 全无」。**排查顺序：先在日志里搜 `Execute Lua function failed` / `attempt to call a nil value`，再怀疑渲染。** 防御：联机/可选子系统一律 `pcall` 包裹并降级，禁止让它们有能力中断游戏启动。
 - 🔴 **模块里的 `function Start()` / `function Stop()` 是全局函数，会覆盖入口的 Start/Stop（v0.12.1 实测）**：`network/Client.lua` 写成 `function Start()` 后，`require` 会把它挂到 `_G.Start`，覆盖 `main.lua` 的入口 `Start`；随后 `Module.Start()`（Module 是模块表）为 nil → 崩。**被 `require` 的模块必须写 `function Module.Start()`**；`main.lua` 是唯一允许定义全局 `Start`/`Stop` 的文件。
 - ⚠️ **事件订阅优先用函数引用（v0.12.1 加固）**：`SubscribeToEvent("Update", HandleUpdate)` 传函数值，不要传 `"HandleUpdate"` 字符串。字符串形式按文件作用域解析，处理器换文件或入口搬迁后可能静默失效。渲染后端已改成自持 `NanoVGRender` 订阅（订阅/处理器/快照三者在同一文件内闭环），不再依赖入口脚本里的 `HandleRender`。

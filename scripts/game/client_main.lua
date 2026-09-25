@@ -810,20 +810,9 @@ function ClientMain.Start(opts)
     -- ⚠️ 全程 pcall：联机层任何异常都不允许中断游戏启动
     --    （曾经因为 NetClient.Start 为 nil，在这里抛出，导致后面的事件订阅全部没执行，
     --     真机表现为「3D 正常但 2D 界面全没」）。
-    if not GameMode.IsOffline() then
-        local okNet, errNet = pcall(function()
-            NetClient.SetGemsListener(function(gems)
-                metaState.gems = gems
-            end)
-            NetClient.Start()
-        end)
-        if not okNet then
-            print("[ClientMain] network layer failed, degrade to offline: " .. tostring(errNet))
-            GameMode.SetOffline(true)
-        end
-    else
-        print("[ClientMain] offline mode: network layer not started")
-    end
+    -- background_match：游戏立即跑起来，服务端在后台匹配。
+    -- 默认按离线起步（不碰云，避免无谓请求）；服务端就绪由 ServerReady 事件接管。
+    print("[ClientMain] offline-first boot; waiting for ServerReady")
 
     local width, height = RenderBackend.GetDesignSize()
     Game.Init({
@@ -836,6 +825,7 @@ function ClientMain.Start(opts)
     LoadHighScoreFromCloud()
     LoadPlayerDataFromCloud()
 
+    SubscribeToEvent("ServerReady", HandleServerReady)
     SubscribeToEvent("Update", HandleUpdate)
     SubscribeToEvent("MouseButtonDown", HandleMouseDown)
     SubscribeToEvent("MouseButtonUp", HandleMouseUp)
@@ -855,6 +845,28 @@ function ClientMain.Stop()
         NetClient.Stop()
     end
     RenderBackend.Shutdown()
+end
+
+-- background_match：服务端就绪 → 启用联机层与云能力。
+-- ⚠️ 必须用函数引用订阅；字符串名按文件作用域解析，跨文件会静默失效。
+---@param eventType string
+---@param eventData any
+function HandleServerReady(eventType, eventData)
+    print("[Main] ServerReady -> enabling online features")
+    GameMode.SetOffline(false)
+    local okNet, errNet = pcall(function()
+        NetClient.SetGemsListener(function(gems)
+            metaState.gems = gems
+        end)
+        NetClient.Start()
+        LoadHighScoreFromCloud()
+        LoadPlayerDataFromCloud()
+    end)
+    if not okNet then
+        print("[Main] online enable failed, stay offline: " .. tostring(errNet))
+        GameMode.SetOffline(true)
+    end
+    RefreshMeta()
 end
 
 ---@return boolean

@@ -6,7 +6,9 @@
 
 local GameMode = {}
 
-local offline_ = false
+-- 默认 true：background_match 下游戏立即启动，服务端还没就绪时按离线处理，
+-- 收到 ServerReady 再置 false 启用云能力。
+local offline_ = true
 
 ---@return boolean
 function GameMode.IsOffline()
