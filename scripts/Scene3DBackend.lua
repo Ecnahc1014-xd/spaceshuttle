@@ -1429,6 +1429,10 @@ local function GetBoostBadgeRect(cx, cardTop, cardW)
     return { x = cx + cardW * 0.5 - w - 6, y = cardTop + 6, w = w, h = h }
 end
 
+local function GetHoldBadgeRect(cx, cardTop, cardW)
+    return { x = cx - cardW * 0.5 + 6, y = cardTop + 6, w = 46, h = 22 }
+end
+
 local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local x = cx - cardW * 0.5
     local y = cy - cardH * 0.5
@@ -1438,7 +1442,8 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawCornerBrackets(ctx, x + 4, y + 4, cardW - 8, cardH - 8, accent, 10, 1.2)
     DrawRect(ctx, x, y, 3, cardH, accent, 0)
 
-    DrawPixelText(ctx, x + 10, y + 8, string.format("%02d", index), 15, C.dim)
+    DrawPixelText(ctx, x + 6, y + 7, choice.held and "保留" or "锁定", 14,
+        choice.held and C.warn or C.cyanDim)
     DrawPixelText(ctx, x + cardW * 0.5, y + 24, choice.name or "强化", 22, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, x + cardW * 0.5, y + 52,
@@ -1516,6 +1521,7 @@ end
 ---@field rerollAd UiRect
 ---@field fourth UiRect
 ---@field extraPick UiRect
+---@field timerAd UiRect
 ---@field hintY number
 
 ---@return UpgradePanelLayout
@@ -1542,6 +1548,7 @@ local function GetUpgradePanelLayout(game)
         rerollAd = { x = rowX + btnW + btnGap, y = btnY, w = btnW, h = btnH },
         fourth = { x = rowX + (btnW + btnGap) * 2, y = btnY, w = btnW, h = btnH },
         extraPick = { x = margin, y = btnY + btnH + 10, w = innerW, h = 42 },
+        timerAd = { x = 160, y = 294, w = w - 320, h = 44 },
         hintY = btnY + btnH + 10 + 42 + 12,
     }
 end
@@ -1641,6 +1648,15 @@ local function DrawLevelUp(ctx, game, presentation)
     DrawPixelText(ctx, game.width * 0.5, 168,
         string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    local seconds = math.max(0, math.ceil(game.upgradeTimeLeft or 0))
+    DrawRect(ctx, 58, 262, game.width - 116, 12, C.widget, 3)
+    DrawRect(ctx, 58, 262, (game.width - 116) * math.min(1, seconds / (game.upgradeTimerExtended and 38 or 8)),
+        12, seconds <= 3 and C.error or C.cyan, 3)
+    DrawPixelText(ctx, game.width * 0.5, 284, "剩余 " .. seconds .. " 秒 · 超时自动选一张", 16,
+        seconds <= 3 and C.error or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if not game.upgradeTimerExtended then
+        DrawPanelButton(ctx, layout.timerAd, "看广告 +30 秒", "", true, C.ad)
+    end
 
     if #choices > 0 then
         for i = 1, layout.cardCount do
@@ -2219,6 +2235,7 @@ function Backend.HitTestUpgradePanel(uiX, uiY, game)
 
     if inside(layout.rerollFree) then return "reroll_free", nil end
     if inside(layout.rerollAd) then return "reroll_ad", nil end
+    if not game.upgradeTimerExtended and inside(layout.timerAd) then return "timer_ad", nil end
     if inside(layout.fourth) then return "fourth", nil end
     if inside(layout.extraPick) then return "extra_pick", nil end
 
@@ -2228,6 +2245,9 @@ function Backend.HitTestUpgradePanel(uiX, uiY, game)
         local cx = layout.startX + (i - 1) * (layout.cardW + layout.gap)
         -- 升格角标只在可升级时是入口；"已升格/已满" 时点按仍按选卡处理。
         local choice = choices[i]
+        if choice and inside(GetHoldBadgeRect(cx, cardTop, layout.cardW)) then
+            return "hold", i
+        end
         if choice and not choice.boosted
             and (choice.stacks or 0) + 1 < (choice.maxStacks or 1)
             and inside(GetBoostBadgeRect(cx, cardTop, layout.cardW)) then

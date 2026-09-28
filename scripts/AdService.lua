@@ -56,6 +56,10 @@ function AdService.IsBusy()
     return inFlight or cooldown > 0
 end
 
+function AdService.IsInFlight()
+    return inFlight
+end
+
 -- 发起一次激励视频。被在途锁或冷却挡住时不会调用 sdk，直接走 busy 提示。
 ---@param opts AdRequestOpts
 ---@return boolean accepted 是否真正向 sdk 发起了请求

@@ -856,6 +856,18 @@ local function TryPickUpgradeAt(uiX, uiY)
     if kind == "card" and index then
         Game.PickUpgrade(index)
         return true
+    elseif kind == "hold" and index then
+        if Game.ToggleHeldUpgrade(index) then
+            Presentation.SetAdToast("已切换保留卡，下一次升级优先出现")
+        end
+        return true
+    elseif kind == "timer_ad" then
+        ShowAd(function()
+            if Game.ExtendUpgradeTime() then
+                Presentation.SetAdToast("选卡时间 +30 秒")
+            end
+        end)
+        return true
     elseif kind == "boost" and index then
         if not Game.CanBoostUpgrade(index) then
             Presentation.SetAdToast("该卡已升格或强化层数已满")
@@ -961,7 +973,7 @@ function ClientMain.Start(opts)
     graphics.windowTitle = "击碎，飞机大战"
     input.mouseVisible = true
 
-    if not RenderBackend.Init() then return end
+    if not RenderBackend.Init() then return false end
 
     -- v0.11.0 联机：充值弹层复用游戏 UI 的令牌与原语（UI 无污染）。
     RechargeShop.Init(MetaUI.GetDeps())
@@ -1023,6 +1035,7 @@ function ClientMain.Start(opts)
     SubscribeToEvent("ScreenMode", HandleScreenMode)
 
     print("[Main] rendering, ads and cloud save connected")
+    return true
 end
 
 function ClientMain.Stop()
@@ -1046,13 +1059,13 @@ function HandleUpdate(eventType, eventData)
     local hitStop = Presentation.GetSnapshot().hitStop or 0
     local gameDt = dt
     if hitStop > 0 then gameDt = dt * 0.15 end
-    Game.Update(gameDt)
+    Game.Update(gameDt, AdService.IsInFlight())
     local snapshot = Game.GetSnapshot()
     Presentation.Update(dt, snapshot, Game.DrainEvents())
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
-    if snapshot.highScore and snapshot.highScore > lastSavedHighScore then
+    if not GameMode.IsOffline() and snapshot.highScore and snapshot.highScore > lastSavedHighScore then
         SaveHighScoreToCloud(snapshot.highScore)
     end
 

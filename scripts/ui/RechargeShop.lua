@@ -114,13 +114,11 @@ function RechargeShop.Draw(ctx, w, meta)
         local def = Shared.GEM_PACKS[i]
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, C.warnDim, 6)
         D.text(ctx, r.x + 14, r.y + 12, def.name, 20, C.text)
-        local priceText = "—"
         local price = meta.prices and meta.prices[def.sku]
-        if price then priceText = "¥" .. tostring(price) end
-        D.text(ctx, r.x + 14, r.y + 44,
-            meta.offline and "需联网" or ("¥" == string.sub(priceText, 1, 1) and priceText or "暂未开通"),
-            17, price and C.warn or C.dim)
         local canBuy = (not meta.offline) and meta.productsAvailable and price ~= nil
+        D.text(ctx, r.x + 14, r.y + 44,
+            meta.offline and "需联网" or (canBuy and ("¥" .. tostring(price)) or "暂未开通"),
+            17, canBuy and C.warn or C.dim)
         local btn = { x = r.x + r.w - 92, y = r.y + r.h - 44, w = 78, h = 32 }
         if canBuy then
             D.rect(ctx, btn.x, btn.y, btn.w, btn.h, C.warn, 6)
