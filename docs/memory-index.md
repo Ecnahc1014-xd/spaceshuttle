@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.12.4
-简述：三十图补齐批次——升级面板（选卡倒计时+自动选卡、锁定保留卡）、首充新手礼包、付费战斗档案轨全部落地；自建大厅修复双 NanoVG 上下文/五秒兜底竞态/Start 幂等。
+当前版本：0.12.5
+简述：真机反馈整改批次——升级面板广告从 5 触点砍到 1（删倒计时/四选一/升格/额外选）；局内道具改右上角竖列；广告在途自动冻结玩法；HUD 暂停按钮 + 暂停页/结算页「回主菜单」出口；平台 SystemNotification 与付费档案轨全部换皮为 dark-tech 顶端通知条；新增 4 张像素图标并增强 HUD。
 最后巩固：2026-09-28
 
 ## 项目概况
@@ -94,6 +94,14 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.12.5（真机反馈整改：广告收敛 + 出口闭环 + 换皮通知 + 道具竖列 + 图标增强）：
+  - **升级面板广告瘦身**（用户 4 截图否决）：删除选卡倒计时/+30 秒/超时自动选卡/看广告解锁第 4 张/单卡升格/额外再选；`Game.Update(dt)` 恢复单参数；面板只剩免费重抽+看广告重抽（必出稀有）+免费锁定/保留。规则层删 8 个接口与占位卡；`HitTestUpgradePanel` 只剩 4 种 kind。
+  - **局内道具右上角竖列**：默认收起「道具」标签（青色数量角标/绿色可领点），展开 3×52 槽；`itemPanelOpen_` 后端持有，`ToggleItemPanel/SetItemPanelOpen`；`HitTestItemSlot` 返回 `("toggle"|"slot"),index`；Grant 成功保持展开。
+  - **广告在途自动暂停**：`HandleUpdate` 以 `AdService.IsInFlight() && state=="playing"` 跳过 `Game.Update`（勿用 IsBusy，冷却会多冻 3s）；表现层照常衰减。
+  - **暂停/结算出口**：HUD 右上角 28×28 暂停按钮（绘制/命中同源、playing 才画、缺图程序化竖条回退）；暂停页「继续战斗/返回主菜单」行 y=740；结算页第四行「回主菜单」y=616（menuArmed 松手确认）；`Game.GoToMenu()` playing/paused/gameover→menu。菜单文案「按 P」改「右上角按钮」（移动端禁键盘指引）。
+  - **平台通知换皮 + 付费轨顶部条**：`Backend.ShowSystemBanner/HitTestSystemBanner/HasSystemBanner`（y=HUD_HEIGHT+8、elapsed 差分计时、最上层绘制、点条体=关闭）；ClientMain 与 lobby_runtime 两处 RegisterHandler（各自 Unregister，大厅 shutdownLobbyUI 统一 hideBanner+退订）；exitOnClose/kicked 带「退出」→engine:Exit()，error 只提示。付费档案轨大行从 DrawPass 删除，改主菜单一次性 banner（`balanceReceived_` 门控防 gems=0 误报；affordable→立即解锁 / 不足→去充值；`onBannerAction` 延后赋值解 local 前向引用）。
+  - **图标与 HUD 增强**：新 4 张 32×32（pause/home/barrier/levelup，.meta 22hex uuid、manifest 验证打包）；等级行 levelup 图标+xp 条右移缩窄；防线列左移 36 让位暂停钮；零件加倍并入零件行；出口按钮 home 图标+程序化播放三角。BUILD_VERSION 0.12.5。
+  - 验证：LSP 0 Error、多人 build+预览上传、manifest 含新图标、uuid 无重复。⚠️ 待 Preview：通知条实机、广告冻结、竖列点按、offer 时机。
 - v0.12.4（三十图补齐：升级变现闭环 + 首充礼包 + 付费档案轨 + 大厅加固）：
   - **升级面板**：①com_lvup_05 锁定保留卡——`Game.heldUpgradeId`/`ToggleHeldUpgrade`，卡片左上角标「锁定↔保留」（hit kind `hold`，判定先于 boost），下次面板 `RollUpgradeChoices` 放首位、重抽仍保留、选走即清；②com_lvup_08 选卡倒计时——`UPGRADE_SECONDS=8`、levelup 态 `Game.Update(dt, upgradeTimerPaused)` 倒数、超时随机自动选真实候选，面板顶部剩余条+「看广告 +30 秒」一次（kind `timer_ad`）；⚠️ 暂停条件必须用 `AdService.IsInFlight()` 而非 `IsBusy()`（冷却期冻面板）；广告在途锁 timer 不消耗。
   - **首充新手礼包**：`Shared.FIRST_GIFT`（sku first_gift_6、24h 窗、parts 500 + arctic 皮肤 + 服务端 100 钻石）；PlayerData `firstGiftClaimed/createdAt`（云合并取更早 createdAt）；服务端 money 标志 first_gift；PURCHASED_PARTS_SYNC 扩带 premium/first_gift 双标志；RechargeShop 顶部横幅行（倒计时+价格+立即购买），GetLayout(w, showFirstGift) Draw/Hit 同源。

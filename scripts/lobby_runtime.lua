@@ -10,9 +10,12 @@
 --    五秒兜底计时，避免与脚本切换竞态导致双起。
 -- 3. stop()（引擎回收大厅）同样要 UI.Shutdown()，不给游戏遗留上下文。
 -- 所有降级入口共用 GoOffline()，禁止在多处各写一遍销毁顺序。
+-- 4. v0.12.5：平台 SystemNotification 必须换皮成 dark-tech 顶部通知条，禁止
+--    默认白底弹窗直出（用户否决）。大厅与游戏是两个 Runtime，切换后各自注册。
 
 local UI = require "urhox-libs/UI"
 local GameMode = require "GameMode"
+local SysNotif = require "urhox-libs.System.SystemNotification"
 
 return function(ctx)
     local root, client = ctx.root, ctx.client
@@ -22,6 +25,55 @@ return function(ctx)
     local updateSubscribed = false
     local elapsed = 0
     GameMode.SetOffline(false)
+
+    -- v0.12.5：顶部通知条（大厅阶段）。绝对定位，按需 AddChild/Destroy。
+    ---@type table|nil
+    local bannerWidget = nil
+    local bannerTimer = 0
+
+    local function hideBanner()
+        if bannerWidget then
+            pcall(function() bannerWidget:Destroy() end)
+            bannerWidget = nil
+        end
+        bannerTimer = 0
+    end
+
+    local function showBanner(title, message)
+        hideBanner()
+        bannerWidget = UI.Panel {
+            position = "absolute",
+            top = 18,
+            left = "7%", width = "86%",
+            padding = 14,
+            flexDirection = "column", gap = 6,
+            backgroundColor = { 10, 16, 28, 255 },
+            borderColor = { 232, 176, 66, 220 }, borderWidth = 1,
+            borderRadius = 8,
+            children = {
+                UI.Label { text = title or "连接提示", fontSize = 18,
+                    fontColor = { 232, 176, 66, 255 } },
+                UI.Label { text = message or "", fontSize = 14,
+                    fontColor = { 226, 236, 248, 255 }, textAlign = "left" },
+            },
+        }
+        root:AddChild(bannerWidget)
+        bannerTimer = 15
+    end
+
+    pcall(function()
+        SysNotif.RegisterHandler(function(info)
+            local ok, view = pcall(function() return SysNotif.Resolve(info) end)
+            if not ok or type(view) ~= "table" then return false end
+            local message = view.message or ""
+            if view.reason and view.reason ~= "" then
+                message = message .. " 原因：" .. view.reason
+            end
+            showBanner(view.title or "连接提示", message)
+            print("[Lobby] system notification banner: " .. tostring(view.id))
+            return true
+        end)
+    end)
 
     local view = UI.Panel {
         width = "100%", height = "100%",
@@ -58,8 +110,10 @@ return function(ctx)
     local function shutdownLobbyUI()
         if uiShutdown then return end
         uiShutdown = true
+        hideBanner()
         pcall(function() view:Destroy() end)
         pcall(UI.Shutdown)
+        pcall(SysNotif.UnregisterHandler)
     end
 
     local function goOffline()
@@ -89,7 +143,12 @@ return function(ctx)
 
     local function onUpdate(_, data)
         if not active then return end
-        elapsed = elapsed + data:GetFloat("TimeStep")
+        local step = data:GetFloat("TimeStep")
+        elapsed = elapsed + step
+        if bannerWidget then
+            bannerTimer = bannerTimer - step
+            if bannerTimer <= 0 then hideBanner() end
+        end
         if elapsed >= 5 then goOffline() end
     end
     SubscribeToEvent("Update", onUpdate)

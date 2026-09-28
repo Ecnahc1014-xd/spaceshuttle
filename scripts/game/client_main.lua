@@ -19,6 +19,7 @@ local NetClient = require "network.Client"
 local MetaUI = require "MetaUI"
 local RechargeShop = require "ui.RechargeShop"
 local Shared = require "network.Shared"
+local SysNotif = require "urhox-libs.System.SystemNotification"
 
 local ClientMain = {}
 
@@ -33,6 +34,7 @@ local lastSavedHighScore = 0
 local reviveArmed = false
 local doubleArmed = false
 local restartArmed = false
+local menuArmed = false
 local metaPointerConsumed = false
 local CLOUD_HIGH_SCORE_KEY = "high_score"
 local CLOUD_META_KEY = "player_meta"
@@ -282,6 +284,65 @@ local metaState = {
     prices = {},
     rechargeToast = nil,
 }
+
+-- v0.12.5：平台系统通知换皮（dark-tech 顶部通知条），不再允许默认白底弹窗直出。
+-- ⚠️ 全局只有一个 handler 槽；大厅/游戏是两个 Runtime，切换后各自注册。
+local function installSystemNotificationHandler()
+    pcall(function()
+        SysNotif.RegisterHandler(function(info)
+            local ok, view = pcall(function() return SysNotif.Resolve(info) end)
+            if not ok or type(view) ~= "table" then return false end
+            local tone = view.kind == "error" and "error" or "warn"
+            local message = view.message or ""
+            if view.reason and view.reason ~= "" then
+                message = message .. " 原因：" .. view.reason
+            end
+            RenderBackend.ShowSystemBanner({
+                title = view.title or "连接提示",
+                message = message,
+                tone = tone,
+                ttl = 15,
+                -- 连接检查/重连类（error）只提示不劝退；被踢/弹窗类给退出出口。
+                actionText = view.kind == "error" and nil or "退出",
+                actionId = "banner_exit",
+            })
+            print("[Main] system notification banner: " .. tostring(view.id)
+                .. " kind=" .. tostring(view.kind))
+            return true
+        end)
+    end)
+end
+
+-- v0.12.5：付费档案轨解锁入口（顶端通知条，不占档案面板大行）。
+-- 只在主菜单展示一次：有 banner 通道空闲、联网、未解锁、余额已收到时才弹
+-- （⚠️ 必须等服务端首推余额，否则 gems=0 会误报「钻石不足」）。
+local premiumOfferShown_ = false
+local balanceReceived_ = false
+local function TryShowPremiumPassOffer()
+    if premiumOfferShown_ then return end
+    if GameMode.IsOffline() then return end
+    if not balanceReceived_ then return end
+    if metaState.premiumPass then return end
+    if RenderBackend.HasSystemBanner() then return end
+    premiumOfferShown_ = true
+    local cost = metaState.premiumPassCost or 100
+    local gems = math.floor(metaState.gems or 0)
+    local affordable = gems >= cost
+    RenderBackend.ShowSystemBanner({
+        title = "付费档案轨",
+        message = (affordable
+            and string.format("每级奖励 ×2 · 钻石一次解锁（当前 %d / 需 %d）", gems, cost))
+            or string.format("每级奖励 ×2 · 需 %d 钻石，当前 %d，可充值后再解锁", cost, gems),
+        tone = "warn",
+        ttl = 8,
+        actionText = affordable and "立即解锁" or "去充值",
+        actionId = affordable and "buy_premium_pass" or "open_recharge",
+    })
+end
+
+-- 顶端通知条动作处理：真正的函数体在 HandleMetaAction 定义后赋值（同文件 local
+-- 前向引用问题：upvalue 同一变量，运行时才取函数体，TryBannerAt 闭包引用不受影响）。
+local onBannerAction = nil
 
 -- 拉一次钻石商品列表（价格来自平台，离线/未开通时为空）。
 local function RefreshGemProducts()
@@ -774,6 +835,20 @@ local function HandleMetaAction(action, index)
     end
 end
 
+-- v0.12.5：顶端通知条动作处理（在此赋值，函数体引用 HandleMetaAction）。
+onBannerAction = function(actionId)
+    if actionId == "buy_premium_pass" then
+        -- 扣款走服务端异步回调，结果由 metaToast 呈现；通知条先收起避免重复点击。
+        RenderBackend.DismissSystemBanner()
+        HandleMetaAction("buy_premium_pass", nil)
+    elseif actionId == "open_recharge" then
+        HandleMetaAction("open_recharge", nil)
+        RenderBackend.DismissSystemBanner()
+    elseif actionId == "banner_exit" then
+        engine:Exit()
+    end
+end
+
 ---@return boolean
 local function IsMetaCapturing()
     return metaState.screen ~= nil or metaState.supplyOpen
@@ -817,14 +892,31 @@ local function MenuMetaBlocksRelease()
     return gameSnapshot ~= nil and gameSnapshot.state == "menu" and IsMetaCapturing()
 end
 
--- v0.11.0 商业化 P4：局内道具槽。有点数就即刻使用；空槽且未领取过则看广告获取。
+-- v0.12.5：HUD 右上角暂停按钮（移动端唯一暂停入口）。返回 true 表示已消费。
+---@return boolean handled
+local function TryHudPauseAt(screenX, screenY)
+    if not gameSnapshot or gameSnapshot.state ~= "playing" then return false end
+    local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+    if not RenderBackend.HitTestHudPause(uiX, uiY, gameSnapshot) then return false end
+    Game.Pause()
+    RefreshSnapshots()
+    return true
+end
+
+-- v0.12.5：局内道具右上角竖列。收起态点标签展开；展开态点槽位用道具或看广告领取。
 -- 返回 true 表示点击已被消费（不再穿透成拖拽起手）。
 ---@return boolean handled
 local function TryUseItemAt(screenX, screenY)
     if not gameSnapshot or gameSnapshot.state ~= "playing" then return false end
     local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-    local index = RenderBackend.HitTestItemSlot(uiX, uiY, gameSnapshot)
-    if not index then return false end
+    local kind, index = RenderBackend.HitTestItemSlot(uiX, uiY, gameSnapshot)
+    if not kind then return false end
+
+    if kind == "toggle" then
+        RenderBackend.ToggleItemPanel()
+        return true
+    end
+
     local item = gameSnapshot.items and gameSnapshot.items[index]
     if not item then return false end
 
@@ -836,6 +928,8 @@ local function TryUseItemAt(screenX, screenY)
         ShowAd(function()
             if Game.GrantItem(item.key) then
                 print("[Main] item granted via ad: " .. item.key)
+                -- 发放成功后保持展开，让玩家看到新入手的道具
+                RenderBackend.SetItemPanelOpen(true)
             end
         end)
         return true
@@ -899,11 +993,19 @@ local function TryPauseSupplyAt(screenX, screenY)
             if Game.PausePartsBoost() then Presentation.SetAdToast("零件 ×2 生效 45 秒") end
         end)
         return true
+    elseif kind == "pause_resume" then
+        Game.Resume()
+        RefreshSnapshots()
+        return true
+    elseif kind == "pause_menu" then
+        Game.GoToMenu()
+        RefreshSnapshots()
+        return true
     end
     return false
 end
 
--- 升级面板点击命中（v0.11.0 商业化）。
+-- 升级面板点击命中（v0.12.5 精简：只有选卡 / 锁定 / 免费重抽 / 看广告重抽）。
 -- 几何完全由 Scene3DBackend.HitTestUpgradePanel 提供，与绘制同源，禁止在此另写常量。
 local function TryPickUpgradeAt(uiX, uiY)
     local snapshot = Game.GetSnapshot()
@@ -915,24 +1017,6 @@ local function TryPickUpgradeAt(uiX, uiY)
         if Game.ToggleHeldUpgrade(index) then
             Presentation.SetAdToast("已切换保留卡，下一次升级优先出现")
         end
-        return true
-    elseif kind == "timer_ad" then
-        ShowAd(function()
-            if Game.ExtendUpgradeTime() then
-                Presentation.SetAdToast("选卡时间 +30 秒")
-            end
-        end)
-        return true
-    elseif kind == "boost" and index then
-        if not Game.CanBoostUpgrade(index) then
-            Presentation.SetAdToast("该卡已升格或强化层数已满")
-            return true
-        end
-        ShowAd(function()
-            if Game.BoostUpgrade(index) then
-                Presentation.SetAdToast("已升格：该卡生效 ×2")
-            end
-        end)
         return true
     elseif kind == "reroll_free" then
         if Game.CanFreeReroll() then
@@ -949,28 +1033,6 @@ local function TryPickUpgradeAt(uiX, uiY)
             end
         end)
         return true
-    elseif kind == "fourth" then
-        if Game.CanUnlockFourthChoice() then
-            ShowAd(function()
-                if Game.UnlockFourthChoice() then
-                    Presentation.SetAdToast("已解锁第 4 张")
-                end
-            end)
-        else
-            Presentation.SetAdToast("第 4 张已解锁")
-        end
-        return true
-    elseif kind == "extra_pick" then
-        if Game.CanArmExtraPick() then
-            ShowAd(function()
-                if Game.ArmExtraPick() then
-                    Presentation.SetAdToast("本次可多选一张")
-                end
-            end)
-        else
-            Presentation.SetAdToast("本次已启用额外选卡")
-        end
-        return true
     end
     return false
 end
@@ -980,6 +1042,8 @@ local function HandleGameOverPointerDown(uiX, uiY)
     reviveArmed = (hit == "revive")
     doubleArmed = (hit == "double")
     restartArmed = (hit == "restart")
+    -- v0.12.5：结算页「回主菜单」出口（同样松手确认，防死亡瞬间误触）
+    menuArmed = (hit == "menu")
     return hit ~= nil
 end
 
@@ -989,6 +1053,7 @@ local function HandleGameOverPointerUp(uiX, uiY)
         reviveArmed = false
         doubleArmed = false
         restartArmed = false
+        menuArmed = false
         ShowReviveAd()
         return true
     end
@@ -996,6 +1061,7 @@ local function HandleGameOverPointerUp(uiX, uiY)
         reviveArmed = false
         doubleArmed = false
         restartArmed = false
+        menuArmed = false
         if Game.CanDoubleSettle() then
             ShowDoublePartsAd()
         else
@@ -1007,13 +1073,24 @@ local function HandleGameOverPointerUp(uiX, uiY)
         reviveArmed = false
         doubleArmed = false
         restartArmed = false
+        menuArmed = false
         Game.RestartFromOver()
+        RefreshSnapshots()
+        return true
+    end
+    if menuArmed and hit == "menu" then
+        reviveArmed = false
+        doubleArmed = false
+        restartArmed = false
+        menuArmed = false
+        Game.GoToMenu()
         RefreshSnapshots()
         return true
     end
     reviveArmed = false
     doubleArmed = false
     restartArmed = false
+    menuArmed = false
     return false
 end
 
@@ -1038,6 +1115,11 @@ function ClientMain.Start(opts)
 
     if not RenderBackend.Init() then return false end
 
+    -- v0.12.5：平台通知换皮 + 付费轨 offer 状态复位（重复进游戏也要能再曝光一次）。
+    installSystemNotificationHandler()
+    premiumOfferShown_ = false
+    balanceReceived_ = false
+
     -- v0.11.0 联机：充值弹层复用游戏 UI 的令牌与原语（UI 无污染）。
     RechargeShop.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("recharge", RechargeShop.Draw, RechargeShop.HitTest)
@@ -1057,8 +1139,10 @@ function ClientMain.Start(opts)
         local okNet, errNet = pcall(function()
             NetClient.SetGemsListener(function(gems)
                 metaState.gems = gems
+                balanceReceived_ = true
             end)
             NetClient.SetPurchasedPartsListener(function(total, _, firstGift)
+                balanceReceived_ = true
                 local granted = PlayerData.ClaimPurchasedParts(total)
                 if granted > 0 then
                     SavePlayerDataToCloud()
@@ -1115,6 +1199,7 @@ end
 
 function ClientMain.Stop()
     started_ = false
+    pcall(SysNotif.UnregisterHandler)
     if not GameMode.IsOffline() then
         NetClient.Stop()
     end
@@ -1135,7 +1220,14 @@ function HandleUpdate(eventType, eventData)
     local hitStop = Presentation.GetSnapshot().hitStop or 0
     local gameDt = dt
     if hitStop > 0 then gameDt = dt * 0.15 end
-    Game.Update(gameDt, AdService.IsInFlight())
+    -- v0.12.5：激励视频在途时冻结玩法推进（浏览器 embed 覆盖时游戏循环仍在跑，
+    -- 广告回来敌人已压到防线）。表现层照常衰减，快照不变 = 画面静止。
+    -- 结算/升级/暂停态的广告本就不推进玩法，无需重复处理。
+    local adFreeze = AdService.IsInFlight()
+        and gameSnapshot ~= nil and gameSnapshot.state == "playing"
+    if not adFreeze then
+        Game.Update(gameDt)
+    end
     local snapshot = Game.GetSnapshot()
     Presentation.Update(dt, snapshot, Game.DrainEvents())
     gameSnapshot = snapshot
@@ -1166,6 +1258,8 @@ function HandleUpdate(eventType, eventData)
             supplyPrompted = true
             metaState.supplyOpen = true
         end
+        -- v0.12.5：主菜单顶端通知一次性曝光付费档案轨（替代原常驻大行）。
+        TryShowPremiumPassOffer()
     else
         -- 离开主菜单时收起所有元层界面，避免带着面板进局。
         metaState.screen = nil
@@ -1204,10 +1298,28 @@ function HandleScreenMode()
     RenderBackend.Resize()
 end
 
+-- v0.12.5：顶端通知条优先消费点击（任意状态都在最上层）。
+---@return boolean consumed
+local function TryBannerAt(screenX, screenY)
+    if not RenderBackend.HasSystemBanner() then return false end
+    local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+    local action = RenderBackend.HitTestSystemBanner(uiX, uiY)
+    if not action then return false end
+    if action ~= "__close__" then
+        onBannerAction(action)
+    end
+    return true
+end
+
 function HandleMouseDown(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    -- v0.12.5：顶部通知条永远最先吃点击（覆盖 HUD 下沿，可能与任何模态重叠）。
+    if TryBannerAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
     if Game.IsGameOver() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         HandleGameOverPointerDown(uiX, uiY)
@@ -1223,7 +1335,11 @@ function HandleMouseDown(eventType, eventData)
         return
     end
     -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
-    -- v0.11.0 商业化 P4：道具槽优先于拖拽起手。
+    -- v0.12.5：HUD 暂停按钮与道具竖列优先于拖拽起手。
+    if TryHudPauseAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
     if TryUseItemAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -1271,6 +1387,11 @@ end
 function HandleTouchBegin(eventType, eventData)
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    -- v0.12.5：顶部通知条永远最先吃触摸。
+    if TryBannerAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
     if Game.IsGameOver() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         HandleGameOverPointerDown(uiX, uiY)
@@ -1285,7 +1406,11 @@ function HandleTouchBegin(eventType, eventData)
         return
     end
     -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
-    -- v0.11.0 商业化 P4：道具槽优先于拖拽起手。
+    -- v0.12.5：HUD 暂停按钮与道具竖列优先于拖拽起手。
+    if TryHudPauseAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
     if TryUseItemAt(screenX, screenY) then
         metaPointerConsumed = true
         return

@@ -166,14 +166,8 @@ local settledParts = 0             -- 已按基础倍率入库的累计零件（
 local settledBricks = 0            -- 已计入跨局统计的击碎数
 local runCounted = false           -- 本局完成次数只计一次
 local upgradeRerollFreeUsed = false -- 每局 1 次免费重抽
-local extraPanelArmed = 0          -- 广告「额外再选一张」剩余次数
-local fourthChoiceUnlocked = false -- 本次面板是否已解锁第 4 张（神秘词条优先）
-local boostedChoiceIds = {}        -- 本次面板被广告升格的卡 id -> true（结算时生效 2 层）
 local heldUpgradeId = nil          -- 本局保留到下一次升级的候选卡 id（最多一张）
-local upgradeTimeLeft = 0           -- 本次选卡剩余时间；暂停广告期间不消耗
-local upgradeTimerExtended = false -- 本次选卡已通过广告延长一次
-local UPGRADE_SECONDS = 8
-local PANEL_CARD_COUNT = 3         -- 常规候选数（解锁后为 4）
+local PANEL_CARD_COUNT = 3         -- 常规候选数（v0.12.5 精简：面板不再有解锁第 4 张）
 -- 暂停补给站（看广告，单局限量）
 local pauseHealUsed = 0            -- 已用「防线急救」次数
 local pauseRareUsed = 0            -- 已用「下次强化保底稀有」次数
@@ -433,12 +427,7 @@ ResetGame = function()
     baseShield = 0
     ResetItems()
     upgradeRerollFreeUsed = false
-    extraPanelArmed = 0
-    fourthChoiceUnlocked = false
-    boostedChoiceIds = {}
     heldUpgradeId = nil
-    upgradeTimeLeft = 0
-    upgradeTimerExtended = false
     pauseHealUsed = 0
     pauseRareUsed = 0
     pendingRareRoll = false
@@ -1123,8 +1112,6 @@ RollUpgradeChoices = function(opts)
         pendingRareRoll = false
     end
     upgradeChoices = {}
-    upgradeTimeLeft = UPGRADE_SECONDS
-    upgradeTimerExtended = false
     local sinceRare = 0
     local forcedRareDone = false
     local chosenThisRoll = {}
@@ -1218,33 +1205,9 @@ RollUpgradeChoices = function(opts)
     end
 end
 
--- 「四选一 / 神秘词条」追加卡：优先未拥有的词条卡，其次轮空池按权重抽。
----@return UpgradeDef|nil
-local function PickExtraChoice()
-    local current = upgradeChoices or {}
-    local used = {}
-    for _, c in ipairs(current) do used[c.id] = true end
-    local wordPool = {}
-    for _, u in ipairs(UPGRADE_POOL) do
-        if u.kind == "word" and not used[u.id] and (upgradeStacks[u.id] or 0) < u.maxStacks then
-            wordPool[#wordPool + 1] = u
-        end
-    end
-    if #wordPool > 0 then
-        return wordPool[RandomInt(1, #wordPool)]
-    end
-    local pool = {}
-    for _, u in ipairs(UPGRADE_POOL) do
-        if not used[u.id] and (upgradeStacks[u.id] or 0) < u.maxStacks then
-            pool[#pool + 1] = u
-        end
-    end
-    if #pool > 0 then return pool[RandomInt(1, #pool)] end
-    return nil
-end
-
 -- 由外部 UI 调用：选择第 index（1-based）项强化，恢复 playing。
--- v0.11.0：返回 boolean；广告升格的卡生效两次；「额外再选一张」不消耗等级。
+-- v0.12.5 精简：面板广告触点收敛为「免费重抽 + 看广告重抽」，
+-- 删除第 4 张解锁 / 单卡升格 / 额外再选 / 选卡倒计时（触点过密招致反感）。
 ---@param index integer
 ---@return boolean picked
 function Game.PickUpgrade(index)
@@ -1253,7 +1216,7 @@ function Game.PickUpgrade(index)
     if not choice then return false end
 
     local stacks = upgradeStacks[choice.id] or 0
-    local times = math.min(choice.maxStacks - stacks, boostedChoiceIds[choice.id] and 2 or 1)
+    local times = math.min(choice.maxStacks - stacks, 1)
     if times <= 0 then return false end
     for _ = 1, times do
         choice.apply(stacks)   -- 传入当前层数，支持边际递减
@@ -1263,25 +1226,12 @@ function Game.PickUpgrade(index)
     if heldUpgradeId == choice.id then heldUpgradeId = nil end
     table.insert(upgradePicks, choice.id)
     Emit("upgrade_picked", {
-        id = choice.id, name = choice.name, stacks = stacks, boosted = times > 1,
+        id = choice.id, name = choice.name, stacks = stacks,
     })
-    print("[Game] upgrade picked: " .. choice.name .. " (stacks=" .. stacks
-        .. ", boosted=" .. tostring(times > 1) .. ")")
-
-    -- 广告「额外再选一张」：同一等级再开一次面板，不消耗 pendingLevelUps。
-    if extraPanelArmed > 0 then
-        extraPanelArmed = extraPanelArmed - 1
-        fourthChoiceUnlocked = false
-        boostedChoiceIds = {}
-        RollUpgradeChoices({})
-        Emit("level_up", {level = playerLevel, extra = true})
-        return true
-    end
+    print("[Game] upgrade picked: " .. choice.name .. " (stacks=" .. stacks .. ")")
 
     pendingLevelUps = pendingLevelUps - 1
     upgradeChoices = nil
-    fourthChoiceUnlocked = false
-    boostedChoiceIds = {}
     if pendingLevelUps > 0 then
         RollUpgradeChoices({})
         Emit("level_up", {level = playerLevel})
@@ -1308,16 +1258,7 @@ function Game.GetUpgradeChoices()
             value = c.value, rarity = c.rarity, kind = c.kind or "buff",
             stacks = upgradeStacks[c.id] or 0, maxStacks = c.maxStacks,
             tradeoff = c.tradeoff,
-            boosted = boostedChoiceIds[c.id] == true,
             held = heldUpgradeId == c.id,
-        })
-    end
-    -- 第 4 个槽位未解锁时补一个占位卡，UI 画成金色锁 +「看广告揭晓」。
-    if not fourthChoiceUnlocked then
-        table.insert(list, {
-            id = "__locked__", name = "", desc = "", detail = "", value = "",
-            rarity = "locked", kind = "locked", stacks = 0, maxStacks = 0,
-            tradeoff = false, boosted = false, locked = true,
         })
     end
     return list
@@ -1351,15 +1292,7 @@ function Game.ToggleHeldUpgrade(index)
     return true
 end
 
-function Game.ExtendUpgradeTime()
-    if gameState ~= "levelup" or upgradeTimerExtended then return false end
-    upgradeTimerExtended = true
-    upgradeTimeLeft = upgradeTimeLeft + 30
-    print("[Game] upgrade timer extended +30s")
-    return true
-end
-
----@param mode string "free" | "ad" | "ad_rare"
+---@param mode string "free" | "ad_rare"
 ---@return boolean ok
 function Game.RerollUpgrades(mode)
     if gameState ~= "levelup" or not upgradeChoices then return false end
@@ -1367,72 +1300,9 @@ function Game.RerollUpgrades(mode)
         if upgradeRerollFreeUsed then return false end
         upgradeRerollFreeUsed = true
     end
-    -- 重抽后本次面板的解锁/升格状态作废，避免 UI 与实际候选错位。
-    fourthChoiceUnlocked = false
-    boostedChoiceIds = {}
     RollUpgradeChoices({ forceRare = (mode == "ad_rare") })
     Emit("upgrade_reroll", {mode = mode})
     print("[Game] upgrade reroll mode=" .. mode)
-    return true
-end
-
----@return boolean
-function Game.CanUnlockFourthChoice()
-    if gameState ~= "levelup" or not upgradeChoices then return false end
-    return not fourthChoiceUnlocked and #upgradeChoices >= PANEL_CARD_COUNT
-end
-
----@return boolean ok
-function Game.UnlockFourthChoice()
-    if not Game.CanUnlockFourthChoice() then return false end
-    local extra = PickExtraChoice()
-    if not extra then return false end
-    local list = upgradeChoices
-    if not list then return false end
-    list[#list + 1] = extra
-    fourthChoiceUnlocked = true
-    Emit("upgrade_fourth", {id = extra.id, name = extra.name})
-    print("[Game] fourth choice unlocked: " .. extra.name)
-    return true
-end
-
----@param index integer
----@return boolean ok 该卡是否可被广告升格
-function Game.CanBoostUpgrade(index)
-    if gameState ~= "levelup" or not upgradeChoices then return false end
-    local choice = upgradeChoices[index]
-    if not choice then return false end
-    return not boostedChoiceIds[choice.id]
-        and (upgradeStacks[choice.id] or 0) + 1 < choice.maxStacks
-end
-
--- 广告「单卡升格」：该卡结算时生效两次。
----@param index integer
----@return boolean ok
-function Game.BoostUpgrade(index)
-    if not Game.CanBoostUpgrade(index) then return false end
-    local list = upgradeChoices
-    if not list then return false end
-    local choice = list[index]
-    if not choice then return false end
-    boostedChoiceIds[choice.id] = true
-    Emit("upgrade_boosted", {id = choice.id, name = choice.name})
-    print("[Game] upgrade boosted: " .. choice.name)
-    return true
-end
-
----@return boolean
-function Game.CanArmExtraPick()
-    return gameState == "levelup" and upgradeChoices ~= nil and extraPanelArmed == 0
-end
-
--- 广告「额外再选一张」：本次升级可多选一张（再开一次面板）。
----@return boolean ok
-function Game.ArmExtraPick()
-    if not Game.CanArmExtraPick() then return false end
-    extraPanelArmed = 1
-    Emit("upgrade_extra_armed", {})
-    print("[Game] extra pick armed for this level")
     return true
 end
 
@@ -2354,20 +2224,12 @@ function Game.Init(config)
         .. " highScore=" .. tostring(highScore))
 end
 
-function Game.Update(dt, upgradeTimerPaused)
+function Game.Update(dt)
     elapsed = elapsed + dt
-    if gameState == "levelup" then
-        if upgradeTimerPaused then return end
-        upgradeTimeLeft = math.max(0, upgradeTimeLeft - dt)
-        if upgradeTimeLeft == 0 and upgradeChoices and #upgradeChoices > 0 then
-            -- 超时自动选一张真实候选，不把第 4 张锁定占位当成强化。
-            local index = RandomInt(1, #upgradeChoices)
-            print("[Game] upgrade timer expired; auto pick " .. index)
-            Game.PickUpgrade(index)
-        end
+    if gameState ~= "playing" then
+        -- 非战斗态只保留时钟，供暂停/升级/菜单表现动画使用。
         return
     end
-    if gameState ~= "playing" then return end
 
     UpdateAiming()
     partsBoostTime = math.max(0, partsBoostTime - dt)
@@ -2576,6 +2438,18 @@ function Game.IsPaused()
     return gameState == "paused"
 end
 
+-- v0.12.5：主动回主菜单（暂停页「返回主菜单」/ 结算页「回主菜单」出口）。
+-- 升级态必须先选完卡（面板是强制三选一），不走这里。
+function Game.GoToMenu()
+    if gameState == "playing" or gameState == "paused" or gameState == "gameover" then
+        gameState = "menu"
+        Emit("game_reset")
+        print("[Game] returned to menu")
+        return true
+    end
+    return false
+end
+
 function Game.DrainEvents()
     local events = pendingEvents
     pendingEvents = {}
@@ -2679,12 +2553,6 @@ function Game.GetSnapshot()
     s.partsDoubled = partsDoubled
     s.canDoubleSettle = Game.CanDoubleSettle()
     s.rerollFreeAvailable = Game.CanFreeReroll()
-    s.upgradeTimeLeft = upgradeTimeLeft
-    s.upgradeTimerExtended = upgradeTimerExtended
-    s.canUnlockFourth = Game.CanUnlockFourthChoice()
-    s.canArmExtraPick = Game.CanArmExtraPick()
-    s.extraPanelArmed = extraPanelArmed
-    s.fourthChoiceUnlocked = fourthChoiceUnlocked
     -- 暂停补给站（只读，供暂停面板画按钮）
     s.canPauseHeal = Game.CanPauseHeal()
     s.pauseHealLeft = Game.GetPauseHealLeft()

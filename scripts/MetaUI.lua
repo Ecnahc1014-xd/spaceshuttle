@@ -649,11 +649,8 @@ local function GetPassRewardRect(content, index)
         w = content.w, h = 72 }
 end
 
--- 付费轨解锁按钮：档案奖励区下方（5 行最多到 content.y+180+4*84+72 = +588）。
-local function GetPassPremiumRect(content)
-    return { x = content.x, y = content.y + 180 + 5 * 84 + 6, w = content.w, h = 56 }
-end
-
+-- v0.12.5：付费档案轨不再占常驻大面板行（用户否决 v0.12.4 显示）。
+-- 解锁入口改为顶端通知条（Backend.ShowSystemBanner），面板本身只保留奖励列表。
 local function DrawPass(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "战斗档案",
@@ -688,23 +685,6 @@ local function DrawPass(ctx, w, meta)
         Button(ctx, btn, item.claimed and "已领取" or (item.claimable and "领取" or "未解锁"), "",
             item.claimable and "primary" or "disabled")
     end
-    -- 付费轨解锁区（金色＝钻石付费，与青色免费、绿色广告区分）
-    local pr = GetPassPremiumRect(content)
-    if meta.premiumPass then
-        D.panel(ctx, pr.x, pr.y, pr.w, pr.h, C.card, C.warnDim, 6)
-        D.text(ctx, pr.x + pr.w * 0.5, pr.y + 18, "付费档案轨 · 已解锁", 17, C.warn,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    else
-        D.panel(ctx, pr.x, pr.y, pr.w, pr.h, C.widget, C.warnDim, 6)
-        D.text(ctx, pr.x + 16, pr.y + 8, "付费档案轨 · 每级奖励 ×2", 17, C.text)
-        D.text(ctx, pr.x + 16, pr.y + 32, "钻石一次解锁 · 由服务端记账", 14, C.dim)
-        local btn = { x = pr.x + pr.w - 148, y = pr.y + 10, w = 132, h = 40 }
-        local affordable = (not meta.offline) and (meta.gems or 0) >= (meta.premiumPassCost or 100)
-        local passBtnLabel = "钻石不足"
-        if meta.offline then passBtnLabel = "需联网"
-        elseif affordable then passBtnLabel = string.format("%d 钻石解锁", meta.premiumPassCost or 100) end
-        Button(ctx, btn, passBtnLabel, "", affordable and "gold" or "disabled")
-    end
     nvgRestore(ctx)
     return content, close
 end
@@ -718,15 +698,6 @@ local function HitTestPass(uiX, uiY, w, meta)
         local r = { x = row.x + row.w - 136,
             y = row.y + 12, w = 120, h = 48 }
         if item.claimable and Inside(r, uiX, uiY) then return "claim_pass", item.level end
-    end
-    if not meta.premiumPass then
-        local pr = GetPassPremiumRect(content)
-        local btn = { x = pr.x + pr.w - 148, y = pr.y + 10, w = 132, h = 40 }
-        if Inside(btn, uiX, uiY)
-            and not meta.offline
-            and (meta.gems or 0) >= (meta.premiumPassCost or 100) then
-            return "buy_premium_pass", nil
-        end
     end
     return nil, nil
 end

@@ -3,6 +3,17 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.5（真机反馈整改批次：广告收敛 + 出口闭环 + 换皮通知 + 道具竖列 + 图标增强）：
+  - **升级面板广告大瘦身（用户否决 v0.12.4：「广告多到玩家会骂娘」）**：删除选卡倒计时/+30 秒广告/超时自动选卡/看广告解锁第 4 张/单卡升格/额外再选全部 5 触点；`Game.Update(dt)` 恢复单参数。面板只剩 2 个广告位：免费重抽 + 看广告重抽必出稀有，另有卡片「锁定/保留」（免费）。`GetUpgradeChoices` 不再补 `__locked__` 占位卡；规则层删 `PickExtraChoice/ExtendUpgradeTime/CanUnlockFourthChoice/UnlockFourthChoice/CanBoostChoice/BoostUpgrade/CanArmExtraPick/ArmExtraPick`；`HitTestUpgradePanel` 只剩 reroll_free/reroll_ad/hold(先于卡体)/card。
+  - **局内道具改右上角竖列**：`GetItemPanelLayout()`（收起标签 `{x=DESIGN_W-52,y=100,w=44,h=36}`，展开 3×52 槽 `y=146+(i-1)*58`）；`itemPanelOpen_` 由后端持有，`Backend.ToggleItemPanel/SetItemPanelOpen/IsItemPanelOpen`；`HitTestItemSlot` 返回 `("toggle"|"slot"), index`。收起标签带青色数量角标/绿色可领点；GrantItem 成功后保持展开。
+  - **广告期间自动暂停玩法**：`HandleUpdate` 里 `AdService.IsInFlight() && state=="playing"` 时跳过 `Game.Update`（表现层照常衰减，画面冻结）；广告结束自然恢复，不弹旧状态。
+  - **暂停页补真出口**：移动端无键盘曾完全没有暂停入口——HUD 右上角新增 28×28 暂停按钮（`GetHudPauseRect`/`HitTestHudPause` 同源，playing 态才画，缺图程序化双竖条回退）；暂停页底部补「继续战斗/返回主菜单」按钮行（`layout.resume/menu`，y=740）；规则层新增 `Game.GoToMenu()`（playing/paused/gameover → menu，Emit game_reset）。
+  - **结算页补回主菜单**：`GetGameOverButtonLayout` 第四行 `menu`（rowPair 宽、y=616，窗口壳内），`HitTestGameOverButton` 返回 `"menu"`，编排层 `menuArmed` 松手确认。菜单「怎么玩」文案由「按 P 暂停」改「右上角按钮暂停」（移动端指引不能写键盘）。
+  - **平台系统通知换皮（图二否决）**：游戏与大厅两处 `SystemNotification.RegisterHandler`，把 `Resolve(info)` 画成 dark-tech **顶端通知条**（`Backend.ShowSystemBanner/HitTestSystemBanner/HasSystemBanner`，HUD 下方 y=100、tone 左竖条、X 关闭、error 类不显示退出钮、exitOnClose 类带「退出」→`engine:Exit()`），banner 在 RenderOverlay 最上层、按 `gameSnapshot.elapsed` 差分计时（TickSystemBanner 在 UpdateScene）。大厅版用 urhox-libs/UI 绝对定位 Panel + 自维护 15s 计时，`shutdownLobbyUI` 里 hideBanner + `UnregisterHandler`。ClientMain.Start 注册（pcall）、Stop 反注册。⚠️ 两个 Runtime 各注册一次，切脚本会清 handler 槽。
+  - **付费档案轨顶端通知化（图一否决）**：DrawPass 删除常驻大解锁行（`GetPassPremiumRect` 整体移除）；改为主菜单一次性顶部 banner（`TryShowPremiumPassOffer`，须 `balanceReceived_` 才弹——SetGemsListener/SetPurchasedPartsListener 都会置位，否则 gems=0 误报「钻石不足」；affordable→「立即解锁」复用 buy_premium_pass，不足→「去充值」）。`onBannerAction` 在 HandleMetaAction 之后赋值（同文件 local 前向引用）。
+  - **图标与界面增强（用户追加需求）**：新增 4 张 32×32 dark-tech 像素图标（pause/home/barrier/levelup，均带 .meta 22hex uuid、进 dist manifest）；HUD 等级行加 levelup 图标（xp bar 100→116 宽缩至 112）、防线读数左移 36 让位暂停钮、零件加倍并入零件行；暂停/结算出口按钮带 home 图标 + 程序化播放三角。BUILD_VERSION → 0.12.5。
+  - 验证：Lua LSP 0 Error、多人 build+预览上传成功、新图标全部进 manifest、uuid 无重复。⚠️ 待 Preview：换皮通知条实机（需真触发平台通知）、广告在途冻结、道具竖列点按、付费轨 offer 曝光时机。
+  - ⚠️ v0.12.4 条目中的「选卡倒计时/+30秒/第4张解锁/升格/额外再选」已被本批次整体删除，仅保留卡 hold 存活。
 - 版本: 0.12.4（三十图补齐批次：升级变现闭环 + 首充礼包 + 付费档案轨 + 大厅生命周期加固）：
   - **升级面板三新机制（com_lvup_05/08）**：①「锁定已有卡保留到下次」——`Game.heldUpgradeId` + `Game.ToggleHeldUpgrade(index)`（卡片左上「锁定/保留」角标，hit kind `hold`，与升格角标同层级先判）；下次 `RollUpgradeChoices` 把保留卡放首位（保留卡为稀有时空转 forceRare 配额），重抽面板仍保留、选卡或换卡即清。②「选卡倒计时」——`UPGRADE_SECONDS=8`，`Game.Update(dt, upgradeTimerPaused)` 在 levelup 态倒数、超时 `RandomInt` 自动选一张真实候选（不含第 4 张占位）；面板顶部画剩余条+秒数，「看广告 +30 秒」一次（`Game.ExtendUpgradeTime`，hit kind `timer_ad`）。⚠️ 广告在途时必须暂停倒计时（编排层传 `AdService.IsInFlight()`，不能用 `IsBusy()`——3s 冷却期会把面板冻住），否则看广告回来卡被自动选了。
   - **首充新手礼包（com_menu_02）**：`Shared.FIRST_GIFT`（sku `first_gift_6`、24h 限时窗、本地补发 parts 500 + skin arctic、服务端发货 gems 100+first_gift 标志）。`PlayerData` 新增 `firstGiftClaimed`/`createdAt`（云合并 createdAt 取更早）；服务端 `serverCloud.money.first_gift` 标志；`PURCHASED_PARTS_SYNC` 现携带 premium/first_gift 双标志，客户端收到 first_gift=1 且本地未补发时一次性发皮肤零件并 `MarkFirstGiftClaimed`（幂等，离线补发）。RechargeShop 顶部横幅行（限时倒计时+¥价格+购买），`GetLayout(w, showFirstGift)` Draw/HitTest 同开关保证几何同源。
@@ -49,7 +60,18 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.12.4 三十图补齐批次（升级倒计时/保留卡、首充礼包、付费档案轨、大厅双上下文修复）
+- 上次交付: v0.12.5 真机反馈整改批次（升级面板广告瘦身、道具右上角竖列、广告在途冻结、暂停/结算回主菜单出口、平台通知与付费轨换皮为顶端通知条、4 张新图标与 HUD 增强）
+
+## 本批次新增避雷（v0.12.5 真机反馈整改）
+- 🔴 **激励视频在途必须冻结玩法推进（v0.12.5）**：浏览器 embed 覆盖时游戏 Update 循环照常跑，广告回来敌人已压线。正确门控在编排层 `HandleUpdate`：`AdService.IsInFlight() && snapshot.state=="playing"` 时跳过 `Game.Update`，表现层照常衰减。⚠️ 不要用 `IsBusy()`（含 3s 冷却）——会把广告关闭后的 3 秒也冻住；结算/升级/暂停态本就停玩法无需处理。
+- 🔴 **平台 SystemNotification 换皮要在「两个 Runtime」各注册一次（v0.12.5）**：全局只有一个 handler 槽且切脚本会清掉——大厅（lobby_runtime）与游戏（ClientMain.Start）都要 `RegisterHandler`，离开时各自 `UnregisterHandler`（大厅在 `shutdownLobbyUI` 统一做）。handler 必须只接管画得出的 kind，未知 id 返回 false 让 Host 兜底；返回 true 就必须自己提供关闭途径（X 或限时）。error 类只提示，exitOnClose/kicked 才给「退出」→ `engine:Exit()`。
+- 🔴 **一次性营销提示走顶部通知条，不做常驻大面板行（v0.12.5 图一否决）**：付费档案轨解锁从 DrawPass 大行改为 `Backend.ShowSystemBanner` 顶部条。**曝光前必须等余额首推**（`balanceReceived_`：SetGemsListener/SetPurchasedPartsListener 都置位），否则 gems=0 误报「钻石不足」；每会话只弹一次（premiumOfferShown_），有 banner 占位则不弹（HasSystemBanner）。
+- ⚠️ **banner 计时不能用 dt 累计在 Draw 里做（v0.12.5）**：RenderOverlay 可能因快照缺失停帧；统一用 `gameSnapshot.elapsed` 差分（TickSystemBanner 在 UpdateScene 调），菜单/暂停态 elapsed 也持续递增。banner 命中永远最先消费（TryBannerAt 在 Down 处理器最前），点条体=关闭。
+- ⚠️ **移动端 UI 禁止键盘指引文案（v0.12.5）**：「按 P 暂停」在真机无法执行——暂停入口必须是 HUD 可见按钮（GetHudPauseRect 与绘制同源、playing 态才画、缺图程序化回退），文案改「右上角按钮」。凡是 PC 快捷键提示都要问「手机上怎么办」。
+- ⚠️ **回主菜单出口三态共用一个 Game.GoToMenu()（v0.12.5）**：playing/paused/gameover → menu 并 Emit game_reset（Presentation fullReset 已映射）；升级态必须先选卡，不允许中途离开。结算与暂停页出口都走松手确认（menuArmed），防死亡瞬间误触。
+- ⚠️ **同文件 local 函数前向引用（v0.12.5）**：`onBannerAction` 若在 `HandleMetaAction` 之前用 `local function` 定义会捕获 nil；正确做法是前面 `local onBannerAction = nil` 声明，后面 `onBannerAction = function(...) ... end` 赋值（闭包引用的是同一 upvalue）。
+- ⚠️ **Lua 运算符优先级 `+` 高于 `and/or`（v0.12.5 复发）**：`r.y + (owned or def.canGrant) and 6 or ...` 会把 boolean 参与加法运行时崩。条件偏移要么加括号，要么写进分支。
+- ⚠️ **新图标资源三件套缺一不可（v0.12.5）**：PNG + 同名 `.meta`（22 位 hex uuid，别写 24 位与既有不一致）+ ICON_PATHS 注册；构建后用 dist manifest grep 文件名确认打包；uuid 全库唯一（grep -ho uuid *.meta | uniq -d 验重）。
 
 ## 本批次新增避雷（v0.12.4 三十图补齐 + 大厅双上下文）
 - 🔴 **urhox-libs/UI 是进程级 NanoVG 单例：换渲染接管方前必须 UI.Shutdown()（v0.12.4 根因）**：大厅挂 `ctx.root` 的 UI.Panel 背后是 UI 自己的 `nvgCreate(1)` 上下文＋自动 Update/Render/输入订阅；`view:Destroy()` 只拆控件树**不拆上下文**。降级起游戏前不 `UI.Shutdown()`，Scene3DBackend 会建第二个上下文，同帧两套 BeginFrame/EndFrame 交替，真机表现「2D UI 只剩零星元素/全没」。所有降级/stop 路径收敛到一个 `shutdownLobbyUI()`（pcall Destroy + pcall UI.Shutdown），禁止只写一处。

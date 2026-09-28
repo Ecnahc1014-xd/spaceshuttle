@@ -405,7 +405,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.11.4"
+local BUILD_VERSION = "0.12.5"
 local GAME_TITLE = "击碎，飞机大战"
 
 local function WorldFromGame(x, y)
@@ -922,8 +922,8 @@ local function DrawPullHint(ctx, game)
 end
 
 -- ============================================================================
--- v0.11.0 商业化 P4：局内道具槽（3 格，位于 Dock 之上）。
--- 视觉几何与命中判定共用 GetItemSlotRects，禁止在 main.lua 另写常量。
+-- v0.12.5：局内道具改右上角竖列（默认收起标签 ⇄ 展开三槽）。
+-- 视觉几何与命中判定共用 GetItemPanelLayout，禁止在 main.lua 另写常量。
 -- ============================================================================
 
 -- ============================================================================
@@ -953,6 +953,11 @@ local ICON_PATHS = {
     reload = "image/ui_icon_reload_20260928011013.png",
     record = "image/ui_icon_record_20260928011019.png",
     boost = "image/ui_icon_boost_20260928011116.png",
+    -- v0.12.5 界面增强：HUD 暂停入口 / 主页出口 / 防线与等级读数图标
+    pause = "image/ui_icon_pause_20260928094729.png",
+    home = "image/ui_icon_home_20260928094732.png",
+    barrier = "image/ui_icon_barrier_20260928094833.png",
+    levelup = "image/ui_icon_levelup_20260928094730.png",
 }
 
 ---@type table<string, integer>
@@ -993,51 +998,76 @@ local function DrawIcon(ctx, key, x, y, size, alpha)
     return true
 end
 
----@return UiRect[]
-local function GetItemSlotRects()
-    local slotW, slotH, gap = 131, 64, 22
-    local totalW = 3 * slotW + 2 * gap
-    local startX = (DESIGN_W - totalW) * 0.5
-    local y = 752
-    local rects = {}
+-- v0.12.5：局内道具改「右上角竖列」，默认收起为一个小标签，点开展示三个槽位。
+-- 开合状态是纯 UI 瞬时状态，由本模块持有；发放道具后编排层会主动展开。
+local itemPanelOpen_ = false
+
+local function GetItemPanelLayout()
+    local tab = { x = DESIGN_W - 52, y = 100, w = 44, h = 36 }
+    local slots = {}
     for i = 1, 3 do
-        rects[i] = { x = startX + (i - 1) * (slotW + gap), y = y, w = slotW, h = slotH }
+        slots[i] = { x = DESIGN_W - 60, y = 146 + (i - 1) * 58, w = 52, h = 52 }
     end
-    return rects
+    return tab, slots
 end
 
+---@param ctx any
+---@param game table
 local function DrawItemSlots(ctx, game)
     local items = game.items
     if not items then return end
-    local rects = GetItemSlotRects()
-    for i = 1, #rects do
+    local tab, slots = GetItemPanelLayout()
+
+    local totalCharges = 0
+    local grantable = 0
+    for i = 1, #items do
         local def = items[i]
         if def then
-            local r = rects[i]
+            if (def.charges or 0) > 0 then totalCharges = totalCharges + 1 end
+            if def.canGrant then grantable = grantable + 1 end
+        end
+    end
+
+    -- 收起/展开标签
+    DrawRect(ctx, tab.x, tab.y, tab.w, tab.h, itemPanelOpen_ and C.card or C.widget, 6)
+    DrawStroke(ctx, tab.x, tab.y, tab.w, tab.h,
+        totalCharges > 0 and C.cyan or C.cyanDim, 6, 1.2)
+    DrawPixelText(ctx, tab.x + tab.w * 0.5, tab.y + 9,
+        itemPanelOpen_ and "收起" or "道具", 15,
+        totalCharges > 0 and C.cyan or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if not itemPanelOpen_ and totalCharges > 0 then
+        DrawRect(ctx, tab.x + tab.w - 10, tab.y - 4, 16, 16, C.cyan, 8)
+        DrawPixelText(ctx, tab.x + tab.w - 2, tab.y - 2, tostring(totalCharges), 13, C.ink,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    end
+    if not itemPanelOpen_ and totalCharges == 0 and grantable > 0 then
+        DrawRect(ctx, tab.x + tab.w - 8, tab.y - 2, 8, 8, C.ad, 4)
+    end
+
+    if not itemPanelOpen_ then return end
+    for i = 1, #slots do
+        local def = items[i]
+        if def then
+            local r = slots[i]
             local col = def.color or C.cyan
             local owned = (def.charges or 0) > 0
-            local iconSize = 32
-            local iconY = r.y + (r.h - iconSize) * 0.5
+            local iconSize = 26
+            local iconX = r.x + (r.w - iconSize) * 0.5
             if owned then
-                DrawBluePanel(ctx, r.x, r.y, r.w, r.h, C.card, col, 6)
-                DrawRect(ctx, r.x, r.y, 3, r.h, col, 0)
-                DrawIcon(ctx, def.key, r.x + 10, iconY, iconSize, 1)
-                DrawPixelText(ctx, r.x + 50, r.y + 6, "×" .. tostring(def.charges), 22, col)
-                DrawPixelText(ctx, r.x + 50, r.y + 36, def.name or "", 17, C.text)
-                DrawPixelText(ctx, r.x + r.w - 10, r.y + 44, "点击使用", 14, C.dim,
-                    NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-            elseif def.canGrant then
-                -- 绿色＝看广告（与全局三色语义一致）
                 DrawRect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
-                DrawStroke(ctx, r.x, r.y, r.w, r.h, C.ad, 6, 1.5)
-                DrawIcon(ctx, def.key, r.x + 10, iconY, iconSize, 0.45)
-                DrawPixelText(ctx, r.x + 50, r.y + 8, def.name or "", 16, C.dim)
-                DrawPixelText(ctx, r.x + 50, r.y + 32, "看广告 获取", 17, C.ad)
+                DrawStroke(ctx, r.x, r.y, r.w, r.h, col, 6, 1.4)
+                DrawIcon(ctx, def.key, iconX, r.y + 6, iconSize, 1)
+                DrawPixelText(ctx, r.x + r.w - 4, r.y + r.h - 18,
+                    "×" .. tostring(def.charges), 14, col, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+                DrawPixelText(ctx, r.x + 4, r.y + r.h - 18, def.name or "", 13, C.text)
+            elseif def.canGrant then
+                DrawRect(ctx, r.x, r.y, r.w, r.h, C.widget, 6)
+                DrawStroke(ctx, r.x, r.y, r.w, r.h, C.adDim, 6, 1.2)
+                DrawIcon(ctx, def.key, iconX, r.y + (r.h - iconSize) * 0.5, iconSize, 0.5)
+                DrawRect(ctx, r.x + r.w - 10, r.y + 2, 8, 8, C.ad, 4)
             else
                 DrawRect(ctx, r.x, r.y, r.w, r.h, C.widget, 6)
-                DrawStroke(ctx, r.x, r.y, r.w, r.h, C.cyanDim, 6, 1)
-                DrawIcon(ctx, def.key, r.x + 10, iconY, iconSize, 0.22)
-                DrawPixelText(ctx, r.x + 50, r.y + 22, "已领取", 16, C.dim)
+                DrawIcon(ctx, def.key, iconX, r.y + (r.h - iconSize) * 0.5, iconSize, 0.2)
             end
         end
     end
@@ -1116,6 +1146,12 @@ local function DrawDamageVignette(ctx, game, presentation)
     nvgBeginPath(ctx); nvgRect(ctx, game.width - edge, 0, edge, game.height); nvgFillPaint(ctx, g); nvgFill(ctx)
 end
 
+-- v0.12.5：HUD 右上角暂停按钮（绘制与命中共用）。
+local function GetHudPauseRect(game)
+    local w = (game and game.width) or DESIGN_W
+    return { x = w - 42, y = 10, w = 28, h = 28 }
+end
+
 local function DrawHud(ctx, game, presentation)
     local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
     -- v0.10.24：低血量（≤35%）基地读数与血条红色脉冲，强化危险提示。
@@ -1166,28 +1202,43 @@ local function DrawHud(ctx, game, presentation)
         string.format("敌机 %d    连击 ×%d", game.concurrentCount or 0, combo),
         comboSize, comboColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width - 12, 4, "防线", 15, C.dim,
+    DrawPixelText(ctx, game.width - 48, 4, "防线", 15, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 12, 20,
+    DrawIcon(ctx, "barrier", game.width - 104, 2, 20, 0.85)
+    DrawPixelText(ctx, game.width - 48, 20,
         string.format("%d / %d", game.baseHp, game.maxBaseHp), 26, hpColor,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 12, 48, hpRatio > 0.35 and "正常" or "危险",
+    DrawPixelText(ctx, game.width - 48, 48, hpRatio > 0.35 and "正常" or "危险",
         14, hpColor, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelBar(ctx, game.width - 168, 64, 156, 8, hpRatio, hpRatio > 0.35 and C.cyan or hpColor)
-    -- v0.11.0 商业化：本局零件实时计数。放在血条下方的空白带（y=74 起），
-    -- 不占「等级/经验」那一行，也不与血条 x 区间打架。
-    DrawPixelText(ctx, game.width - 12, 74, string.format("零件 +%d", game.runParts or 0), 15, C.warn,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    if (game.partsBoostTime or 0) > 0 then
-        DrawIcon(ctx, "double", 350, 68, 24)
-        DrawPixelText(ctx, 340, 74,
-            string.format("×2 %d秒", math.ceil(game.partsBoostTime)), 15, C.ad,
-            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelBar(ctx, game.width - 204, 64, 156, 8, hpRatio, hpRatio > 0.35 and C.cyan or hpColor)
+    -- v0.11.0 商业化：本局零件实时计数 + 零件加倍状态（并入同一行，避免撞血条）。
+    local boostActive = (game.partsBoostTime or 0) > 0
+    local partsLine = string.format("零件 +%d", game.runParts or 0)
+    if boostActive then
+        partsLine = partsLine .. string.format("   ×2 %d秒", math.ceil(game.partsBoostTime))
+    end
+    DrawPixelText(ctx, game.width - 48, 74, partsLine, 15,
+        boostActive and C.ad or C.warn, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    -- v0.12.5 界面增强：HUD 右上角暂停按钮（移动端无键盘，此前没有暂停入口）。
+    -- 防线读数列整体左移 36px 让位；命中判定见 HitTestHudPause，与绘制同源。
+    if game.state == "playing" then
+        local pauseBtn = GetHudPauseRect(game)
+        DrawTechPanel(ctx, pauseBtn.x, pauseBtn.y, pauseBtn.w, pauseBtn.h, C.card, C.cyanDim)
+        if not DrawIcon(ctx, "pause", pauseBtn.x + 4, pauseBtn.y + 4, 20, 1) then
+            -- 缺图回退：程序化双竖条，保证入口永远可见
+            DrawRect(ctx, pauseBtn.x + 8, pauseBtn.y + 7, 4, 14, C.cyan, 1)
+            DrawRect(ctx, pauseBtn.x + 16, pauseBtn.y + 7, 4, 14, C.cyan, 1)
+        end
     end
 
     local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
-    DrawPixelText(ctx, 14, 70, string.format("等级 %d", game.playerLevel), 15, C.cyan)
-    DrawPixelBar(ctx, 100, 74, 128, 10, xpRatio, C.cyan)
+    if not DrawIcon(ctx, "levelup", 14, 68, 20, 0.9) then
+        DrawPixelText(ctx, 14, 70, "等级 " .. tostring(game.playerLevel), 15, C.cyan)
+    else
+        DrawPixelText(ctx, 38, 70, string.format("等级 %d", game.playerLevel), 15, C.cyan)
+    end
+    DrawPixelBar(ctx, 116, 74, 112, 10, xpRatio, C.cyan)
     DrawPixelText(ctx, 236, 70,
         string.format("经验 %d/%d", math.floor(game.xp or 0), game.xpToNext or 0), 15, C.dim)
 
@@ -1260,15 +1311,15 @@ local function DrawMenu(ctx, game, meta)
     DrawBluePanel(ctx, 40, 554, game.width - 80, 86, C.card, C.cyanDim, 6)
     DrawPixelText(ctx, 58, 564, "拖拽瞄准", 15, C.dim)
     DrawPixelText(ctx, 58, 584, "松手发射", 18, C.text)
-    DrawPixelText(ctx, 292, 564, "按 P", 15, C.dim)
-    DrawPixelText(ctx, 292, 584, "暂停游戏", 18, C.text)
+    DrawPixelText(ctx, 292, 564, "右上角按钮", 15, C.dim)
+    DrawPixelText(ctx, 292, 584, "暂停战斗", 18, C.text)
 
     -- v0.11.0 商业化：菜单下半区（货币栏 / 四入口 / 签到 / 每日补给）。
     if meta then MetaUI.DrawMenuBar(ctx, game.width, meta) end
     nvgRestore(ctx)
 end
 
--- v0.11.0 商业化：结算页三按钮（复活 / 看广告双倍零件 / 再来一局）。
+-- v0.12.5：结算页四出口（复活 / 双倍+再来一局 / 回主菜单）。
 -- 视觉几何与命中判定共用此处，禁止在 main.lua 再写一套常量。
 local function GetGameOverButtonLayout(game)
     local w = game.width or DESIGN_W
@@ -1294,7 +1345,15 @@ local function GetGameOverButtonLayout(game)
         w = rowW,
         h = btnH,
     }
-    return revive, double, restart
+    -- v0.12.5：回主菜单（用户否决「游戏结束不让回主菜单」）。窗口壳底边 720，
+    -- 第四行放 616..664，窗口内、toast 提示上方，不压既有三行几何。
+    local menu = {
+        x = rowX,
+        y = double.y + btnH + gap,
+        w = rowPairW,
+        h = 44,
+    }
+    return revive, double, restart, menu
 end
 
 local function DrawGameOver(ctx, game, presentation)
@@ -1342,7 +1401,7 @@ local function DrawGameOver(ctx, game, presentation)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawIcon(ctx, "parts", game.width * 0.5 - 184, 439, 28)
 
-    local reviveBtn, doubleBtn, restartBtn = GetGameOverButtonLayout(game)
+    local reviveBtn, doubleBtn, restartBtn, menuBtn = GetGameOverButtonLayout(game)
     local canRevive = game.canRevive
     local adBusy = presentation and presentation.adStatus == "loading"
     if canRevive then
@@ -1387,9 +1446,16 @@ local function DrawGameOver(ctx, game, presentation)
     DrawPixelText(ctx, restartBtn.x + restartBtn.w * 0.5, restartBtn.y + 12, "再来一局", 20, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
+    -- v0.12.5：回主菜单（次级出口：widget 底 + 青 dim 描边，不与主 CTA 抢焦点）
+    DrawRect(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.widget, 8)
+    DrawStroke(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.cyanDim, 8, 1.4)
+    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 10, 24, 1)
+    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 10, "回主菜单", 18, C.text,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
-        DrawPixelText(ctx, game.width * 0.5, restartBtn.y + restartBtn.h + 10, toast, 15, C.warn,
+        DrawPixelText(ctx, game.width * 0.5, menuBtn.y + menuBtn.h + 10, toast, 15, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
@@ -1422,13 +1488,8 @@ end
 ---@field w number
 ---@field h number
 
--- 升格角标：卡片右上角，未升格时是入口、已升格时是状态标识。
+-- 锁定/保留角标：卡片左上角（v0.12.5 面板唯一卡级角标）。
 ---@return UiRect
-local function GetBoostBadgeRect(cx, cardTop, cardW)
-    local w, h = 46, 22
-    return { x = cx + cardW * 0.5 - w - 6, y = cardTop + 6, w = w, h = h }
-end
-
 local function GetHoldBadgeRect(cx, cardTop, cardW)
     return { x = cx - cardW * 0.5 + 6, y = cardTop + 6, w = 46, h = 22 }
 end
@@ -1486,26 +1547,10 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 22,
         "已选 " .. tostring(stacks) .. " / " .. maxText, 14, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    -- v0.11.0 商业化：广告升格角标 / 升格入口（同位置切换，不额外占版面）。
-    local badge = GetBoostBadgeRect(cx, y, cardW)
-    if choice.boosted then
-        DrawRect(ctx, badge.x, badge.y, badge.w, badge.h, C.widget, 4)
-        DrawStroke(ctx, badge.x, badge.y, badge.w, badge.h, C.ad, 4, 1.2)
-        DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "已升格", 14, C.ad,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    elseif (choice.stacks or 0) + 1 >= (choice.maxStacks or 1) then
-        DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "已满", 14, C.dim,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    else
-        DrawStroke(ctx, badge.x, badge.y, badge.w, badge.h, C.adDim, 4, 1)
-        DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "升格", 14, C.adDim,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    end
 end
 
 -- ============================================================================
--- v0.11.0 商业化：升级面板变现区（第 4 张宽卡 + 底部动作按钮）。
+-- v0.12.5 精简：升级面板只保留「免费重抽 + 看广告重抽」两个按钮，
 -- 视觉几何与命中判定共用 GetUpgradePanelLayout，禁止在 main.lua 另写常量。
 -- ============================================================================
 
@@ -1516,12 +1561,8 @@ end
 ---@field startX number
 ---@field cy number
 ---@field cardCount integer
----@field extra UiRect
 ---@field rerollFree UiRect
 ---@field rerollAd UiRect
----@field fourth UiRect
----@field extraPick UiRect
----@field timerAd UiRect
 ---@field hintY number
 
 ---@return UpgradePanelLayout
@@ -1531,7 +1572,7 @@ local function GetUpgradePanelLayout(game)
     local margin = 24
     local innerW = w - margin * 2
     local btnGap = 12
-    local btnW = math.floor((innerW - btnGap * 2) / 3)
+    local btnW = math.floor((innerW - btnGap) / 2)
     local btnY = 806
     local btnH = 50
     local rowX = margin
@@ -1543,51 +1584,10 @@ local function GetUpgradePanelLayout(game)
         startX = startX,
         cy = cy,
         cardCount = math.min(3, #choices),
-        extra = { x = margin, y = 692, w = innerW, h = 104 },
         rerollFree = { x = rowX, y = btnY, w = btnW, h = btnH },
         rerollAd = { x = rowX + btnW + btnGap, y = btnY, w = btnW, h = btnH },
-        fourth = { x = rowX + (btnW + btnGap) * 2, y = btnY, w = btnW, h = btnH },
-        extraPick = { x = margin, y = btnY + btnH + 10, w = innerW, h = 42 },
-        timerAd = { x = 160, y = 294, w = w - 320, h = 44 },
-        hintY = btnY + btnH + 10 + 42 + 12,
+        hintY = btnY + btnH + 14,
     }
-end
-
--- 第 4 张宽卡：未解锁时是金色锁条，解锁后展示追加候选。
-local function DrawExtraChoiceCard(ctx, choice, rect)
-    local x, y, w, h = rect.x, rect.y, rect.w, rect.h
-    if choice.locked then
-        DrawRect(ctx, x, y, w, h, C.widget, 6)
-        DrawStroke(ctx, x, y, w, h, C.adDim, 6, 1.2)
-        DrawPixelText(ctx, x + 18, y + 14, "??", 26, C.adDim)
-        DrawPixelText(ctx, x + 66, y + 14, "看广告 解锁第 4 张", 20, C.ad)
-        DrawPixelText(ctx, x + 66, y + 46, "神秘词条优先 · 本局多一个选择", 16, C.dim)
-        DrawPixelText(ctx, x + w - 18, y + 30, "广告", 16, C.adDim,
-            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        return
-    end
-    local rare = UPGRADE_RARITY[choice.rarity] or UPGRADE_RARITY.common
-    local accent = rare.color
-    DrawBluePanel(ctx, x, y, w, h, C.card, accent, 6)
-    DrawCornerBrackets(ctx, x + 4, y + 4, w - 8, h - 8, accent, 10, 1.2)
-    DrawRect(ctx, x, y, 3, h, accent, 0)
-    DrawPixelText(ctx, x + 16, y + 12, "04", 15, C.dim)
-    DrawPixelText(ctx, x + 48, y + 8, choice.name or "强化", 22, C.text)
-    DrawPixelText(ctx, x + 48, y + 38,
-        (choice.kind == "word" and "神秘词条 · " or "") .. rare.tag, 16, accent)
-    local lines = WrapTextLines(ctx, choice.detail or choice.desc or "", 17, w - 190)
-    if #lines > 0 then
-        DrawPixelText(ctx, x + w - 16, y + 20, lines[1], 17, C.dim,
-            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        if #lines > 1 then
-            DrawPixelText(ctx, x + w - 16, y + 46, lines[2], 17, C.dim,
-                NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        end
-    end
-    DrawRect(ctx, x + w - 16 - 130, y + h - 36, 130, 26, C.widget, 6)
-    DrawStroke(ctx, x + w - 16 - 130, y + h - 36, 130, 26, accent, 6, 1)
-    DrawPixelText(ctx, x + w - 16 - 65, y + h - 31, choice.value or "强化", 16, accent,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
 ---@param rect UiRect
@@ -1617,17 +1617,6 @@ local function DrawUpgradeActions(ctx, game, layout)
     DrawPanelButton(ctx, layout.rerollAd, "看广告 重抽", "必出稀有",
         true, C.ad)
     DrawIcon(ctx, "rarity", layout.rerollAd.x + 6, layout.rerollAd.y + 12, 26)
-    DrawPanelButton(ctx, layout.fourth,
-        game.fourthChoiceUnlocked and "已解锁第 4 张" or "看广告 四选一",
-        game.fourthChoiceUnlocked and "本局有效" or "多一个选择",
-        game.fourthChoiceUnlocked ~= true, C.ad)
-
-    local extraRect = layout.extraPick
-    if game.canArmExtraPick then
-        DrawPanelButton(ctx, extraRect, "看广告 · 本次额外再选一张", "", true, C.ad)
-    else
-        DrawPanelButton(ctx, extraRect, "已启用额外选卡", "选完后会再开一次面板", false, C.cyan)
-    end
 end
 
 local function DrawLevelUp(ctx, game, presentation)
@@ -1641,21 +1630,18 @@ local function DrawLevelUp(ctx, game, presentation)
 
     DrawPixelText(ctx, 24, 106, "升级", 18, C.cyan)
     DrawPixelText(ctx, game.width - 24, 106,
-        string.format("%d 选一", (choices[4] and not choices[4].locked) and 4 or math.min(3, #choices)), 18, C.warn,
+        string.format("%d 选一", math.min(3, #choices)), 18, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 130, "选择一项强化", 30, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 168,
         string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    local seconds = math.max(0, math.ceil(game.upgradeTimeLeft or 0))
-    DrawRect(ctx, 58, 262, game.width - 116, 12, C.widget, 3)
-    DrawRect(ctx, 58, 262, (game.width - 116) * math.min(1, seconds / (game.upgradeTimerExtended and 38 or 8)),
-        12, seconds <= 3 and C.error or C.cyan, 3)
-    DrawPixelText(ctx, game.width * 0.5, 284, "剩余 " .. seconds .. " 秒 · 超时自动选一张", 16,
-        seconds <= 3 and C.error or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    if not game.upgradeTimerExtended then
-        DrawPanelButton(ctx, layout.timerAd, "看广告 +30 秒", "", true, C.ad)
+
+    local toast = presentation and presentation.adToast
+    if toast and toast ~= "" then
+        DrawPixelText(ctx, game.width * 0.5, 300, toast, 16, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
     if #choices > 0 then
@@ -1663,9 +1649,6 @@ local function DrawLevelUp(ctx, game, presentation)
             DrawUpgradeCard(ctx, i, choices[i],
                 layout.startX + (i - 1) * (layout.cardW + layout.gap),
                 layout.cy, layout.cardW, layout.cardH)
-        end
-        if choices[4] then
-            DrawExtraChoiceCard(ctx, choices[4], layout.extra)
         end
     else
         DrawBluePanel(ctx, 30, 365, game.width - 60, 100, C.rail, C.cyanDim, 6)
@@ -1676,12 +1659,6 @@ local function DrawLevelUp(ctx, game, presentation)
     end
 
     DrawUpgradeActions(ctx, game, layout)
-
-    local toast = presentation and presentation.adToast
-    if toast and toast ~= "" then
-        DrawPixelText(ctx, game.width * 0.5, 206, toast, 16, C.warn,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    end
 
     DrawPixelText(ctx, 24, layout.hintY, "战斗已暂停", 16, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
@@ -1715,6 +1692,9 @@ end
 local function GetPausePanelLayout(w)
     local margin = 44
     local innerW = w - margin * 2
+    local btnW, btnGap = 216, 12
+    local pairW = btnW * 2 + btnGap
+    local pairX = (w - pairW) * 0.5
     return {
         win = { x = 24, y = 178, w = w - 48, h = 630 },
         heal = { x = margin, y = 380, w = innerW, h = 64 },
@@ -1722,6 +1702,9 @@ local function GetPausePanelLayout(w)
         orbital = { x = margin, y = 524, w = innerW, h = 64 },
         reload = { x = margin, y = 596, w = innerW, h = 64 },
         partsBoost = { x = margin, y = 668, w = innerW, h = 64 },
+        -- v0.12.5：显式出口按钮（移动端无键盘，必须给「继续/回主菜单」）
+        resume = { x = pairX, y = 740, w = btnW, h = 48 },
+        menu = { x = pairX + btnW + btnGap, y = 740, w = btnW, h = 48 },
     }
 end
 
@@ -1786,13 +1769,28 @@ local function DrawPaused(ctx, game, meta, presentation)
         DrawPixelText(ctx, r.x + 54, r.y + 34, offer.note, 14, C.dim)
     end
 
+    -- v0.12.5：显式出口按钮组（主操作青底继续 / 次级回主菜单）
+    DrawRect(ctx, layout.resume.x, layout.resume.y, layout.resume.w, layout.resume.h, C.cyan, 8)
+    -- 程序化播放三角（避免再占一张图标资源）
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, layout.resume.x + 58, layout.resume.y + 14)
+    nvgLineTo(ctx, layout.resume.x + 58, layout.resume.y + 34)
+    nvgLineTo(ctx, layout.resume.x + 74, layout.resume.y + 24)
+    nvgClosePath(ctx)
+    nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], 255))
+    nvgFill(ctx)
+    DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.5 + 14, layout.resume.y + 12,
+        "继续战斗", 20, C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawRect(ctx, layout.menu.x, layout.menu.y, layout.menu.w, layout.menu.h, C.widget, 8)
+    DrawStroke(ctx, layout.menu.x, layout.menu.y, layout.menu.w, layout.menu.h, C.cyanDim, 8, 1.4)
+    DrawIcon(ctx, "home", layout.menu.x + 56, layout.menu.y + 12, 24, 1)
+    DrawPixelText(ctx, layout.menu.x + layout.menu.w * 0.5 + 14, layout.menu.y + 12,
+        "返回主菜单", 18, C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
-        DrawPixelText(ctx, game.width * 0.5, layout.win.y + layout.win.h + 12, toast, 15, C.warn,
+        DrawPixelText(ctx, game.width * 0.5, layout.menu.y + layout.menu.h + 10, toast, 15, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    else
-        DrawPixelText(ctx, game.width * 0.5, layout.win.y + layout.win.h + 12,
-            "暂停不会消耗时间", 14, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
 end
@@ -1823,6 +1821,123 @@ local function DrawWaveBanner(ctx, game, presentation)
         DrawPixelText(ctx, cx, 154 + yOff, string.format("第 %d 波来了", game.wave), 22,
             C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
+    nvgRestore(ctx)
+end
+
+-- ============================================================================
+-- v0.12.5：顶端通知条（dark-tech 换皮通道）。
+-- 用途①：平台 SystemNotification（服务器资源不足 / 被踢 / 掉线）不允许再走
+--         引擎默认白底弹窗；编排层把 SN.Resolve 的结果喂进来。
+-- 用途②：付费档案轨等一次性营销提示，也用它而不是常驻大面板行。
+-- ⚠️ banner 显示时不拦截其它输入——玩家点 X 关掉即可，游戏逻辑照常。
+-- ⚠️ 计时用 gameSnapshot.elapsed 差分（菜单/暂停/战斗中 elapsed 都持续递增）。
+-- ============================================================================
+
+---@type table|nil
+local sysBanner_ = nil
+local bannerLastElapsed_ = 0
+
+---@param spec table {title:string, message:string, actionText:string|nil, tone:"warn"|"error"|"cyan", ttl:number|nil, actionId:string|nil}
+function Backend.ShowSystemBanner(spec)
+    if type(spec) ~= "table" then return end
+    sysBanner_ = {
+        title = spec.title or "",
+        message = spec.message or "",
+        actionText = spec.actionText,
+        actionId = spec.actionId,
+        tone = spec.tone or "warn",
+        ttl = spec.ttl or 12,
+    }
+end
+
+function Backend.DismissSystemBanner()
+    sysBanner_ = nil
+end
+
+function Backend.HasSystemBanner()
+    return sysBanner_ ~= nil
+end
+
+---@return string|nil actionId 点中按钮返回绑定动作 id；点关闭/条体返回 "__close__"
+function Backend.HitTestSystemBanner(uiX, uiY)
+    local b = sysBanner_
+    if not b then return nil end
+    local w = DESIGN_W - 40
+    local x = 20
+    local h = 74
+    local y = HUD_HEIGHT + 8
+    if uiX < x or uiX > x + w or uiY < y or uiY > y + h then return nil end
+    local closeR = { x = x + w - 30, y = y + 6, w = 24, h = 24 }
+    if uiX >= closeR.x and uiX <= closeR.x + closeR.w and uiY >= closeR.y and uiY <= closeR.y + closeR.h then
+        Backend.DismissSystemBanner()
+        return "__close__"
+    end
+    if b.actionText and b.actionText ~= "" then
+        local btnR = { x = x + w - 30 - 96, y = y + 5, w = 90, h = 26 }
+        if uiX >= btnR.x and uiX <= btnR.x + btnR.w and uiY >= btnR.y and uiY <= btnR.y + btnR.h then
+            return b.actionId or "banner_action"
+        end
+    end
+    Backend.DismissSystemBanner()
+    return "__close__"
+end
+
+local function TickSystemBanner(elapsed)
+    if not sysBanner_ then bannerLastElapsed_ = elapsed return end
+    if bannerLastElapsed_ > elapsed then bannerLastElapsed_ = elapsed end
+    local d = elapsed - bannerLastElapsed_
+    bannerLastElapsed_ = elapsed
+    if sysBanner_.ttl and d > 0 then
+        sysBanner_.ttl = sysBanner_.ttl - d
+        if sysBanner_.ttl <= 0 then
+            sysBanner_ = nil
+            return
+        end
+    end
+end
+
+local function DrawSystemBanner(ctx)
+    local b = sysBanner_
+    if not b then return end
+    local tone = C.warn
+    if b.tone == "error" then tone = C.error end
+    if b.tone == "cyan" then tone = C.cyan end
+
+    local w = DESIGN_W - 40
+    local x = 20
+    local h = 74
+    local y = HUD_HEIGHT + 8
+    local alpha = 1
+    if b.ttl and b.ttl < 0.4 then alpha = math.max(0, b.ttl / 0.4) end
+    nvgSave(ctx)
+    nvgGlobalAlpha(ctx, alpha)
+    DrawRect(ctx, x, y, w, h, C.panel, 8)
+    DrawStroke(ctx, x, y, w, h, tone, 8, 1.5)
+    DrawRect(ctx, x + 4, y + 10, 4, h - 20, tone, 2)
+    DrawPixelText(ctx, x + 18, y + 10, b.title, 18, tone)
+    local lines = WrapTextLines(ctx, b.message, 15, w - 150)
+    for li = 1, math.min(2, #lines) do
+        DrawPixelText(ctx, x + 18, y + 36 + (li - 1) * 18, lines[li], 15, C.text)
+    end
+    if b.actionText and b.actionText ~= "" then
+        local bx = x + w - 30 - 96
+        local by = y + 5
+        DrawRect(ctx, bx, by, 90, 26, C.card, 5)
+        DrawStroke(ctx, bx, by, 90, 26, C.cyan, 5, 1.2)
+        DrawPixelText(ctx, bx + 45, by + 5, b.actionText, 14, C.cyan,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+    local cx0 = x + w - 30
+    local cy0 = y + 6
+    DrawRect(ctx, cx0, cy0, 24, 24, C.widget, 5)
+    nvgStrokeColor(ctx, nvgRGBA(C.dim[1], C.dim[2], C.dim[3], 230))
+    nvgStrokeWidth(ctx, 1.6)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, cx0 + 7, cy0 + 7)
+    nvgLineTo(ctx, cx0 + 17, cy0 + 17)
+    nvgMoveTo(ctx, cx0 + 17, cy0 + 7)
+    nvgLineTo(ctx, cx0 + 7, cy0 + 17)
+    nvgStroke(ctx)
     nvgRestore(ctx)
 end
 
@@ -1880,6 +1995,8 @@ local function RenderOverlay(game, presentation, meta)
     end
     nvgResetScissor(vg_)
     nvgGlobalAlpha(vg_, 1.0)
+    -- v0.12.5：顶端通知条画在最上层（元层面板之上），限时自动消失。
+    DrawSystemBanner(vg_)
     nvgEndFrame(vg_)
 end
 
@@ -2180,6 +2297,8 @@ function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
         local playing = gameSnapshot.state == "playing"
         voxelWorld_:SetSimulationPaused(not playing)
     end
+    -- v0.12.5：顶端通知条按快照 elapsed 差分计时（菜单/暂停也持续递减）。
+    TickSystemBanner(gameSnapshot.elapsed or 0)
     Renderer3D.Render(gameSnapshot, presentationSnapshot, metaState and metaState.selectedSkin)
 end
 
@@ -2208,7 +2327,7 @@ function Backend.HitTestSupplyPopup(uiX, uiY, metaState)
 end
 
 function Backend.HitTestGameOverButton(uiX, uiY, game)
-    local revive, double, restart = GetGameOverButtonLayout(game or {})
+    local revive, double, restart, menu = GetGameOverButtonLayout(game or {})
     local function inside(btn)
         return uiX >= btn.x and uiX <= btn.x + btn.w
             and uiY >= btn.y and uiY <= btn.y + btn.h
@@ -2216,10 +2335,12 @@ function Backend.HitTestGameOverButton(uiX, uiY, game)
     if inside(revive) then return "revive" end
     if inside(double) then return "double" end
     if inside(restart) then return "restart" end
+    -- v0.12.5：结算页「回主菜单」出口
+    if inside(menu) then return "menu" end
     return nil
 end
 
--- v0.11.0 商业化：升级面板命中判定。
+-- v0.12.5 精简：升级面板命中（只保留免费重抽/看广告重抽/锁定/选卡）。
 -- 与 DrawLevelUp 共用 GetUpgradePanelLayout，视觉与命中永远同源。
 ---@param uiX number
 ---@param uiY number
@@ -2235,43 +2356,34 @@ function Backend.HitTestUpgradePanel(uiX, uiY, game)
 
     if inside(layout.rerollFree) then return "reroll_free", nil end
     if inside(layout.rerollAd) then return "reroll_ad", nil end
-    if not game.upgradeTimerExtended and inside(layout.timerAd) then return "timer_ad", nil end
-    if inside(layout.fourth) then return "fourth", nil end
-    if inside(layout.extraPick) then return "extra_pick", nil end
 
     local choices = (game and game.upgradeChoices) or {}
     local cardTop = layout.cy - layout.cardH * 0.5
     for i = 1, layout.cardCount do
         local cx = layout.startX + (i - 1) * (layout.cardW + layout.gap)
-        -- 升格角标只在可升级时是入口；"已升格/已满" 时点按仍按选卡处理。
         local choice = choices[i]
+        -- 左上「锁定/保留」角标先于卡体判定。
         if choice and inside(GetHoldBadgeRect(cx, cardTop, layout.cardW)) then
             return "hold", i
-        end
-        if choice and not choice.boosted
-            and (choice.stacks or 0) + 1 < (choice.maxStacks or 1)
-            and inside(GetBoostBadgeRect(cx, cardTop, layout.cardW)) then
-            return "boost", i
         end
         if math.abs(uiX - cx) <= layout.cardW * 0.5 + 4
             and math.abs(uiY - layout.cy) <= layout.cardH * 0.5 + 4 then
             return "card", i
         end
     end
-    if choices[4] and inside(layout.extra) then
-        if choices[4].locked then return "fourth", nil end
-        return "card", 4
-    end
     return nil, nil
 end
 
 -- v0.11.0 商业化：暂停补给站命中判定（与 DrawPaused 同源）。
----@return string|nil kind "pause_heal" | "pause_rare"
+---@return string|nil kind "pause_heal" | "pause_rare" | "pause_orbital" | "pause_reload" | "pause_parts_boost" | "pause_resume" | "pause_menu"
 function Backend.HitTestPausePanel(uiX, uiY, game)
     local layout = GetPausePanelLayout((game and game.width) or DESIGN_W)
     local function inside(r)
         return uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h
     end
+    -- v0.12.5：出口按钮先于补给行（虽几何不重叠，保持顺序防御后续改布局）
+    if inside(layout.resume) then return "pause_resume" end
+    if inside(layout.menu) then return "pause_menu" end
     if inside(layout.heal) then return "pause_heal" end
     if inside(layout.rare) then return "pause_rare" end
     if inside(layout.orbital) then return "pause_orbital" end
@@ -2280,18 +2392,49 @@ function Backend.HitTestPausePanel(uiX, uiY, game)
     return nil
 end
 
--- v0.11.0 商业化 P4：局内道具槽命中判定（与 DrawItemSlots 同源）。
----@return integer|nil index
+-- v0.12.5：HUD 右上角暂停按钮命中（与 DrawHud 同源）。
+function Backend.HitTestHudPause(uiX, uiY, game)
+    local r = GetHudPauseRect(game)
+    if uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h then
+        return true
+    end
+    return false
+end
+
+-- v0.12.5：局内道具竖列命中判定（与 DrawItemSlots 共用 GetItemPanelLayout）。
+---@return string|nil kind "toggle" | "slot"
+---@return integer|nil index 槽位序号（kind=="slot" 时）
 function Backend.HitTestItemSlot(uiX, uiY, game)
     local items = (game and game.items) or {}
-    local rects = GetItemSlotRects()
-    for i = 1, #rects do
-        local r = rects[i]
-        if items[i] and uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h then
-            return i
-        end
+    local tab, slots = GetItemPanelLayout()
+    local function inside(r)
+        return uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h
     end
+    if itemPanelOpen_ then
+        for i = 1, #slots do
+            if items[i] and inside(slots[i]) then
+                return "slot", i
+            end
+        end
+        -- 展开态标签区仍是「收起」按钮
+        if inside(tab) then return "toggle" end
+        return nil
+    end
+    if inside(tab) then return "toggle" end
     return nil
+end
+
+---@return boolean open
+function Backend.IsItemPanelOpen()
+    return itemPanelOpen_
+end
+
+function Backend.SetItemPanelOpen(open)
+    itemPanelOpen_ = open and true or false
+end
+
+function Backend.ToggleItemPanel()
+    itemPanelOpen_ = not itemPanelOpen_
 end
 
 function Backend.GetDesignSize()
