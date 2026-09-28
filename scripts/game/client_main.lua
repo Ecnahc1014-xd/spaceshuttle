@@ -231,7 +231,6 @@ end
 local META_TOAST_SECONDS = 2.4
 local metaToastTimer = 0
 local metaDate = ""
-local supplyPrompted = false
 local aircraftSilhouettes = {}
 for _, entry in ipairs(MetaCatalog.GetCodex()) do
     local model = AircraftPixelData[entry.key]
@@ -313,32 +312,9 @@ local function installSystemNotificationHandler()
     end)
 end
 
--- v0.12.5：付费档案轨解锁入口（顶端通知条，不占档案面板大行）。
--- 只在主菜单展示一次：有 banner 通道空闲、联网、未解锁、余额已收到时才弹
--- （⚠️ 必须等服务端首推余额，否则 gems=0 会误报「钻石不足」）。
-local premiumOfferShown_ = false
-local balanceReceived_ = false
-local function TryShowPremiumPassOffer()
-    if premiumOfferShown_ then return end
-    if GameMode.IsOffline() then return end
-    if not balanceReceived_ then return end
-    if metaState.premiumPass then return end
-    if RenderBackend.HasSystemBanner() then return end
-    premiumOfferShown_ = true
-    local cost = metaState.premiumPassCost or 100
-    local gems = math.floor(metaState.gems or 0)
-    local affordable = gems >= cost
-    RenderBackend.ShowSystemBanner({
-        title = "付费档案轨",
-        message = (affordable
-            and string.format("每级奖励 ×2 · 钻石一次解锁（当前 %d / 需 %d）", gems, cost))
-            or string.format("每级奖励 ×2 · 需 %d 钻石，当前 %d，可充值后再解锁", cost, gems),
-        tone = "warn",
-        ttl = 8,
-        actionText = affordable and "立即解锁" or "去充值",
-        actionId = affordable and "buy_premium_pass" or "open_recharge",
-    })
-end
+-- v0.12.7：删除「主菜单自动弹付费轨通知条 + 自动弹每日补给」两处启动打扰
+-- （用户否决：开局首充弹窗）。付费轨解锁入口收回战斗档案面板与钻石兑换，
+-- 玩家主动打开才见；后端 SystemBanner 通道保留，仅供平台 SystemNotification 换皮用。
 
 -- 顶端通知条动作处理：真正的函数体在 HandleMetaAction 定义后赋值（同文件 local
 -- 前向引用问题：upvalue 同一变量，运行时才取函数体，TryBannerAt 闭包引用不受影响）。
@@ -1115,10 +1091,8 @@ function ClientMain.Start(opts)
 
     if not RenderBackend.Init() then return false end
 
-    -- v0.12.5：平台通知换皮 + 付费轨 offer 状态复位（重复进游戏也要能再曝光一次）。
+    -- v0.12.5：平台通知换皮（v0.12.7：付费轨自动曝光已删，无需状态复位）。
     installSystemNotificationHandler()
-    premiumOfferShown_ = false
-    balanceReceived_ = false
 
     -- v0.11.0 联机：充值弹层复用游戏 UI 的令牌与原语（UI 无污染）。
     RechargeShop.Init(MetaUI.GetDeps())
@@ -1126,7 +1100,6 @@ function ClientMain.Start(opts)
 
     PlayerData.Load()
     metaDate = os.date("%Y-%m-%d")
-    supplyPrompted = false
     -- ⚠️ 全程 pcall：联机层任何异常都不允许中断游戏启动
     --    （曾经因为 NetClient.Start 为 nil，在这里抛出，导致后面的事件订阅全部没执行，
     --     真机表现为「3D 正常但 2D 界面全没」）。
@@ -1139,10 +1112,8 @@ function ClientMain.Start(opts)
         local okNet, errNet = pcall(function()
             NetClient.SetGemsListener(function(gems)
                 metaState.gems = gems
-                balanceReceived_ = true
             end)
             NetClient.SetPurchasedPartsListener(function(total, _, firstGift)
-                balanceReceived_ = true
                 local granted = PlayerData.ClaimPurchasedParts(total)
                 if granted > 0 then
                     SavePlayerDataToCloud()
@@ -1244,7 +1215,6 @@ function HandleUpdate(eventType, eventData)
         PlayerData.RollDaily()
         PlayerData.Save()
         SavePlayerDataToCloud()
-        supplyPrompted = false
         RefreshMeta()
         print("[Main] daily state refreshed: " .. today)
     end
@@ -1253,14 +1223,7 @@ function HandleUpdate(eventType, eventData)
         metaToastTimer = metaToastTimer - dt
         if metaToastTimer <= 0 then metaState.toast = nil end
     end
-    if snapshot.state == "menu" then
-        if not supplyPrompted and metaState.supplyAvailable then
-            supplyPrompted = true
-            metaState.supplyOpen = true
-        end
-        -- v0.12.5：主菜单顶端通知一次性曝光付费档案轨（替代原常驻大行）。
-        TryShowPremiumPassOffer()
-    else
+    if snapshot.state ~= "menu" then
         -- 离开主菜单时收起所有元层界面，避免带着面板进局。
         metaState.screen = nil
         metaState.supplyOpen = false

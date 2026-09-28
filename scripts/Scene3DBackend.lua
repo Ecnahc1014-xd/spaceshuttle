@@ -405,7 +405,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.12.6"
+local BUILD_VERSION = "0.12.7"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -1269,28 +1269,16 @@ local function DrawHud(ctx, game, presentation)
     if boss then DrawBossPhaseBar(ctx, game, boss) end
 end
 
--- v0.12.6：像素超大打字 logo。UTF-8 逐字排版，青色/亮白交替 + 硬偏移阴影，
--- 保持 zpix 块状像素语言（与 HUD/卡面同源），不使用外部图片资源。
+-- v0.12.7：像素大 logo。⚠️ zpix 位图字体逐字（单码位）绘制在超大字号会退化成
+-- 空框（v0.12.6 逐字排版真机只有两个空心矩形），改回「整串一次绘制 + 硬偏移阴影」，
+-- 与既有 36px「击碎飞机」同一条已验证可渲染的路径，只是加大字号。
 local function DrawPixelLogo(ctx, cx, topY, title, size, bodyColor, shadowColor)
-    local count = 0
-    local chars = {}
-    for p in utf8.codes(title) do
-        count = count + 1
-        chars[count] = utf8.char(p)
-    end
-    local spacing = math.floor(size * 0.08)
-    local totalW = count * size + (count - 1) * spacing
-    local startX = cx - totalW * 0.5
-    for i = 1, count do
-        local x = startX + (i - 1) * (size + spacing) + size * 0.5
-        local accent = (i == 1 or i == count)
-        -- 硬阴影：右下偏移的暗青层
-        DrawPixelText(ctx, x + size * 0.06, topY + size * 0.06, chars[i], size,
-            shadowColor or C.cyanDim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        -- 主层：首尾字青色，中间亮白
-        DrawPixelText(ctx, x, topY, chars[i], size,
-            accent and bodyColor or C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    end
+    -- 阴影层（右下偏移暗青）
+    DrawPixelText(ctx, cx + size * 0.045, topY + size * 0.045, title, size,
+        shadowColor or C.cyanDim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- 主层
+    DrawPixelText(ctx, cx, topY, title, size, bodyColor or C.text,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
 local function DrawMenu(ctx, game, meta)

@@ -207,18 +207,21 @@ end
 
 local function GetMenuBarLayout()
     local bw, gap = 120, 8
-    local function row(y, h)
+    -- 行卡按数量水平居中（v0.12.7：签到并入充值后，今日福利只剩 3 卡）
+    local function row(y, h, n)
+        local total = n * bw + (n - 1) * gap
+        local x0 = 18 + (504 - total) * 0.5
         local r = {}
-        for i = 1, 4 do
-            r[i] = { x = 18 + (i - 1) * (bw + gap), y = y, w = bw, h = h }
+        for i = 1, n do
+            r[i] = { x = x0 + (i - 1) * (bw + gap), y = y, w = bw, h = h }
         end
         return r
     end
     return {
         fleet  = { x = 18, y = 390, w = 504, h = 92 },
         wallet = { x = 18, y = 496, w = 504, h = 56 },
-        daily  = row(588, 92),
-        grow   = row(716, 92),
+        daily  = row(588, 92, 3),
+        grow   = row(716, 92, 4),
     }
 end
 
@@ -264,13 +267,10 @@ local function CountClaimableTasks(tasks)
 end
 
 -- 今日福利：全部「免费领取/看广告免费」——tone=free 青、tone=ad 绿（三色语义）。
+-- v0.12.7：每日签到并入充值弹层（用户要求），菜单只剩 3 卡（水平居中见 GetMenuBarLayout）。
 local function GetDailyDefs(meta)
     local taskCount = CountClaimableTasks(meta.tasks)
     return {
-        { action = "signin", icon = "signin", label = "每日签到",
-          sub = meta.signInAvailable and string.format("+%d 零件", meta.signInReward or 0)
-                or string.format("已连续 %d 天", meta.signInStreak or 0),
-          hot = meta.signInAvailable, tone = "free" },
         { action = "supply", icon = "supply", label = "每日补给",
           sub = meta.supplyAvailable and "待领取" or "明日再来",
           hot = meta.supplyAvailable, tone = "free" },
@@ -283,25 +283,19 @@ local function GetDailyDefs(meta)
     }
 end
 
--- 养成收藏：花零件/成长线/付费加速——首充限时窗内礼包顶替图鉴位。
+-- 养成收藏：花零件/成长线/付费加速。v0.12.7：用户否决开局首充促销——
+-- 菜单不再用金框「新手礼包」顶替图鉴位；首充只在玩家主动打开充值弹层时出现。
 local function GetGrowDefs(meta)
     local passSub = meta.passClaimable and "有奖励可领"
         or ("Lv." .. tostring(meta.passLevel or 1) .. (meta.premiumPass and " · 奖励×2" or ""))
-    local third
-    if meta.firstGiftAvailable then
-        third = { action = "open_recharge", icon = "gem", label = "新手礼包",
-                  sub = "限时特惠", hot = true, tone = "gold" }
-    else
-        third = { action = "open_codex", icon = "codex", label = "敌机图鉴",
-                  sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
-                  hot = meta.codexClaimable, tone = "free" }
-    end
     return {
         { action = "open_shop", icon = "shop", label = "涂装商城",
           sub = "零件换车漆", hot = false, tone = "free" },
         { action = "open_pass", icon = "pass", label = "战斗档案",
           sub = passSub, hot = meta.passClaimable, tone = "free" },
-        third,
+        { action = "open_codex", icon = "codex", label = "敌机图鉴",
+          sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
+          hot = meta.codexClaimable, tone = "free" },
         { action = "open_rank", icon = "rank", label = "排行榜",
           sub = "全服最高分", hot = false, tone = "free" },
     }
@@ -320,17 +314,20 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     -- ② 钱包连接器：左半零件（软货币）、右半钻石+充值（付费货币）。整条可点进充值。
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
-    D.icon(ctx, "parts", L.wallet.x + 14, L.wallet.y + 12, 32)
-    D.text(ctx, L.wallet.x + 54, L.wallet.y + 8, "零件", 15, C.dim)
-    D.text(ctx, L.wallet.x + 54, L.wallet.y + 26, string.format("%d", meta.parts or 0), 26, C.warn)
-    -- 中缝箭头：零件 → 消费闭环的方向提示
-    D.text(ctx, L.wallet.x + 178, L.wallet.y + 18, "→", 24, C.dim)
-    D.icon(ctx, "gem", L.wallet.x + 214, L.wallet.y + 14, 28)
-    D.text(ctx, L.wallet.x + 248, L.wallet.y + 8, "钻石", 15, C.dim)
-    D.text(ctx, L.wallet.x + 248, L.wallet.y + 26,
-        meta.offline and "—" or string.format("%d", meta.gems or 0), 26, C.warn)
-    D.text(ctx, L.wallet.x + L.wallet.w - 16, L.wallet.y + 20, "充值 ›", 18, C.warn,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    -- 左块：零件（软货币，对战/福利产出）
+    D.icon(ctx, "parts", L.wallet.x + 16, L.wallet.y + 14, 28)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 8, "零件", 14, C.dim)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 26, string.format("%d", meta.parts or 0), 24, C.text)
+    -- 中块：钻石（氪金代币，服务端权威）
+    D.icon(ctx, "gem", L.wallet.x + 200, L.wallet.y + 14, 28)
+    D.text(ctx, L.wallet.x + 236, L.wallet.y + 8, "钻石", 14, C.dim)
+    D.text(ctx, L.wallet.x + 236, L.wallet.y + 26,
+        meta.offline and "—" or string.format("%d", meta.gems or 0), 24, C.warn)
+    -- 右块：明确的充值按钮（金色=付费；不再用误导性的「零件→钻石」箭头）
+    local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 10, w = 96, h = 36 }
+    D.rect(ctx, wb.x, wb.y, wb.w, wb.h, C.warn, 6)
+    D.text(ctx, wb.x + wb.w * 0.5, wb.y + 8, "充值", 17, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     -- ③ 今日福利（免费领零件）/ ④ 养成收藏（花零件与付费加速）。两行小标签区分语义。
     local rows = {
@@ -707,7 +704,12 @@ local function GetPassRewardRect(content, index)
 end
 
 -- v0.12.5：付费档案轨不再占常驻大面板行（用户否决 v0.12.4 显示）。
--- 解锁入口改为顶端通知条（Backend.ShowSystemBanner），面板本身只保留奖励列表。
+-- v0.12.7：启动自动弹窗被用户否决删除后，付费轨解锁入口收回本面板内一个
+-- 紧凑按钮（打开面板才可见，绝不自动弹），与「升级获得零件…」文案同行右侧。
+local function GetPassUnlockRect(content)
+    return { x = content.x + content.w - 152, y = content.y + 138, w = 140, h = 40 }
+end
+
 local function DrawPass(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "战斗档案",
@@ -742,6 +744,15 @@ local function DrawPass(ctx, w, meta)
         Button(ctx, btn, item.claimed and "已领取" or (item.claimable and "领取" or "未解锁"), "",
             item.claimable and "primary" or "disabled")
     end
+    -- v0.12.7：付费轨解锁入口（金色=钻石付费；仅未解锁时显示，绝不自动弹）
+    if not meta.premiumPass then
+        local ur = GetPassUnlockRect(content)
+        local affordable = (not meta.offline) and (meta.gems or 0) >= (meta.premiumPassCost or 100)
+        local label = "钻石不足"
+        if meta.offline then label = "需联网"
+        elseif affordable then label = string.format("%d 钻石解锁", meta.premiumPassCost or 100) end
+        Button(ctx, ur, label, "", affordable and "gold" or "disabled")
+    end
     nvgRestore(ctx)
     return content, close
 end
@@ -750,6 +761,14 @@ local function HitTestPass(uiX, uiY, w, meta)
     local content, close = GetShellLayout(w)
     if Inside(close, uiX, uiY) then return "close", nil end
     if not Inside(content, uiX, uiY) then return nil, nil end
+    if not meta.premiumPass then
+        local ur = GetPassUnlockRect(content)
+        if Inside(ur, uiX, uiY)
+            and not meta.offline
+            and (meta.gems or 0) >= (meta.premiumPassCost or 100) then
+            return "buy_premium_pass", nil
+        end
+    end
     for i, item in ipairs(meta.passRewards or {}) do
         local row = GetPassRewardRect(content, i)
         local r = { x = row.x + row.w - 136,

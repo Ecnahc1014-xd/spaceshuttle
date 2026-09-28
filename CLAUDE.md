@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.7（截图反馈整改批次：大厅换皮 + logo 空框修复 + 开局零自动弹窗 + 签到并入充值 + 钱包语义修正）：
+  - **大厅加载页 dark-tech 换皮（用户否决裸 UI）**：`lobby_runtime.lua` 重写为窗口壳风格——深底 COL 令牌、panel 窗口（cyanDim 边 + 46px 标题栏：青识别条 +「击碎，飞机大战」+ 右侧版本号）、1px 断线、状态文案「正在连接服务器」+ 青色进度 fill + 「N 秒后自动进入单机模式」倒计时 + 三扫描点随机闪。状态迁移：onMatchFound→「正在接入战斗服务器」+setFill(0.5)；onProgress>=1→「连接完成，正在进入」+stopWaiting；SN onError / client OnError→「服务器不可用/连接失败，进入单机模式」。⚠️ urhox-libs/UI **无 ref 机制**：控件全部先建局部变量再组装进 children；`SetText`/`SetStyle` 动态更新用 pcall。契约保留：`shutdownLobbyUI()`（hideBanner+Destroy+UI.Shutdown+UnregisterHandler）、五秒兜底、banner 换皮通道。
+  - **logo 空框修复（用户截图点名「还是个空框」）**：v0.12.6 的 `DrawPixelLogo` 用 utf8.codes **逐码位**在 104px 下渲染，zpix 位图字体超大号逐字退化成空心框（只剩阴影层成框）。改回**整串一次 nvgText + 右下硬偏移阴影双层**（与 36px 旧版同一条已验证路径）。BUILD_VERSION→0.12.7。
+  - **开局零自动弹窗（用户二次否决）**：删除 `TryShowPremiumPassOffer`（v0.12.5 的付费轨主菜单 banner）与菜单自动弹补给 modal（`supplyPrompted`）及 `premiumOfferShown_`/`balanceReceived_` 门控——`HandleUpdate` menu 分支不再开任何弹窗；ShowSystemBanner 通道只服务平台 SystemNotification。付费轨解锁收回 `DrawPass` 内紧凑金按钮（`GetPassUnlockRect` 右上 140×40，affordable→「N 钻石解锁」/不足→「钻石不足」/离线→「需联网」，`HitTestPass` 先于奖励行返回 `buy_premium_pass`）。菜单「养成收藏」行删金框新手礼包顶替槽，固定 4 卡（open_shop/open_pass/open_codex/open_rank）。
+  - **每日签到并入充值界面（用户指定）**：`RechargeShop` 顶部常驻 signIn 行（56px：可签时 cyan 边+左侧 3px 识别条+signin 图标+「每日签到」+「已连续 N 天 · 今日 +X 零件」+「签到/今日已签到」按钮），`HitTest` 返回 `"signin"`（经 `HandleRechargeAction` 自然穿透到 `HandleMetaAction` 的 signin 分支）。首充礼包行与签到行共存时布局 `GetLayout(w, showFirstGift)` 重排：signIn 常驻 shift 64、gift 68、spendStep/spendH 压缩 62/56（全开末行底 798 < retry 820 推演过）。菜单「今日福利」行剩 3 卡（补给/任务/转盘），`row()` 按数量水平居中。
+  - **钱包条语义修正（用户两次点名同一截图「这里有问题」）**：删「零件 → 钻石」误导箭头（零件不会兑换成钻石，方向反了）——改左零件余额块/中钻石余额块/右**金色实心「充值」按钮**（`wb={x=L.wallet.x+L.wallet.w-112,y=L.wallet.y+10,w=96,h=36}`，`HitTestMenuBar` 整条仍 open_recharge）。
+  - **backdrop 铺满连锁**：菜单无 HUD 后 RechargeShop backdrop 从 (0,92) 改 (0,0,w,960)。
+  - 验证：Lua LSP 0 Error（15 files 538 诊断 0 error）、多人 build+预览上传成功。⚠️ 待 Preview：大厅换皮实机、logo 整串渲染观感、充值界面签到行、钱包条新排布。
 - 版本: 0.12.6（主菜单重设计批次：像素大 logo + 菜单去 HUD + 变现闭环三段式）：
   - **像素超大打字 logo**：`DrawPixelLogo`（UTF-8 逐字排版、104px、首尾青/中间白、右下硬偏移阴影，zpix 程序化，无外部图片）。短名 `GAME_SHORT_TITLE="击碎飞机"` 用于 logo；对外全名 `GAME_TITLE` 契约不变（窗口/发布名仍「击碎，飞机大战」，logo 下方小字带全名）。
   - **菜单态隐藏战斗 HUD**：`RenderOverlay` 只在 `game.state ~= "menu"` 时画 `DrawHud`（分数/波次/防线对局读数不属于首页）；菜单改全屏自绘（bg 实心 + 角标/断线/微型网格），窗口壳与「本局目标」填充块删除；`DrawSupplyPopup` backdrop 从 y=92 改铺满 0..960（旧值假设 HUD 存在）。
@@ -20,6 +28,7 @@
   - **图标与界面增强（用户追加需求）**：新增 4 张 32×32 dark-tech 像素图标（pause/home/barrier/levelup，均带 .meta 22hex uuid、进 dist manifest）；HUD 等级行加 levelup 图标（xp bar 100→116 宽缩至 112）、防线读数左移 36 让位暂停钮、零件加倍并入零件行；暂停/结算出口按钮带 home 图标 + 程序化播放三角。BUILD_VERSION → 0.12.5。
   - 验证：Lua LSP 0 Error、多人 build+预览上传成功、新图标全部进 manifest、uuid 无重复。⚠️ 待 Preview：换皮通知条实机（需真触发平台通知）、广告在途冻结、道具竖列点按、付费轨 offer 曝光时机。
   - ⚠️ v0.12.4 条目中的「选卡倒计时/+30秒/第4张解锁/升格/额外再选」已被本批次整体删除，仅保留卡 hold 存活。
+  - ⚠️ 本条目的「付费档案轨主菜单一次性 banner（TryShowPremiumPassOffer）」已被 v0.12.7 删除（开局零自动弹窗），解锁收回 DrawPass 面板内按钮。
 - 版本: 0.12.4（三十图补齐批次：升级变现闭环 + 首充礼包 + 付费档案轨 + 大厅生命周期加固）：
   - **升级面板三新机制（com_lvup_05/08）**：①「锁定已有卡保留到下次」——`Game.heldUpgradeId` + `Game.ToggleHeldUpgrade(index)`（卡片左上「锁定/保留」角标，hit kind `hold`，与升格角标同层级先判）；下次 `RollUpgradeChoices` 把保留卡放首位（保留卡为稀有时空转 forceRare 配额），重抽面板仍保留、选卡或换卡即清。②「选卡倒计时」——`UPGRADE_SECONDS=8`，`Game.Update(dt, upgradeTimerPaused)` 在 levelup 态倒数、超时 `RandomInt` 自动选一张真实候选（不含第 4 张占位）；面板顶部画剩余条+秒数，「看广告 +30 秒」一次（`Game.ExtendUpgradeTime`，hit kind `timer_ad`）。⚠️ 广告在途时必须暂停倒计时（编排层传 `AdService.IsInFlight()`，不能用 `IsBusy()`——3s 冷却期会把面板冻住），否则看广告回来卡被自动选了。
   - **首充新手礼包（com_menu_02）**：`Shared.FIRST_GIFT`（sku `first_gift_6`、24h 限时窗、本地补发 parts 500 + skin arctic、服务端发货 gems 100+first_gift 标志）。`PlayerData` 新增 `firstGiftClaimed`/`createdAt`（云合并 createdAt 取更早）；服务端 `serverCloud.money.first_gift` 标志；`PURCHASED_PARTS_SYNC` 现携带 premium/first_gift 双标志，客户端收到 first_gift=1 且本地未补发时一次性发皮肤零件并 `MarkFirstGiftClaimed`（幂等，离线补发）。RechargeShop 顶部横幅行（限时倒计时+¥价格+购买），`GetLayout(w, showFirstGift)` Draw/HitTest 同开关保证几何同源。
@@ -66,7 +75,14 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.12.6 主菜单重设计批次（像素大 logo、菜单隐藏战斗 HUD、变现闭环三段式：图鉴条/钱包连接器/今日福利/养成收藏）
+- 上次交付: v0.12.7 截图整改批次（大厅 dark-tech 换皮、logo 空框修复为整串+阴影、开局零自动弹窗、签到并入充值界面、钱包条删误导箭头改金充值钮）
+
+## 本批次新增避雷（v0.12.7 截图整改）
+- 🔴 **zpix 位图字体逐字绘制在超大字号退化成空心框（v0.12.7 实测）**：`DrawPixelLogo` 曾用 utf8.codes 逐码位 nvgText 画 104px 中文，真机只剩阴影层是框、主层空白——大字号必须**整串一次绘制**（36px 旧版即此路径），想做首尾异色也别拆单字（可拆「前缀串+后缀串」两段整串，不能拆单码位）。
+- 🔴 **urhox-libs/UI 没有 ref 机制，别用属性回取控件（v0.12.7）**：构建后 `view.children` 下标遍历或 `ref=function(w)` 都拿不到（库源码无此支持，恒 nil）。需要动态更新的控件**先建局部变量再组装进 children**；`SetText`/`SetStyle` 调用 pcall 包裹防库行为差异。
+- 🔴 **开局禁止任何自动营销弹窗（v0.12.5 banner→v0.12.7 二次否决）**：用户点名「把开局的 1 首充弹窗去了」——付费轨 offer 从主菜单自动 banner 再收回 DrawPass 面板内紧凑按钮；自动弹补给 modal（supplyPrompted）一并删。营销触点只能存在于**玩家主动打开的面板**里；`ShowSystemBanner` 通道从此只服务平台 SystemNotification，不再复用给商业推广。
+- ⚠️ **平行货币条别画兑换箭头（v0.12.7 用户两次点名）**：「零件 → 钻石」箭头暗示零件能兑钻石（实际方向相反：钻石兑零件/充值得钻石），误导即缺陷。两种余额各自成块，获得途径交给明确的「充值」按钮，别用连接线脑补兑换关系。
+- ⚠️ **弹窗并入后布局要推演最坏堆叠（v0.12.7）**：签到行常驻 + 首充限时行共存时 RechargeShop 内容高度 798 逼近 retry 按钮 y=820——新增行时把 spendStep/spendH 设条件压缩并在注释里留下底边数值推演，防止只测单行态。
 
 ## 本批次新增避雷（v0.12.6 主菜单重设计）
 - ⚠️ **菜单态隐藏 HUD 后，所有假设「顶部有 92px HUD」的层都要自查（v0.12.6）**：`RenderOverlay` 里 menu 态不再画 `DrawHud`，凡是遮罩/弹窗从 `HUD_HEIGHT(92)` 起画的（如 `DrawSupplyPopup` 的 backdrop）会在顶部留 92px 不遮断的缝——全屏模态一律从 0 起铺满。改渲染分层时 grep `MENU_CONTENT_TOP`/`HUD_HEIGHT` 找齐依赖方。

@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.12.6
-简述：主菜单重设计批次——像素超大打字 logo（DrawPixelLogo 程序化）、菜单态隐藏战斗 HUD、变现点按「闭环三段式」重组（图鉴展示条 → 钱包连接器 → 今日福利 → 养成收藏，defs 纯函数绘制/命中同源）。
+当前版本：0.12.7
+简述：截图整改批次——大厅加载页 dark-tech 换皮（urhox-libs/UI 窗口壳）、logo 空框修复（zpix 逐字超大号退化→整串+硬阴影）、开局零自动弹窗（删付费轨 banner 与自动补给 modal，解锁收回 DrawPass 按钮）、每日签到并入充值界面、钱包条删误导箭头改金色充值按钮。
 最后巩固：2026-09-28
 
 ## 项目概况
@@ -94,6 +94,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.12.7（截图整改：大厅换皮 + logo 空框 + 开局零弹窗 + 签到并入充值 + 钱包语义）：用户三张截图与多次插话。①`lobby_runtime.lua` 重写为 dark-tech 窗口壳（深底/panel 标题栏/断线/青色进度 fill/倒计时/扫描点，状态迁移文案），⚠️ urhox-libs/UI 无 ref→控件先建局部变量再组装、SetText/SetStyle pcall。②logo 空框根因=**zpix 逐码位超大号退化**，改整串 nvgText+右下硬阴影双层；BUILD_VERSION→0.12.7。③开局零自动弹窗：删 `TryShowPremiumPassOffer`/`premiumOfferShown_`/`balanceReceived_`/自动补给 modal；付费轨解锁收回 DrawPass 紧凑金按钮（`GetPassUnlockRect`/`buy_premium_pass`）；养成收藏行固定 4 卡。④每日签到并入 `RechargeShop` 顶部 signIn 行（HitTest→"signin" 穿透 HandleMetaAction）；菜单福利行 3 卡 `row()` 居中；gift 共存时 spendStep/spendH 压缩（798<820 推演）。⑤钱包条删「零件→钻石」误导箭头，改双余额块+金色实心「充值」钮；RechargeShop backdrop 0..960。LSP 0、多人 build+预览上传。⚠️ 待 Preview：大厅实机、logo 观感、签到行、钱包排布。
 - v0.12.6（主菜单重设计：像素大 logo + 去 HUD + 变现闭环三段式）：用户截图反馈「击碎飞机应该本身变成像素超级大标题；主页明显需要重新设计；所有变现点之间没有良好的整合」。①`DrawPixelLogo`（UTF-8 逐字 104px、首尾青中间白、硬偏移阴影、zpix 程序化无外部图），短名 `GAME_SHORT_TITLE` 只用于 logo，对外全名契约不变；菜单从窗口壳+「本局目标/怎么玩」填充块改全屏自绘（bg+角标+断线+微型网格），CTA 上移 y262。②`RenderOverlay` menu 态不画战斗 HUD；`DrawSupplyPopup` backdrop 0..960 铺满。③变现三段式（AskUser 用户拍板）：图鉴剪影条→钱包连接器（零件→钻石→充值）→今日福利行（签到/补给/任务/转盘）→养成收藏行（商城/档案/图鉴或首充礼包顶替/排行）；`GetDailyDefs/GetGrowDefs` 纯函数驱动绘制+`HitTestMenuBar` 同源；三色边框落卡描边。LSP 0、多人 build+预览。⚠️ 待 Preview：logo 真机观感、卡片信息密度、遮罩缝。
 - v0.12.5（真机反馈整改：广告收敛 + 出口闭环 + 换皮通知 + 道具竖列 + 图标增强）：
   - **升级面板广告瘦身**（用户 4 截图否决）：删除选卡倒计时/+30 秒/超时自动选卡/看广告解锁第 4 张/单卡升格/额外再选；`Game.Update(dt)` 恢复单参数；面板只剩免费重抽+看广告重抽（必出稀有）+免费锁定/保留。规则层删 8 个接口与占位卡；`HitTestUpgradePanel` 只剩 4 种 kind。

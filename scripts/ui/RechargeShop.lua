@@ -38,6 +38,7 @@ end
 ---@class RechargeLayout
 ---@field content table
 ---@field close table
+---@field signIn table 每日签到行（v0.12.7 从主菜单并入充值弹层，常驻一行）
 ---@field packs table[] 钻石礼包卡
 ---@field spends table[] 钻石兑换卡
 ---@field firstGift table|nil 首充礼包卡（限时窗内未购买时存在）
@@ -51,12 +52,14 @@ local function GetLayout(w, showFirstGift)
     local sw, sh = w - 36, 780
     local content = { x = x + 14, y = y + 60, w = sw - 28, h = sh - 76 }
     local close = { x = x + sw - 46, y = y + 8, w = 36, h = 36 }
-    -- 首充礼包占一行，展示时其余分区整体下移；Draw 与 HitTest 传同一个开关保证几何同源。
+    -- 签到常驻一行；首充礼包再占一行。每个存在都让下方分区整体下移，
+    -- Draw 与 HitTest 传同一个开关保证几何同源。
+    local signIn = { x = content.x, y = content.y + 4, w = content.w, h = 56 }
+    local shift = 64
     local firstGift = nil
-    local shift = 0
     if showFirstGift then
-        firstGift = { x = content.x, y = content.y + 4, w = content.w, h = 58 }
-        shift = 68
+        firstGift = { x = content.x, y = content.y + 4 + shift, w = content.w, h = 58 }
+        shift = shift + 68
     end
 
     local colW = math.floor((content.w - 12) * 0.5)
@@ -73,17 +76,20 @@ local function GetLayout(w, showFirstGift)
         }
     end
     local spendTop = packTop + 2 * 104 + 44
+    -- 首充行存在时压缩兑换行距/行高，保证不压到底部重试按钮（retry y=+652）。
+    local spendStep = showFirstGift and 62 or 72
+    local spendH = showFirstGift and 56 or 64
     local spends = {}
     for i = 1, #Shared.GEM_SPENDS do
         spends[i] = {
             x = content.x,
-            y = spendTop + (i - 1) * 76,
+            y = spendTop + (i - 1) * spendStep,
             w = content.w,
-            h = 64,
+            h = spendH,
         }
     end
     local retry = { x = content.x, y = content.y + content.h - 52, w = content.w, h = 44 }
-    return { content = content, close = close, packs = packs, spends = spends,
+    return { content = content, close = close, signIn = signIn, packs = packs, spends = spends,
         firstGift = firstGift, retry = retry }
 end
 
@@ -99,7 +105,7 @@ function RechargeShop.Draw(ctx, w, meta)
     local showGift = meta.firstGiftAvailable == true
     local L = GetLayout(w, showGift)
 
-    D.backdrop(ctx, 0, 92, w, 960 - 92)
+    D.backdrop(ctx, 0, 0, w, 960)
     D.shell(ctx, 18, 108, w - 36, 780, 48)
     D.rect(ctx, 18, 156, 3, 22, C.warn, 0)
     D.text(ctx, 34, 118, "钻石商店", 22, C.warn)
@@ -110,6 +116,31 @@ function RechargeShop.Draw(ctx, w, meta)
     D.text(ctx, L.close.x + L.close.w * 0.5, L.close.y + 7, "X", 20, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     D.grid(ctx, 32, 164, w - 64, 20, 12, 14)
+
+    -- 每日签到（v0.12.7 从主菜单并入：免费领取＝青色语义，与付费分区上下分层）
+    local si = L.signIn
+    D.panel(ctx, si.x, si.y, si.w, si.h,
+        meta.signInAvailable and C.card or C.widget,
+        meta.signInAvailable and C.cyan or C.cyanDim, 6)
+    D.rect(ctx, si.x, si.y, 3, si.h, meta.signInAvailable and C.cyan or C.cyanDim, 0)
+    D.icon(ctx, "signin", si.x + 14, si.y + 12, 32, meta.signInAvailable and 1 or 0.45)
+    D.text(ctx, si.x + 56, si.y + 8, "每日签到", 18,
+        meta.signInAvailable and C.text or C.dim)
+    D.text(ctx, si.x + 56, si.y + 32,
+        string.format("已连续 %d 天%s", meta.signInStreak or 0,
+            meta.signInAvailable and string.format(" · 今日 +%d 零件", meta.signInReward or 0) or ""),
+        14, C.dim)
+    local siBtn = { x = si.x + si.w - 116, y = si.y + 12, w = 104, h = 32 }
+    if meta.signInAvailable then
+        D.rect(ctx, siBtn.x, siBtn.y, siBtn.w, siBtn.h, C.cyan, 6)
+        D.text(ctx, siBtn.x + siBtn.w * 0.5, siBtn.y + 6, "签到", 16, C.ink,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        D.rect(ctx, siBtn.x, siBtn.y, siBtn.w, siBtn.h, C.widget, 6)
+        D.stroke(ctx, siBtn.x, siBtn.y, siBtn.w, siBtn.h, C.cyanDim, 6, 1)
+        D.text(ctx, siBtn.x + siBtn.w * 0.5, siBtn.y + 6, "今日已签到", 14, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
 
     -- 首充新手礼包（限时窗内未首购展示；金色＝钻石付费系）
     if showGift then
@@ -210,12 +241,18 @@ end
 -- 命中
 -- ============================================================================
 
----@return string|nil action "close" | "buy" | "spend" | "retry" | "buy_first_gift"
+---@return string|nil action "close" | "buy" | "spend" | "retry" | "buy_first_gift" | "signin"
 ---@return integer|nil index
 function RechargeShop.HitTest(uiX, uiY, w, meta)
     local L = GetLayout(w, meta.firstGiftAvailable == true)
     if Inside(L.close, uiX, uiY) then return "close", nil end
     if Inside(L.retry, uiX, uiY) then return "retry", nil end
+    -- v0.12.7：每日签到并入本弹层（action 由 HandleMetaAction 的 signin 分支处理）
+    if meta.signInAvailable then
+        local si = L.signIn
+        local btn = { x = si.x + si.w - 116, y = si.y + 12, w = 104, h = 32 }
+        if Inside(btn, uiX, uiY) then return "signin", nil end
+    end
     if L.firstGift and meta.firstGiftPrice ~= nil then
         local r = L.firstGift
         local btn = { x = r.x + r.w - 128, y = r.y + 26, w = 112, h = 26 }
