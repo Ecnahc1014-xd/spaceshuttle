@@ -677,6 +677,24 @@ local function HandleRechargeAction(action, index)
     elseif action == "buy" and index then
         HandleGemPurchase(index)
         return true
+    elseif action == "buy_first_gift" then
+        if GameMode.IsOffline() then
+            metaState.rechargeToast = "需联网后可用"
+        elseif not productsAvailable_ then
+            metaState.rechargeToast = "内购未开通或暂无商品"
+        else
+            metaState.rechargeToast = "正在拉起支付…"
+            NetClient.Purchase(Shared.FIRST_GIFT.sku, function(ok, reason)
+                if ok then
+                    -- 发货由服务端异步完成；钻石/礼包标志到账后推送刷新展示。
+                    metaState.rechargeToast = "支付完成后礼包自动到账"
+                else
+                    metaState.rechargeToast = "购买失败：" .. tostring(reason)
+                end
+                RefreshMeta()
+            end)
+        end
+        return true
     elseif action == "spend" and index then
         HandleGemSpend(index)
         return true

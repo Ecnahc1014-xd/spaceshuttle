@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.11.4
-简述：新手下拉手势提示——本局未发射且未拖拽时，手势图在弹弓车辆上方循环播放「向下拖拽 松手发射」动画。
-最后巩固：2026-09-25
+当前版本：0.12.4
+简述：三十图补齐批次——升级面板（选卡倒计时+自动选卡、锁定保留卡）、首充新手礼包、付费战斗档案轨全部落地；自建大厅修复双 NanoVG 上下文/五秒兜底竞态/Start 幂等。
+最后巩固：2026-09-28
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，启用多人匹配但战斗客户端本地运行（服务端仅 IAP/钻石），raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -94,6 +94,13 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.12.4（三十图补齐：升级变现闭环 + 首充礼包 + 付费档案轨 + 大厅加固）：
+  - **升级面板**：①com_lvup_05 锁定保留卡——`Game.heldUpgradeId`/`ToggleHeldUpgrade`，卡片左上角标「锁定↔保留」（hit kind `hold`，判定先于 boost），下次面板 `RollUpgradeChoices` 放首位、重抽仍保留、选走即清；②com_lvup_08 选卡倒计时——`UPGRADE_SECONDS=8`、levelup 态 `Game.Update(dt, upgradeTimerPaused)` 倒数、超时随机自动选真实候选，面板顶部剩余条+「看广告 +30 秒」一次（kind `timer_ad`）；⚠️ 暂停条件必须用 `AdService.IsInFlight()` 而非 `IsBusy()`（冷却期冻面板）；广告在途锁 timer 不消耗。
+  - **首充新手礼包**：`Shared.FIRST_GIFT`（sku first_gift_6、24h 窗、parts 500 + arctic 皮肤 + 服务端 100 钻石）；PlayerData `firstGiftClaimed/createdAt`（云合并取更早 createdAt）；服务端 money 标志 first_gift；PURCHASED_PARTS_SYNC 扩带 premium/first_gift 双标志；RechargeShop 顶部横幅行（倒计时+价格+立即购买），GetLayout(w, showFirstGift) Draw/Hit 同源。
+  - **付费档案轨**：GEM_SPENDS 增 pass_premium（100 钻一次性、grantCurrency 分支、服务端已购回 already_owned）；DrawPass 双轨显示 + gold Button kind；ClaimPass(level, multiplier) ×2。
+  - **大厅修复**：lobby_runtime 降级/stop 统一 `shutdownLobbyUI()`（view:Destroy + UI.Shutdown——urhox-libs/UI 是进程级 nvg 单例，不拆上下文=历史「2D 零星元素」根因）；onProgress>=1 撤销五秒兜底；ClientMain.Start `started_` 幂等守卫；失败打 FATAL。
+  - **平台强冲突跳过**：好友榜/分享战绩（.emmylua 无 Share/Friend API），不做假按钮。
+  - 验证：LSP 0 Error、多人 build+预览上传成功。待 Preview：降级 2D 完整性、倒计时自动选卡、保留卡；⚠️ IAP 白名单 403 未解除，新商品未在平台创建。
 - v0.11.4（新手下拉手势提示）: 玩家要求做首次进入游戏的引导——还没做过任何操作时循环播放「手从上往下拉」的动画，提示拖拽发射。做法：①规则层加 `hasLaunched`（`LaunchMarble` 置 true、`ResetGame` 复位），快照出 `s.showPullHint = playing and not hasLaunched and not aiming`——一拖拽即消失、发射过永不出现，渲染层不自行猜"是否操作过"。②手势图 `assets/image/ui_hand_pull3_20260925153601.png`（256×384 RGBA，dark-tech 青色线稿、右手握拳食指斜朝左上，AI 生成；⚠️ 方向必须是斜朝左上，垂直向上/带箭头与下拉语义冲突），`nvgCreateImage(vg_, "image/...png", 0)` 在 `Backend.Init` 加载一次，**可选资源**——失败只打日志跳过提示，绝不进初始化成功条件（否则缺图会 UI 全没 + 卡死）。③`DrawPullHint` 在弹弓车辆上方循环 1.6s：手沿 9 点青色虚线从上方下移到发射位（已滑过的点更亮更大），淡入/淡出，末尾跟「向下拖拽 松手发射」。LSP 0、多人 build 成功、资源已进 dist manifest（uuid 与 .meta 一致）。⚠️ 环境 HDR Bloom shader 编译失败致离屏截图发白，需 Preview 验收动画。
 - v0.12.2（后台匹配，删掉大厅层）: 玩家反馈「预览连不到服务器」，加上前几轮反复出现的灰帧/主题不匹配/UI 只剩零星元素，根因统一指向「1 人匹配 + lobby_runtime」这套方案——它为了拿一个服务端进程承载 `Shop.onDeliver`，付出了「进游戏前必须等匹配」的代价。改为 `background_match: true`：游戏脚本立即加载、匹配后台跑、服务端就绪触发 `ServerReady` 再启用联机层与云。删除 lobby_runtime.lua / local_game.lua / ui.LoadingScreen.lua 整层；settings 去掉 lobby_runtime；GameMode 默认离线起步（不碰云，避免无谓请求）。另修 `DrawLetterboxBackground` 不能当全屏兜底（只填画布外，9:16 偏移为 0 时一笔不画），灰帧改为整屏实心填。\n- v0.11.3（本地体素失色修复）：联机项目的敌机战斗仍只在客户端本地 Scene 运行；`LOCAL` Volume 查询 Local 色板，但 `SetPaletteEntry`/`SetPaletteEntryPBR`/`SetPaletteCutColor`/`GetPaletteMaterial` 省略 domain 时默认 Replicated，导致机身和飞散碎块无机型色。`Renderer3D` 明确以 `CreateVolume(..., Quaternion(), LOCAL)` 创建两类体积，并把基础色、PBR（无发光时传占位 `Color(0,0,0,0)`）、切面色、材质全部指定 `VOXEL_PALETTE_LOCAL`；仍用 VisualCatalog 的 bank 0 槽位 1–64，不动 Game/逐格修理日志。Lua LSP 0 Error、官方多人构建和静态契约通过；Linux 无体素模块且单机验证器不适用多人战斗，Preview 实际颜色待验。
 - v0.11.1（扣血线位置 + 可见性）: 玩家反馈「扣分那条线不可见，而且方块过了紫线才掉血」。根因两层：①位置——规则层越线判定是 `Game.lua` 的 `brickBottom > DANGER_Y(900)`，而 3D 紫线写死 `Vector3(0,-8.0,0.9)`；46° 斜俯视**正交**相机下 z 会投影到屏幕 Y，z=0.9 把线整体抬高约一行砖。改为 `CreateDangerBand` 初值 `(DESIGN_H*0.5-900)*0.018`、z=0（与敌机体素同平面），并在 `Backend.UpdateScene` 每帧按快照 `gameSnapshot.dangerY` 刷位置，与规则同源；横线 x 必须居中 0，不能用 `WorldFromGame(0,y)`（x=-4.86 会把线左移）。②可见性——深空场景纯漫反射细盒几乎看不见，加常驻 `MatEmissiveColor(0.40,0.13,0.70)`、线体 0.06→0.09、底色提亮 (0.39,0.19,0.67)→(0.62,0.26,0.92)，受击/Boss 在其上叠加。LSP 0、多人 build 成功。⚠️ 本环境 llvmpipe 下 `BloomHDR(...TONEMAP_LUT)` 编译失败（`texture3DLod`），HDR 链断导致离屏截图整屏纯白，无法目视验收，需 Preview 确认。

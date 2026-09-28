@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.4（三十图补齐批次：升级变现闭环 + 首充礼包 + 付费档案轨 + 大厅生命周期加固）：
+  - **升级面板三新机制（com_lvup_05/08）**：①「锁定已有卡保留到下次」——`Game.heldUpgradeId` + `Game.ToggleHeldUpgrade(index)`（卡片左上「锁定/保留」角标，hit kind `hold`，与升格角标同层级先判）；下次 `RollUpgradeChoices` 把保留卡放首位（保留卡为稀有时空转 forceRare 配额），重抽面板仍保留、选卡或换卡即清。②「选卡倒计时」——`UPGRADE_SECONDS=8`，`Game.Update(dt, upgradeTimerPaused)` 在 levelup 态倒数、超时 `RandomInt` 自动选一张真实候选（不含第 4 张占位）；面板顶部画剩余条+秒数，「看广告 +30 秒」一次（`Game.ExtendUpgradeTime`，hit kind `timer_ad`）。⚠️ 广告在途时必须暂停倒计时（编排层传 `AdService.IsInFlight()`，不能用 `IsBusy()`——3s 冷却期会把面板冻住），否则看广告回来卡被自动选了。
+  - **首充新手礼包（com_menu_02）**：`Shared.FIRST_GIFT`（sku `first_gift_6`、24h 限时窗、本地补发 parts 500 + skin arctic、服务端发货 gems 100+first_gift 标志）。`PlayerData` 新增 `firstGiftClaimed`/`createdAt`（云合并 createdAt 取更早）；服务端 `serverCloud.money.first_gift` 标志；`PURCHASED_PARTS_SYNC` 现携带 premium/first_gift 双标志，客户端收到 first_gift=1 且本地未补发时一次性发皮肤零件并 `MarkFirstGiftClaimed`（幂等，离线补发）。RechargeShop 顶部横幅行（限时倒计时+¥价格+购买），`GetLayout(w, showFirstGift)` Draw/HitTest 同开关保证几何同源。
+  - **付费战斗档案轨（com_menu_08）**：`GEM_SPENDS` 新增 `pass_premium`（100 钻石一次性，`grantCurrency=premium_pass`）；服务端先查标志、已购回 `already_owned`，事务扣钻+MoneyAdd 标志；客户端 `Client.GetPremiumPass()`；MetaUI DrawPass 双轨显示（未解锁→金按钮「N 钻石解锁」kind `buy_premium_pass`；已解锁→奖励 ×2 显示 `+X 零件（base ×2）`）；`PlayerData.ClaimPass(level, multiplier)`。Button 新增 `gold` kind（金色=钻石付费三分语义）。
+  - **大厅生命周期修复（真机灰屏/UI 零星根因）**：`lobby_runtime.lua` ①降级统一 `shutdownLobbyUI()`＝`view:Destroy()`+`UI.Shutdown()`（urhox-libs/UI 是进程级 NanoVG 单例+自动事件订阅，`view:Destroy()` 不销毁上下文；不先销毁就 `ClientMain.Start` 会让 Scene3DBackend 建第二个 nvgCreate 上下文，同帧双 BeginFrame 合成不稳 = 历史「2D 页面全没」根因）；②`onProgress>=1` 立即 `stopWaiting()` 撤销五秒兜底防双起竞态；③`stop()` 成功路径同样清 UI 上下文；④起游戏失败打 FATAL 日志。`ClientMain.Start` 加 `started_` 幂等守卫（重复进入直接返回 true，防双订阅双 Update），`Stop()` 复位。
+  - 验证：Lua LSP 0 Error、多人 build+预览上传成功。⚠️ 待 Preview 验收：五秒降级双上下文修复后 2D 完整性、选卡倒计时/自动选卡、保留卡跨面板传递；⚠️ 首充与付费轨真实支付仍被 IAP 白名单 403 阻塞，`first_gift_6`/付费档商品未在平台创建。
+  - **三十图判定为平台强冲突跳过项**（.emmylua 无 Share/Friend API）：com_menu_06 好友榜切换、com_ingame_10 分享战绩按钮——引擎无对应能力，不做假按钮。
 - 版本: 0.11.4（新手下拉手势提示）：
   - **手势图**：`assets/image/ui_hand_pull3_20260925153601.png`（256×384 RGBA，dark-tech 青色线稿，**右手握拳、食指斜朝左上**）。`Scene3DBackend` 用 `nvgCreateImage(vg_, "image/...png", 0)` 在 Init 加载一次，**可选资源**——失败只打日志跳过提示，绝不纳入初始化成功条件。⚠️ 手指方向必须是斜朝左上（下拉起手的姿态）；垂直向上或带向上箭头都与「向下拖拽」语义冲突，第一版即因箭头+垂直被弃用。
   - **触发条件**：规则层 `Game.lua` 新增 `hasLaunched`（`LaunchMarble` 置 true、`ResetGame` 复位），快照输出 `s.showPullHint = playing and not hasLaunched and not aiming`。玩家一拖拽就消失，发射过就永不出现。
@@ -42,7 +49,17 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.11.4 新手下拉手势提示（循环动画）
+- 上次交付: v0.12.4 三十图补齐批次（升级倒计时/保留卡、首充礼包、付费档案轨、大厅双上下文修复）
+
+## 本批次新增避雷（v0.12.4 三十图补齐 + 大厅双上下文）
+- 🔴 **urhox-libs/UI 是进程级 NanoVG 单例：换渲染接管方前必须 UI.Shutdown()（v0.12.4 根因）**：大厅挂 `ctx.root` 的 UI.Panel 背后是 UI 自己的 `nvgCreate(1)` 上下文＋自动 Update/Render/输入订阅；`view:Destroy()` 只拆控件树**不拆上下文**。降级起游戏前不 `UI.Shutdown()`，Scene3DBackend 会建第二个上下文，同帧两套 BeginFrame/EndFrame 交替，真机表现「2D UI 只剩零星元素/全没」。所有降级/stop 路径收敛到一个 `shutdownLobbyUI()`（pcall Destroy + pcall UI.Shutdown），禁止只写一处。
+- ⚠️ **五秒兜底必须在连服完成时撤销（v0.12.4）**：`onProgress>=1` 后引擎即将切游戏脚本，若计时继续跑会在切换竞态窗口里抢跑 `goOffline()` 本地起一局（双起）。匹配成功即 `stopWaiting()`。
+- ⚠️ **ClientMain.Start 必须幂等（v0.12.4）**：降级路径与引擎脚本切换可能各调一次 Start；无 `started_` 守卫会重复 SubscribeToEvent → Game.Update 每帧跑两遍（双倍 dt、双倍事件）。
+- 🔴 **升级倒计时不能被广告冷却暂停（v0.12.4）**：`Game.Update(dt, upgradeTimerPaused)` 编排层必须传 `AdService.IsInFlight()`（在途锁），不能传 `IsBusy()`（含 3s 冷却）——冷却期冻结面板会让玩家无法操作且倒计时不动，语义错乱。超时自动选卡只从真实候选 `RandomInt(1,#upgradeChoices)` 抽，第 4 张锁定占位不参与。
+- ⚠️ **保留卡（heldUpgradeId）与升格/解锁是三种不同状态（v0.12.4）**：「锁定已有卡保留到下次」≠「看广告解锁第 4 张占位」；保留卡在新面板 `RollUpgradeChoices` 首位重现，选完或重抽换卡即清；重抽面板保留卡仍占首位（防白锁）。UI 角标命中 hold 必须在 boost 之前判，否则左上角标点成升格。
+- ⚠️ **一次性兑换商品要在服务端事务前查已购标志（v0.12.4）**：付费档案轨 `pass_premium` 先 `serverCloud.money:Get` 判断 `premium_pass>=1` 回 `already_owned`，否则重复点会重复扣钻；普通钻石兑换（累计额语义）不需要此防重。
+- ⚠️ **首充礼包发放幂等靠本地标志+服务端标志双保险（v0.12.4）**：`firstGiftClaimed`（本地/云，随 BatchCommit 发货推送补发）＋服务端 `first_gift` money 标志；限时窗基准 `createdAt` 云合并取两台设备更早值。真实商品 `first_gift_6` 尚未在平台创建（IAP 白名单 403），构建通过不代表可支付。
+- ⚠️ **RechargeShop 布局行开关必须 Draw/HitTest 同参（v0.12.4）**：`GetLayout(w, showFirstGift)` 首充行存在时其余分区下移 68px；两边传同一个条件，禁止只在 Draw 判可见。
 
 ## 本批次新增避雷（v0.11.4 新手引导）
 - ⚠️ **新手提示必须由规则层给"是否已操作过"的标志，别让渲染层猜（v0.11.4）**：`Game.lua` 的 `hasLaunched` 在 `LaunchMarble` 置 true、`ResetGame` 复位，快照出 `s.showPullHint = playing and not hasLaunched and not aiming`。渲染层只读，不自行判断"玩家是否操作过"。玩家一拖拽（`aiming`）提示即消失，发射过就永不出现。
