@@ -96,7 +96,8 @@ end
 ---@param meta MetaState
 function RechargeShop.Draw(ctx, w, meta)
     local C = Style()
-    local L = GetLayout(w)
+    local showGift = meta.firstGiftAvailable == true
+    local L = GetLayout(w, showGift)
 
     D.backdrop(ctx, 0, 92, w, 960 - 92)
     D.shell(ctx, 18, 108, w - 36, 780, 48)
@@ -110,12 +111,39 @@ function RechargeShop.Draw(ctx, w, meta)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     D.grid(ctx, 32, 164, w - 64, 20, 12, 14)
 
-    D.text(ctx, L.content.x + 4, L.content.y + 16, "钻石礼包", 18, C.warn)
+    -- 首充新手礼包（限时窗内未首购展示；金色＝钻石付费系）
+    if showGift then
+        local r = L.firstGift
+        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, C.warnDim, 6)
+        D.rect(ctx, r.x, r.y, 3, r.h, C.warn, 0)
+        D.text(ctx, r.x + 16, r.y + 8, "限时新手礼包", 19, C.warn)
+        D.text(ctx, r.x + 16, r.y + 33,
+            string.format("高级零件×%d 稀有皮肤×1 钻石×%d",
+                Shared.FIRST_GIFT.parts, Shared.FIRST_GIFT.bonusGems), 14, C.dim)
+        local secs = math.max(0, math.floor(meta.firstGiftSeconds or 0))
+        D.text(ctx, r.x + r.w - 150, r.y + 8,
+            string.format("限时 %02d:%02d:%02d", secs // 3600, (secs % 3600) // 60, secs % 60),
+            15, C.warn, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        local price = meta.firstGiftPrice
+        local btn = { x = r.x + r.w - 128, y = r.y + 26, w = 112, h = 26 }
+        if price ~= nil then
+            D.rect(ctx, btn.x, btn.y, btn.w, btn.h, C.warn, 6)
+            D.text(ctx, btn.x + btn.w * 0.5, btn.y + 4, "¥" .. tostring(price) .. " 立即购买", 15,
+                C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        else
+            D.rect(ctx, btn.x, btn.y, btn.w, btn.h, C.widget, 6)
+            D.text(ctx, btn.x + btn.w * 0.5, btn.y + 4,
+                meta.offline and "需联网" or "暂未开通", 14, C.dim,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
+    end
+
+    D.text(ctx, L.content.x + 4, L.packs[1].y - 20, "钻石礼包", 18, C.warn)
     if meta.offline then
-        D.text(ctx, L.content.x + L.content.w, L.content.y + 20, "需联网", 15, C.dim,
+        D.text(ctx, L.content.x + L.content.w, L.packs[1].y - 16, "需联网", 15, C.dim,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     elseif not meta.productsAvailable then
-        D.text(ctx, L.content.x + L.content.w, L.content.y + 20, "内购未开通", 15, C.dim,
+        D.text(ctx, L.content.x + L.content.w, L.packs[1].y - 16, "内购未开通", 15, C.dim,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
 
@@ -182,12 +210,17 @@ end
 -- 命中
 -- ============================================================================
 
----@return string|nil action "close" | "buy" | "spend" | "retry"
+---@return string|nil action "close" | "buy" | "spend" | "retry" | "buy_first_gift"
 ---@return integer|nil index
 function RechargeShop.HitTest(uiX, uiY, w, meta)
-    local L = GetLayout(w)
+    local L = GetLayout(w, meta.firstGiftAvailable == true)
     if Inside(L.close, uiX, uiY) then return "close", nil end
     if Inside(L.retry, uiX, uiY) then return "retry", nil end
+    if L.firstGift and meta.firstGiftPrice ~= nil then
+        local r = L.firstGift
+        local btn = { x = r.x + r.w - 128, y = r.y + 26, w = 112, h = 26 }
+        if Inside(btn, uiX, uiY) then return "buy_first_gift", nil end
+    end
     for i = 1, #L.packs do
         local r = L.packs[i]
         local btn = { x = r.x + r.w - 92, y = r.y + r.h - 44, w = 78, h = 32 }

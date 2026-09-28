@@ -42,6 +42,9 @@ local MetaUI = {}
 ---@field passClaimable boolean
 ---@field premiumPass boolean 付费档案轨（服务端权威标志）
 ---@field premiumPassCost integer 解锁付费轨所需钻石
+---@field firstGiftAvailable boolean 首充礼包是否在限时窗内且未购买
+---@field firstGiftSeconds number 首充限时窗剩余秒数
+---@field firstGiftPrice number|nil 首充礼包平台价格（nil=未开通）
 ---@field firstGiftClaimed boolean
 ---@field signinRewards integer[]
 ---@field rankList table[]

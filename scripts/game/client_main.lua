@@ -267,6 +267,9 @@ local metaState = {
     myRankLoading = false,
     premiumPass = false,
     premiumPassCost = (Shared.GetGemSpend("pass_premium") or {}).cost or 100,
+    firstGiftAvailable = false,
+    firstGiftSeconds = 0,
+    firstGiftPrice = nil,
     skins = {},
     selectedSkin = "default",
     giftUsed = {},
@@ -366,6 +369,14 @@ RefreshMeta = function()
     local rewards = {}
     local claimed = PlayerData.GetPassClaimed()
     metaState.premiumPass = (not GameMode.IsOffline()) and NetClient.GetPremiumPass() or false
+    -- 首充礼包：限时窗内且未购买（服务端权威已购标志 + 本地已补发标志都不再展示）。
+    local giftOpen = (not PlayerData.IsFirstGiftClaimed())
+        and (not GameMode.IsOffline()) and (not NetClient.GetFirstGiftBought())
+    metaState.firstGiftAvailable = giftOpen
+        and PlayerData.GetFirstGiftWindow(Shared.FIRST_GIFT.windowSeconds) > 0
+    metaState.firstGiftSeconds = metaState.firstGiftAvailable
+        and PlayerData.GetFirstGiftWindow(Shared.FIRST_GIFT.windowSeconds) or 0
+    metaState.firstGiftPrice = productsAvailable_ and (gemPrices_[Shared.FIRST_GIFT.sku] or nil) or nil
     local passMul = metaState.premiumPass and 2 or 1
     for level = math.max(1, claimed), math.min(6, math.max(claimed + 3, metaState.passLevel)) do
         rewards[#rewards + 1] = {
@@ -1029,14 +1040,24 @@ function ClientMain.Start(opts)
             NetClient.SetGemsListener(function(gems)
                 metaState.gems = gems
             end)
-            NetClient.SetPurchasedPartsListener(function(total)
+            NetClient.SetPurchasedPartsListener(function(total, _, firstGift)
                 local granted = PlayerData.ClaimPurchasedParts(total)
                 if granted > 0 then
                     SavePlayerDataToCloud()
                     metaState.rechargeToast = string.format("兑换零件到账 +%d", granted)
                     print("[Main] purchased parts recovered +" .. granted .. " total=" .. total)
                 end
-                -- 每次权威推送都刷新付费轨标志（服务端随同一事件带 premium）。
+                -- 首充礼包发货：服务端标志为真且本地未补发时，发一次皮肤+高级零件。
+                if firstGift and not PlayerData.IsFirstGiftClaimed() then
+                    PlayerData.AddParts(Shared.FIRST_GIFT.parts)
+                    PlayerData.UnlockSkin(Shared.FIRST_GIFT.skin)
+                    PlayerData.MarkFirstGiftClaimed()
+                    SavePlayerDataToCloud()
+                    metaState.rechargeToast = "新手礼包已到账"
+                    print("[Main] first gift delivered: parts+" .. Shared.FIRST_GIFT.parts
+                        .. " skin=" .. Shared.FIRST_GIFT.skin)
+                end
+                -- 每次权威推送都刷新付费轨/首充标志（服务端随同一事件带 premium/first_gift）。
                 RefreshMeta()
             end)
             NetClient.Start()
