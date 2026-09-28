@@ -21,7 +21,7 @@ Shared.EVENTS = {
     GEM_SPEND       = "IAPGemSpend",
     -- S→C：扣款结果
     SPEND_RESULT    = "IAPGemSpendResult",
-    -- S→C：服务端权威的累计钻石兑换零件总数
+    -- S→C：服务端权威的累计钻石兑换零件总数（并携带 premium / firstGift 标志）
     PURCHASED_PARTS_SYNC = "IAPPurchasedPartsSync",
 }
 
@@ -34,6 +34,26 @@ Shared.CURRENCY = {
     GEMS = "gems",
     -- 钻石兑换所得零件的权威累计额，先在同一事务扣款并加额，再由客户端补领
     PURCHASED_PARTS = "purchased_parts",
+    -- 付费战斗档案轨解锁标志（0/1）：服务端权威，客户端只读展示
+    PREMIUM_PASS = "premium_pass",
+    -- 首充新手礼包已购标志（0/1）：服务端发货计数，客户端据此本地发奖一次
+    FIRST_GIFT = "first_gift",
+}
+
+-- ============================================================================
+-- 首充新手礼包（直接人民币 IAP，非钻石兑换）
+-- 商品需在平台创建：sku 必须与 merchant_sku_id 一致；
+-- 发货 items = first_gift:1 + gems:100（服务端事务），零件/皮肤由客户端补发。
+-- 限时窗：安装（createdAt）起 24 小时内有效，仅未首购时展示。
+-- ============================================================================
+
+Shared.FIRST_GIFT = {
+    sku = "first_gift_6",
+    name = "限时新手礼包",
+    priceHint = 6,           -- 展示参考价（实际以平台商品价为准）
+    windowSeconds = 24 * 3600,
+    parts = 500,             -- 客户端补发的「高级零件」
+    bonusGems = 100,         -- 服务端发货的钻石
 }
 
 -- ============================================================================
@@ -47,11 +67,15 @@ Shared.CURRENCY = {
 ---@field cost integer 钻石价格
 ---@field grantKey string 发往本地的软货币（parts）
 ---@field grantAmount integer
+---@field grantCurrency string|nil 服务端权威发放的货币 key（缺省 PURCHASED_PARTS）
 
 ---@type GemSpendDef[]
 Shared.GEM_SPENDS = {
     { key = "parts_500",  name = "500 零件",  cost = 20, grantKey = "parts", grantAmount = 500 },
     { key = "parts_1500", name = "1500 零件", cost = 50, grantKey = "parts", grantAmount = 1500 },
+    -- 付费档案轨：一次性解锁，服务端记标志，奖励领取由客户端软发（防作弊容忍档）。
+    { key = "pass_premium", name = "付费档案轨", cost = 100, grantKey = "", grantAmount = 0,
+      grantCurrency = "premium_pass" },
 }
 
 ---@param key string

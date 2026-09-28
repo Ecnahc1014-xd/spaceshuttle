@@ -40,19 +40,28 @@ end
 ---@field close table
 ---@field packs table[] 钻石礼包卡
 ---@field spends table[] 钻石兑换卡
+---@field firstGift table|nil 首充礼包卡（限时窗内未购买时存在）
 ---@field retry table 重新拉取
 
 ---@param w number
+---@param showFirstGift boolean|nil 限时窗内未首购时展示礼包行（Draw/HitTest 同参调用）
 ---@return RechargeLayout
-local function GetLayout(w)
+local function GetLayout(w, showFirstGift)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
     local content = { x = x + 14, y = y + 60, w = sw - 28, h = sh - 76 }
     local close = { x = x + sw - 46, y = y + 8, w = 36, h = 36 }
+    -- 首充礼包占一行，展示时其余分区整体下移；Draw 与 HitTest 传同一个开关保证几何同源。
+    local firstGift = nil
+    local shift = 0
+    if showFirstGift then
+        firstGift = { x = content.x, y = content.y + 4, w = content.w, h = 58 }
+        shift = 68
+    end
 
     local colW = math.floor((content.w - 12) * 0.5)
     local packs = {}
-    local packTop = content.y + 66
+    local packTop = content.y + 66 + shift
     for i = 1, 4 do
         local col = (i - 1) % 2
         local row = math.floor((i - 1) / 2)
@@ -74,7 +83,8 @@ local function GetLayout(w)
         }
     end
     local retry = { x = content.x, y = content.y + content.h - 52, w = content.w, h = 44 }
-    return { content = content, close = close, packs = packs, spends = spends, retry = retry }
+    return { content = content, close = close, packs = packs, spends = spends,
+        firstGift = firstGift, retry = retry }
 end
 
 -- ============================================================================

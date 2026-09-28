@@ -15,6 +15,8 @@ local Client = {}
 local GEMS = Shared.CURRENCY.GEMS
 
 local gems_ = 0                 -- 最后一次从服务端同步到的钻石余额
+local premiumPass_ = false      -- 服务端权威的付费档案轨标志
+local firstGiftBought_ = false  -- 服务端权威的「新手礼包已购」标志
 local ready_ = false            -- 是否已向服务端报到
 local seq_ = 0
 local spendPending_ = false
@@ -24,7 +26,7 @@ local SPEND_TIMEOUT = 30
 local spendWaiters_ = {}
 ---@type fun(gems: integer)|nil
 local gemsListener_ = nil
----@type fun(total: integer)|nil
+---@type fun(total: integer, premium: boolean, firstGift: boolean)|nil
 local purchasedPartsListener_ = nil
 ---@type fun(ok: boolean)|nil
 local purchaseListener_ = nil
@@ -36,6 +38,18 @@ local purchaseListener_ = nil
 ---@return integer
 function Client.GetGems()
     return gems_
+end
+
+--- 服务端权威的付费档案轨标志（离线时保持最后一次已知值）。
+---@return boolean
+function Client.GetPremiumPass()
+    return premiumPass_
+end
+
+--- 服务端权威的「新手礼包已购」标志。
+---@return boolean
+function Client.GetFirstGiftBought()
+    return firstGiftBought_
 end
 
 ---@return boolean
@@ -55,7 +69,7 @@ function Client.SetGemsListener(fn)
     if fn then fn(gems_) end
 end
 
----@param fn fun(total: integer)|nil
+---@param fn fun(total: integer, premium: boolean)|nil
 function Client.SetPurchasedPartsListener(fn)
     purchasedPartsListener_ = fn
 end
@@ -226,8 +240,12 @@ function HandleIapBalanceDirty(eventType, eventData)
 end
 
 function HandleIapPurchasedPartsSync(eventType, eventData)
+    local okPre, premium = pcall(function() return eventData:GetInt("premium") end)
+    premiumPass_ = okPre and premium == 1
+    local okGift, gift = pcall(function() return eventData:GetInt("first_gift") end)
+    firstGiftBought_ = okGift and gift == 1
     if purchasedPartsListener_ then
-        purchasedPartsListener_(eventData:GetInt("total"))
+        purchasedPartsListener_(eventData:GetInt("total"), premiumPass_, firstGiftBought_)
     end
 end
 

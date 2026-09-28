@@ -25,6 +25,8 @@ local DATA_VERSION = 1
 ---@field selectedSkin string 当前使用的皮肤 key
 ---@field shopBought table<string, boolean> 商城一次性商品
 ---@field passClaimed integer 战斗档案已领到的等级
+---@field firstGiftClaimed boolean 首充新手礼包奖励是否已本地补发
+---@field createdAt integer 首次运行时间戳（首充限时窗基准）
 ---@field purchasedPartsClaimed integer 已补领的钻石兑换零件累计额
 ---@field stats table<string, integer> 通用计数器（复活次数、广告观看等）
 
@@ -47,6 +49,8 @@ local function NewState()
         selectedSkin = "default",
         shopBought = {},
         passClaimed = 0,
+        firstGiftClaimed = false,
+        createdAt = 0,
         purchasedPartsClaimed = 0,
         stats = {},
     }
@@ -102,6 +106,7 @@ end
 
 function PlayerData.Load()
     state = NewState()
+    state.createdAt = os.time()
     if not fileSystem:FileExists(SAVE_FILE) then
         print("[PlayerData] no local save, start fresh")
         return false
@@ -134,6 +139,8 @@ function PlayerData.Load()
     state.codex        = AsBoolMap(d.codex)
     state.shopBought   = AsBoolMap(d.shopBought)
     state.passClaimed  = math.max(0, AsInt(d.passClaimed))
+    state.firstGiftClaimed = d.firstGiftClaimed == true
+    state.createdAt = math.max(0, AsInt(d.createdAt))
     state.purchasedPartsClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
     state.stats        = AsIntMap(d.stats)
     local skins = AsBoolMap(d.skins)
@@ -141,6 +148,7 @@ function PlayerData.Load()
     state.skins = skins
     local selected = AsStr(d.selectedSkin)
     state.selectedSkin = skins[selected] and selected or "default"
+    if state.createdAt == 0 then state.createdAt = os.time() end
 
     PlayerData.RollDaily()
     print("[PlayerData] loaded parts=" .. state.parts .. " highScore=" .. state.highScore
@@ -209,6 +217,12 @@ function PlayerData.ImportFromCloud(text)
         state.signInStreak = math.max(state.signInStreak, math.max(0, AsInt(d.signInStreak)))
     end
     state.passClaimed = math.max(state.passClaimed, math.max(0, AsInt(d.passClaimed)))
+    if d.firstGiftClaimed == true then state.firstGiftClaimed = true end
+    local cloudCreated = math.max(0, AsInt(d.createdAt))
+    -- 首次运行时间取两台设备中更早的那个（限时窗基准）。
+    if cloudCreated > 0 and (state.createdAt == 0 or cloudCreated < state.createdAt) then
+        state.createdAt = cloudCreated
+    end
     state.highScore  = math.max(state.highScore, cloudHigh)
     for k in pairs(cloudCodex) do state.codex[k] = true end
     for k in pairs(cloudSkins) do state.skins[k] = true end
@@ -517,10 +531,30 @@ function PlayerData.GetPassClaimed()
     return state.passClaimed
 end
 
-function PlayerData.ClaimPass(level)
+-- 首充新手礼包：限时窗剩余秒数（<=0 表示窗口已关）。
+---@param windowSeconds integer
+---@return integer secondsLeft
+function PlayerData.GetFirstGiftWindow(windowSeconds)
+    if state.createdAt <= 0 then return 0 end
+    local elapsed = os.time() - state.createdAt
+    local left = windowSeconds - elapsed
+    return left > 0 and left or 0
+end
+
+---@return boolean
+function PlayerData.IsFirstGiftClaimed()
+    return state.firstGiftClaimed
+end
+
+function PlayerData.MarkFirstGiftClaimed()
+    state.firstGiftClaimed = true
+    PlayerData.Save()
+end
+
+function PlayerData.ClaimPass(level, multiplier)
     if level ~= state.passClaimed + 1 or level > PlayerData.GetPassLevel() then return 0 end
     state.passClaimed = level
-    local reward = 100 + level * 100
+    local reward = (100 + level * 100) * math.max(1, math.floor(multiplier or 1))
     PlayerData.AddParts(reward)
     print("[PlayerData] battle record level=" .. level .. " reward=" .. reward)
     return reward

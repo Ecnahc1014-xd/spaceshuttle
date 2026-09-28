@@ -40,6 +40,8 @@ local MetaUI = {}
 ---@field passTarget integer
 ---@field passRewards table[]
 ---@field passClaimable boolean
+---@field premiumPass boolean 付费档案轨（服务端权威标志）
+---@field premiumPassCost integer 解锁付费轨所需钻石
 ---@field firstGiftClaimed boolean
 ---@field signinRewards integer[]
 ---@field rankList table[]
@@ -111,6 +113,9 @@ local function Button(ctx, r, label, sub, kind)
         border, labelColor, fill = C.ad, C.ad, C.card
     elseif kind == "disabled" then
         border, labelColor, fill = C.cyanDim, C.dim, C.widget
+    elseif kind == "gold" then
+        -- 金色＝钻石付费（与广告绿、免费青三分）。
+        border, labelColor, fill = C.warn, C.warn, C.card
     elseif kind == "danger" then
         border, labelColor, fill = C.error, C.error, C.card
     else
@@ -641,9 +646,15 @@ local function GetPassRewardRect(content, index)
         w = content.w, h = 72 }
 end
 
+-- 付费轨解锁按钮：档案奖励区下方（5 行最多到 content.y+180+4*84+72 = +588）。
+local function GetPassPremiumRect(content)
+    return { x = content.x, y = content.y + 180 + 5 * 84 + 6, w = content.w, h = 56 }
+end
+
 local function DrawPass(ctx, w, meta)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "战斗档案", "免费奖励")
+    local content, close = Shell(ctx, w, 960, "战斗档案",
+        meta.premiumPass and "双轨奖励" or "免费奖励")
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
     D.icon(ctx, "pass", content.x + 16, content.y + 18, 32)
@@ -653,17 +664,43 @@ local function DrawPass(ctx, w, meta)
         string.format("累计击碎 %d / %d 块", meta.passProgress or 0, meta.passTarget or 1), 17, C.dim)
     ProgressBar(ctx, content.x + 16, content.y + 102, content.w - 32,
         (meta.passProgress or 0) / math.max(1, meta.passTarget or 1), C.cyan)
-    D.text(ctx, content.x + 16, content.y + 148, "升级获得零件 · 已解锁等级可逐级领取", 16, C.dim)
+    D.text(ctx, content.x + 16, content.y + 148,
+        meta.premiumPass and "已解锁付费轨 · 每级奖励 ×2"
+            or "升级获得零件 · 已解锁等级可逐级领取", 16,
+        meta.premiumPass and C.warn or C.dim)
     local rewards = meta.passRewards or {}
     for i, item in ipairs(rewards) do
         local r = GetPassRewardRect(content, i)
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, item.claimable and C.cyan or C.cyanDim, 6)
         D.icon(ctx, "record", r.x + 14, r.y + 20, 32, item.unlocked and 1 or 0.4)
         D.text(ctx, r.x + 60, r.y + 6, "档案等级 " .. tostring(item.level), 18, C.text)
-        D.text(ctx, r.x + 60, r.y + 38, "+" .. tostring(item.reward) .. " 零件", 17, C.warn)
+        if meta.premiumPass then
+            D.text(ctx, r.x + 60, r.y + 38,
+                string.format("+%d 零件（%d ×2）", item.reward, item.baseReward or item.reward),
+                17, C.warn)
+        else
+            D.text(ctx, r.x + 60, r.y + 38, "+" .. tostring(item.reward) .. " 零件", 17, C.warn)
+        end
         local btn = { x = r.x + r.w - 136, y = r.y + 12, w = 120, h = 48 }
         Button(ctx, btn, item.claimed and "已领取" or (item.claimable and "领取" or "未解锁"), "",
             item.claimable and "primary" or "disabled")
+    end
+    -- 付费轨解锁区（金色＝钻石付费，与青色免费、绿色广告区分）
+    local pr = GetPassPremiumRect(content)
+    if meta.premiumPass then
+        D.panel(ctx, pr.x, pr.y, pr.w, pr.h, C.card, C.warnDim, 6)
+        D.text(ctx, pr.x + pr.w * 0.5, pr.y + 18, "付费档案轨 · 已解锁", 17, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        D.panel(ctx, pr.x, pr.y, pr.w, pr.h, C.widget, C.warnDim, 6)
+        D.text(ctx, pr.x + 16, pr.y + 8, "付费档案轨 · 每级奖励 ×2", 17, C.text)
+        D.text(ctx, pr.x + 16, pr.y + 32, "钻石一次解锁 · 由服务端记账", 14, C.dim)
+        local btn = { x = pr.x + pr.w - 148, y = pr.y + 10, w = 132, h = 40 }
+        local affordable = (not meta.offline) and (meta.gems or 0) >= (meta.premiumPassCost or 100)
+        local passBtnLabel = "钻石不足"
+        if meta.offline then passBtnLabel = "需联网"
+        elseif affordable then passBtnLabel = string.format("%d 钻石解锁", meta.premiumPassCost or 100) end
+        Button(ctx, btn, passBtnLabel, "", affordable and "gold" or "disabled")
     end
     nvgRestore(ctx)
     return content, close
@@ -678,6 +715,15 @@ local function HitTestPass(uiX, uiY, w, meta)
         local r = { x = row.x + row.w - 136,
             y = row.y + 12, w = 120, h = 48 }
         if item.claimable and Inside(r, uiX, uiY) then return "claim_pass", item.level end
+    end
+    if not meta.premiumPass then
+        local pr = GetPassPremiumRect(content)
+        local btn = { x = pr.x + pr.w - 148, y = pr.y + 10, w = 132, h = 40 }
+        if Inside(btn, uiX, uiY)
+            and not meta.offline
+            and (meta.gems or 0) >= (meta.premiumPassCost or 100) then
+            return "buy_premium_pass", nil
+        end
     end
     return nil, nil
 end

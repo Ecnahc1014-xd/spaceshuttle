@@ -13,6 +13,8 @@ local Server = {}
 
 local GEMS = Shared.CURRENCY.GEMS
 local PURCHASED_PARTS = Shared.CURRENCY.PURCHASED_PARTS
+local PREMIUM_PASS = Shared.CURRENCY.PREMIUM_PASS
+local FIRST_GIFT = Shared.CURRENCY.FIRST_GIFT
 
 -- 服务端专属全局：由 C++ 侧在服务端脚本环境注入，客户端不存在。
 -- 通过 _G 取用，避免「客户端也会打包本文件」时的静态检查报未定义全局。
@@ -72,16 +74,24 @@ local function QueryAndPushBalance(userId, conn)
         ok = function(moneys)
             local gems = 0
             local purchasedParts = 0
+            local premiumPass = 0
+            local firstGift = 0
             if moneys then
                 gems = moneys[GEMS] or 0
                 purchasedParts = moneys[PURCHASED_PARTS] or 0
+                premiumPass = moneys[PREMIUM_PASS] or 0
+                firstGift = moneys[FIRST_GIFT] or 0
             end
             print("[Server] balance userId=" .. tostring(userId) .. " gems=" .. tostring(gems)
-                .. " purchased_parts=" .. tostring(purchasedParts))
+                .. " purchased_parts=" .. tostring(purchasedParts)
+                .. " premium_pass=" .. tostring(premiumPass)
+                .. " first_gift=" .. tostring(firstGift))
             PushBalance(conn, gems)
             if conn and conn:IsConnected() then
                 local data = VariantMap()
                 data["total"] = Variant(math.floor(purchasedParts))
+                data["premium"] = Variant(premiumPass >= 1 and 1 or 0)
+                data["first_gift"] = Variant(firstGift >= 1 and 1 or 0)
                 conn:SendRemoteEvent(Shared.EVENTS.PURCHASED_PARTS_SYNC, true, data)
             end
         end,
@@ -188,6 +198,41 @@ function HandleIapGemSpend(eventType, eventData)
 
     if not def then
         reply(false, "unknown_sku", 0)
+        return
+    end
+
+    -- 一次性商品（如付费档案轨）：已持有标志时直接拒绝，避免重复扣钻。
+    if def.grantCurrency == PREMIUM_PASS then
+        serverCloud.money:Get(userId, {
+            ok = function(moneys)
+                if moneys and (moneys[PREMIUM_PASS] or 0) >= 1 then
+                    reply(false, "already_owned", def.cost)
+                    QueryAndPushBalance(userId, conn)
+                    return
+                end
+                local batch = serverCloud:BatchCommit("钻石兑换: " .. def.key)
+                batch:MoneyCost(userId, GEMS, def.cost)
+                batch:MoneyAdd(userId, PREMIUM_PASS, 1)
+                batch:Commit({
+                    ok = function()
+                        print("[Server] premium pass unlocked userId=" .. tostring(userId))
+                        reply(true, "", def.cost)
+                        QueryAndPushBalance(userId, conn)
+                    end,
+                    error = function(code, reason)
+                        print("[Server] premium pass spend failed code=" .. tostring(code)
+                            .. " reason=" .. tostring(reason))
+                        reply(false, "failed", def.cost)
+                        QueryAndPushBalance(userId, conn)
+                    end,
+                })
+            end,
+            error = function(code, reason)
+                print("[Server] premium pass precheck failed code=" .. tostring(code)
+                    .. " reason=" .. tostring(reason))
+                reply(false, "failed", def.cost)
+            end,
+        })
         return
     end
 

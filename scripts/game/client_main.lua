@@ -265,6 +265,8 @@ local metaState = {
     rankTotal = 0,
     myRank = nil,
     myRankLoading = false,
+    premiumPass = false,
+    premiumPassCost = (Shared.GetGemSpend("pass_premium") or {}).cost or 100,
     skins = {},
     selectedSkin = "default",
     giftUsed = {},
@@ -363,10 +365,13 @@ RefreshMeta = function()
     metaState.passProgress, metaState.passTarget = PlayerData.GetPassProgress()
     local rewards = {}
     local claimed = PlayerData.GetPassClaimed()
+    metaState.premiumPass = (not GameMode.IsOffline()) and NetClient.GetPremiumPass() or false
+    local passMul = metaState.premiumPass and 2 or 1
     for level = math.max(1, claimed), math.min(6, math.max(claimed + 3, metaState.passLevel)) do
         rewards[#rewards + 1] = {
             level = level,
-            reward = 100 + level * 100,
+            reward = (100 + level * 100) * passMul,
+            baseReward = 100 + level * 100,
             unlocked = level <= metaState.passLevel,
             claimed = level <= claimed,
             claimable = level == claimed + 1 and level <= metaState.passLevel,
@@ -691,10 +696,31 @@ local function HandleMetaAction(action, index)
     elseif action == "open_pass" then
         OpenMetaScreen("pass")
     elseif action == "claim_pass" and index then
-        local reward = PlayerData.ClaimPass(index)
+        local reward = PlayerData.ClaimPass(index, metaState.premiumPass and 2 or 1)
         if reward > 0 then
             PersistMeta()
             SetMetaToast(string.format("战斗档案 +%d 零件", reward))
+        end
+    elseif action == "buy_premium_pass" then
+        if GameMode.IsOffline() then
+            SetMetaToast("需联网后可用")
+        else
+            SetMetaToast("扣款中…")
+            NetClient.SpendGems("pass_premium", function(ok, reason)
+                if ok then
+                    NetClient.RequestBalance()
+                    SetMetaToast("付费档案轨已解锁")
+                elseif reason == "pending" then
+                    SetMetaToast("上一笔兑换尚未确认，请稍候")
+                elseif reason == "unknown" then
+                    SetMetaToast("结果待确认，请重新进入游戏对账")
+                elseif reason == "already_owned" then
+                    SetMetaToast("付费档案轨已解锁")
+                else
+                    SetMetaToast("扣款失败，请重试")
+                end
+                RefreshMeta()
+            end)
         end
     elseif action == "signin" then
         HandleSignIn()
@@ -962,9 +988,17 @@ local function HandleGameOverPointerUp(uiX, uiY)
     return false
 end
 
+local started_ = false
+
 -- 离线降级：云能力（云存档/排行榜/余额）在单机路径上全部短路，只读本地。
 ---@param opts table|nil { offline = boolean }
 function ClientMain.Start(opts)
+    -- 自建大厅五秒超时先本地启动了游戏；若引擎随后仍完成脚本切换再调一次 Start，
+    -- 重复订阅会让 Game.Update 每帧跑两遍。此处幂等保护，保持已运行的本地局不变。
+    if started_ then
+        print("[ClientMain] already started, ignore duplicate entry")
+        return true
+    end
     opts = opts or {}
     if opts.offline ~= nil then
         GameMode.SetOffline(opts.offline == true)
@@ -999,10 +1033,11 @@ function ClientMain.Start(opts)
                 local granted = PlayerData.ClaimPurchasedParts(total)
                 if granted > 0 then
                     SavePlayerDataToCloud()
-                    RefreshMeta()
                     metaState.rechargeToast = string.format("兑换零件到账 +%d", granted)
                     print("[Main] purchased parts recovered +" .. granted .. " total=" .. total)
                 end
+                -- 每次权威推送都刷新付费轨标志（服务端随同一事件带 premium）。
+                RefreshMeta()
             end)
             NetClient.Start()
         end)
@@ -1035,10 +1070,12 @@ function ClientMain.Start(opts)
     SubscribeToEvent("ScreenMode", HandleScreenMode)
 
     print("[Main] rendering, ads and cloud save connected")
+    started_ = true
     return true
 end
 
 function ClientMain.Stop()
+    started_ = false
     if not GameMode.IsOffline() then
         NetClient.Stop()
     end

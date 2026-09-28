@@ -1,5 +1,15 @@
 -- 自建联机入口：只显示项目自己的加载画面；匹配与连服由 ctx.client 托管。
 -- 五秒未切入游戏脚本时直接启动本地玩法，不经过房间或默认五屏大厅。
+--
+-- 生命周期契约（⚠️ 全部路径必须遵守）：
+-- 1. 大厅用 urhox-libs/UI（自带进程级 NanoVG 单例 + 自动 Update/Render 订阅）。
+--    游戏 Scene3DBackend 会 nvgCreate 第二个上下文 —— 降级进游戏前必须先
+--    UI.Shutdown() 销毁旧上下文，否则两个上下文同帧 BeginFrame 合成顺序不稳定，
+--    真机表现为「游戏 UI 只剩零星元素 / 2D 页面全没」（AB-088c）。
+-- 2. 匹配成功（连服 progress>=1）后引擎会切游戏脚本：立即 stopWaiting() 撤销
+--    五秒兜底计时，避免与脚本切换竞态导致双起。
+-- 3. stop()（引擎回收大厅）同样要 UI.Shutdown()，不给游戏遗留上下文。
+-- 所有降级入口共用 GoOffline()，禁止在多处各写一遍销毁顺序。
 
 local UI = require "urhox-libs/UI"
 local GameMode = require "GameMode"
@@ -8,6 +18,7 @@ return function(ctx)
     local root, client = ctx.root, ctx.client
     local active = true
     local localStarted = false
+    local uiShutdown = false
     local updateSubscribed = false
     local elapsed = 0
     GameMode.SetOffline(false)
@@ -43,12 +54,19 @@ return function(ctx)
         end
     end
 
+    -- 先销毁大厅的 UI 上下文，再起游戏（唯一合法的降级顺序）。
+    local function shutdownLobbyUI()
+        if uiShutdown then return end
+        uiShutdown = true
+        pcall(function() view:Destroy() end)
+        pcall(UI.Shutdown)
+    end
+
     local function goOffline()
         if not active then return end
         stopWaiting()
         pcall(function() client:CancelMatch() end)
-        -- 本地游戏接管根节点；旧大厅内容必须先销毁，防止遮住战斗 UI。
-        view:Destroy()
+        shutdownLobbyUI()
         GameMode.SetOffline(true)
         local ok, started = pcall(function()
             local clientMain = require "game.client_main"
@@ -58,7 +76,9 @@ return function(ctx)
             localStarted = true
             print("[Lobby] timeout/error, local game started")
         else
-            print("[Lobby] local game start failed: " .. tostring(started))
+            -- UI 上下文已销毁、游戏后端 Init 失败属于致命错误（可选资源已不得阻断 Init），
+            -- 记录完整错误供日志定位；不再伪造回退界面。
+            print("[Lobby] FATAL local game start failed: " .. tostring(started))
         end
     end
 
@@ -80,8 +100,10 @@ return function(ctx)
             onStarted = function() print("[Lobby] matchmaking started") end,
             onMatchFound = function() print("[Lobby] server found, connecting") end,
             onProgress = function(progress)
-                if active and progress >= 1 then
+                if active and progress ~= nil and progress >= 1 then
+                    -- 连服完成，引擎即将切游戏脚本：撤销兜底计时，防双起竞态。
                     print("[Lobby] server connection completed")
+                    stopWaiting()
                 end
             end,
             onError = function(code, message)
@@ -100,6 +122,9 @@ return function(ctx)
             if active then stopWaiting() end
             if localStarted then
                 require("game.client_main").Stop()
+            else
+                -- 联机成功被引擎切换：root 由引擎回收，但 UI 单例上下文必须自行销毁。
+                shutdownLobbyUI()
             end
         end,
     }
