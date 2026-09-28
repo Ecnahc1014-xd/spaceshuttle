@@ -21,7 +21,7 @@ local MetaUI = {}
 ---@field parts integer
 ---@field gems integer 氪金代币（钻石）余额，来自服务端权威
 ---@field highScore integer
----@field screen string|nil 当前打开的功能面板："tasks"|"codex"|"rank"|"shop"|"wheel"
+---@field screen string|nil 当前打开的功能面板："tasks"|"codex"|"rank"|"shop"|"wheel"|"pass"|"recharge"
 ---@field supplyOpen boolean 每日补给弹窗是否显示
 ---@field supplyAvailable boolean
 ---@field supplyReward integer
@@ -31,12 +31,22 @@ local MetaUI = {}
 ---@field taskClaimable boolean
 ---@field tasks MetaTaskView[]
 ---@field codex table<string, boolean>
+---@field aircraft table<string, table> 图鉴剪影（来自 AircraftPixelData，同一份网格）
 ---@field codexUnlocked integer
 ---@field codexTotal integer
 ---@field codexClaimable boolean
+---@field passLevel integer
+---@field passProgress integer
+---@field passTarget integer
+---@field passRewards table[]
+---@field passClaimable boolean
+---@field firstGiftClaimed boolean
+---@field signinRewards integer[]
 ---@field rankList table[]
 ---@field rankLoading boolean
 ---@field rankTotal integer
+---@field myRank integer|nil 当前玩家全服名次，nil 表示未上榜或尚未加载
+---@field myRankLoading boolean
 ---@field skins table<string, boolean>
 ---@field selectedSkin string
 ---@field giftUsed table<string, integer>
@@ -184,6 +194,8 @@ end
 ---@field entries table[]
 ---@field signin table
 ---@field supply table
+---@field pass table
+---@field wheel table
 
 ---@return MetaBarLayout
 local function GetMenuBarLayout()
@@ -195,7 +207,10 @@ local function GetMenuBarLayout()
     end
     local signin = { x = 18, y = 778, w = 248, h = 64 }
     local supply = { x = 274, y = 778, w = 248, h = 64 }
-    return { wallet = wallet, entries = entries, signin = signin, supply = supply }
+    -- 菜单态不绘制战斗 Dock，底部入口可以占用 848..888。
+    local pass = { x = 18, y = 848, w = 248, h = 40 }
+    local wheel = { x = 274, y = 848, w = 248, h = 40 }
+    return { wallet = wallet, entries = entries, signin = signin, supply = supply, pass = pass, wheel = wheel }
 end
 
 local ENTRY_DEFS = {
@@ -219,10 +234,11 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     D.text(ctx, L.wallet.x + 52, L.wallet.y + 6, "零件", 15, C.dim)
     D.text(ctx, L.wallet.x + 52, L.wallet.y + 22, string.format("%d", meta.parts or 0), 24, C.warn)
     -- 钻石：金色＝付费货币；余额由服务端权威记账。
-    D.text(ctx, L.wallet.x + 156, L.wallet.y + 6, "钻石", 15, C.dim)
-    D.text(ctx, L.wallet.x + 156, L.wallet.y + 22,
+    D.text(ctx, L.wallet.x + 196, L.wallet.y + 6, "钻石", 15, C.dim)
+    D.icon(ctx, "gem", L.wallet.x + 164, L.wallet.y + 10, 28)
+    D.text(ctx, L.wallet.x + 196, L.wallet.y + 22,
         meta.offline and "—" or string.format("%d", meta.gems or 0), 24, C.warn)
-    D.text(ctx, L.wallet.x + 236, L.wallet.y + 22, "充值 ›", 15, C.warn)
+    D.text(ctx, L.wallet.x + 276, L.wallet.y + 22, "充值 ›", 15, C.warn)
     D.text(ctx, L.wallet.x + L.wallet.w - 16, L.wallet.y + 8,
         string.format("图鉴 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0), 15, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -249,37 +265,43 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
 
     -- 每日签到（免费领取 → 青色，不用金色）
     local s = L.signin
-    if meta.signInAvailable then
-        D.rect(ctx, s.x, s.y, s.w, s.h, C.card, 6)
-        D.stroke(ctx, s.x, s.y, s.w, s.h, C.cyan, 6, 1.5)
-        D.text(ctx, s.x + 14, s.y + 10, "每日签到", 17, C.cyan)
-        D.text(ctx, s.x + 14, s.y + 36,
-            string.format("第 %d 天 · +%d 零件", meta.signInStreak or 1, meta.signInReward or 0),
-            15, C.dim)
-    else
-        D.rect(ctx, s.x, s.y, s.w, s.h, C.widget, 6)
-        D.stroke(ctx, s.x, s.y, s.w, s.h, C.cyanDim, 6, 1)
-        D.text(ctx, s.x + 14, s.y + 10, "每日签到", 17, C.dim)
-        D.text(ctx, s.x + 14, s.y + 36,
-            string.format("已连续 %d 天", meta.signInStreak or 0), 15, C.dim)
-    end
+    D.rect(ctx, s.x, s.y, s.w, s.h, meta.signInAvailable and C.card or C.widget, 6)
+    D.stroke(ctx, s.x, s.y, s.w, s.h,
+        meta.signInAvailable and C.cyan or C.cyanDim, 6, 1.5)
+    D.icon(ctx, "signin", s.x + 12, s.y + 16, 32, meta.signInAvailable and 1 or 0.4)
+    D.text(ctx, s.x + 54, s.y + 10, "每日签到", 17,
+        meta.signInAvailable and C.cyan or C.dim)
+    D.text(ctx, s.x + 54, s.y + 36,
+        meta.signInAvailable
+            and string.format("第 %d 天 · +%d 零件", meta.signInStreak or 1, meta.signInReward or 0)
+            or string.format("已连续 %d 天", meta.signInStreak or 0),
+        15, C.dim)
 
-    -- 每日补给
     local p = L.supply
-    if meta.supplyAvailable then
-        D.rect(ctx, p.x, p.y, p.w, p.h, C.card, 6)
-        D.stroke(ctx, p.x, p.y, p.w, p.h, C.cyan, 6, 1.5)
-        D.text(ctx, p.x + 14, p.y + 10, "每日补给", 17, C.cyan)
-        D.text(ctx, p.x + 14, p.y + 36, "待领取", 15, C.dim)
-    else
-        D.rect(ctx, p.x, p.y, p.w, p.h, C.widget, 6)
-        D.stroke(ctx, p.x, p.y, p.w, p.h, C.cyanDim, 6, 1)
-        D.text(ctx, p.x + 14, p.y + 10, "每日补给", 17, C.dim)
-        D.text(ctx, p.x + 14, p.y + 36, "明日再来", 15, C.dim)
+    D.rect(ctx, p.x, p.y, p.w, p.h, meta.supplyAvailable and C.card or C.widget, 6)
+    D.stroke(ctx, p.x, p.y, p.w, p.h,
+        meta.supplyAvailable and C.cyan or C.cyanDim, 6, 1.5)
+    D.icon(ctx, "supply", p.x + 12, p.y + 16, 32, meta.supplyAvailable and 1 or 0.4)
+    D.text(ctx, p.x + 54, p.y + 10, "每日补给", 17,
+        meta.supplyAvailable and C.cyan or C.dim)
+    D.text(ctx, p.x + 54, p.y + 36,
+        meta.supplyAvailable and "待领取" or "明日再来", 15, C.dim)
+
+    for _, entry in ipairs({
+        { rect = L.pass, icon = "pass", name = "战斗档案", value = "等级 " .. tostring(meta.passLevel or 1) },
+        { rect = L.wheel, icon = "wheel", name = "幸运转盘", value = meta.wheelReady and "今日可抽" or "明日再来" },
+    }) do
+        local r = entry.rect
+        D.rect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
+        D.stroke(ctx, r.x, r.y, r.w, r.h, C.cyanDim, 6, 1)
+        D.icon(ctx, entry.icon, r.x + 8, r.y + 5, 32)
+        D.text(ctx, r.x + 46, r.y + 10, entry.name, 16, C.text)
+        D.text(ctx, r.x + r.w - 10, r.y + 12, entry.value, 14, C.dim,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
 
     if meta.toast and meta.toast ~= "" then
-        D.text(ctx, w * 0.5, 862, meta.toast, 16, C.warn,
+        D.text(ctx, w * 0.5, 904, meta.toast, 16, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 end
@@ -293,6 +315,8 @@ function MetaUI.HitTestMenuBar(uiX, uiY, meta)
     end
     if Inside(L.signin, uiX, uiY) then return "signin" end
     if Inside(L.supply, uiX, uiY) then return "supply" end
+    if Inside(L.pass, uiX, uiY) then return "open_pass" end
+    if Inside(L.wheel, uiX, uiY) then return "open_wheel" end
     return nil
 end
 
@@ -411,8 +435,10 @@ local function DrawCodex(ctx, w, meta)
     local content, close = Shell(ctx, w, 960, "敌机图鉴",
         string.format("%d / %d", meta.codexUnlocked or 0, meta.codexTotal or 0))
     local entries = MetaCatalog.GetCodex()
-    local cw, ch, gap = 240, 128, 12
+    local cw, ch, gap = 226, 146, 12
     local y0 = content.y + 16
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
     for i, entry in ipairs(entries) do
         local col = (i - 1) % 2
         local row = math.floor((i - 1) / 2)
@@ -422,15 +448,26 @@ local function DrawCodex(ctx, w, meta)
         D.panel(ctx, x, y, cw, ch, C.card, owned and C.cyanDim or C.widget, 6)
         D.rect(ctx, x, y, 3, ch, owned and C.cyan or C.widget, 0)
         D.text(ctx, x + 14, y + 10, entry.name, 19, owned and C.text or C.dim)
+        local aircraft = meta.aircraft and meta.aircraft[entry.key]
+        if aircraft then
+            local rows = aircraft.rows or {}
+            local scale = math.min(5, 80 / math.max(1, aircraft.gridW), 52 / math.max(1, aircraft.gridH))
+            local left = x + (cw - aircraft.gridW * scale) * 0.5
+            for _, cell in ipairs(rows) do
+                D.rect(ctx, left + (cell.col - 1) * scale, y + 37 + (cell.row - 1) * scale,
+                    scale - 0.5, scale - 0.5, owned and C.cyan or C.dim, 0)
+            end
+        end
         local lines = D.wrap(ctx, entry.note, 14, cw - 28)
         for li = 1, math.min(2, #lines) do
-            D.text(ctx, x + 14, y + 38 + (li - 1) * 20, lines[li], 14, C.dim)
+            D.text(ctx, x + 14, y + 96 + (li - 1) * 17, lines[li], 14, C.dim)
         end
-        D.text(ctx, x + 14, y + ch - 26, owned and "已收录" or "未收录", 14,
+        D.text(ctx, x + 14, y + ch - 25, owned and "已收录" or "未收录", 14,
             owned and C.cyan or C.dim)
         D.text(ctx, x + cw - 14, y + ch - 26, string.format("+%d", entry.reward), 14,
             owned and C.warn or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
+    nvgRestore(ctx)
     return content, close
 end
 
@@ -460,16 +497,19 @@ local function DrawRank(ctx, w, meta)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         return content, close
     end
+    local rankFooterY = content.y + content.h - 66
     if #list == 0 then
         D.text(ctx, content.x + content.w * 0.5, content.y + 180, "暂无上榜记录", 20, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         D.text(ctx, content.x + content.w * 0.5, content.y + 214, "打出更高分就能上榜", 16, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        return content, close
     end
     local rowH = 56
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, content.x, content.y, content.w, rankFooterY - content.y - 8)
     for i, item in ipairs(list) do
         local y = content.y + 14 + (i - 1) * (rowH + 4)
+        if y + rowH > rankFooterY - 8 then break end
         local r = { x = content.x, y = y, w = content.w, h = rowH }
         local mine = item.isMe == true
         D.panel(ctx, r.x, r.y, r.w, r.h, mine and C.widget or C.card,
@@ -482,6 +522,14 @@ local function DrawRank(ctx, w, meta)
         D.text(ctx, r.x + r.w - 18, r.y + 16, string.format("%d", item.score or 0), 20,
             mine and C.cyan or C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
+    nvgRestore(ctx)
+    D.panel(ctx, content.x, rankFooterY, content.w, 56, C.rail, C.cyanDim, 6)
+    local rankLabel = meta.myRankLoading and "我的排名 · 查询中"
+        or (meta.myRank and string.format("我的排名 · 第 %d 名", meta.myRank) or "我的排名 · 暂未上榜")
+    D.text(ctx, content.x + 18, rankFooterY + 16, rankLabel, 18, C.cyan)
+    D.text(ctx, content.x + content.w - 16, rankFooterY + 18,
+        string.format("最高分 %d", meta.highScore or 0), 16, C.dim,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     return content, close
 end
 
@@ -493,7 +541,7 @@ local function HitTestRank(uiX, uiY, w)
 end
 
 -- ============================================================================
--- 商城面板（只卖软货币零件；无内购）
+-- 商城面板（零件车辆涂装 + 免费广告礼包；真实内购走钻石商店）
 -- ============================================================================
 
 ---@param ctx any
@@ -505,12 +553,14 @@ local function DrawShop(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "商城",
         string.format("零件 %d", meta.parts or 0))
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
     local y = content.y + 16
     D.text(ctx, content.x + 4, y, "车辆涂装", 18, C.cyan)
     y = y + 32
 
     local skins = MetaCatalog.GetSkins()
-    local rowH = 74
+    local rowH = 70
     for i, skin in ipairs(skins) do
         local r = { x = content.x, y = y + (i - 1) * (rowH + 8), w = content.w, h = rowH }
         local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
@@ -553,6 +603,7 @@ local function DrawShop(ctx, w, meta)
             Button(ctx, btn, "今日已领", "", "disabled")
         end
     end
+    nvgRestore(ctx)
     return content, close
 end
 
@@ -561,7 +612,8 @@ end
 local function HitTestShop(uiX, uiY, w, meta)
     local L, close = GetShellLayout(w)
     if Inside(close, uiX, uiY) then return "close", nil end
-    local rowH = 74
+    if not Inside(L, uiX, uiY) then return nil, nil end
+    local rowH = 70
     local y = L.y + 48
     local skins = MetaCatalog.GetSkins()
     for i = 1, #skins do
@@ -575,6 +627,57 @@ local function HitTestShop(uiX, uiY, w, meta)
         local r = { x = L.x, y = y + (i - 1) * 68, w = L.w, h = 60 }
         local btn = { x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48 }
         if Inside(btn, uiX, uiY) then return "ad_gift", i end
+    end
+    return nil, nil
+end
+
+-- ============================================================================
+-- 战斗档案（累计击碎方块升级，逐级领取免费零件）
+-- ============================================================================
+
+-- 档案奖励按已领取等级滑动；一屏最多五项，绘制/命中共用同一行几何。
+local function GetPassRewardRect(content, index)
+    return { x = content.x, y = content.y + 180 + (index - 1) * 84,
+        w = content.w, h = 72 }
+end
+
+local function DrawPass(ctx, w, meta)
+    local C = Colors()
+    local content, close = Shell(ctx, w, 960, "战斗档案", "免费奖励")
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
+    D.icon(ctx, "pass", content.x + 16, content.y + 18, 32)
+    D.text(ctx, content.x + 60, content.y + 14,
+        string.format("等级 %d", meta.passLevel or 1), 26, C.text)
+    D.text(ctx, content.x + 16, content.y + 68,
+        string.format("累计击碎 %d / %d 块", meta.passProgress or 0, meta.passTarget or 1), 17, C.dim)
+    ProgressBar(ctx, content.x + 16, content.y + 102, content.w - 32,
+        (meta.passProgress or 0) / math.max(1, meta.passTarget or 1), C.cyan)
+    D.text(ctx, content.x + 16, content.y + 148, "升级获得零件 · 已解锁等级可逐级领取", 16, C.dim)
+    local rewards = meta.passRewards or {}
+    for i, item in ipairs(rewards) do
+        local r = GetPassRewardRect(content, i)
+        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, item.claimable and C.cyan or C.cyanDim, 6)
+        D.icon(ctx, "record", r.x + 14, r.y + 20, 32, item.unlocked and 1 or 0.4)
+        D.text(ctx, r.x + 60, r.y + 6, "档案等级 " .. tostring(item.level), 18, C.text)
+        D.text(ctx, r.x + 60, r.y + 38, "+" .. tostring(item.reward) .. " 零件", 17, C.warn)
+        local btn = { x = r.x + r.w - 136, y = r.y + 12, w = 120, h = 48 }
+        Button(ctx, btn, item.claimed and "已领取" or (item.claimable and "领取" or "未解锁"), "",
+            item.claimable and "primary" or "disabled")
+    end
+    nvgRestore(ctx)
+    return content, close
+end
+
+local function HitTestPass(uiX, uiY, w, meta)
+    local content, close = GetShellLayout(w)
+    if Inside(close, uiX, uiY) then return "close", nil end
+    if not Inside(content, uiX, uiY) then return nil, nil end
+    for i, item in ipairs(meta.passRewards or {}) do
+        local row = GetPassRewardRect(content, i)
+        local r = { x = row.x + row.w - 136,
+            y = row.y + 12, w = 120, h = 48 }
+        if item.claimable and Inside(r, uiX, uiY) then return "claim_pass", item.level end
     end
     return nil, nil
 end
@@ -633,6 +736,9 @@ local function DrawWheel(ctx, w, meta)
     local label = meta.wheelReady and "看广告 免费抽一次" or "今日已抽取"
     Button(ctx, spin, label,
         meta.wheelReady and "必得 120 零件以上" or "明日再来", meta.wheelReady and "ad" or "disabled")
+    D.text(ctx, w * 0.5, spin.y + spin.h + 48,
+        "每日限抽一次 · 八档零件奖励", 15, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     if meta.wheelPrize and meta.wheelPrize > 0 then
         D.text(ctx, w * 0.5, spin.y + spin.h + 14,
             string.format("恭喜获得 %d 零件", meta.wheelPrize), 18, C.warn,
@@ -642,11 +748,11 @@ local function DrawWheel(ctx, w, meta)
 end
 
 ---@return string|nil action
-local function HitTestWheel(uiX, uiY, w)
+local function HitTestWheel(uiX, uiY, w, meta)
     local _, close = GetShellLayout(w)
     if Inside(close, uiX, uiY) then return "close" end
     local spin = GetWheelLayout(w)
-    if Inside(spin, uiX, uiY) then return "wheel_spin" end
+    if meta.wheelReady and Inside(spin, uiX, uiY) then return "wheel_spin" end
     return nil
 end
 
@@ -694,6 +800,8 @@ function MetaUI.DrawScreen(ctx, w, meta)
         DrawShop(ctx, w, meta)
     elseif screen == "wheel" then
         DrawWheel(ctx, w, meta)
+    elseif screen == "pass" then
+        DrawPass(ctx, w, meta)
     end
 end
 
@@ -714,7 +822,9 @@ function MetaUI.HitTestScreen(uiX, uiY, w, meta)
     elseif screen == "shop" then
         return HitTestShop(uiX, uiY, w, meta)
     elseif screen == "wheel" then
-        return HitTestWheel(uiX, uiY, w)
+        return HitTestWheel(uiX, uiY, w, meta)
+    elseif screen == "pass" then
+        return HitTestPass(uiX, uiY, w, meta)
     end
     return nil, nil
 end

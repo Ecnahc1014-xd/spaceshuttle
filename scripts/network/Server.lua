@@ -5,13 +5,14 @@
 -- ⚠️ 本作是「单机间接联机」：服务端不跑战斗、不做场景复制、不模拟敌人。
 --    战斗、排行榜、养成存档仍然由客户端（clientCloud + 本地玩法）负责。
 --
--- 服务端唯一的权威数据：serverCloud.money 里的 gems。
+-- 服务端权威数据：serverCloud.money 里的 gems 与已兑换零件累计额。
 
 local Shared = require("network.Shared")
 
 local Server = {}
 
 local GEMS = Shared.CURRENCY.GEMS
+local PURCHASED_PARTS = Shared.CURRENCY.PURCHASED_PARTS
 
 -- 服务端专属全局：由 C++ 侧在服务端脚本环境注入，客户端不存在。
 -- 通过 _G 取用，避免「客户端也会打包本文件」时的静态检查报未定义全局。
@@ -57,27 +58,36 @@ end
 ---@param conn any
 ---@param gems integer
 local function PushBalance(conn, gems)
-    if not conn then return end
+    if not conn or not conn:IsConnected() then return end
     local data = VariantMap()
     data["gems"] = Variant(math.floor(gems))
     conn:SendRemoteEvent(Shared.EVENTS.BALANCE_SYNC, true, data)
 end
 
--- 读余额并推给指定连接。任何失败都推 0，保证客户端不会卡在「结算中」。
+-- 余额查询失败时不推送伪造的零余额；客户端保留上一次已知值。
 ---@param userId number
 ---@param conn any|nil
 local function QueryAndPushBalance(userId, conn)
     serverCloud.money:Get(userId, {
         ok = function(moneys)
             local gems = 0
-            if moneys then gems = moneys[GEMS] or 0 end
-            print("[Server] balance userId=" .. tostring(userId) .. " gems=" .. tostring(gems))
+            local purchasedParts = 0
+            if moneys then
+                gems = moneys[GEMS] or 0
+                purchasedParts = moneys[PURCHASED_PARTS] or 0
+            end
+            print("[Server] balance userId=" .. tostring(userId) .. " gems=" .. tostring(gems)
+                .. " purchased_parts=" .. tostring(purchasedParts))
             PushBalance(conn, gems)
+            if conn and conn:IsConnected() then
+                local data = VariantMap()
+                data["total"] = Variant(math.floor(purchasedParts))
+                conn:SendRemoteEvent(Shared.EVENTS.PURCHASED_PARTS_SYNC, true, data)
+            end
         end,
         error = function(code, reason)
             print("[Server] balance query failed userId=" .. tostring(userId)
                 .. " code=" .. tostring(code) .. " reason=" .. tostring(reason))
-            PushBalance(conn, 0)
         end,
     })
 end
@@ -119,7 +129,7 @@ local function Deliver(ctx)
             print("[Server] delivery ok orderId=" .. tostring(orderId))
             -- 通知该客户端刷新余额；玩家已离线时 conn 为 nil，跳过推送即可，
             -- 下次连上会通过 IAPClientReady 拉到最新余额。
-            if conn then
+            if conn and conn:IsConnected() then
                 local data = VariantMap()
                 data["reason"] = Variant("deliver")
                 conn:SendRemoteEvent(Shared.EVENTS.BALANCE_DIRTY, true, data)
@@ -166,7 +176,7 @@ function HandleIapGemSpend(eventType, eventData)
     local def = Shared.GetGemSpend(key)
 
     local function reply(success, reason, cost)
-        if not conn then return end
+        if not conn or not conn:IsConnected() then return end
         local data = VariantMap()
         data["key"] = Variant(key)
         data["requestId"] = Variant(requestId)
@@ -181,7 +191,10 @@ function HandleIapGemSpend(eventType, eventData)
         return
     end
 
-    serverCloud.money:Cost(userId, GEMS, def.cost, {
+    local batch = serverCloud:BatchCommit("钻石兑换: " .. def.key)
+    batch:MoneyCost(userId, GEMS, def.cost)
+    batch:MoneyAdd(userId, PURCHASED_PARTS, def.grantAmount)
+    batch:Commit({
         ok = function()
             print("[Server] gem spend ok userId=" .. tostring(userId)
                 .. " key=" .. key .. " cost=" .. tostring(def.cost))
@@ -191,7 +204,7 @@ function HandleIapGemSpend(eventType, eventData)
         error = function(code, reason)
             print("[Server] gem spend failed userId=" .. tostring(userId)
                 .. " key=" .. key .. " code=" .. tostring(code) .. " reason=" .. tostring(reason))
-            reply(false, "insufficient", def.cost)
+            reply(false, "failed", def.cost)
             QueryAndPushBalance(userId, conn)
         end,
     })
@@ -211,6 +224,7 @@ function Server.Start()
     network:RegisterRemoteEvent(Shared.EVENTS.CLIENT_READY)
     network:RegisterRemoteEvent(Shared.EVENTS.REQUEST_BALANCE)
     network:RegisterRemoteEvent(Shared.EVENTS.GEM_SPEND)
+    network:RegisterRemoteEvent(Shared.EVENTS.PURCHASED_PARTS_SYNC)
 
     SubscribeToEvent(Shared.EVENTS.CLIENT_READY, HandleIapClientReady)
     SubscribeToEvent(Shared.EVENTS.REQUEST_BALANCE, HandleIapClientReady)

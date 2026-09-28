@@ -9,9 +9,13 @@ local AdService = {}
 
 -- 两次广告之间的最小间隔（秒）。引擎侧自身还有防抖，这里再兜一层避免连点。
 local COOLDOWN_SECONDS = 3
+local RESPONSE_TIMEOUT_SECONDS = 120
 
 local inFlight = false
 local cooldown = 0
+local pendingTimeout = 0
+---@type fun()|nil
+local timeoutRequest = nil
 
 ---@class AdRequestOpts
 ---@field onReward fun() 完整观看后的发奖回调
@@ -40,6 +44,10 @@ function AdService.Update(dt)
     if cooldown > 0 then
         cooldown = cooldown - dt
         if cooldown < 0 then cooldown = 0 end
+    end
+    if timeoutRequest then
+        pendingTimeout = pendingTimeout - dt
+        if pendingTimeout <= 0 then timeoutRequest() end
     end
 end
 
@@ -73,6 +81,8 @@ function AdService.Show(opts)
     local function finish(result)
         if completed then return end
         completed = true
+        timeoutRequest = nil
+        pendingTimeout = 0
         inFlight = false
         cooldown = COOLDOWN_SECONDS
         local success, msg = Normalize(result)
@@ -102,6 +112,13 @@ function AdService.Show(opts)
     if not accepted and not callbackFired then
         finish(nil)
         return false
+    end
+    if accepted and not completed then
+        pendingTimeout = RESPONSE_TIMEOUT_SECONDS
+        timeoutRequest = function()
+            print("[AdService] callback timeout")
+            finish({ success = false, msg = "广告响应超时" })
+        end
     end
     return accepted
 end

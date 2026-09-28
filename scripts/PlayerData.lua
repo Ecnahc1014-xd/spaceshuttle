@@ -12,6 +12,7 @@ local DATA_VERSION = 1
 ---@field version integer 存档结构版本
 ---@field parts integer 软货币「零件」余额
 ---@field totalParts integer 历史累计获得零件（统计）
+---@field totalSpent integer 历史累计消费零件（避免云合并恢复已消费余额）
 ---@field highScore integer 历史最高分（本地副本）
 ---@field signInDate string 上次签到日期 YYYY-MM-DD
 ---@field signInStreak integer 连续签到天数
@@ -23,6 +24,8 @@ local DATA_VERSION = 1
 ---@field skins table<string, boolean> 已解锁皮肤 key
 ---@field selectedSkin string 当前使用的皮肤 key
 ---@field shopBought table<string, boolean> 商城一次性商品
+---@field passClaimed integer 战斗档案已领到的等级
+---@field purchasedPartsClaimed integer 已补领的钻石兑换零件累计额
 ---@field stats table<string, integer> 通用计数器（复活次数、广告观看等）
 
 ---@return PlayerDataState
@@ -31,6 +34,7 @@ local function NewState()
         version = DATA_VERSION,
         parts = 0,
         totalParts = 0,
+        totalSpent = 0,
         highScore = 0,
         signInDate = "",
         signInStreak = 0,
@@ -42,6 +46,8 @@ local function NewState()
         skins = { default = true },
         selectedSkin = "default",
         shopBought = {},
+        passClaimed = 0,
+        purchasedPartsClaimed = 0,
         stats = {},
     }
 end
@@ -116,7 +122,8 @@ function PlayerData.Load()
     local d = decoded --[[@as table]]
     state.version      = AsInt(d.version) ~= 0 and AsInt(d.version) or DATA_VERSION
     state.parts        = math.max(0, AsInt(d.parts))
-    state.totalParts   = math.max(0, AsInt(d.totalParts))
+    state.totalParts   = math.max(0, AsInt(d.totalParts), state.parts)
+    state.totalSpent   = math.max(0, AsInt(d.totalSpent), state.totalParts - state.parts)
     state.highScore    = math.max(0, AsInt(d.highScore))
     state.signInDate   = AsStr(d.signInDate)
     state.signInStreak = math.max(0, AsInt(d.signInStreak))
@@ -126,6 +133,8 @@ function PlayerData.Load()
     state.dailyClaimed  = AsBoolMap(d.dailyClaimed)
     state.codex        = AsBoolMap(d.codex)
     state.shopBought   = AsBoolMap(d.shopBought)
+    state.passClaimed  = math.max(0, AsInt(d.passClaimed))
+    state.purchasedPartsClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
     state.stats        = AsIntMap(d.stats)
     local skins = AsBoolMap(d.skins)
     skins.default = true
@@ -167,15 +176,39 @@ function PlayerData.ImportFromCloud(text)
     end
     local d = decoded --[[@as table]]
     local cloudParts = math.max(0, AsInt(d.parts))
-    local cloudTotal = math.max(0, AsInt(d.totalParts))
+    local cloudTotal = math.max(0, AsInt(d.totalParts), cloudParts)
+    local cloudSpent = math.max(0, AsInt(d.totalSpent), cloudTotal - cloudParts)
     local cloudCodex = AsBoolMap(d.codex)
     local cloudSkins = AsBoolMap(d.skins)
     local cloudStats = AsIntMap(d.stats)
     local cloudHigh  = math.max(0, AsInt(d.highScore))
 
-    -- 取「较大值」合并，避免换设备回退进度；签到/任务进度按本地日期保留。
-    state.parts      = math.max(state.parts, cloudParts)
-    state.totalParts = math.max(state.totalParts, cloudTotal)
+    local cloudClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
+    -- 累计兑换额已经包含在 totalParts 中，先拆出普通收入再合并，
+    -- 否则旧设备本地补领后再读取未更新的云档，会把同一笔零件算两遍。
+    -- 注意普通收入/消费仍是跨设备取最大值，并非事务账本；并发游玩无法保证无损。
+    local localEarned = math.max(0, state.totalParts - state.purchasedPartsClaimed)
+    local cloudEarned = math.max(0, cloudTotal - cloudClaimed)
+    state.purchasedPartsClaimed = math.max(state.purchasedPartsClaimed, cloudClaimed)
+    state.totalParts = math.max(localEarned, cloudEarned) + state.purchasedPartsClaimed
+    state.totalSpent = math.max(state.totalSpent, cloudSpent)
+    state.parts = math.max(0, state.totalParts - state.totalSpent)
+    -- 仅合并当天的每日状态；不同日期的任务/广告限次不能互相污染。
+    if AsStr(d.dailyDate) == Today() then
+        if state.dailyDate ~= Today() then PlayerData.RollDaily() end
+        for k, v in pairs(AsIntMap(d.dailyProgress)) do
+            state.dailyProgress[k] = math.max(state.dailyProgress[k] or 0, v)
+        end
+        for k in pairs(AsBoolMap(d.dailyClaimed)) do state.dailyClaimed[k] = true end
+    end
+    local cloudSignDate = AsStr(d.signInDate)
+    if cloudSignDate <= Today() and cloudSignDate > state.signInDate then
+        state.signInDate = cloudSignDate
+        state.signInStreak = math.max(0, AsInt(d.signInStreak))
+    elseif cloudSignDate == state.signInDate then
+        state.signInStreak = math.max(state.signInStreak, math.max(0, AsInt(d.signInStreak)))
+    end
+    state.passClaimed = math.max(state.passClaimed, math.max(0, AsInt(d.passClaimed)))
     state.highScore  = math.max(state.highScore, cloudHigh)
     for k in pairs(cloudCodex) do state.codex[k] = true end
     for k in pairs(cloudSkins) do state.skins[k] = true end
@@ -208,6 +241,20 @@ function PlayerData.AddParts(amount)
     return state.parts
 end
 
+-- 服务端每次推累计额；本地与云端均记录已补领进度，不依赖单次扣款回调。
+---@param total integer
+---@return integer granted
+function PlayerData.ClaimPurchasedParts(total)
+    local n = math.max(0, math.floor(total))
+    if n <= state.purchasedPartsClaimed then return 0 end
+    local delta = n - state.purchasedPartsClaimed
+    state.purchasedPartsClaimed = n
+    state.parts = state.parts + delta
+    state.totalParts = state.totalParts + delta
+    PlayerData.Save()
+    return delta
+end
+
 ---@param amount integer
 ---@return boolean
 function PlayerData.SpendParts(amount)
@@ -215,6 +262,7 @@ function PlayerData.SpendParts(amount)
     if n <= 0 then return false end
     if state.parts < n then return false end
     state.parts = state.parts - n
+    state.totalSpent = state.totalSpent + n
     PlayerData.Save()
     return true
 end
@@ -235,7 +283,11 @@ local SIGN_IN_TABLE = { 100, 120, 140, 160, 200, 240, 300 }
 ---@return integer parts
 ---@return integer streak
 function PlayerData.GetSignInPreview()
-    local streak = PlayerData.CanSignIn() and (state.signInStreak + 1) or state.signInStreak
+    local streak = state.signInStreak
+    if PlayerData.CanSignIn() then
+        local yesterday = os.date("%Y-%m-%d", os.time() - 86400)
+        streak = state.signInDate == yesterday and streak + 1 or 1
+    end
     return PlayerData.SignInReward(streak), streak
 end
 
@@ -312,6 +364,7 @@ end
 ---@param id string
 ---@return integer
 function PlayerData.GetDailyProgress(id)
+    PlayerData.RollDaily()
     return state.dailyProgress[id] or 0
 end
 
@@ -319,6 +372,7 @@ end
 ---@param key string
 ---@return integer
 function PlayerData.GetDailyCount(key)
+    PlayerData.RollDaily()
     return state.dailyProgress["__cnt_" .. key] or 0
 end
 
@@ -333,12 +387,14 @@ end
 ---@param id string
 ---@return boolean
 function PlayerData.IsDailyClaimed(id)
+    PlayerData.RollDaily()
     return state.dailyClaimed[id] == true
 end
 
 ---@param id string
 ---@return boolean
 function PlayerData.CanClaimDaily(id)
+    PlayerData.RollDaily()
     if state.dailyClaimed[id] then return false end
     for _, task in ipairs(DAILY_TASKS) do
         if task.id == id then
@@ -440,6 +496,34 @@ end
 function PlayerData.MarkShopBought(key)
     state.shopBought[key] = true
     PlayerData.Save()
+end
+
+-- ============================================================================
+-- 战斗档案（累计击碎方块，每 200 块解锁一级免费奖励）
+-- ============================================================================
+
+local PASS_STEP = 200
+
+function PlayerData.GetPassLevel()
+    return math.min(6, 1 + math.floor((state.stats.bricksTotal or 0) / PASS_STEP))
+end
+
+function PlayerData.GetPassProgress()
+    local total = state.stats.bricksTotal or 0
+    return total % PASS_STEP, PASS_STEP
+end
+
+function PlayerData.GetPassClaimed()
+    return state.passClaimed
+end
+
+function PlayerData.ClaimPass(level)
+    if level ~= state.passClaimed + 1 or level > PlayerData.GetPassLevel() then return 0 end
+    state.passClaimed = level
+    local reward = 100 + level * 100
+    PlayerData.AddParts(reward)
+    print("[PlayerData] battle record level=" .. level .. " reward=" .. reward)
+    return reward
 end
 
 -- ============================================================================

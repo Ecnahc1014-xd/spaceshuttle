@@ -2,6 +2,9 @@
 -- 只读消费 Game / Presentation 快照，将箱体敌人、精品几何车辆和碎片同步到 3D 场景。
 
 local Renderer3D = {}
+local MetaCatalog = require "MetaCatalog"
+
+local selectedSkin_ = "default"
 
 local WORLD_SCALE = 0.018
 local DESIGN_CENTER_X = 270
@@ -895,13 +898,20 @@ local function CreateGlassMaterial(rgb)
 end
 
 local function GetVehicleMaterials(ballType)
-    local cached = vehicleMaterialSets_[ballType]
+    local key = ballType .. ":" .. selectedSkin_
+    local cached = vehicleMaterialSets_[key]
     if cached then return cached end
     local palette = VEHICLE_PALETTES[ballType] or VEHICLE_PALETTES.normal
     local lightColor = BALL_COLORS[ballType] or BALL_COLORS.normal
+    local paint = MetaCatalog.GetSkinPaint(selectedSkin_)
+    local panel = MetaCatalog.GetSkinPanel(selectedSkin_)
+    local bodyColor = selectedSkin_ == "default" and palette.body or
+        {paint[1] / 255, paint[2] / 255, paint[3] / 255}
+    local sideColor = selectedSkin_ == "default" and palette.side or
+        {panel[1] / 255, panel[2] / 255, panel[3] / 255}
     cached = {
-        CreateMaterial(palette.body, 0.72, 0.27),
-        CreateMaterial(palette.side, 0.56, 0.34),
+        CreateMaterial(bodyColor, 0.72, 0.27),
+        CreateMaterial(sideColor, 0.56, 0.34),
         CreateMaterial(WHEEL_COLOR, 0.0, 0.88),
         CreateMaterial(HUB_COLOR, 0.96, 0.18),
         CreateGlassMaterial(palette.glass),
@@ -909,7 +919,7 @@ local function GetVehicleMaterials(ballType)
             lightColor[1] * 3.2, lightColor[2] * 3.2, lightColor[3] * 3.2,
         }),
     }
-    vehicleMaterialSets_[ballType] = cached
+    vehicleMaterialSets_[key] = cached
     return cached
 end
 
@@ -1030,6 +1040,7 @@ local function CreateVehicleRecord(id, marble, initialHeading)
         root = root,
         geometry = geometry,
         ballType = marble.ballType,
+        skin = selectedSkin_,
         heading = initialHeading,
         targetHeading = initialHeading,
     }
@@ -1047,8 +1058,9 @@ local function SyncVehicles(game, dt)
             local initialHeading = targetHeading or -90
             record = CreateVehicleRecord(marble.id, marble, initialHeading)
             vehicleRecords_[marble.id] = record
-        elseif record.ballType ~= marble.ballType then
+        elseif record.ballType ~= marble.ballType or record.skin ~= selectedSkin_ then
             record.ballType = marble.ballType
+            record.skin = selectedSkin_
             RebuildVehicleGeometry(record.geometry, marble.ballType)
         end
 
@@ -1468,8 +1480,9 @@ function Renderer3D.GetVehicleAnchor(x, y, marble)
     return GetVehicleAnchorWorld({x = x, y = y, radius = marble.radius})
 end
 
-function Renderer3D.Render(game, presentation)
+function Renderer3D.Render(game, presentation, skin)
     if not initialized_ then return end
+    selectedSkin_ = skin or "default"
 
     local elapsed = game.elapsed or 0
     local dt = 1 / 60

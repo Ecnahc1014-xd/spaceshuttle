@@ -21,6 +21,8 @@ Shared.EVENTS = {
     GEM_SPEND       = "IAPGemSpend",
     -- S→C：扣款结果
     SPEND_RESULT    = "IAPGemSpendResult",
+    -- S→C：服务端权威的累计钻石兑换零件总数
+    PURCHASED_PARTS_SYNC = "IAPPurchasedPartsSync",
 }
 
 -- ============================================================================
@@ -30,6 +32,8 @@ Shared.EVENTS = {
 Shared.CURRENCY = {
     -- 氪金代币：唯一由服务端权威持有的货币（serverCloud.money）
     GEMS = "gems",
+    -- 钻石兑换所得零件的权威累计额，先在同一事务扣款并加额，再由客户端补领
+    PURCHASED_PARTS = "purchased_parts",
 }
 
 -- ============================================================================

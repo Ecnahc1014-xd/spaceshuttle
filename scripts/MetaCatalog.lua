@@ -100,7 +100,8 @@ function MetaCatalog.GetSkinPanel(key)
 end
 
 -- ============================================================================
--- 商城（只卖软货币「零件」，无内购；单机架构不支持服务端发货）
+-- 商城：车辆涂装使用软货币零件；广告礼包为主动观看激励视频后领取。
+
 -- ============================================================================
 
 ---@class ShopEntry
@@ -161,8 +162,8 @@ end
 
 ---@return integer
 function MetaCatalog.RollWheelPrize()
-    -- 低面额权重更高，大额稀有（800 只占 1/8 权重的一半）。
-    local weights = { 22, 18, 14, 18, 10, 14, 0, 4 }
+    -- 低面额权重更高；所有画在转盘上的扇区都有非零概率。
+    local weights = { 20, 17, 14, 17, 10, 14, 4, 4 }
     local total = 0
     for _, w in ipairs(weights) do total = total + w end
     local roll = math.random() * total

@@ -183,11 +183,18 @@ function RechargeShop.HitTest(uiX, uiY, w, meta)
     for i = 1, #L.packs do
         local r = L.packs[i]
         local btn = { x = r.x + r.w - 92, y = r.y + r.h - 44, w = 78, h = 32 }
-        if Inside(btn, uiX, uiY) then return "buy", i end
+        local def = Shared.GEM_PACKS[i]
+        if Inside(btn, uiX, uiY) and not meta.offline
+            and meta.productsAvailable and meta.prices and meta.prices[def.sku] then
+            return "buy", i
+        end
     end
     for i, r in ipairs(L.spends) do
         local btn = { x = r.x + r.w - 132, y = r.y + 12, w = 116, h = 40 }
-        if Inside(btn, uiX, uiY) then return "spend", i end
+        if Inside(btn, uiX, uiY) and not meta.offline
+            and (meta.gems or 0) >= Shared.GEM_SPENDS[i].cost then
+            return "spend", i
+        end
     end
     if Inside(L.content, uiX, uiY) then return nil, nil end
     return "close", nil

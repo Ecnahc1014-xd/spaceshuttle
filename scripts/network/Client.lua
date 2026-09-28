@@ -17,10 +17,15 @@ local GEMS = Shared.CURRENCY.GEMS
 local gems_ = 0                 -- 最后一次从服务端同步到的钻石余额
 local ready_ = false            -- 是否已向服务端报到
 local seq_ = 0
+local spendPending_ = false
+local spendElapsed_ = 0
+local SPEND_TIMEOUT = 30
 ---@type table<integer, fun(ok: boolean, reason: string)>
 local spendWaiters_ = {}
 ---@type fun(gems: integer)|nil
 local gemsListener_ = nil
+---@type fun(total: integer)|nil
+local purchasedPartsListener_ = nil
 ---@type fun(ok: boolean)|nil
 local purchaseListener_ = nil
 
@@ -48,6 +53,11 @@ end
 function Client.SetGemsListener(fn)
     gemsListener_ = fn
     if fn then fn(gems_) end
+end
+
+---@param fn fun(total: integer)|nil
+function Client.SetPurchasedPartsListener(fn)
+    purchasedPartsListener_ = fn
 end
 
 ---@param fn fun(ok: boolean)|nil
@@ -115,20 +125,36 @@ function Client.SpendGems(key, cb)
         if cb then cb(false, "offline") end
         return
     end
-    seq_ = seq_ + 1
-    local requestId = seq_
-    spendWaiters_[requestId] = cb
-
+    if spendPending_ then
+        if cb then cb(false, "pending") end
+        return
+    end
     local conn = ServerConnection()
     if not conn then
-        spendWaiters_[requestId] = nil
         if cb then cb(false, "no_connection") end
         return
     end
+    seq_ = seq_ + 1
+    local requestId = seq_
+    spendWaiters_[requestId] = cb
+    spendPending_ = true
+    spendElapsed_ = 0
     local data = VariantMap()
     data["key"] = Variant(key)
     data["requestId"] = Variant(requestId)
     conn:SendRemoteEvent(Shared.EVENTS.GEM_SPEND, true, data)
+end
+
+function Client.Update(dt)
+    if not spendPending_ or spendElapsed_ >= SPEND_TIMEOUT then return end
+    spendElapsed_ = spendElapsed_ + dt
+    if spendElapsed_ < SPEND_TIMEOUT then return end
+    print("[Client] gem spend response timed out; outcome unknown, refresh balance")
+    Client.RequestBalance()
+    local waiter = spendWaiters_[seq_]
+    spendWaiters_[seq_] = nil
+    if waiter then waiter(false, "unknown") end
+    -- 结果未知不能自动重发或开放再次兑换；只能等待本次结果或重新进游戏后对账。
 end
 
 -- ============================================================================
@@ -199,6 +225,12 @@ function HandleIapBalanceDirty(eventType, eventData)
     Client.RequestBalance()
 end
 
+function HandleIapPurchasedPartsSync(eventType, eventData)
+    if purchasedPartsListener_ then
+        purchasedPartsListener_(eventData:GetInt("total"))
+    end
+end
+
 ---@param eventType string
 ---@param eventData any
 function HandleIapSpendResult(eventType, eventData)
@@ -207,6 +239,9 @@ function HandleIapSpendResult(eventType, eventData)
     local reason = eventData:GetString("reason")
     local waiter = spendWaiters_[requestId]
     spendWaiters_[requestId] = nil
+    if requestId ~= seq_ or not spendPending_ then return end
+    spendPending_ = false
+    spendElapsed_ = 0
     if waiter then waiter(success, reason or "") end
 end
 
@@ -224,10 +259,12 @@ function Client.Start()
     network:RegisterRemoteEvent(Shared.EVENTS.BALANCE_SYNC)
     network:RegisterRemoteEvent(Shared.EVENTS.BALANCE_DIRTY)
     network:RegisterRemoteEvent(Shared.EVENTS.SPEND_RESULT)
+    network:RegisterRemoteEvent(Shared.EVENTS.PURCHASED_PARTS_SYNC)
 
     SubscribeToEvent(Shared.EVENTS.BALANCE_SYNC, HandleIapBalanceSync)
     SubscribeToEvent(Shared.EVENTS.BALANCE_DIRTY, HandleIapBalanceDirty)
     SubscribeToEvent(Shared.EVENTS.SPEND_RESULT, HandleIapSpendResult)
+    SubscribeToEvent(Shared.EVENTS.PURCHASED_PARTS_SYNC, HandleIapPurchasedPartsSync)
 
     -- 报到：服务端收到后推一次余额。
     Client.RequestBalance()
@@ -239,8 +276,11 @@ function Client.Stop()
     UnsubscribeFromEvent(Shared.EVENTS.BALANCE_SYNC)
     UnsubscribeFromEvent(Shared.EVENTS.BALANCE_DIRTY)
     UnsubscribeFromEvent(Shared.EVENTS.SPEND_RESULT)
+    UnsubscribeFromEvent(Shared.EVENTS.PURCHASED_PARTS_SYNC)
     ready_ = false
     spendWaiters_ = {}
+    spendPending_ = false
+    spendElapsed_ = 0
 end
 
 return Client

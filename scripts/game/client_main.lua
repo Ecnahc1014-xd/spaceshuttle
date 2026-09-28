@@ -13,6 +13,7 @@ local RenderBackend = require "Scene3DBackend"
 local PlayerData = require "PlayerData"
 local AdService = require "AdService"
 local MetaCatalog = require "MetaCatalog"
+local AircraftPixelData = require "AircraftPixelData"
 local GameMode = require "GameMode"
 local NetClient = require "network.Client"
 local MetaUI = require "MetaUI"
@@ -32,9 +33,13 @@ local lastSavedHighScore = 0
 local reviveArmed = false
 local doubleArmed = false
 local restartArmed = false
+local metaPointerConsumed = false
 local CLOUD_HIGH_SCORE_KEY = "high_score"
 local CLOUD_META_KEY = "player_meta"
 local metaCloudSynced = false
+local metaRevision = 0
+local metaSaveInFlight = false
+local RefreshMeta
 
 local function RefreshSnapshots()
     gameSnapshot = Game.GetSnapshot()
@@ -104,17 +109,33 @@ end
 -- 云变量只在编排层读写；PlayerData 只负责编解码。
 local function SavePlayerDataToCloud()
     if GameMode.IsOffline() then return end
+    metaRevision = metaRevision + 1
+    -- 初次云档读取尚未完成时仅记脏；先写会把另一台设备的档案覆盖掉。
+    if not metaCloudSynced or metaSaveInFlight then return end
+    metaSaveInFlight = true
+    local revision = metaRevision
     local payload = PlayerData.ExportForCloud()
-    pcall(function()
+    local okCall, errCall = pcall(function()
         clientCloud:Set(CLOUD_META_KEY, payload, {
             ok = function()
-                metaCloudSynced = true
+                metaSaveInFlight = false
+                print("[Main] player meta saved to cloud")
+                if metaRevision ~= revision and metaCloudSynced then SavePlayerDataToCloud() end
             end,
             error = function(code, reason)
+                metaSaveInFlight = false
                 print("[Main] meta cloud save failed: " .. tostring(reason) .. " code=" .. tostring(code))
+            end,
+            timeout = function()
+                metaSaveInFlight = false
+                print("[Main] meta cloud save timed out; local save retained")
             end,
         })
     end)
+    if not okCall then
+        metaSaveInFlight = false
+        print("[Main] meta cloud save unavailable: " .. tostring(errCall))
+    end
 end
 
 local function LoadPlayerDataFromCloud()
@@ -122,6 +143,7 @@ local function LoadPlayerDataFromCloud()
         print("[Main] offline: skip cloud player data")
         return
     end
+    local requestRevision = metaRevision
     pcall(function()
         clientCloud:Get(CLOUD_META_KEY, {
             ok = function(values, _)
@@ -129,12 +151,23 @@ local function LoadPlayerDataFromCloud()
                 if values then raw = values[CLOUD_META_KEY] end
                 if type(raw) == "table" then raw = cjson.encode(raw) end
                 if type(raw) == "string" and raw ~= "" then
-                    PlayerData.ImportFromCloud(raw)
-                    PlayerData.Save()
-                    RefreshSnapshots()
-                    print("[Main] player meta merged from cloud")
+                    local merged = PlayerData.ImportFromCloud(raw)
+                    if merged then
+                        PlayerData.Save()
+                        RefreshSnapshots()
+                        RefreshMeta()
+                        metaCloudSynced = true
+                        if metaRevision ~= requestRevision or PlayerData.ExportForCloud() ~= raw then
+                            SavePlayerDataToCloud()
+                        end
+                        print("[Main] player meta merged from cloud")
+                    end
+                else
+                    -- 云端尚无档案时把本地进度上传，避免换设备后找不到已有存档。
+                    metaCloudSynced = true
+                    SavePlayerDataToCloud()
                 end
-                metaCloudSynced = true
+                if not GameMode.IsOffline() then NetClient.RequestBalance() end
             end,
             error = function(code, reason)
                 print("[Main] meta cloud load failed: " .. tostring(reason) .. " code=" .. tostring(code))
@@ -195,7 +228,19 @@ end
 
 local META_TOAST_SECONDS = 2.4
 local metaToastTimer = 0
+local metaDate = ""
 local supplyPrompted = false
+local aircraftSilhouettes = {}
+for _, entry in ipairs(MetaCatalog.GetCodex()) do
+    local model = AircraftPixelData[entry.key]
+    if model then
+        local rows = {}
+        for col, row in model.data:gmatch("(%d+),(%d+),%d+,%d+,%d+;") do
+            rows[#rows + 1] = { col = tonumber(col), row = tonumber(row) }
+        end
+        aircraftSilhouettes[entry.key] = { rows = rows, gridW = model.gridW, gridH = model.gridH }
+    end
+end
 
 ---@type MetaState
 local metaState = {
@@ -218,6 +263,8 @@ local metaState = {
     rankList = {},
     rankLoading = false,
     rankTotal = 0,
+    myRank = nil,
+    myRankLoading = false,
     skins = {},
     selectedSkin = "default",
     giftUsed = {},
@@ -262,7 +309,7 @@ local function SetMetaToast(msg)
     metaToastTimer = META_TOAST_SECONDS
 end
 
-local function RefreshMeta()
+RefreshMeta = function()
     local tasks = {}
     local anyClaimable = false
     for _, def in ipairs(PlayerData.GetDailyTasks()) do
@@ -295,6 +342,7 @@ local function RefreshMeta()
         if PlayerData.IsCodexUnlocked(entry.key) then codexMap[entry.key] = true end
     end
     metaState.codex = codexMap
+    metaState.aircraft = aircraftSilhouettes
     metaState.codexUnlocked = PlayerData.CodexCount()
     metaState.codexTotal = MetaCatalog.GetCodexTotal()
 
@@ -311,6 +359,22 @@ local function RefreshMeta()
     end
     metaState.giftUsed = giftUsed
     metaState.wheelReady = PlayerData.GetDailyCount("wheel") == 0
+    metaState.passLevel = PlayerData.GetPassLevel()
+    metaState.passProgress, metaState.passTarget = PlayerData.GetPassProgress()
+    local rewards = {}
+    local claimed = PlayerData.GetPassClaimed()
+    for level = math.max(1, claimed), math.min(6, math.max(claimed + 3, metaState.passLevel)) do
+        rewards[#rewards + 1] = {
+            level = level,
+            reward = 100 + level * 100,
+            unlocked = level <= metaState.passLevel,
+            claimed = level <= claimed,
+            claimable = level == claimed + 1 and level <= metaState.passLevel,
+        }
+        if #rewards >= 5 then break end
+    end
+    metaState.passRewards = rewards
+    metaState.passClaimable = metaState.passLevel > claimed
     metaState.offline = GameMode.IsOffline()
     metaState.gems = GameMode.IsOffline() and metaState.gems or NetClient.GetGems()
 end
@@ -339,13 +403,33 @@ end
 local function FetchRankList()
     if GameMode.IsOffline() then
         metaState.rankLoading = false
+        metaState.myRankLoading = false
+        metaState.myRank = nil
         metaState.rankList = {}
         SetMetaToast("联网后可用排行榜")
         return
     end
     metaState.rankLoading = true
     metaState.rankList = {}
-    pcall(function()
+    metaState.myRank = nil
+    metaState.myRankLoading = true
+    local okRankCall, rankErr = pcall(function()
+        clientCloud:GetUserRank(clientCloud.userId, CLOUD_HIGH_SCORE_KEY, {
+            ok = function(rank)
+                metaState.myRank = rank and math.floor(rank) or nil
+                metaState.myRankLoading = false
+            end,
+            error = function(code, reason)
+                metaState.myRankLoading = false
+                print("[Main] own rank failed: " .. tostring(reason) .. " code=" .. tostring(code))
+            end,
+        })
+    end)
+    if not okRankCall then
+        metaState.myRankLoading = false
+        print("[Main] own rank unavailable: " .. tostring(rankErr))
+    end
+    local okListCall, listErr = pcall(function()
         clientCloud:GetRankList(CLOUD_HIGH_SCORE_KEY, 0, 10, {
             ok = function(rankList)
                 local list = {}
@@ -395,12 +479,21 @@ local function FetchRankList()
                 print("[Main] rank list failed: " .. tostring(reason) .. " code=" .. tostring(code))
             end,
         })
+    end)
+    if not okListCall then
+        metaState.rankLoading = false
+        print("[Main] rank list unavailable: " .. tostring(listErr))
+    end
+    local okTotalCall, totalErr = pcall(function()
         clientCloud:GetRankTotal(CLOUD_HIGH_SCORE_KEY, {
             ok = function(total)
                 metaState.rankTotal = math.floor(total or 0)
             end,
         })
     end)
+    if not okTotalCall then
+        print("[Main] rank total unavailable: " .. tostring(totalErr))
+    end
 end
 
 local function OpenMetaScreen(name)
@@ -503,7 +596,7 @@ local function HandleWheelSpin()
     end)
 end
 
--- 钻石兑换：**先由服务端权威扣款**，成功后才发本地软货币。
+-- 钻石兑换：服务端事务原子扣钻并记录累计零件；客户端按权威累计额补领。
 ---@param index integer
 local function HandleGemSpend(index)
     local def = Shared.GEM_SPENDS[index]
@@ -512,12 +605,17 @@ local function HandleGemSpend(index)
         metaState.rechargeToast = "需联网后可用"
         return
     end
+    -- 下一次成功的余额请求会推送权威累计额并补领；每次进商店也会重新拉取。
     metaState.rechargeToast = "扣款中…"
     NetClient.SpendGems(def.key, function(ok, reason)
         if ok then
-            PlayerData.AddParts(def.grantAmount)
-            PersistMeta()
-            metaState.rechargeToast = string.format("已兑换 %s", def.name)
+            -- 等待服务端同步累计额再补领，不从单次成功回调直接入账。
+            NetClient.RequestBalance()
+            metaState.rechargeToast = "兑换成功，零件同步中…"
+        elseif reason == "pending" then
+            metaState.rechargeToast = "上一笔兑换尚未确认，请勿重复点击"
+        elseif reason == "unknown" then
+            metaState.rechargeToast = "结果待确认，请重新进入游戏对账，勿重复兑换"
         elseif reason == "insufficient" then
             metaState.rechargeToast = "钻石不足"
         else
@@ -588,6 +686,16 @@ local function HandleMetaAction(action, index)
         OpenMetaScreen("tasks")
     elseif action == "open_rank" then
         OpenMetaScreen("rank")
+    elseif action == "open_wheel" then
+        OpenMetaScreen("wheel")
+    elseif action == "open_pass" then
+        OpenMetaScreen("pass")
+    elseif action == "claim_pass" and index then
+        local reward = PlayerData.ClaimPass(index)
+        if reward > 0 then
+            PersistMeta()
+            SetMetaToast(string.format("战斗档案 +%d 零件", reward))
+        end
     elseif action == "signin" then
         HandleSignIn()
     elseif action == "supply" then
@@ -709,6 +817,33 @@ local function TryPauseSupplyAt(screenX, screenY)
             end
         end)
         return true
+    elseif kind == "pause_orbital" then
+        if not Game.CanPauseOrbital() then
+            Presentation.SetAdToast("只在首领在场且本局未支援时可用")
+            return true
+        end
+        ShowAd(function()
+            if Game.PauseOrbital() then Presentation.SetAdToast("轨道支援已轰击首领") end
+        end)
+        return true
+    elseif kind == "pause_reload" then
+        if not Game.CanPauseReload() then
+            Presentation.SetAdToast("本局弹药补给已领取")
+            return true
+        end
+        ShowAd(function()
+            if Game.PauseReload() then Presentation.SetAdToast("已补充一辆重卡") end
+        end)
+        return true
+    elseif kind == "pause_parts_boost" then
+        if not Game.CanPausePartsBoost() then
+            Presentation.SetAdToast("本局零件加倍已领取")
+            return true
+        end
+        ShowAd(function()
+            if Game.PausePartsBoost() then Presentation.SetAdToast("零件 ×2 生效 45 秒") end
+        end)
+        return true
     end
     return false
 end
@@ -723,7 +858,7 @@ local function TryPickUpgradeAt(uiX, uiY)
         return true
     elseif kind == "boost" and index then
         if not Game.CanBoostUpgrade(index) then
-            Presentation.SetAdToast("该卡已升格")
+            Presentation.SetAdToast("该卡已升格或强化层数已满")
             return true
         end
         ShowAd(function()
@@ -742,8 +877,9 @@ local function TryPickUpgradeAt(uiX, uiY)
         return true
     elseif kind == "reroll_ad" then
         ShowAd(function()
-            Game.RerollUpgrades("ad")
-            Presentation.SetAdToast("已重抽")
+            if Game.RerollUpgrades("ad_rare") then
+                Presentation.SetAdToast("已重抽，本次必有稀有强化")
+            end
         end)
         return true
     elseif kind == "fourth" then
@@ -832,8 +968,8 @@ function ClientMain.Start(opts)
     MetaUI.RegisterScreen("recharge", RechargeShop.Draw, RechargeShop.HitTest)
 
     PlayerData.Load()
-
-    -- 联机层（余额同步）只在非离线路径启动；离线时整层不加载。
+    metaDate = os.date("%Y-%m-%d")
+    supplyPrompted = false
     -- ⚠️ 全程 pcall：联机层任何异常都不允许中断游戏启动
     --    （曾经因为 NetClient.Start 为 nil，在这里抛出，导致后面的事件订阅全部没执行，
     --     真机表现为「3D 正常但 2D 界面全没」）。
@@ -846,6 +982,15 @@ function ClientMain.Start(opts)
         local okNet, errNet = pcall(function()
             NetClient.SetGemsListener(function(gems)
                 metaState.gems = gems
+            end)
+            NetClient.SetPurchasedPartsListener(function(total)
+                local granted = PlayerData.ClaimPurchasedParts(total)
+                if granted > 0 then
+                    SavePlayerDataToCloud()
+                    RefreshMeta()
+                    metaState.rechargeToast = string.format("兑换零件到账 +%d", granted)
+                    print("[Main] purchased parts recovered +" .. granted .. " total=" .. total)
+                end
             end)
             NetClient.Start()
         end)
@@ -897,6 +1042,7 @@ end
 function HandleUpdate(eventType, eventData)
     local dt = math.min(eventData:GetFloat("TimeStep"), 0.05)
     AdService.Update(dt)
+    if not GameMode.IsOffline() then NetClient.Update(dt) end
     local hitStop = Presentation.GetSnapshot().hitStop or 0
     local gameDt = dt
     if hitStop > 0 then gameDt = dt * 0.15 end
@@ -910,6 +1056,17 @@ function HandleUpdate(eventType, eventData)
         SaveHighScoreToCloud(snapshot.highScore)
     end
 
+    -- 跨午夜时同步刷新菜单上的签到/任务/补给/转盘状态。
+    local today = os.date("%Y-%m-%d")
+    if today ~= metaDate then
+        metaDate = today
+        PlayerData.RollDaily()
+        PlayerData.Save()
+        SavePlayerDataToCloud()
+        supplyPrompted = false
+        RefreshMeta()
+        print("[Main] daily state refreshed: " .. today)
+    end
     -- v0.11.0 商业化：元层提示计时与「回到主菜单自动弹每日补给」。
     if metaToastTimer > 0 then
         metaToastTimer = metaToastTimer - dt
@@ -927,29 +1084,30 @@ function HandleUpdate(eventType, eventData)
     end
 
     -- v0.11.0 商业化：结算页一出现就按 ×1 把本局零件入库（幂等，同帧只结算一次）。
-    if snapshot.state == "gameover" then
+    if snapshot.state == "gameover" and not snapshot.partsSettled then
+        local newBricks, firstFinish = Game.TakeSettlementStats()
         local granted = Game.SettleParts(1)
-        if granted > 0 then
-            PlayerData.AddParts(granted)
-            PlayerData.AddDailyProgress("break_bricks", math.floor(snapshot.bricksBroken or 0))
-            PlayerData.AddDailyProgress("reach_wave", math.floor(snapshot.wave or 1), true)
-            PlayerData.AddDailyProgress("play_runs", 1)
-            PlayerData.SetHighScore(math.floor(snapshot.highScore or 0))
-            -- 清掉过哪些机型就解锁哪些图鉴，首次收录额外发零件。
-            local bonus = 0
-            for _, key in ipairs(snapshot.runAircraft or {}) do
-                if PlayerData.UnlockCodex(key) then
-                    local entry = MetaCatalog.GetCodexEntry(key)
-                    if entry then bonus = bonus + entry.reward end
-                    print("[Main] codex unlocked: " .. key)
-                end
-            end
-            if bonus > 0 then PlayerData.AddParts(bonus) end
-            PlayerData.Save()
-            SavePlayerDataToCloud()
-            RefreshMeta()
-            print("[Main] run settled, parts +" .. granted .. ", codex bonus +" .. bonus)
+        if granted > 0 then PlayerData.AddParts(granted) end
+        if newBricks > 0 then
+            PlayerData.AddDailyProgress("break_bricks", newBricks)
+            PlayerData.AddStat("bricksTotal", newBricks)
         end
+        PlayerData.AddDailyProgress("reach_wave", math.floor(snapshot.wave or 1), true)
+        if firstFinish then PlayerData.AddDailyProgress("play_runs", 1) end
+        PlayerData.SetHighScore(math.floor(snapshot.highScore or 0))
+        local bonus = 0
+        for _, key in ipairs(snapshot.runAircraft or {}) do
+            if PlayerData.UnlockCodex(key) then
+                local entry = MetaCatalog.GetCodexEntry(key)
+                if entry then bonus = bonus + entry.reward end
+                print("[Main] codex unlocked: " .. key)
+            end
+        end
+        if bonus > 0 then PlayerData.AddParts(bonus) end
+        PlayerData.Save()
+        SavePlayerDataToCloud()
+        RefreshMeta()
+        print("[Main] run settled, parts +" .. granted .. ", codex bonus +" .. bonus)
     end
 end
 
@@ -977,10 +1135,20 @@ function HandleMouseDown(eventType, eventData)
     end
     -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
     -- v0.11.0 商业化 P4：道具槽优先于拖拽起手。
-    if TryUseItemAt(screenX, screenY) then return end
-    if TryPauseSupplyAt(screenX, screenY) then return end
+    if TryUseItemAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
+    if TryPauseSupplyAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
     -- v0.11.0 商业化：主菜单商业区/功能面板优先消费点击。
-    if TryMenuMetaAt(screenX, screenY) then return end
+    if TryMenuMetaAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
+    metaPointerConsumed = false
     Game.PointerDown(x, y)
 end
 
@@ -995,13 +1163,17 @@ function HandleMouseUp(eventType, eventData)
     -- v0.10.24：升级态的按下已在 Down 分支消费，禁止其穿透成玩法 PointerUp。
     if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
+    if metaPointerConsumed then
+        metaPointerConsumed = false
+        return
+    end
     if MenuMetaBlocksRelease() then return end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerUp(x, y)
 end
 
 function HandleMouseMove(eventType, eventData)
-    if Game.IsLevelUp() or Game.IsGameOver() then return end
+    if Game.IsLevelUp() or Game.IsGameOver() or IsMetaCapturing() or metaPointerConsumed then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerMove(x, y)
@@ -1025,15 +1197,25 @@ function HandleTouchBegin(eventType, eventData)
     end
     -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
     -- v0.11.0 商业化 P4：道具槽优先于拖拽起手。
-    if TryUseItemAt(screenX, screenY) then return end
-    if TryPauseSupplyAt(screenX, screenY) then return end
+    if TryUseItemAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
+    if TryPauseSupplyAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
     -- v0.11.0 商业化：主菜单商业区/功能面板优先消费触摸。
-    if TryMenuMetaAt(screenX, screenY) then return end
+    if TryMenuMetaAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
+    metaPointerConsumed = false
     Game.PointerDown(x, y)
 end
 
 function HandleTouchMove(eventType, eventData)
-    if Game.IsLevelUp() or Game.IsGameOver() then return end
+    if Game.IsLevelUp() or Game.IsGameOver() or IsMetaCapturing() or metaPointerConsumed then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerMove(x, y)
@@ -1048,6 +1230,10 @@ function HandleTouchEnd(eventType, eventData)
     end
     if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
+    if metaPointerConsumed then
+        metaPointerConsumed = false
+        return
+    end
     if MenuMetaBlocksRelease() then return end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerUp(x, y)

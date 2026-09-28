@@ -943,6 +943,16 @@ local ICON_PATHS = {
     task   = "image/ui_icon_task_20260928005023.png",
     rank   = "image/ui_icon_rank_20260928005022.png",
     wheel  = "image/ui_icon_wheel_20260928005018.png",
+    signin = "image/ui_icon_signin_20260928011015.png",
+    supply = "image/ui_icon_supply_20260928011008.png",
+    pass = "image/ui_icon_pass_20260928011014.png",
+    reroll = "image/ui_icon_reroll_20260928011012.png",
+    rarity = "image/ui_icon_rarity_20260928011021.png",
+    double = "image/ui_icon_double_20260928011016.png",
+    orbital = "image/ui_icon_orbital_20260928011016.png",
+    reload = "image/ui_icon_reload_20260928011013.png",
+    record = "image/ui_icon_record_20260928011019.png",
+    boost = "image/ui_icon_boost_20260928011116.png",
 }
 
 ---@type table<string, integer>
@@ -955,7 +965,7 @@ local function LoadIcons()
         local ok, img = pcall(function()
             return nvgCreateImage(vg_, path, NVG_IMAGE_NEAREST)
         end)
-        if ok and type(img) == "number" and img >= 0 then
+        if ok and type(img) == "number" and img > 0 then
             iconImages_[key] = img
             loaded = loaded + 1
         end
@@ -1063,8 +1073,8 @@ local function DrawBossPhaseBar(ctx, game, boss)
     local cx = game.width * 0.5
     local barW = 220
     local x0 = cx - barW * 0.5
-    local y = 84
-    DrawPixelText(ctx, cx, y - 18, "首领阶段", 16, C.warn,
+    local y = HUD_HEIGHT + 34
+    DrawPixelText(ctx, cx, y - 24, "首领阶段", 16, C.warn,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     local segments = 3
     local segW = barW / segments
@@ -1168,6 +1178,12 @@ local function DrawHud(ctx, game, presentation)
     -- 不占「等级/经验」那一行，也不与血条 x 区间打架。
     DrawPixelText(ctx, game.width - 12, 74, string.format("零件 +%d", game.runParts or 0), 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    if (game.partsBoostTime or 0) > 0 then
+        DrawIcon(ctx, "double", 350, 68, 24)
+        DrawPixelText(ctx, 340, 74,
+            string.format("×2 %d秒", math.ceil(game.partsBoostTime)), 15, C.ad,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    end
 
     local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
     DrawPixelText(ctx, 14, 70, string.format("等级 %d", game.playerLevel), 15, C.cyan)
@@ -1295,8 +1311,14 @@ local function DrawGameOver(ctx, game, presentation)
     DrawPixelText(ctx, winX + winW - 16, winY + 14, "本局结束", 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width * 0.5, 278, "游戏结束", 36, C.text,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if game.newRecord then
+        DrawIcon(ctx, "record", game.width * 0.5 - 104, 266, 32)
+        DrawPixelText(ctx, game.width * 0.5 + 14, 272, "刷新最高分", 20, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        DrawPixelText(ctx, game.width * 0.5, 278, "游戏结束", 36, C.text,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
     DrawPixelText(ctx, game.width * 0.5, 322, "敌机突破了底部防线", 18, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 348,
@@ -1318,6 +1340,7 @@ local function DrawGameOver(ctx, game, presentation)
     DrawPixelText(ctx, game.width * 0.5, 446,
         string.format("本局获得  零件 ×%d", game.runParts or 0), 18, C.warn,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawIcon(ctx, "parts", game.width * 0.5 - 184, 439, 28)
 
     local reviveBtn, doubleBtn, restartBtn = GetGameOverButtonLayout(game)
     local canRevive = game.canRevive
@@ -1346,6 +1369,7 @@ local function DrawGameOver(ctx, game, presentation)
     if game.canDoubleSettle then
         DrawRect(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.card, 8)
         DrawStroke(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.ad, 8, 1.5)
+        DrawIcon(ctx, "double", doubleBtn.x + 9, doubleBtn.y + 10, 28)
         DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 5, "看广告 双倍零件", 18, C.ad,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 28,
@@ -1465,6 +1489,9 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
         DrawStroke(ctx, badge.x, badge.y, badge.w, badge.h, C.ad, 4, 1.2)
         DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "已升格", 14, C.ad,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    elseif (choice.stacks or 0) + 1 >= (choice.maxStacks or 1) then
+        DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "已满", 14, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         DrawStroke(ctx, badge.x, badge.y, badge.w, badge.h, C.adDim, 4, 1)
         DrawPixelText(ctx, badge.x + badge.w * 0.5, badge.y + 4, "升格", 14, C.adDim,
@@ -1578,8 +1605,11 @@ local function DrawUpgradeActions(ctx, game, layout)
     local freeLabel = game.rerollFreeAvailable and "免费重抽 1/1" or "免费重抽 已用"
     DrawPanelButton(ctx, layout.rerollFree, freeLabel, "",
         game.rerollFreeAvailable == true, C.cyan)
-    -- 绿色＝看广告（免费获取），与青色免费重抽、金色稀有度区分开。
-    DrawPanelButton(ctx, layout.rerollAd, "看广告 重抽", "或升格卡池", true, C.ad)
+    DrawIcon(ctx, "reroll", layout.rerollFree.x + 6, layout.rerollFree.y + 12, 26)
+    -- 看广告重抽实际触发 Game.RerollUpgrades("ad_rare")，首张强制稀有。
+    DrawPanelButton(ctx, layout.rerollAd, "看广告 重抽", "必出稀有",
+        true, C.ad)
+    DrawIcon(ctx, "rarity", layout.rerollAd.x + 6, layout.rerollAd.y + 12, 26)
     DrawPanelButton(ctx, layout.fourth,
         game.fourthChoiceUnlocked and "已解锁第 4 张" or "看广告 四选一",
         game.fourthChoiceUnlocked and "本局有效" or "多一个选择",
@@ -1604,7 +1634,7 @@ local function DrawLevelUp(ctx, game, presentation)
 
     DrawPixelText(ctx, 24, 106, "升级", 18, C.cyan)
     DrawPixelText(ctx, game.width - 24, 106,
-        string.format("%d 选一", math.max(3, #choices)), 18, C.warn,
+        string.format("%d 选一", (choices[4] and not choices[4].locked) and 4 or math.min(3, #choices)), 18, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 130, "选择一项强化", 30, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -1631,6 +1661,12 @@ local function DrawLevelUp(ctx, game, presentation)
 
     DrawUpgradeActions(ctx, game, layout)
 
+    local toast = presentation and presentation.adToast
+    if toast and toast ~= "" then
+        DrawPixelText(ctx, game.width * 0.5, 206, toast, 16, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
     DrawPixelText(ctx, 24, layout.hintY, "战斗已暂停", 16, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
     local hintColor = C.warn
@@ -1655,15 +1691,21 @@ end
 ---@field win UiRect
 ---@field heal UiRect
 ---@field rare UiRect
+---@field orbital UiRect
+---@field reload UiRect
+---@field partsBoost UiRect
 
 ---@return PausePanelLayout
 local function GetPausePanelLayout(w)
     local margin = 44
     local innerW = w - margin * 2
     return {
-        win = { x = 24, y = 280, w = w - 48, h = 400 },
-        heal = { x = margin, y = 478, w = innerW, h = 64 },
-        rare = { x = margin, y = 552, w = innerW, h = 64 },
+        win = { x = 24, y = 178, w = w - 48, h = 630 },
+        heal = { x = margin, y = 380, w = innerW, h = 64 },
+        rare = { x = margin, y = 452, w = innerW, h = 64 },
+        orbital = { x = margin, y = 524, w = innerW, h = 64 },
+        reload = { x = margin, y = 596, w = innerW, h = 64 },
+        partsBoost = { x = margin, y = 668, w = innerW, h = 64 },
     }
 end
 
@@ -1676,15 +1718,14 @@ local function DrawPaused(ctx, game, meta, presentation)
     local layout = GetPausePanelLayout(game.width)
     DrawWindowShell(ctx, layout.win.x, layout.win.y, layout.win.w, layout.win.h, 46)
     DrawPixelText(ctx, layout.win.x + 18, layout.win.y + 10, "已暂停", 18, C.cyan)
-    DrawPixelText(ctx, game.width * 0.5, 330, "休息一下", 34, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 224, "休息一下", 30, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 382, "点击屏幕继续 · 或按 P", 18, C.text,
+    DrawPixelText(ctx, game.width * 0.5, 266, "点击空白处继续 · 或按 P", 17, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, 72, 418, game.width - 144, 10, C.cyanDim)
+    DrawSegmentedRule(ctx, 72, 312, game.width - 144, 10, C.cyanDim)
 
-    -- 战场补给站：本局内看广告换即时资源。
-    DrawPixelText(ctx, 44, 444, "战场补给站", 18, C.ad)
-    DrawPixelText(ctx, game.width - 44, 448, "本局限量", 14, C.dim,
+    DrawPixelText(ctx, 44, 338, "战场补给站", 18, C.ad)
+    DrawPixelText(ctx, game.width - 44, 342, "本局限量", 14, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     local heal = layout.heal
@@ -1710,6 +1751,23 @@ local function DrawPaused(ctx, game, meta, presentation)
         DrawRect(ctx, rare.x, rare.y, rare.w, rare.h, C.widget, 6)
         DrawStroke(ctx, rare.x, rare.y, rare.w, rare.h, C.cyanDim, 6, 1)
         DrawPixelText(ctx, rare.x + 18, rare.y + 12, "稀有保底 已购买", 18, C.dim)
+    end
+
+    for _, offer in ipairs({
+        { rect = layout.orbital, icon = "orbital", ready = game.canPauseOrbital,
+          label = "看广告 · 首领轨道支援", note = "轰击首领部分方块", unavailable = "首领未出现或支援已用" },
+        { rect = layout.reload, icon = "reload", ready = game.canPauseReload,
+          label = "看广告 · 弹药补给", note = "补充一辆待发重卡", unavailable = "本局已领取" },
+        { rect = layout.partsBoost, icon = "double", ready = game.canPausePartsBoost,
+          label = "看广告 · 零件加倍", note = "45 秒内产出 ×2", unavailable = "本局已领取" },
+    }) do
+        local r = offer.rect
+        DrawRect(ctx, r.x, r.y, r.w, r.h, offer.ready and C.card or C.widget, 6)
+        DrawStroke(ctx, r.x, r.y, r.w, r.h, offer.ready and C.ad or C.cyanDim, 6, 1.5)
+        DrawIcon(ctx, offer.icon, r.x + 12, r.y + 16, 32, offer.ready and 1 or 0.35)
+        DrawPixelText(ctx, r.x + 54, r.y + 6, offer.ready and offer.label or offer.unavailable,
+            17, offer.ready and C.ad or C.dim)
+        DrawPixelText(ctx, r.x + 54, r.y + 34, offer.note, 14, C.dim)
     end
 
     local toast = presentation and presentation.adToast
@@ -1784,6 +1842,7 @@ local function RenderOverlay(game, presentation, meta)
     nvgGlobalAlpha(vg_, 1.0)
     DrawHud(vg_, game, presentation)
     if game.state == "playing" then
+        DrawItemSlots(vg_, game)
         DrawPullHint(vg_, game)
         DrawAmmoSlots(vg_, game, presentation)
         DrawDamageVignette(vg_, game, presentation)
@@ -2105,7 +2164,7 @@ function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
         local playing = gameSnapshot.state == "playing"
         voxelWorld_:SetSimulationPaused(not playing)
     end
-    Renderer3D.Render(gameSnapshot, presentationSnapshot)
+    Renderer3D.Render(gameSnapshot, presentationSnapshot, metaState and metaState.selectedSkin)
 end
 
 function Backend.RenderOverlay(gameSnapshot, presentationSnapshot, metaState)
@@ -2167,8 +2226,11 @@ function Backend.HitTestUpgradePanel(uiX, uiY, game)
     local cardTop = layout.cy - layout.cardH * 0.5
     for i = 1, layout.cardCount do
         local cx = layout.startX + (i - 1) * (layout.cardW + layout.gap)
-        -- 升格角标优先于卡片本体，避免点角标被当成选卡。
-        if inside(GetBoostBadgeRect(cx, cardTop, layout.cardW)) then
+        -- 升格角标只在可升级时是入口；"已升格/已满" 时点按仍按选卡处理。
+        local choice = choices[i]
+        if choice and not choice.boosted
+            and (choice.stacks or 0) + 1 < (choice.maxStacks or 1)
+            and inside(GetBoostBadgeRect(cx, cardTop, layout.cardW)) then
             return "boost", i
         end
         if math.abs(uiX - cx) <= layout.cardW * 0.5 + 4
@@ -2192,6 +2254,9 @@ function Backend.HitTestPausePanel(uiX, uiY, game)
     end
     if inside(layout.heal) then return "pause_heal" end
     if inside(layout.rare) then return "pause_rare" end
+    if inside(layout.orbital) then return "pause_orbital" end
+    if inside(layout.reload) then return "pause_reload" end
+    if inside(layout.partsBoost) then return "pause_parts_boost" end
     return nil
 end
 

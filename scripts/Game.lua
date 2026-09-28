@@ -154,13 +154,17 @@ local upgradeStacks = {}           -- 已选强化各 id 的层数（WO-09/P5 �
 local activeWords = {}
 local clearStreak = 0              -- 连续清空飞船的连击（经验加成）
 local bricksBroken = 0            -- 累计击碎砖块数（WO-11/P8 gameover 回顾）
+local previousHighScore = 0      -- 本局开局时的最高纪录（新纪录提示仅与此基准比较）
 
 -- v0.11.0 商业化：局内零件产出与升级面板变现状态（均为单局生命周期）。
 local partsEarned = 0              -- 本局累计获得的「零件」，结算时由编排层入库
 local runAircraft = {}             -- 本局清掉过的机型和唯一列表（结算时解锁图鉴）
-local partsSettled = false         -- 本局零件是否已入库（防止重复发放）
-local partsDoubled = false         -- 结算是否已用广告翻倍（每局一次）
-local lastSettledParts = 0         -- 已入库的零件数（广告双倍时按此数补发）
+local partsSettled = false         -- 当前战斗阶段零件是否已入库
+local partsDoubled = false         -- 本局是否已用广告翻倍（每局一次）
+local lastSettledParts = 0         -- 最近一次结算实际入库数
+local settledParts = 0             -- 已按基础倍率入库的累计零件（复活后只补增量）
+local settledBricks = 0            -- 已计入跨局统计的击碎数
+local runCounted = false           -- 本局完成次数只计一次
 local upgradeRerollFreeUsed = false -- 每局 1 次免费重抽
 local extraPanelArmed = 0          -- 广告「额外再选一张」剩余次数
 local fourthChoiceUnlocked = false -- 本次面板是否已解锁第 4 张（神秘词条优先）
@@ -173,6 +177,11 @@ local pendingRareRoll = false      -- 下次抽卡强制稀有（由暂停补给
 local PAUSE_HEAL_MAX = 1
 local PAUSE_HEAL_AMOUNT = 25
 local PAUSE_RARE_MAX = 1
+local EjectBrick
+local pauseOrbitalUsed = false
+local pauseReloadUsed = false
+local pausePartsBoostUsed = false
+local partsBoostTime = 0
 
 -- 幸存者升级强化池（WO-09/P5）：
 -- weight 抽卡权重；rarity 稀有度（common/rare/epic）；maxStacks 叠加上限；
@@ -413,6 +422,9 @@ ResetGame = function()
     partsSettled = false
     partsDoubled = false
     lastSettledParts = 0
+    settledParts = 0
+    settledBricks = 0
+    runCounted = false
     runAircraft = {}
     baseShield = 0
     ResetItems()
@@ -423,6 +435,10 @@ ResetGame = function()
     pauseHealUsed = 0
     pauseRareUsed = 0
     pendingRareRoll = false
+    pauseOrbitalUsed = false
+    pauseReloadUsed = false
+    pausePartsBoostUsed = false
+    partsBoostTime = 0
     aimX = SLING_X
     aimY = SLING_Y
     grabStartX = SLING_X
@@ -455,6 +471,7 @@ ResetGame = function()
 end
 
 local function StartGame()
+    previousHighScore = highScore
     ResetGame()
     gameState = "playing"
     SpawnWave()
@@ -579,6 +596,7 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opt
         phase = spawnPhase,
         bricks = bricks,
         dead = false,
+        breached = false,
         frozen = 0,
         freezeRatio = 0,    -- WO-13/P2：渲染层只读冻结比例（0..1），初始化为零
     }
@@ -948,7 +966,7 @@ local function EmitBrickShatterFx(enemy, brick, x, y)
     })
 end
 
-local function EjectBrick(enemy, brick)
+EjectBrick = function(enemy, brick)
     if brick.ejected or not brick.alive then return false end
     local data = AircraftData[enemy.aircraftKey]
     local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
@@ -957,7 +975,7 @@ local function EjectBrick(enemy, brick)
     brick.ejected = true
     score = score + data.score
     bricksBroken = bricksBroken + 1
-    partsEarned = partsEarned + PARTS_PER_BRICK
+    partsEarned = partsEarned + PARTS_PER_BRICK * (partsBoostTime > 0 and 2 or 1)
     GainXp(XP_PER_BRICK)
     EmitBrickShatterFx(enemy, brick, x, y)
     return true
@@ -1215,7 +1233,8 @@ function Game.PickUpgrade(index)
     if not choice then return false end
 
     local stacks = upgradeStacks[choice.id] or 0
-    local times = boostedChoiceIds[choice.id] and 2 or 1
+    local times = math.min(choice.maxStacks - stacks, boostedChoiceIds[choice.id] and 2 or 1)
+    if times <= 0 then return false end
     for _ = 1, times do
         choice.apply(stacks)   -- 传入当前层数，支持边际递减
         stacks = stacks + 1
@@ -1341,6 +1360,7 @@ function Game.CanBoostUpgrade(index)
     local choice = upgradeChoices[index]
     if not choice then return false end
     return not boostedChoiceIds[choice.id]
+        and (upgradeStacks[choice.id] or 0) + 1 < choice.maxStacks
 end
 
 -- 广告「单卡升格」：该卡结算时生效两次。
@@ -1415,6 +1435,62 @@ function Game.PauseRarePick()
     pendingRareRoll = true
     Emit("rare_roll_armed", {})
     print("[Game] pause supply: next upgrade roll guaranteed rare")
+    return true
+end
+
+function Game.CanPauseOrbital()
+    if gameState ~= "paused" or pauseOrbitalUsed then return false end
+    for _, enemy in ipairs(veggies) do
+        if enemy.isBoss and not enemy.dead then return true end
+    end
+    return false
+end
+
+function Game.PauseOrbital()
+    if not Game.CanPauseOrbital() then return false end
+    pauseOrbitalUsed = true
+    local destroyed = 0
+    for _, enemy in ipairs(veggies) do
+        if enemy.isBoss and not enemy.dead then
+            for _, brick in ipairs(enemy.bricks) do
+                if brick.alive and (brick.col + brick.row) % 4 == 0 then
+                    if EjectBrick(enemy, brick) then destroyed = destroyed + 1 end
+                end
+            end
+        end
+    end
+    Emit("orbital_strike", {count = destroyed})
+    print("[Game] orbital strike destroyed=" .. destroyed)
+    return true
+end
+
+function Game.CanPauseReload()
+    return gameState == "paused" and not pauseReloadUsed
+end
+
+function Game.PauseReload()
+    if not Game.CanPauseReload() then return false end
+    pauseReloadUsed = true
+    local nextType = ballQueue[1] or (activeBall and activeBall.ballType) or "normal"
+    table.insert(ballQueue, 1, nextType)
+    if not activeBall then
+        activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
+    end
+    Emit("marble_reloaded", {ballType = nextType})
+    print("[Game] reserve ammo +1: " .. nextType)
+    return true
+end
+
+function Game.CanPausePartsBoost()
+    return gameState == "paused" and not pausePartsBoostUsed
+end
+
+function Game.PausePartsBoost()
+    if not Game.CanPausePartsBoost() then return false end
+    pausePartsBoostUsed = true
+    partsBoostTime = 45
+    Emit("parts_boost", {duration = 45})
+    print("[Game] parts x2 for 45 seconds")
     return true
 end
 
@@ -1502,12 +1578,10 @@ function Game.UseItem(key)
                 for _ = 1, math.min(4, #live) do
                     local idx = RandomInt(1, #live)
                     local brick = table.remove(live, idx)
-                    EjectBrick(enemy, brick)
-                    popped = popped + 1
+                    if EjectBrick(enemy, brick) then popped = popped + 1 end
                 end
             end
         end
-        partsEarned = partsEarned + math.floor(popped * PARTS_PER_BRICK)
         Emit("item_used", {key = key, count = popped})
         print("[Game] bomb used, bricks=" .. popped)
         return true
@@ -2099,6 +2173,7 @@ UpdateEnemies = function(dt)
         for row, list in pairs(rows) do
             -- 该行方块全部碎裂（独立飞散箱体），视觉反馈取该行中心。
             local sumX = 0
+            enemy.breached = true
             for _, brick in ipairs(list) do
                 ShatterBreachedBrick(enemy, brick)
                 sumX = sumX + enemy.x + (brick.col - 0.5) * enemy.brickSize
@@ -2145,19 +2220,21 @@ UpdateEnemies = function(dt)
         local height = enemy.gridH * enemy.brickSize
         if not enemy.dead and IsEnemyCleared(enemy) then
             enemy.dead = true
-            score = score + 50
-            partsEarned = partsEarned + PARTS_PER_CLEAR
-            runAircraft[enemy.aircraftKey] = true
-            clearStreak = clearStreak + 1
-            -- 连续清空的连击经验加成，鼓励连续压制。
-            local bonus = math.min(clearStreak - 1, BALANCE.clearStreakBonusCap)
-            GainXp(XP_PER_CLEAR + bonus)
-            Emit("enemy_cleared", {
-                enemyId = enemy.id,
-                x = enemy.x + width * 0.5,
-                y = enemy.y + height * 0.5,
-                streak = clearStreak,
-            })
+            if not enemy.breached then
+                score = score + 50
+                partsEarned = partsEarned + PARTS_PER_CLEAR * (partsBoostTime > 0 and 2 or 1)
+                runAircraft[enemy.aircraftKey] = true
+                clearStreak = clearStreak + 1
+                -- 连续清空的连击经验加成，鼓励连续压制。
+                local bonus = math.min(clearStreak - 1, BALANCE.clearStreakBonusCap)
+                GainXp(XP_PER_CLEAR + bonus)
+                Emit("enemy_cleared", {
+                    enemyId = enemy.id,
+                    x = enemy.x + width * 0.5,
+                    y = enemy.y + height * 0.5,
+                    streak = clearStreak,
+                })
+            end
         end
 
         if enemy.dead then table.remove(veggies, i) end
@@ -2197,7 +2274,7 @@ UpdateWaveLogic = function(dt)
 
     if #veggies < concurrentCap then
         wave = wave + 1
-        partsEarned = partsEarned + PARTS_PER_WAVE
+        partsEarned = partsEarned + PARTS_PER_WAVE * (partsBoostTime > 0 and 2 or 1)
         SpawnWave()
         EnsureNextWavePlan()
     end
@@ -2226,6 +2303,7 @@ function Game.Init(config)
     SetRandomSeed(config.seed or 1)
     pendingEvents = {}
     highScore = math.max(0, math.floor(tonumber(config.highScore) or 0))
+    previousHighScore = highScore
     ResetGame()
     pendingEvents = {}
     gameState = "menu"
@@ -2241,6 +2319,7 @@ function Game.Update(dt)
     end
 
     UpdateAiming()
+    partsBoostTime = math.max(0, partsBoostTime - dt)
     UpdateMarbles(dt)
     if gameState ~= "playing" then return end
     UpdateEnemies(dt)
@@ -2351,9 +2430,8 @@ function Game.ReviveFromAd()
         end
     end
     gameState = "playing"
-    -- v0.11.0：复活后本局继续，重新开放零件结算，否则复活后新赚的零件会被丢弃。
+    -- 保留本局已结算基线；复活后再次死亡只入库新增零件。
     partsSettled = false
-    partsDoubled = false
     lastSettledParts = 0
     Emit("base_revived", {hp = baseHp})
     print("[Game] revived from ad, hp=" .. tostring(baseHp))
@@ -2370,22 +2448,32 @@ end
 -- 结算页一出现就由编排层按 ×1 入库；「看广告双倍」再补发等额零件。
 -- ============================================================================
 
----@return integer 本局累计零件（未入库时为待结算数，已入库时为已入库数）
+---@return integer 当前阶段待结算或已结算的零件
 function Game.GetRunParts()
     if partsSettled then return lastSettledParts end
-    return partsEarned
+    return math.max(0, partsEarned - settledParts)
+end
+
+-- 跨局统计只认增量；复活后再次死亡不重复计「完成一局」与旧砖块。
+function Game.TakeSettlementStats()
+    if gameState ~= "gameover" or partsSettled then return 0, false end
+    local delta = math.max(0, bricksBroken - settledBricks)
+    settledBricks = bricksBroken
+    local firstFinish = not runCounted
+    runCounted = true
+    return delta, firstFinish
 end
 
 ---@param multiplier integer
----@return integer granted 本次入库的零件数（0 表示已结算过）
+---@return integer granted 本次入库的新增零件（0 表示没有新增）
 function Game.SettleParts(multiplier)
     if partsSettled then return 0 end
-    if partsEarned <= 0 then return 0 end
     partsSettled = true
-    local mult = math.max(1, math.floor(multiplier or 1))
-    lastSettledParts = partsEarned * mult
-    if mult > 1 then partsDoubled = true end
-    print("[Game] parts settled: " .. lastSettledParts .. " (x" .. mult .. ")")
+    local delta = math.max(0, partsEarned - settledParts)
+    settledParts = partsEarned
+    lastSettledParts = delta * math.max(1, math.floor(multiplier or 1))
+    if multiplier and multiplier > 1 then partsDoubled = true end
+    print("[Game] parts settled: +" .. lastSettledParts)
     return lastSettledParts
 end
 
@@ -2484,6 +2572,7 @@ function Game.GetSnapshot()
     s.state = gameState
     s.score = score
     s.highScore = highScore
+    s.newRecord = gameState == "gameover" and score > previousHighScore and score > 0
     s.baseHp = baseHp
     s.maxBaseHp = BASE_HP
     s.wave = wave
@@ -2503,7 +2592,7 @@ function Game.GetSnapshot()
         if activeWords[id] then words[#words + 1] = id end
     end
     s.activeWords = words
-    s.upgradeChoices = (gameState == "levelup" and upgradeChoices) or nil
+    s.upgradeChoices = Game.GetUpgradeChoices()
     s.veggies = veggies
     s.marbles = marbles
     s.aiming = aiming
@@ -2548,6 +2637,10 @@ function Game.GetSnapshot()
     s.pauseHealLeft = Game.GetPauseHealLeft()
     s.canPauseRarePick = Game.CanPauseRarePick()
     s.pauseRareLeft = Game.GetPauseRareLeft()
+    s.canPauseOrbital = Game.CanPauseOrbital()
+    s.canPauseReload = Game.CanPauseReload()
+    s.canPausePartsBoost = Game.CanPausePartsBoost()
+    s.partsBoostTime = partsBoostTime
     -- 局内道具槽（渲染层只读）：每格 {key,name,color,charges,canGrant}
     local items = {}
     for i = 1, #ITEM_DEFS do
