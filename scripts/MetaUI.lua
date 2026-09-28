@@ -194,39 +194,118 @@ local function Shell(ctx, w, h, title, subtitle)
 end
 
 -- ============================================================================
--- 主菜单商业化区（货币栏 + 四入口 + 签到 / 每日补给）
+-- v0.12.6 主菜单变现闭环三段式（用户拍板「闭环三段式」方案）：
+--   图鉴展示条 → 钱包连接器（零件/钻石两端同框）→ 今日福利(免费领) → 养成收藏(花/付费)。
+--   全部几何集中在 GetMenuBarLayout，绘制与命中共用同一来源，禁止第二套常量。
 -- ============================================================================
 
 ---@class MetaBarLayout
+---@field fleet table
 ---@field wallet table
----@field entries table[]
----@field signin table
----@field supply table
----@field pass table
----@field wheel table
+---@field daily table[]
+---@field grow table[]
 
----@return MetaBarLayout
 local function GetMenuBarLayout()
-    local wallet = { x = 18, y = 660, w = 504, h = 48 }
-    local entries = {}
     local bw, gap = 120, 8
-    for i = 1, 4 do
-        entries[i] = { x = 18 + (i - 1) * (bw + gap), y = 716, w = bw, h = 54 }
+    local function row(y, h)
+        local r = {}
+        for i = 1, 4 do
+            r[i] = { x = 18 + (i - 1) * (bw + gap), y = y, w = bw, h = h }
+        end
+        return r
     end
-    local signin = { x = 18, y = 778, w = 248, h = 64 }
-    local supply = { x = 274, y = 778, w = 248, h = 64 }
-    -- 菜单态不绘制战斗 Dock，底部入口可以占用 848..888。
-    local pass = { x = 18, y = 848, w = 248, h = 40 }
-    local wheel = { x = 274, y = 848, w = 248, h = 40 }
-    return { wallet = wallet, entries = entries, signin = signin, supply = supply, pass = pass, wheel = wheel }
+    return {
+        fleet  = { x = 18, y = 390, w = 504, h = 92 },
+        wallet = { x = 18, y = 496, w = 504, h = 56 },
+        daily  = row(588, 92),
+        grow   = row(716, 92),
+    }
 end
 
-local ENTRY_DEFS = {
-    { action = "open_shop",  label = "商城", icon = "shop" },
-    { action = "open_codex", label = "图鉴", icon = "codex" },
-    { action = "open_tasks", label = "任务", icon = "task" },
-    { action = "open_rank",  label = "排行", icon = "rank" },
-}
+---@param ctx any
+---@param w number
+---@param meta MetaState
+function MetaUI.DrawHomeFleet(ctx, w, meta)
+    local C = Colors()
+    local L = GetMenuBarLayout()
+    local r = L.fleet
+    D.panel(ctx, r.x, r.y, r.w, r.h, C.rail, C.cyanDim, 6)
+    D.text(ctx, r.x + 14, r.y + 8, "敌机图鉴", 15, C.cyan)
+    D.text(ctx, r.x + r.w - 14, r.y + 8,
+        string.format("收录 %d/%d ›", meta.codexUnlocked or 0, meta.codexTotal or 0), 15, C.dim,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    local entries = MetaCatalog.GetCodex()
+    local n = math.max(1, #entries)
+    local slotW = (r.w - 24) / n
+    for i, entry in ipairs(entries) do
+        local owned = meta.codex and meta.codex[entry.key] == true
+        local aircraft = meta.aircraft and meta.aircraft[entry.key]
+        if aircraft then
+            local gridW = aircraft.gridW or 1
+            local gridH = aircraft.gridH or 1
+            local scale = math.min(15, 40 / math.max(1, gridW), (r.h - 46) / math.max(1, gridH))
+            local left = r.x + 12 + (i - 1) * slotW + (slotW - gridW * scale) * 0.5
+            local top = r.y + 34 + ((r.h - 46) - gridH * scale) * 0.5
+            for _, cell in ipairs(aircraft.rows or {}) do
+                D.rect(ctx, left + (cell.col - 1) * scale, top + (cell.row - 1) * scale,
+                    scale - 0.5, scale - 0.5, owned and C.cyan or C.widget, 0)
+            end
+        end
+    end
+end
+
+---@return integer
+local function CountClaimableTasks(tasks)
+    local n = 0
+    for _, t in ipairs(tasks or {}) do
+        if t.claimable then n = n + 1 end
+    end
+    return n
+end
+
+-- 今日福利：全部「免费领取/看广告免费」——tone=free 青、tone=ad 绿（三色语义）。
+local function GetDailyDefs(meta)
+    local taskCount = CountClaimableTasks(meta.tasks)
+    return {
+        { action = "signin", icon = "signin", label = "每日签到",
+          sub = meta.signInAvailable and string.format("+%d 零件", meta.signInReward or 0)
+                or string.format("已连续 %d 天", meta.signInStreak or 0),
+          hot = meta.signInAvailable, tone = "free" },
+        { action = "supply", icon = "supply", label = "每日补给",
+          sub = meta.supplyAvailable and "待领取" or "明日再来",
+          hot = meta.supplyAvailable, tone = "free" },
+        { action = "open_tasks", icon = "task", label = "每日任务",
+          sub = taskCount > 0 and string.format("%d 项可领", taskCount) or "对战积累",
+          hot = taskCount > 0, tone = "free" },
+        { action = "open_wheel", icon = "wheel", label = "幸运转盘",
+          sub = meta.wheelReady and "看广告免费" or "今日已抽取",
+          hot = meta.wheelReady, tone = "ad" },
+    }
+end
+
+-- 养成收藏：花零件/成长线/付费加速——首充限时窗内礼包顶替图鉴位。
+local function GetGrowDefs(meta)
+    local passSub = meta.passClaimable and "有奖励可领"
+        or ("Lv." .. tostring(meta.passLevel or 1) .. (meta.premiumPass and " · 奖励×2" or ""))
+    local third
+    if meta.firstGiftAvailable then
+        third = { action = "open_recharge", icon = "gem", label = "新手礼包",
+                  sub = "限时特惠", hot = true, tone = "gold" }
+    else
+        third = { action = "open_codex", icon = "codex", label = "敌机图鉴",
+                  sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
+                  hot = meta.codexClaimable, tone = "free" }
+    end
+    return {
+        { action = "open_shop", icon = "shop", label = "涂装商城",
+          sub = "零件换车漆", hot = false, tone = "free" },
+        { action = "open_pass", icon = "pass", label = "战斗档案",
+          sub = passSub, hot = meta.passClaimable, tone = "free" },
+        third,
+        { action = "open_rank", icon = "rank", label = "排行榜",
+          sub = "全服最高分", hot = false, tone = "free" },
+    }
+end
 
 ---@param ctx any
 ---@param w number
@@ -235,81 +314,58 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     local C = Colors()
     local L = GetMenuBarLayout()
 
-    -- 货币栏：软货币「零件」+ 氪金代币「钻石」。整条可点，进钻石商店。
+    -- ① 图鉴展示条（青色=已收录剪影，点击进图鉴）
+    MetaUI.DrawHomeFleet(ctx, w, meta)
+
+    -- ② 钱包连接器：左半零件（软货币）、右半钻石+充值（付费货币）。整条可点进充值。
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
-    D.icon(ctx, "parts", L.wallet.x + 12, L.wallet.y + 8, 32)
-    D.text(ctx, L.wallet.x + 52, L.wallet.y + 6, "零件", 15, C.dim)
-    D.text(ctx, L.wallet.x + 52, L.wallet.y + 22, string.format("%d", meta.parts or 0), 24, C.warn)
-    -- 钻石：金色＝付费货币；余额由服务端权威记账。
-    D.text(ctx, L.wallet.x + 196, L.wallet.y + 6, "钻石", 15, C.dim)
-    D.icon(ctx, "gem", L.wallet.x + 164, L.wallet.y + 10, 28)
-    D.text(ctx, L.wallet.x + 196, L.wallet.y + 22,
-        meta.offline and "—" or string.format("%d", meta.gems or 0), 24, C.warn)
-    D.text(ctx, L.wallet.x + 276, L.wallet.y + 22, "充值 ›", 15, C.warn)
-    D.text(ctx, L.wallet.x + L.wallet.w - 16, L.wallet.y + 8,
-        string.format("图鉴 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0), 15, C.dim,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    D.text(ctx, L.wallet.x + L.wallet.w - 16, L.wallet.y + 28,
-        string.format("最高分 %d", meta.highScore or 0), 15, C.dim,
+    D.icon(ctx, "parts", L.wallet.x + 14, L.wallet.y + 12, 32)
+    D.text(ctx, L.wallet.x + 54, L.wallet.y + 8, "零件", 15, C.dim)
+    D.text(ctx, L.wallet.x + 54, L.wallet.y + 26, string.format("%d", meta.parts or 0), 26, C.warn)
+    -- 中缝箭头：零件 → 消费闭环的方向提示
+    D.text(ctx, L.wallet.x + 178, L.wallet.y + 18, "→", 24, C.dim)
+    D.icon(ctx, "gem", L.wallet.x + 214, L.wallet.y + 14, 28)
+    D.text(ctx, L.wallet.x + 248, L.wallet.y + 8, "钻石", 15, C.dim)
+    D.text(ctx, L.wallet.x + 248, L.wallet.y + 26,
+        meta.offline and "—" or string.format("%d", meta.gems or 0), 26, C.warn)
+    D.text(ctx, L.wallet.x + L.wallet.w - 16, L.wallet.y + 20, "充值 ›", 18, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    -- 四个入口：任务带红点。
-    for i, def in ipairs(ENTRY_DEFS) do
-        local r = L.entries[i]
-        local hot = (def.action == "open_tasks" and meta.taskClaimable)
-            or (def.action == "open_codex" and meta.codexClaimable)
-        D.rect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
-        D.stroke(ctx, r.x, r.y, r.w, r.h, hot and C.warn or C.cyanDim, 6, hot and 1.6 or 1.2)
-        -- 图标 + 文字横排：图标占左，文字右移；缺图时文字自动回中。
-        local drewIcon = D.icon(ctx, def.icon, r.x + 12, r.y + (r.h - 28) * 0.5, 28)
-        D.text(ctx, drewIcon and (r.x + 46) or (r.x + r.w * 0.5), r.y + r.h * 0.5 - 9,
-            def.label, 18, hot and C.warn or C.text,
-            drewIcon and (NVG_ALIGN_LEFT + NVG_ALIGN_TOP) or (NVG_ALIGN_CENTER + NVG_ALIGN_TOP))
-        if hot then
-            D.rect(ctx, r.x + r.w - 14, r.y + 6, 8, 8, C.warn, 4)
+    -- ③ 今日福利（免费领零件）/ ④ 养成收藏（花零件与付费加速）。两行小标签区分语义。
+    local rows = {
+        { label = "今日福利", rects = L.daily, defs = GetDailyDefs(meta) },
+        { label = "养成收藏", rects = L.grow,  defs = GetGrowDefs(meta) },
+    }
+    for _, rowDef in ipairs(rows) do
+        D.text(ctx, 18, rowDef.rects[1].y - 14, rowDef.label, 15, C.cyanDim)
+        for i, def in ipairs(rowDef.defs) do
+            local rr = rowDef.rects[i]
+            local border
+            if def.hot then
+                border = def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.cyan)
+            else
+                border = C.cyanDim
+            end
+            D.rect(ctx, rr.x, rr.y, rr.w, rr.h, C.card, 6)
+            D.stroke(ctx, rr.x, rr.y, rr.w, rr.h, border, 6, def.hot and 1.6 or 1.1)
+            local drewIcon = D.icon(ctx, def.icon, rr.x + rr.w * 0.5 - 14, rr.y + 12, 28,
+                def.hot and 1 or 0.75)
+            D.text(ctx, rr.x + rr.w * 0.5, drewIcon and (rr.y + 46) or (rr.y + 16),
+                def.label, 16, def.hot and C.text or C.dim,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            local lines = D.wrap(ctx, def.sub, 13, rr.w - 10)
+            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 68, lines[1] or "", 13,
+                def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.dim),
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            if def.hot then
+                D.rect(ctx, rr.x + rr.w - 12, rr.y + 8, 8, 8, border, 4)
+            end
         end
     end
 
-    -- 每日签到（免费领取 → 青色，不用金色）
-    local s = L.signin
-    D.rect(ctx, s.x, s.y, s.w, s.h, meta.signInAvailable and C.card or C.widget, 6)
-    D.stroke(ctx, s.x, s.y, s.w, s.h,
-        meta.signInAvailable and C.cyan or C.cyanDim, 6, 1.5)
-    D.icon(ctx, "signin", s.x + 12, s.y + 16, 32, meta.signInAvailable and 1 or 0.4)
-    D.text(ctx, s.x + 54, s.y + 10, "每日签到", 17,
-        meta.signInAvailable and C.cyan or C.dim)
-    D.text(ctx, s.x + 54, s.y + 36,
-        meta.signInAvailable
-            and string.format("第 %d 天 · +%d 零件", meta.signInStreak or 1, meta.signInReward or 0)
-            or string.format("已连续 %d 天", meta.signInStreak or 0),
-        15, C.dim)
-
-    local p = L.supply
-    D.rect(ctx, p.x, p.y, p.w, p.h, meta.supplyAvailable and C.card or C.widget, 6)
-    D.stroke(ctx, p.x, p.y, p.w, p.h,
-        meta.supplyAvailable and C.cyan or C.cyanDim, 6, 1.5)
-    D.icon(ctx, "supply", p.x + 12, p.y + 16, 32, meta.supplyAvailable and 1 or 0.4)
-    D.text(ctx, p.x + 54, p.y + 10, "每日补给", 17,
-        meta.supplyAvailable and C.cyan or C.dim)
-    D.text(ctx, p.x + 54, p.y + 36,
-        meta.supplyAvailable and "待领取" or "明日再来", 15, C.dim)
-
-    for _, entry in ipairs({
-        { rect = L.pass, icon = "pass", name = "战斗档案", value = "等级 " .. tostring(meta.passLevel or 1) },
-        { rect = L.wheel, icon = "wheel", name = "幸运转盘", value = meta.wheelReady and "今日可抽" or "明日再来" },
-    }) do
-        local r = entry.rect
-        D.rect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
-        D.stroke(ctx, r.x, r.y, r.w, r.h, C.cyanDim, 6, 1)
-        D.icon(ctx, entry.icon, r.x + 8, r.y + 5, 32)
-        D.text(ctx, r.x + 46, r.y + 10, entry.name, 16, C.text)
-        D.text(ctx, r.x + r.w - 10, r.y + 12, entry.value, 14, C.dim,
-            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    end
-
     if meta.toast and meta.toast ~= "" then
-        D.text(ctx, w * 0.5, 904, meta.toast, 16, C.warn,
+        D.text(ctx, w * 0.5, 848, meta.toast, 16, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 end
@@ -317,14 +373,14 @@ end
 ---@return string|nil action
 function MetaUI.HitTestMenuBar(uiX, uiY, meta)
     local L = GetMenuBarLayout()
+    if Inside(L.fleet, uiX, uiY) then return "open_codex" end
     if Inside(L.wallet, uiX, uiY) then return "open_recharge" end
-    for i, def in ipairs(ENTRY_DEFS) do
-        if Inside(L.entries[i], uiX, uiY) then return def.action end
+    for i, def in ipairs(GetDailyDefs(meta)) do
+        if Inside(L.daily[i], uiX, uiY) then return def.action end
     end
-    if Inside(L.signin, uiX, uiY) then return "signin" end
-    if Inside(L.supply, uiX, uiY) then return "supply" end
-    if Inside(L.pass, uiX, uiY) then return "open_pass" end
-    if Inside(L.wheel, uiX, uiY) then return "open_wheel" end
+    for i, def in ipairs(GetGrowDefs(meta)) do
+        if Inside(L.grow[i], uiX, uiY) then return def.action end
+    end
     return nil
 end
 
@@ -346,7 +402,8 @@ end
 ---@param meta MetaState
 function MetaUI.DrawSupplyPopup(ctx, w, meta)
     local C = Colors()
-    D.backdrop(ctx, 0, 92, w, 960 - 92)
+    -- v0.12.6：菜单态不再绘制战斗 HUD，弹窗遮罩必须铺满整屏（旧值从 y=92 起）。
+    D.backdrop(ctx, 0, 0, w, 960)
     local x, y, sw, sh = 40, 300, w - 80, 340
     D.shell(ctx, x, y, sw, sh, 44)
     D.rect(ctx, x, y + 44, 3, 20, C.cyan, 0)

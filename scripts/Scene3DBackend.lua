@@ -405,8 +405,10 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.12.5"
+local BUILD_VERSION = "0.12.6"
 local GAME_TITLE = "击碎，飞机大战"
+-- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
+local GAME_SHORT_TITLE = "击碎飞机"
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -1267,54 +1269,64 @@ local function DrawHud(ctx, game, presentation)
     if boss then DrawBossPhaseBar(ctx, game, boss) end
 end
 
+-- v0.12.6：像素超大打字 logo。UTF-8 逐字排版，青色/亮白交替 + 硬偏移阴影，
+-- 保持 zpix 块状像素语言（与 HUD/卡面同源），不使用外部图片资源。
+local function DrawPixelLogo(ctx, cx, topY, title, size, bodyColor, shadowColor)
+    local count = 0
+    local chars = {}
+    for p in utf8.codes(title) do
+        count = count + 1
+        chars[count] = utf8.char(p)
+    end
+    local spacing = math.floor(size * 0.08)
+    local totalW = count * size + (count - 1) * spacing
+    local startX = cx - totalW * 0.5
+    for i = 1, count do
+        local x = startX + (i - 1) * (size + spacing) + size * 0.5
+        local accent = (i == 1 or i == count)
+        -- 硬阴影：右下偏移的暗青层
+        DrawPixelText(ctx, x + size * 0.06, topY + size * 0.06, chars[i], size,
+            shadowColor or C.cyanDim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        -- 主层：首尾字青色，中间亮白
+        DrawPixelText(ctx, x, topY, chars[i], size,
+            accent and bodyColor or C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+end
+
 local function DrawMenu(ctx, game, meta)
     nvgSave(ctx)
-    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgIntersectScissor(ctx, 0, 0, game.width, game.height)
     nvgGlobalAlpha(ctx, ModalIntro(game))
-    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    nvgFillColor(ctx, nvgRGBA(C.bg[1], C.bg[2], C.bg[3], 255))
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, 0, game.width, game.height)
+    nvgFill(ctx)
+    -- 装饰：角标 + 断线边框 + 局部微型网格（dark-tech 骨架，贴边不穿正文）
+    DrawCornerBrackets(ctx, 6, 6, game.width - 12, game.height - 12,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 150}, 22, 1.5)
+    DrawBrokenFrame(ctx, 3, 3, game.width - 6, game.height - 6,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80}, 48)
+    DrawMicroGrid(ctx, 16, 84, 96, 120, 12, 16)
+    DrawMicroGrid(ctx, game.width - 112, game.height - 220, 96, 140, 12, 14)
 
-    local winX, winY = 18, 108
-    local winW, winH = game.width - 36, 540
-    DrawWindowShell(ctx, winX, winY, winW, winH, 48)
-    DrawPixelText(ctx, winX + 18, winY + 10, GAME_TITLE, 22, C.cyan)
-    DrawPixelText(ctx, winX + winW - 16, winY + 14, "v" .. BUILD_VERSION, 14, C.dim,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawBrokenFrame(ctx, winX + 10, winY + 52, winW - 20, winH - 64, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 36)
-    DrawEdgeTicks(ctx, winX + 18, winY + 50, winW - 36, 17, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80})
-
-    DrawPixelText(ctx, game.width * 0.5, 184, "击碎飞机", 36, C.text,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 228, "拖拽发射重卡，一块一块打掉敌机", 18, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 254, "别让飞机飞过底部防线", 18, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    -- 主操作：青底深字胶囊。
-    DrawRect(ctx, 40, 292, game.width - 80, 76, C.cyan, 8)
-    DrawPixelText(ctx, game.width * 0.5, 302, "点击开始", 28, C.ink,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 338, "松手确认", 16, C.ink,
+    -- ① 像素超大打字标题（用户点名：logo 本身要大字化）
+    DrawPixelLogo(ctx, game.width * 0.5, 96, GAME_SHORT_TITLE, 104, C.cyan)
+    DrawSegmentedRule(ctx, 120, 218, game.width - 240, 12, C.cyanDim)
+    DrawPixelText(ctx, game.width * 0.5, 232, "拖拽发射重卡 · 逐块撕碎敌机编队", 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, 40, 384, "本局目标", 18, C.cyan)
-    DrawBluePanel(ctx, 40, 404, game.width - 80, 112, C.rail, C.cyanDim, 6)
-    DrawMicroGrid(ctx, 48, 412, game.width - 96, 96, 12, 18)
-    DrawPixelText(ctx, 58, 416, "防线生命", 15, C.dim)
-    DrawPixelText(ctx, 58, 436, "100", 30, C.text)
-    DrawPixelText(ctx, 138, 450, "点", 15, C.dim)
-    DrawPixelText(ctx, 292, 416, "弹种", 15, C.dim)
-    DrawPixelText(ctx, 292, 436, "4", 30, C.text)
-    DrawPixelText(ctx, 334, 450, "种轮换", 15, C.dim)
-    DrawSegmentedRule(ctx, 58, 488, game.width - 116, 10, C.cyanDim)
+    -- ② 主 CTA（开局点击/松手确认仍走原有 startArmed 通道，纯视觉引导）
+    local ctaY = 262
+    DrawRect(ctx, 40, ctaY, game.width - 80, 92, C.cyan, 8)
+    DrawPixelText(ctx, game.width * 0.5, ctaY + 16, "开始战斗", 34, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, ctaY + 58, "点 击 · 松 手 确 认", 16, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, ctaY + 102,
+        "v" .. BUILD_VERSION .. " · " .. GAME_TITLE, 14, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, 40, 532, "怎么玩", 18, C.cyan)
-    DrawBluePanel(ctx, 40, 554, game.width - 80, 86, C.card, C.cyanDim, 6)
-    DrawPixelText(ctx, 58, 564, "拖拽瞄准", 15, C.dim)
-    DrawPixelText(ctx, 58, 584, "松手发射", 18, C.text)
-    DrawPixelText(ctx, 292, 564, "右上角按钮", 15, C.dim)
-    DrawPixelText(ctx, 292, 584, "暂停战斗", 18, C.text)
-
-    -- v0.11.0 商业化：菜单下半区（货币栏 / 四入口 / 签到 / 每日补给）。
+    -- ③ 变现闭环三段式：钱包连接器 + 今日福利(赚) + 养成收藏(花) + 图鉴/排行（布局/命中同源 MetaUI）
     if meta then MetaUI.DrawMenuBar(ctx, game.width, meta) end
     nvgRestore(ctx)
 end
@@ -1971,7 +1983,11 @@ local function RenderOverlay(game, presentation, meta)
     nvgScale(vg_, scale_, scale_)
     nvgTranslate(vg_, offsetX_, offsetY_)
     nvgGlobalAlpha(vg_, 1.0)
-    DrawHud(vg_, game, presentation)
+    -- v0.12.6：菜单不再画战斗 HUD（分数/波次/防线对局读数不属于首页）——
+    -- 顶部钱包条由 MetaUI.DrawMenuBar 提供，HUD 只在有对局语义的状态出现。
+    if game.state ~= "menu" then
+        DrawHud(vg_, game, presentation)
+    end
     if game.state == "playing" then
         DrawItemSlots(vg_, game)
         DrawPullHint(vg_, game)

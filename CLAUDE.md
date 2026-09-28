@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.6（主菜单重设计批次：像素大 logo + 菜单去 HUD + 变现闭环三段式）：
+  - **像素超大打字 logo**：`DrawPixelLogo`（UTF-8 逐字排版、104px、首尾青/中间白、右下硬偏移阴影，zpix 程序化，无外部图片）。短名 `GAME_SHORT_TITLE="击碎飞机"` 用于 logo；对外全名 `GAME_TITLE` 契约不变（窗口/发布名仍「击碎，飞机大战」，logo 下方小字带全名）。
+  - **菜单态隐藏战斗 HUD**：`RenderOverlay` 只在 `game.state ~= "menu"` 时画 `DrawHud`（分数/波次/防线对局读数不属于首页）；菜单改全屏自绘（bg 实心 + 角标/断线/微型网格），窗口壳与「本局目标」填充块删除；`DrawSupplyPopup` backdrop 从 y=92 改铺满 0..960（旧值假设 HUD 存在）。
+  - **变现闭环三段式**（用户选定方案）：`GetMenuBarLayout` 全部重排——图鉴剪影展示条(y390, 8 机 data-driven 青=已收录, 点击进图鉴) → 钱包连接器(y496, 零件→钻石→充值, 整条点击开充值) → 「今日福利」行(y588: 签到/补给/任务/转盘, 免费青·广告绿) → 「养成收藏」行(y716: 商城/档案/图鉴或首充礼包/排行, 付费金)。`GetDailyDefs/GetGrowDefs(meta)` 纯函数供绘制与命中同源；`HitTestMenuBar` 完全由这两个 defs + layout 驱动（新增 fleet→open_codex）；首充限时窗内 third 槽被「新手礼包」顶替。卡片为竖构：图标居中 + 名称 + 一行 sub。
+  - CTA「开始战斗」(y262 高 92) 保留松手确认（startArmed 通道不变）；toast y=904→848。BUILD_VERSION→0.12.6。
+  - 验证：LSP 0 Error、多人 build+预览上传。⚠️ 待 Preview：logo 在真机 zpix 下的字距/阴影观感、三段式卡片信息密度、菜单无 HUD 后弹窗遮罩。
 - 版本: 0.12.5（真机反馈整改批次：广告收敛 + 出口闭环 + 换皮通知 + 道具竖列 + 图标增强）：
   - **升级面板广告大瘦身（用户否决 v0.12.4：「广告多到玩家会骂娘」）**：删除选卡倒计时/+30 秒广告/超时自动选卡/看广告解锁第 4 张/单卡升格/额外再选全部 5 触点；`Game.Update(dt)` 恢复单参数。面板只剩 2 个广告位：免费重抽 + 看广告重抽必出稀有，另有卡片「锁定/保留」（免费）。`GetUpgradeChoices` 不再补 `__locked__` 占位卡；规则层删 `PickExtraChoice/ExtendUpgradeTime/CanUnlockFourthChoice/UnlockFourthChoice/CanBoostChoice/BoostUpgrade/CanArmExtraPick/ArmExtraPick`；`HitTestUpgradePanel` 只剩 reroll_free/reroll_ad/hold(先于卡体)/card。
   - **局内道具改右上角竖列**：`GetItemPanelLayout()`（收起标签 `{x=DESIGN_W-52,y=100,w=44,h=36}`，展开 3×52 槽 `y=146+(i-1)*58`）；`itemPanelOpen_` 由后端持有，`Backend.ToggleItemPanel/SetItemPanelOpen/IsItemPanelOpen`；`HitTestItemSlot` 返回 `("toggle"|"slot"), index`。收起标签带青色数量角标/绿色可领点；GrantItem 成功后保持展开。
@@ -60,7 +66,13 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.12.5 真机反馈整改批次（升级面板广告瘦身、道具右上角竖列、广告在途冻结、暂停/结算回主菜单出口、平台通知与付费轨换皮为顶端通知条、4 张新图标与 HUD 增强）
+- 上次交付: v0.12.6 主菜单重设计批次（像素大 logo、菜单隐藏战斗 HUD、变现闭环三段式：图鉴条/钱包连接器/今日福利/养成收藏）
+
+## 本批次新增避雷（v0.12.6 主菜单重设计）
+- ⚠️ **菜单态隐藏 HUD 后，所有假设「顶部有 92px HUD」的层都要自查（v0.12.6）**：`RenderOverlay` 里 menu 态不再画 `DrawHud`，凡是遮罩/弹窗从 `HUD_HEIGHT(92)` 起画的（如 `DrawSupplyPopup` 的 backdrop）会在顶部留 92px 不遮断的缝——全屏模态一律从 0 起铺满。改渲染分层时 grep `MENU_CONTENT_TOP`/`HUD_HEIGHT` 找齐依赖方。
+- ⚠️ **变现入口重组走「defs 纯函数」模式（v0.12.6）**：把两行卡片的 action/icon/label/sub/hot/tone 收进 `GetDailyDefs(meta)/GetGrowDefs(meta)` 纯函数，绘制遍历 defs+layout、`HitTestMenuBar` 用同一对 defs+layout 判定——新增/挪动入口只改 defs，命中永不漂移。行标签字符串禁止参与分支判断（用 rects 数组而不是给 rowDef 塞单 rect 再特判）。
+- ⚠️ **对外全名契约与 logo 短名分开（v0.12.6）**：像素大标题用 `GAME_SHORT_TITLE`（4 字才撑得起 104px），但窗口标题/发布名/CTA 下方小字仍是「击碎，飞机大战」——别把 D-052 的对外名契约"顺手"改成短名。
+- ⚠️ **闭环式变现要有"连接器"视觉（v0.12.6 用户拍板）**：玩家看不出零件/钻石/充值的关系=没整合。钱包条做成「零件 →(箭头) 钻石 →充值」横排，福利行标「今日福利」、消耗行标「养成收藏」，三色边框（青免费/绿广告/金付费）直接落在卡片描边上，语义一眼分层。
 
 ## 本批次新增避雷（v0.12.5 真机反馈整改）
 - 🔴 **激励视频在途必须冻结玩法推进（v0.12.5）**：浏览器 embed 覆盖时游戏 Update 循环照常跑，广告回来敌人已压线。正确门控在编排层 `HandleUpdate`：`AdService.IsInFlight() && snapshot.state=="playing"` 时跳过 `Game.Update`，表现层照常衰减。⚠️ 不要用 `IsBusy()`（含 3s 冷却）——会把广告关闭后的 3 秒也冻住；结算/升级/暂停态本就停玩法无需处理。
