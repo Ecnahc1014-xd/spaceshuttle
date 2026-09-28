@@ -654,6 +654,33 @@ local function MenuMetaBlocksRelease()
     return gameSnapshot ~= nil and gameSnapshot.state == "menu" and IsMetaCapturing()
 end
 
+-- v0.11.0 商业化 P4：局内道具槽。有点数就即刻使用；空槽且未领取过则看广告获取。
+-- 返回 true 表示点击已被消费（不再穿透成拖拽起手）。
+---@return boolean handled
+local function TryUseItemAt(screenX, screenY)
+    if not gameSnapshot or gameSnapshot.state ~= "playing" then return false end
+    local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+    local index = RenderBackend.HitTestItemSlot(uiX, uiY, gameSnapshot)
+    if not index then return false end
+    local item = gameSnapshot.items and gameSnapshot.items[index]
+    if not item then return false end
+
+    if (item.charges or 0) > 0 then
+        Game.UseItem(item.key)   -- 效果与飘字都由规则层事件驱动
+        return true
+    end
+    if item.canGrant then
+        ShowAd(function()
+            if Game.GrantItem(item.key) then
+                print("[Main] item granted via ad: " .. item.key)
+            end
+        end)
+        return true
+    end
+    Presentation.SetAdToast(item.name .. " 本局已领取")
+    return true
+end
+
 -- v0.11.0 商业化：暂停补给站的看广告按钮。返回 true 表示点击已被消费（不触发恢复）。
 ---@return boolean handled
 local function TryPauseSupplyAt(screenX, screenY)
@@ -949,6 +976,8 @@ function HandleMouseDown(eventType, eventData)
         return
     end
     -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
+    -- v0.11.0 商业化 P4：道具槽优先于拖拽起手。
+    if TryUseItemAt(screenX, screenY) then return end
     if TryPauseSupplyAt(screenX, screenY) then return end
     -- v0.11.0 商业化：主菜单商业区/功能面板优先消费点击。
     if TryMenuMetaAt(screenX, screenY) then return end
@@ -995,6 +1024,8 @@ function HandleTouchBegin(eventType, eventData)
         return
     end
     -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
+    -- v0.11.0 商业化 P4：道具槽优先于拖拽起手。
+    if TryUseItemAt(screenX, screenY) then return end
     if TryPauseSupplyAt(screenX, screenY) then return end
     -- v0.11.0 商业化：主菜单商业区/功能面板优先消费触摸。
     if TryMenuMetaAt(screenX, screenY) then return end

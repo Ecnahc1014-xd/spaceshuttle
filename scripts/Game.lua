@@ -130,6 +130,8 @@ local gameState = "menu"
 local score = 0
 local highScore = 0
 local baseHp = BASE_HP
+local baseShield = 0               -- 局内护盾吸收值（道具槽「护盾」提供）
+local ResetItems                   -- 前向声明：ResetGame 里要调用；后定义会退化成全局查找
 local wave = 1
 local elapsed = 0
 local waveCooldown = 0
@@ -412,6 +414,8 @@ ResetGame = function()
     partsDoubled = false
     lastSettledParts = 0
     runAircraft = {}
+    baseShield = 0
+    ResetItems()
     upgradeRerollFreeUsed = false
     extraPanelArmed = 0
     fourthChoiceUnlocked = false
@@ -1414,6 +1418,128 @@ function Game.PauseRarePick()
     return true
 end
 
+-- ============================================================================
+-- 局内道具槽（v0.11.0 商业化 P4）。
+-- 三格：炸弹 / 冰冻 / 护盾。每格单局可用广告获取 1 次，获取后点一下立即生效。
+-- 规则层只管「能不能拿 / 拿到没 / 用了什么效果」，广告播放由编排层决定。
+-- ============================================================================
+
+---@class ItemDef
+---@field key string
+---@field name string
+---@field color integer[] 槽位主色（UI 只读）
+
+---@type ItemDef[]
+local ITEM_DEFS = {
+    { key = "bomb",   name = "炸弹", color = {196, 120, 255} },
+    { key = "freeze", name = "冰冻", color = {120, 216, 255} },
+    { key = "shield", name = "护盾", color = {90, 200, 255} },
+}
+local ITEM_BY_KEY = {}
+for i = 1, #ITEM_DEFS do ITEM_BY_KEY[ITEM_DEFS[i].key] = ITEM_DEFS[i] end
+
+---@type table<string, integer>
+local itemCharges = { bomb = 0, freeze = 0, shield = 0 }  -- 槽位存量
+---@type table<string, boolean>
+local itemGranted = {}                                     -- 本局是否已用广告领过
+local FREEZE_SECONDS = 4.0                                 -- 冰冻持续
+local SHIELD_POINTS = 30                                   -- 护盾吸收量
+
+ResetItems = function()
+    itemCharges = { bomb = 0, freeze = 0, shield = 0 }
+    itemGranted = {}
+end
+
+---@param key string
+---@return boolean
+function Game.CanGrantItem(key)
+    if gameState ~= "playing" then return false end
+    if not ITEM_BY_KEY[key] then return false end
+    return itemGranted[key] ~= true
+end
+
+---@param key string
+---@return integer
+function Game.GetItemCharges(key)
+    return itemCharges[key] or 0
+end
+
+-- 广告看完后发放到槽位。
+---@param key string
+---@return boolean ok
+function Game.GrantItem(key)
+    if not Game.CanGrantItem(key) then return false end
+    itemGranted[key] = true
+    itemCharges[key] = (itemCharges[key] or 0) + 1
+    Emit("item_granted", {key = key})
+    print("[Game] item granted: " .. key)
+    return true
+end
+
+---@param key string
+---@return boolean
+function Game.CanUseItem(key)
+    if gameState ~= "playing" then return false end
+    return (itemCharges[key] or 0) > 0
+end
+
+-- 立即生效。炸弹=全场每机炸掉数格；冰冻=全场冻结；护盾=防线获得吸收值。
+---@param key string
+---@return boolean ok
+function Game.UseItem(key)
+    if not Game.CanUseItem(key) then return false end
+    itemCharges[key] = itemCharges[key] - 1
+
+    if key == "bomb" then
+        local popped = 0
+        for _, enemy in ipairs(veggies) do
+            if not enemy.dead then
+                local live = {}
+                for _, brick in ipairs(enemy.bricks) do
+                    if brick.alive then live[#live + 1] = brick end
+                end
+                -- 每机随机炸掉至多 4 格，避免一键清场破坏节奏
+                for _ = 1, math.min(4, #live) do
+                    local idx = RandomInt(1, #live)
+                    local brick = table.remove(live, idx)
+                    EjectBrick(enemy, brick)
+                    popped = popped + 1
+                end
+            end
+        end
+        partsEarned = partsEarned + math.floor(popped * PARTS_PER_BRICK)
+        Emit("item_used", {key = key, count = popped})
+        print("[Game] bomb used, bricks=" .. popped)
+        return true
+    end
+
+    if key == "freeze" then
+        for _, enemy in ipairs(veggies) do
+            if not enemy.dead then
+                enemy.frozen = FREEZE_SECONDS
+                enemy.freezeRatio = 1
+            end
+        end
+        Emit("item_used", {key = key, duration = FREEZE_SECONDS})
+        print("[Game] freeze used for " .. FREEZE_SECONDS .. "s")
+        return true
+    end
+
+    if key == "shield" then
+        baseShield = baseShield + SHIELD_POINTS
+        Emit("item_used", {key = key, amount = SHIELD_POINTS})
+        print("[Game] shield used, shield=" .. baseShield)
+        return true
+    end
+
+    return false
+end
+
+---@return ItemDef[]
+function Game.GetItemDefs()
+    return ITEM_DEFS
+end
+
 local function RotateVelocity(vx, vy, degrees)
     local radians = math.rad(degrees)
     local c = math.cos(radians)
@@ -1987,7 +2113,13 @@ UpdateEnemies = function(dt)
     if #breachedRows > 0 and gameState ~= "gameover" then
         local baseDamage = math.ceil(#breachedRows * BRICK_BASE_DAMAGE)
         local totalDamage = math.max(1, baseDamage + BALL_TUNING.lineDamageBonus)
-        baseHp = baseHp - totalDamage
+        -- 护盾优先吸收，吸完还有剩才扣血。
+        if baseShield > 0 then
+            local absorbed = math.min(baseShield, totalDamage)
+            baseShield = baseShield - absorbed
+            totalDamage = totalDamage - absorbed
+        end
+        if totalDamage > 0 then baseHp = baseHp - totalDamage end
         -- 防线反馈：一条聚合事件（震屏/冲击波/飘字），碎裂方块的飞箱由各自事件呈现。
         local focus = breachedRows[1]
         Emit("base_hit", {x = focus.x, y = DANGER_Y, brick = true, damage = totalDamage, rows = #breachedRows})
@@ -2416,6 +2548,18 @@ function Game.GetSnapshot()
     s.pauseHealLeft = Game.GetPauseHealLeft()
     s.canPauseRarePick = Game.CanPauseRarePick()
     s.pauseRareLeft = Game.GetPauseRareLeft()
+    -- 局内道具槽（渲染层只读）：每格 {key,name,color,charges,canGrant}
+    local items = {}
+    for i = 1, #ITEM_DEFS do
+        local def = ITEM_DEFS[i]
+        items[i] = {
+            key = def.key, name = def.name, color = def.color,
+            charges = itemCharges[def.key] or 0,
+            canGrant = Game.CanGrantItem(def.key),
+        }
+    end
+    s.items = items
+    s.baseShield = baseShield
     return s
 end
 

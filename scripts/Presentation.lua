@@ -57,6 +57,9 @@ local FEEDBACK_MAP = {
     marble_reloaded = {"reloadPulse"},
     game_reset = {"fullReset"},
     base_revived = {"reviveConfirm"},
+    -- v0.11.0 商业化 P4：局内道具槽
+    item_used = {"itemUsed"},
+    item_granted = {"itemGranted"},
 }
 
 local function GetBrickKey(enemyId, col, row)
@@ -311,6 +314,16 @@ local FEEDBACK_HANDLERS = {
     reviveConfirm = function(event)
         SpawnFloatText(270, 430, "复活  +" .. tostring(event.hp or 50) .. " 血", {0, 229, 208}, 1.2)
         screenShake = math.max(screenShake, 0.12)
+    end,
+    -- v0.11.0 商业化 P4：道具槽反馈（只写瞬时状态，不触达规则层）
+    itemUsed = function(event)
+        local label = ({ bomb = "炸弹引爆", freeze = "全场冻结", shield = "护盾展开" })[event.key]
+            or "道具生效"
+        SpawnFloatText(270, 470, label, {120, 255, 160}, 1.4)
+        screenShake = math.max(screenShake, 0.18)
+    end,
+    itemGranted = function(event)
+        SpawnFloatText(270, 780, "道具已入库 · 点一下使用", {120, 255, 160}, 1.0)
     end,
     -- marble_removed 无需维护拖尾状态。
 }

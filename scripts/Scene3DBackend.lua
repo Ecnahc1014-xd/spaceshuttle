@@ -921,6 +921,56 @@ local function DrawPullHint(ctx, game)
     nvgRestore(ctx)
 end
 
+-- ============================================================================
+-- v0.11.0 商业化 P4：局内道具槽（3 格，位于 Dock 之上）。
+-- 视觉几何与命中判定共用 GetItemSlotRects，禁止在 main.lua 另写常量。
+-- ============================================================================
+
+---@return UiRect[]
+local function GetItemSlotRects()
+    local slotW, slotH, gap = 131, 64, 22
+    local totalW = 3 * slotW + 2 * gap
+    local startX = (DESIGN_W - totalW) * 0.5
+    local y = 752
+    local rects = {}
+    for i = 1, 3 do
+        rects[i] = { x = startX + (i - 1) * (slotW + gap), y = y, w = slotW, h = slotH }
+    end
+    return rects
+end
+
+local function DrawItemSlots(ctx, game)
+    local items = game.items
+    if not items then return end
+    local rects = GetItemSlotRects()
+    for i = 1, #rects do
+        local def = items[i]
+        if def then
+            local r = rects[i]
+            local col = def.color or C.cyan
+            local owned = (def.charges or 0) > 0
+            if owned then
+                DrawBluePanel(ctx, r.x, r.y, r.w, r.h, C.card, col, 6)
+                DrawRect(ctx, r.x, r.y, 3, r.h, col, 0)
+                DrawPixelText(ctx, r.x + 14, r.y + 8, "×" .. tostring(def.charges), 22, col)
+                DrawPixelText(ctx, r.x + 14, r.y + 38, def.name or "", 17, C.text)
+                DrawPixelText(ctx, r.x + r.w - 12, r.y + 42, "点击使用", 14, C.dim,
+                    NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+            elseif def.canGrant then
+                -- 绿色＝看广告（与全局三色语义一致）
+                DrawRect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
+                DrawStroke(ctx, r.x, r.y, r.w, r.h, C.ad, 6, 1.5)
+                DrawPixelText(ctx, r.x + 12, r.y + 10, def.name or "", 16, C.dim)
+                DrawPixelText(ctx, r.x + 12, r.y + 34, "看广告 获取", 17, C.ad)
+            else
+                DrawRect(ctx, r.x, r.y, r.w, r.h, C.widget, 6)
+                DrawStroke(ctx, r.x, r.y, r.w, r.h, C.cyanDim, 6, 1)
+                DrawPixelText(ctx, r.x + 12, r.y + 22, def.name .. " 已领取", 16, C.dim)
+            end
+        end
+    end
+end
+
 local function DrawLetterboxBackground(ctx, width, height)
     -- NanoVG 位于 3D Viewport 之后：只填充设计画布外的 letterbox，绝不能覆盖画布内部。
     nvgFillColor(ctx, nvgRGBA(C.bg[1], C.bg[2], C.bg[3], 255))
@@ -2077,6 +2127,20 @@ function Backend.HitTestPausePanel(uiX, uiY, game)
     end
     if inside(layout.heal) then return "pause_heal" end
     if inside(layout.rare) then return "pause_rare" end
+    return nil
+end
+
+-- v0.11.0 商业化 P4：局内道具槽命中判定（与 DrawItemSlots 同源）。
+---@return integer|nil index
+function Backend.HitTestItemSlot(uiX, uiY, game)
+    local items = (game and game.items) or {}
+    local rects = GetItemSlotRects()
+    for i = 1, #rects do
+        local r = rects[i]
+        if items[i] and uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h then
+            return i
+        end
+    end
     return nil
 end
 
