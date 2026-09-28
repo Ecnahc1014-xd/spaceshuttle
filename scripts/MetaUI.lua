@@ -60,6 +60,7 @@ local MetaUI = {}
 ---@field rule fun(ctx:any, x:number, y:number, w:number, segments:number, color:table, active:number|nil)
 ---@field backdrop fun(ctx:any, x:number, y:number, w:number, h:number)
 ---@field wrap fun(ctx:any, s:string, size:number, maxW:number) 返回行数组
+---@field icon fun(ctx:any, key:string, x:number, y:number, size:number, alpha:number|nil) 绘制 32×32 像素图标（可选资源，返回 false 表示未加载）
 
 ---@type MetaUiDeps
 local D = nil
@@ -198,10 +199,10 @@ local function GetMenuBarLayout()
 end
 
 local ENTRY_DEFS = {
-    { action = "open_shop",  label = "商城" },
-    { action = "open_codex", label = "图鉴" },
-    { action = "open_tasks", label = "任务" },
-    { action = "open_rank",  label = "排行" },
+    { action = "open_shop",  label = "商城", icon = "shop" },
+    { action = "open_codex", label = "图鉴", icon = "codex" },
+    { action = "open_tasks", label = "任务", icon = "task" },
+    { action = "open_rank",  label = "排行", icon = "rank" },
 }
 
 ---@param ctx any
@@ -214,8 +215,9 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     -- 货币栏：软货币「零件」+ 氪金代币「钻石」。整条可点，进钻石商店。
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
-    D.text(ctx, L.wallet.x + 16, L.wallet.y + 6, "零件", 15, C.dim)
-    D.text(ctx, L.wallet.x + 16, L.wallet.y + 22, string.format("%d", meta.parts or 0), 24, C.warn)
+    D.icon(ctx, "parts", L.wallet.x + 12, L.wallet.y + 8, 32)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 6, "零件", 15, C.dim)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 22, string.format("%d", meta.parts or 0), 24, C.warn)
     -- 钻石：金色＝付费货币；余额由服务端权威记账。
     D.text(ctx, L.wallet.x + 156, L.wallet.y + 6, "钻石", 15, C.dim)
     D.text(ctx, L.wallet.x + 156, L.wallet.y + 22,
@@ -235,8 +237,11 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
             or (def.action == "open_codex" and meta.codexClaimable)
         D.rect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
         D.stroke(ctx, r.x, r.y, r.w, r.h, hot and C.warn or C.cyanDim, 6, hot and 1.6 or 1.2)
-        D.text(ctx, r.x + r.w * 0.5, r.y + r.h * 0.5 - 9, def.label, 18,
-            hot and C.warn or C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        -- 图标 + 文字横排：图标占左，文字右移；缺图时文字自动回中。
+        local drewIcon = D.icon(ctx, def.icon, r.x + 12, r.y + (r.h - 28) * 0.5, 28)
+        D.text(ctx, drewIcon and (r.x + 46) or (r.x + r.w * 0.5), r.y + r.h * 0.5 - 9,
+            def.label, 18, hot and C.warn or C.text,
+            drewIcon and (NVG_ALIGN_LEFT + NVG_ALIGN_TOP) or (NVG_ALIGN_CENTER + NVG_ALIGN_TOP))
         if hot then
             D.rect(ctx, r.x + r.w - 14, r.y + 6, 8, 8, C.warn, 4)
         end

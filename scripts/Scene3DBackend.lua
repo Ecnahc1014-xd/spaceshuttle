@@ -926,6 +926,63 @@ end
 -- 视觉几何与命中判定共用 GetItemSlotRects，禁止在 main.lua 另写常量。
 -- ============================================================================
 
+-- ============================================================================
+-- v0.11.0 商业化：32×32 像素图标表。
+-- ⚠️ 全部按「可选资源」处理：缺图只跳过该图标，绝不进 Init 的成功条件。
+-- ⚠️ 必须用 NVG_IMAGE_NEAREST 采样，否则像素画缩放会糊成一片。
+-- ============================================================================
+
+local ICON_PATHS = {
+    bomb   = "image/ui_icon_bomb_20260928005024.png",
+    freeze = "image/ui_icon_freeze_20260928005014.png",
+    shield = "image/ui_icon_shield_20260928005021.png",
+    parts  = "image/ui_icon_parts_20260928005017.png",
+    gem    = "image/ui_icon_gem_20260928005033.png",
+    shop   = "image/ui_icon_shop_20260928005019.png",
+    codex  = "image/ui_icon_codex_20260928005024.png",
+    task   = "image/ui_icon_task_20260928005023.png",
+    rank   = "image/ui_icon_rank_20260928005022.png",
+    wheel  = "image/ui_icon_wheel_20260928005018.png",
+}
+
+---@type table<string, integer>
+local iconImages_ = {}
+
+local function LoadIcons()
+    iconImages_ = {}
+    local loaded = 0
+    for key, path in pairs(ICON_PATHS) do
+        local ok, img = pcall(function()
+            return nvgCreateImage(vg_, path, NVG_IMAGE_NEAREST)
+        end)
+        if ok and type(img) == "number" and img >= 0 then
+            iconImages_[key] = img
+            loaded = loaded + 1
+        end
+    end
+    -- ⚠️ ICON_PATHS 是字符串键表，`#` 恒为 0，必须手动计数。
+    local total = 0
+    for _ in pairs(ICON_PATHS) do total = total + 1 end
+    print("[Scene3DBackend] pixel icons loaded=" .. loaded .. "/" .. total)
+end
+
+---@param ctx any
+---@param key string
+---@param x number
+---@param y number
+---@param size number
+---@param alpha number|nil
+---@return boolean drawn
+local function DrawIcon(ctx, key, x, y, size, alpha)
+    local img = iconImages_[key]
+    if not img then return false end
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x, y, size, size)
+    nvgFillPaint(ctx, nvgImagePattern(ctx, x, y, size, size, 0, img, alpha or 1))
+    nvgFill(ctx)
+    return true
+end
+
 ---@return UiRect[]
 local function GetItemSlotRects()
     local slotW, slotH, gap = 131, 64, 22
@@ -949,23 +1006,28 @@ local function DrawItemSlots(ctx, game)
             local r = rects[i]
             local col = def.color or C.cyan
             local owned = (def.charges or 0) > 0
+            local iconSize = 32
+            local iconY = r.y + (r.h - iconSize) * 0.5
             if owned then
                 DrawBluePanel(ctx, r.x, r.y, r.w, r.h, C.card, col, 6)
                 DrawRect(ctx, r.x, r.y, 3, r.h, col, 0)
-                DrawPixelText(ctx, r.x + 14, r.y + 8, "×" .. tostring(def.charges), 22, col)
-                DrawPixelText(ctx, r.x + 14, r.y + 38, def.name or "", 17, C.text)
-                DrawPixelText(ctx, r.x + r.w - 12, r.y + 42, "点击使用", 14, C.dim,
+                DrawIcon(ctx, def.key, r.x + 10, iconY, iconSize, 1)
+                DrawPixelText(ctx, r.x + 50, r.y + 6, "×" .. tostring(def.charges), 22, col)
+                DrawPixelText(ctx, r.x + 50, r.y + 36, def.name or "", 17, C.text)
+                DrawPixelText(ctx, r.x + r.w - 10, r.y + 44, "点击使用", 14, C.dim,
                     NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
             elseif def.canGrant then
                 -- 绿色＝看广告（与全局三色语义一致）
                 DrawRect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
                 DrawStroke(ctx, r.x, r.y, r.w, r.h, C.ad, 6, 1.5)
-                DrawPixelText(ctx, r.x + 12, r.y + 10, def.name or "", 16, C.dim)
-                DrawPixelText(ctx, r.x + 12, r.y + 34, "看广告 获取", 17, C.ad)
+                DrawIcon(ctx, def.key, r.x + 10, iconY, iconSize, 0.45)
+                DrawPixelText(ctx, r.x + 50, r.y + 8, def.name or "", 16, C.dim)
+                DrawPixelText(ctx, r.x + 50, r.y + 32, "看广告 获取", 17, C.ad)
             else
                 DrawRect(ctx, r.x, r.y, r.w, r.h, C.widget, 6)
                 DrawStroke(ctx, r.x, r.y, r.w, r.h, C.cyanDim, 6, 1)
-                DrawPixelText(ctx, r.x + 12, r.y + 22, def.name .. " 已领取", 16, C.dim)
+                DrawIcon(ctx, def.key, r.x + 10, iconY, iconSize, 0.22)
+                DrawPixelText(ctx, r.x + 50, r.y + 22, "已领取", 16, C.dim)
             end
         end
     end
@@ -1814,6 +1876,7 @@ function Backend.Init()
         rule = DrawSegmentedRule,
         backdrop = DrawModalBackdrop,
         wrap = WrapTextLines,
+        icon = DrawIcon,
     })
     scene_ = Scene()
     scene_:CreateComponent("Octree")
@@ -1907,6 +1970,8 @@ function Backend.Init()
 
     -- 手势图是可选资源：缺失时只跳过提示，绝不纳入初始化成功条件。
     handImage_ = nvgCreateImage(vg_, HAND_IMAGE_PATH, 0)
+    -- ⚠️ 必须在 vg_ 创建之后加载；vg_ 为 nil 时所有图标都会静默失败。
+    LoadIcons()
     if not handImage_ or handImage_ <= 0 then
         handImage_ = -1
         print("[Scene3DBackend] hand hint image unavailable: " .. HAND_IMAGE_PATH)
