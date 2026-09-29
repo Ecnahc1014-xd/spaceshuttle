@@ -3,13 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.10（HUD 全消失真因修复批次：大厅 UI 上下文自毁时机）：
+  - **根因（两张"战场有、2D 全没"截图 + 源码/库证据闭环）**：`nvgCreate` 是**全局单例**（`GetNanoVGContext` 文档自述 lazy singleton alias for nvgCreate），urhox-libs/UI 内部 `nvg_` 与 `Scene3DBackend.vg_` 其实是**同一个 NanoVG 上下文**，"双上下文"模型不成立。真正的危险是反向的：`UI.Shutdown()` 内部 `nvgDelete(nvg_)` 会把共享上下文整个销毁。v0.12.7 重写大厅时把成功路径改成只 `stopWaiting()`、`shutdownLobbyUI()` 留给引擎的 `stop()`——引擎不保证在切脚本后**立刻**调 stop：stop() 晚于 `ClientMain.Start` 跑，`UI.Shutdown` 的 nvgDelete 把游戏刚拿到的上下文连带销毁（订阅挂在对象上，随后 nvgCreate 复用底层单例但旧事件订阅已断），症状=3D 正常、NanoVG 输出归零、无任何 stage 错误日志（回调根本没再触发）。此前 AB-093/088c 的"先 Destroy 再 Shutdown"防的是降级双起，但**把 Shutdown 推迟到 stop() 恰恰制造了这个新坑**。
+  - **修复**：`lobby_runtime.lua` onProgress>=1（连接完成、即将切脚本）当场 `shutdownLobbyUI()`（幂等，stop() 路径保留原样作兜底）——把两条 stop() 时序收敛为唯一安全顺序：销毁大厅订阅+上下文 → 引擎切换 → 新脚本 `nvgCreate` 拿到干净单例。BUILD_VERSION→0.12.10、大厅标题栏同步。验证：多人 build+预览上传 ✅；⚠️ **待实机验收**：进战斗 HUD/弹药 Dock/暂停页是否恢复（预览日志应见 `[Lobby] server connection completed` 后紧跟 `[Scene3DBackend] NanoVGRender callback active`，且无 overlay stage failed）。
 - 版本: 0.12.9（高端 dark-tech UI 全局精修 + 8 张量化像素素材 + NanoVG HUD 容错）：
   - **素材规格先锁，再生成 8 张（遵循 `0718-pixelimage-aigc` + `dark-tech-game-editor-ui`）**：【项目建议】全部图标母版 32×32、显示 1×原生尺寸、透明、固定 8 色（#10131F/#252A3A/#555B6C/#9FA6B3/#F1EEF0/#00E5D0/#009694/#FFC448）。4 张高级奖品图标：补给箱/档案盾徽/能量核心/转盘奖章；4 张弹药专属剪影：分裂核心/冰锥弹头/加速弹体+速度刻线/巨型装甲球。nanobanana 256×256 草案经 bbox 裁切→LANCZOS 降到 32×32→alpha<128 透明化→8 色最近邻量化，全部实测 32×32/9 色（8 色+透明）→8 个 .meta 22hex UUID 全库无重复。最终成品 `assets/image/ui_{premium_supply_crate,premium_pass_crest,premium_energy_core,premium_wheel_medal,ammo_split_core,ammo_frost_shard,ammo_velocity_coil,ammo_giant_shell}.png`，草案移出 assets 到 `/home/Maker/ui_premium/drafts/`，不进入包。ICON_PATHS 用 `NVG_IMAGE_NEAREST` 注册，全部可选资源。
   - **全局机加工暗舱表面材质**：`DrawMachinedPanel`（短幅微渐层 + 外描边 + 内槽线 + 2 个黄铜铆点 + 1 个稀疏局部电路刻纹）取代旧单层平色 `DrawWindowShell/DrawBluePanel`；电路刻纹只在 w>150 且 h>w*0.14 的宽面板使用、位于右上边缘且 alpha 14–25，短卡/文字区不画，避免干扰信息。进度条统一 `DrawPixelBar/DrawPremiumProgress`（黑槽、描边、轻高光、宽条 24px 分段刻痕）；NanoVG 原生，不新增外部依赖。
   - **战斗 HUD / Dock**：HUD 三栏固定（x=14 分数、x=264 波次连击、x=384 基地耐久），分隔线明确，右上暂停按钮几何保持原样；删掉挤在一起的「云已同步」长尾，把云状态改 HUD x=140 的 5px 状态点。底部四槽加四张弹药图，图标按原生 32×32 NEAREST 显示，文字/待发态收敛，增加「弹药矩阵」「点击切换·拖拽发射」和细刻线。玩法与命中区域未变。
   - **暂停/档案/转盘/补给**：暂停去掉不适合手机的「按 P」提示，主标题「暂停控制台」+ 状态，5 项广告补给行统一成 48px 图标/标题/效果/广告状态 pill，继续与回主菜单出口原几何不变；战斗档案重排为「精英航空档案」英雄卡（大等级、本级奖励、进度刻度、免费/精英轨）+ 5 条里程碑奖励（能量核心图、奖励数字、领取状态），按钮 hit rect 跟随行偏移一起改；转盘改为仪表盘式 8 扇区、固定奖针、24 个黄铜/青色刻度、中央奖章，抽取命中按钮位置原样保留；每日补给弹窗变为补给箱英雄区+领取方式分区，两个按钮含实际奖励数，点击几何保持原值。
   - **主菜单**：开始战斗 CTA 外加黄铜机加工导轨与原生 32px 补给箱图标，按钮原命中几何不变；其余闭环三段式结构保留，钱包货币/充值图标各 32×32 原生尺寸。
-  - **新截图暴露的战斗 HUD 丢失**：截图时间 18:06 早于当前预览构建；运行日志/服务端不可取，因此**尚未证实根因**。防御性加固：`RenderOverlay` 的 letterbox/world-FX/HUD/Dock/modal/banner 各 stage 独立 pcall，每阶段重设 transform/scissor，`nvgEndFrame` 单独保护；HUD 或 Dock 失败时画最小可读回退。NanoVGRender 订阅与首个快照状态仅各打一条诊断日志，便于下一轮确认回调是否触发；尚未实机证明新包回退是否触发，继续列为待 Preview。
+  - **新截图暴露的战斗 HUD 丢失**：截图时间 18:06 早于当前预览构建；运行日志/服务端不可取，因此**尚未证实根因**。防御性加固：`RenderOverlay` 的 letterbox/world-FX/HUD/Dock/modal/banner 各 stage 独立 pcall，每阶段重设 transform/scissor，`nvgEndFrame` 单独保护；HUD 或 Dock 失败时画最小可读回退。NanoVGRender 订阅与首个快照状态仅各打一条诊断日志，便于下一轮确认回调是否触发。⚠️ v0.12.10 已证实：真因是大厅 stop() 时序（见 v0.12.10 条目），本批次 stage 容错与最小回退作为纵深防御保留。
   - BUILD_VERSION→0.12.9。验证：官方多人 build ✅、预览上传 ✅、8 PNG 均进 dist manifest、.meta UUID 无重复、`git diff --check` 干净；LSP daemon 持续 unavailable（child PID 7 code 1），build 明确 skip LSP gate，未宣称 LSP 通过。⚠️ 待 Preview：战斗截图确认 HUD/Dock 恢复、档案/转盘视觉密度、8 图原生像素观感。
 - 版本: 0.12.8（主菜单像素字标轮播批次：AI 生图 → 0718 管线后处理 → 每 5 秒切换）：
   - **像素字标成品图（用户指定用 `0718-pixelimage-aigc` skill，并要求"图标太无聊，没有游戏元素介入"）**：`batch_generate_images`（nanobanana, 1344×768 草案, 4 seed）出 4 张「击碎飞机」字标，每张融合游戏元素（①重卡弹道击碎「碎」字+右上 8bit 敌机；②小货车点状弹道+飞碟+橙色碎块；③「击」字裂纹+invader 嵌在飞字前+底部砖墙被撞穿；④像素弹丸撞碎「碎」字+俯冲小敌机）。后处理按 skill 管线手写定制脚本（skill 自带 postprocess.py 只支持方形母版，字标需按内容纵横比）：包围盒裁切 → LANCZOS 等比缩到 **120 高母版**（宽 207/235/244/264 随字标比例）→ alpha 二值化(128) → **7 色 dark-tech 量化**（#10131F 轮廓/#252A3A 影/#009694 青暗/#00E5D0 青/#7FF2E6 青亮/#F1EEF0 白/#FFFFFF，全 ≤9 色达标）。成品 `assets/image/ui_logo_{a,b,c,d}_20260929162106.png` + 22hex uuid .meta（已验重、已进 dist manifest）。草案 png 已移出 assets（→ /home/Maker/logo_pp/drafts，不占包体）。
@@ -87,7 +90,13 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.12.8 主菜单像素字标轮播批次（AI 生 4 张融合游戏元素的字标 → 0718 管线量化 120 高母版 → 进主页随机起点每 5 秒轮播、NEAREST 1× 居中）
+- 上次交付: v0.12.10 HUD 全消失真因修复批次（大厅 UI 上下文幂等自毁时机，收敛 stop() 两条时序；stage 容错+最小回退保留为纵深防御）
+
+## 本批次新增避雷（v0.12.10 HUD 全消失真因）
+- 🔴 **NanoVG 上下文是全局单例，"双上下文抢帧"心智模型作废（订正 v0.12.3/v0.12.4 的机制描述）**：`nvgCreate` 与 `GetNanoVGContext` 是同一底层对象；urhox-libs/UI 内部 `nvg_` 与 raw NanoVG 后端 `vg_` 拿到的是**同一个 ctx**。危险是反向的——**`UI.Shutdown()` 里的 `nvgDelete(nvg_)` 会销毁共享上下文**。若大厅 Shutdown 发生在游戏 `Backend.Init` 之后（引擎不保证切脚本后立刻调旧脚本 `stop()`），游戏侧订阅挂在已销毁对象上、后续 `nvgCreate` 复用单例但旧事件绑定已断 → **3D 正常、全部 2D 静默消失、零报错**。
+- 🔴 **自建大厅所有切脚本路径必须当场幂等 `shutdownLobbyUI()`**：匹配成功 onProgress>=1、降级 goOffline、stop() 三条路径都调用（`uiShutdown` 守卫），禁止把 Shutdown 只留给引擎 stop()——stop() 时序不可控。降级路径"先 Shutdown 再 Start"，成功路径"先 Shutdown 再让引擎切换"。
+- ⚠️ **诊断模板（2D 缺失三分类）**：有 `Execute Lua function failed` → 启动期崩溃断订阅（AB 旧条目）；**零错误日志且 2D 全无** → 查共享上下文生命周期（谁 nvgDelete 了单例，本案）；零星元素 → 查字符串订阅失效/上下文抢帧。本次保留的 RenderOverlay stage 容错+最小回退+首帧日志即为此设计：能直接区分"回调未触发"与"某 stage 抛错"。
+- ⚠️ **同症状族变体别沿用旧结论**：v0.12.4「零星元素」当时归因双上下文，其修复（Destroy 时不 Shutdown）反而酿成 v0.12.9 全消失。先穷举生命周期时序再选修复点，且修复幂等收敛所有路径。
 
 ## 本批次新增避雷（v0.12.8 像素字标轮播）
 - ⚠️ **AI 生图≠像素素材成品，必须过管线后处理才能进包（v0.12.8）**：高分辨率草案（1344×768）直接进资源会带抗锯齿/颜色漂移/主体占比失控。`0718-pixelimage-aigc` 管线：包围盒裁切 → LANCZOS 缩母版 → alpha 二值化(阈值 128) → 色板量化（映射到项目色板，可见色 ≤9）。字标这类非方形主体别用 skill 自带 `postprocess.py`（它 `--master` 只支持正方形），按内容纵横比手写（固定高、宽=round(高×宽高比)）。

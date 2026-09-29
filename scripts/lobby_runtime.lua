@@ -136,7 +136,7 @@ return function(ctx)
                                 backgroundColor = COL.cyan },
                             UI.Label { text = "击碎，飞机大战", fontSize = 18,
                                 fontColor = COL.cyan },
-                            UI.Label { text = "v0.12.7", fontSize = 13,
+                            UI.Label { text = "v0.12.10", fontSize = 13,
                                 fontColor = COL.dim, marginLeft = "auto" },
                         },
                     },
@@ -275,6 +275,13 @@ return function(ctx)
                         print("[Lobby] server connection completed")
                         setStatus("连接完成，正在进入")
                         stopWaiting()
+                        -- v0.12.9 修复：nvgCreate 是**全局单例**，lobby 与游戏后端共用同一个
+                        -- NanoVG 上下文。引擎不保证在新脚本 Init **之前**调用大厅的 stop()：
+                        -- 晚 shutdown → UI.Shutdown 把游戏刚持有的上下文连带 nvgDelete（2D 全没）；
+                        -- 不 shutdown → lobby 的空 UI 订阅持续抢帧（零星/全没，AB-093 同族）。
+                        -- 成功路径当场幂等自毁，两条时序收敛为唯一安全顺序：
+                        -- 销毁订阅+上下文 → 引擎切换 → 新脚本 nvgCreate 拿到干净单例。
+                        shutdownLobbyUI()
                     end
                 end
             end,
