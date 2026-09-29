@@ -407,7 +407,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.12.11"
+local BUILD_VERSION = "0.12.12"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -919,7 +919,7 @@ local function DrawAmmoSlots(ctx, game, presentation)
 
     DrawPixelText(ctx, 14, BOTTOM_DOCK_Y + 4, "弹药矩阵", 15, C.cyan)
     DrawPixelText(ctx, DESIGN_W - 14, BOTTOM_DOCK_Y + 4,
-        "点击切换 · 拖拽发射", 14, C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        "升级解锁车辆 · 拖拽发射", 14, C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     DrawLine(ctx, 14, BOTTOM_DOCK_Y + 22, DESIGN_W - 14, BOTTOM_DOCK_Y + 22,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 85}, 1)
 
@@ -935,9 +935,11 @@ local function DrawAmmoSlots(ctx, game, presentation)
         local pairIndex = (i - 1) % 2
         local x = (i <= 2 and leftStart or rightStart) + pairIndex * (slotSize + slotGap)
         local color = SLOT_COLORS[ballType]
-        local selected = game.activeBall and game.activeBall.ballType == ballType
-        local fill = selected and C.widget or C.card
-        local border = selected and C.cyan or {color[1], color[2], color[3], 170}
+        local unlocked = game.unlockedBalls and game.unlockedBalls[ballType] == true
+        local selected = unlocked and game.activeBall and game.activeBall.ballType == ballType
+        local fill = selected and C.widget or (unlocked and C.card or C.rail)
+        local border = selected and C.cyan
+            or (unlocked and {color[1], color[2], color[3], 170} or C.cyanDim)
         if selected then
             DrawRect(ctx, x - 2, slotY - 2, slotSize + 4, slotSize + 4,
                 {C.cyan[1], C.cyan[2], C.cyan[3], 32}, 8)
@@ -948,17 +950,20 @@ local function DrawAmmoSlots(ctx, game, presentation)
         end
         DrawPixelText(ctx, x + 6, slotY + 3, string.format("%d", i), 12, C.dim)
         DrawPixelText(ctx, x + slotSize - 6, slotY + 3,
-            "×" .. tostring(queueCounts[ballType] or 0), 13, selected and C.cyan or color,
+            unlocked and ("×" .. tostring(queueCounts[ballType] or 0)) or "锁", 13,
+            selected and C.cyan or (unlocked and color or C.dim),
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        -- 精致像素弹药图标：32×32 原生母版，不做非整数放大。
-        DrawIcon(ctx, ammoIcons[ballType], x + 16, slotY + 7, 32, selected and 1 or 0.86)
+        -- 32×32 图标始终原生尺寸，锁定态降低亮度而不改变图标资源。
+        DrawIcon(ctx, ammoIcons[ballType], x + 16, slotY + 7, 32,
+            selected and 1 or (unlocked and 0.86 or 0.28))
         DrawPixelText(ctx, x + slotSize * 0.5, slotY + 40, SLOT_NAMES[ballType], 14,
             selected and C.text or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawPixelText(ctx, x + slotSize * 0.5, slotY + 54,
-            selected and "待发" or "待命", 11, selected and C.cyan or C.dim,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            selected and "待发" or (unlocked and "待命" or "待解锁"), 11,
+            selected and C.cyan or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawRect(ctx, x + 6, slotY + slotSize - 3, slotSize - 12, selected and 2 or 1,
-            {color[1], color[2], color[3], selected and 230 or 105}, 0)
+            unlocked and {color[1], color[2], color[3], selected and 230 or 105}
+                or C.cyanDim, 0)
     end
 
     DrawNextWavePreview(ctx, game)
@@ -1644,7 +1649,11 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     end
 
     local footerTop = y + cardH - 90
-    if choice.tradeoff then
+    if choice.kind == "unlock" then
+        DrawTechPanel(ctx, x + 10, footerTop, cardW - 20, 26, C.widget, C.cyan)
+        DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "新车型 · 本局解锁", 15,
+            C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    elseif choice.tradeoff then
         DrawTechPanel(ctx, x + 10, footerTop, cardW - 20, 26, C.widget, C.warn)
         DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "高风险 / 高回报", 15,
             C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -2097,7 +2106,7 @@ local function DrawMinimalHudFallback(game)
         "基地 " .. tostring(game.baseHp or 0) .. "/" .. tostring(game.maxBaseHp or 0), nil)
 end
 
-local function DrawMinimalDockFallback()
+local function DrawMinimalDockFallback(game)
     ApplyOverlayDesignTransform()
     nvgBeginPath(vg_)
     nvgRect(vg_, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y)
@@ -2116,16 +2125,21 @@ local function DrawMinimalDockFallback()
         local x = (i <= 2 and 10 or DESIGN_W - 10 - 2 * 64 - 6)
             + ((i - 1) % 2) * 70
         local y = BOTTOM_DOCK_Y + 26
+        local unlocked = game.unlockedBalls and game.unlockedBalls[ballType] == true
         nvgBeginPath(vg_)
         nvgRoundedRect(vg_, x, y, 64, 64, 5)
-        nvgFillColor(vg_, nvgRGBA(C.card[1], C.card[2], C.card[3], 255))
+        local fill = unlocked and C.card or C.rail
+        nvgFillColor(vg_, nvgRGBA(fill[1], fill[2], fill[3], 255))
         nvgFill(vg_)
         nvgStrokeColor(vg_, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 255))
         nvgStrokeWidth(vg_, 1)
         nvgStroke(vg_)
         nvgTextAlign(vg_, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         nvgFillColor(vg_, nvgRGBA(C.text[1], C.text[2], C.text[3], 255))
-        nvgText(vg_, x + 32, y + 24, SLOT_NAMES[ballType], nil)
+        nvgText(vg_, x + 32, y + 15, SLOT_NAMES[ballType], nil)
+        nvgFontSize(vg_, 12)
+        nvgText(vg_, x + 32, y + 40, unlocked and "已解锁" or "待解锁", nil)
+        nvgFontSize(vg_, 15)
     end
 end
 
@@ -2181,7 +2195,7 @@ local function RenderOverlay(game, presentation, meta)
             DrawItemSlots(vg_, game)
             DrawPullHint(vg_, game)
         end) then
-            RunOverlayStage("dock-fallback", DrawMinimalDockFallback)
+            RunOverlayStage("dock-fallback", function() DrawMinimalDockFallback(game) end)
         end
         RunOverlayStage("damage-vignette", function() DrawDamageVignette(vg_, game, presentation) end)
     elseif game.state == "menu" then

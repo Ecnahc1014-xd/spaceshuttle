@@ -84,6 +84,8 @@ local BALL_TYPES = {
     },
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
+local STARTING_BALL_TYPE = "normal"
+local unlockedBalls = { [STARTING_BALL_TYPE] = true }
 
 -- P11 词条系统（规则层）：弹珠可携带的"词条"修饰，影响伤害/弹道/反馈行为。
 -- 仅通过 CreateMarble 的 words 表注入；apply() 在生成时改写 marble 字段或挂载行为标记，
@@ -147,7 +149,7 @@ local xpToNext = BASE_XP_TO_NEXT
 local pendingLevelUps = 0          -- 待处理的升级次数（暂停选强化）
 local deferredXp = 0               -- 升级触发同帧后续击碎经验原值，完成选卡后结算
 ---@type UpgradeDef[]|nil
-local upgradeChoices = nil         -- 当前可选的强化候选（常规 3 张，解锁第 4 槽后 4 张）
+local upgradeChoices = nil         -- 当前可选的三张升级候选
 local upgradePicks = {}            -- 已选强化的累计效果（id 列表，可重复）
 local upgradeStacks = {}           -- 已选强化各 id 的层数（WO-09/P5 叠加上限判定）
 -- P11：已激活词条（来自专属词条升级），作为新弹珠的默认词条第。规则层持有，渲染层只读快照。
@@ -198,7 +200,11 @@ local partsBoostTime = 0
 ---@field tradeoff boolean
 ---@field value string
 ---@field kind string|nil
+---@field ballType string|nil 仅对应车型可用的强化
+---@field unlockBallType string|nil 未解锁时才进入卡池的车型解锁卡
 ---@field apply fun(stacks: integer)
+
+local UnlockBallType -- 解锁卡先于补弹函数声明，应用时再调用规则层函数
 
 ---@type UpgradeDef[]
 local UPGRADE_POOL = {
@@ -206,21 +212,21 @@ local UPGRADE_POOL = {
       detail = "弹珠伤害 +1，打装甲更快。",
       weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1 伤害",
       apply = function(stacks) BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1 end },
-    { id = "giant", name = "重型化", desc = "巨型弹贯穿范围 +1 格",
-      detail = "巨型弹爆炸范围 +1 格。",
-      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 格",
+    { id = "giant", name = "重型化", desc = "巨型车贯穿范围 +1 格",
+      detail = "巨型车爆炸范围 +1 格。",
+      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 格", ballType = "giant",
       apply = function(stacks) BALL_TUNING.giantArea = BALL_TUNING.giantArea + 1.0 end },
-    { id = "split", name = "裂变核", desc = "基础弹分裂概率 +3%",
-      detail = "分裂小弹概率 +3%。",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+3% 概率",
+    { id = "split", name = "裂变核", desc = "分裂车分裂概率 +3%",
+      detail = "分裂小车概率 +3%。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+3% 概率", ballType = "normal",
       apply = function(stacks) BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.03 end },
-    { id = "speed", name = "疾速引擎", desc = "弹珠飞行速度 +8%",
-      detail = "弹珠飞得更快，但更难瞄准。",
-      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8% 速度",
+    { id = "speed", name = "疾速引擎", desc = "加速车最高速度 +8%",
+      detail = "加速车最高速度 +8%。",
+      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8% 极速", ballType = "speed",
       apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.08 end },
     { id = "ice", name = "深寒涂层", desc = "冰冻时长 +1.2 秒",
       detail = "冰冻时间 +1.2 秒。",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+1.2 秒",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+1.2 秒", ballType = "ice",
       apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
     { id = "repair", name = "前线维修", desc = "立即恢复 25 点基地生命",
       detail = "立刻回 25 点基地生命。",
@@ -242,15 +248,29 @@ local UPGRADE_POOL = {
           BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 2
           BALL_TUNING.lineDamageBonus = BALL_TUNING.lineDamageBonus + 1
       end },
-    { id = "overclock", name = "超载核心", desc = "速度 +15% 但基地 -8",
-      detail = "速度 +15%，但立刻 -8 生命。",
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "速度+15% / 生命-8",
+    { id = "overclock", name = "超载核心", desc = "加速车极速 +15%，基地 -8",
+      detail = "加速车极速 +15%，基地 -8。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "极速+15% / 生命-8", ballType = "speed",
       apply = function(stacks)
           BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
           baseHp = math.max(1, baseHp - 8)
       end },
-    -- P11 词条系统：专属"词条"升级，apply 把对应 word 加入 activeWords（规则变量），
-    -- 新生成弹珠自动携带；视觉染色推迟到表现层消费新事件。
+    { id = "unlock_ice", name = "解锁冰冻车", desc = "冰冻车加入本局弹药队列",
+      detail = "解锁冰冻车，命中可冻结敌机。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "冰冻车入队",
+      kind = "unlock", unlockBallType = "ice",
+      apply = function(stacks) UnlockBallType("ice") end },
+    { id = "unlock_speed", name = "解锁加速车", desc = "加速车加入本局弹药队列",
+      detail = "解锁加速车，反弹后越跑越快。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "加速车入队",
+      kind = "unlock", unlockBallType = "speed",
+      apply = function(stacks) UnlockBallType("speed") end },
+    { id = "unlock_giant", name = "解锁巨型车", desc = "巨型车加入本局弹药队列",
+      detail = "解锁巨型车，反弹后范围击碎。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "巨型车入队",
+      kind = "unlock", unlockBallType = "giant",
+      apply = function(stacks) UnlockBallType("giant") end },
+    -- P11 词条系统：全车型通用效果，新生成弹珠自动携带。
     { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带贯穿效果",
       detail = "弹珠穿透第一块继续飞。",
       weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "贯穿", kind = "word",
@@ -359,6 +379,7 @@ local function CreateMarble(ballType, words)
         bounceCount = 0,
         isPrimary = true,
         generation = 0,
+        flightTime = 0,
         ignoredBrick = nil,
         giantPiercing = false,
         words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
@@ -378,13 +399,25 @@ local function CreateMarble(ballType, words)
 end
 
 local function NextBallType()
-    ballCycleIndex = ballCycleIndex + 1
-    if ballCycleIndex > #BALL_ORDER then ballCycleIndex = 1 end
-    return BALL_ORDER[ballCycleIndex]
+    -- 固定顺序轮换，但只产出本局已解锁的车型；即使仅有初始车也始终可补弹。
+    for _ = 1, #BALL_ORDER do
+        ballCycleIndex = ballCycleIndex % #BALL_ORDER + 1
+        local ballType = BALL_ORDER[ballCycleIndex]
+        if unlockedBalls[ballType] then return ballType end
+    end
+    return STARTING_BALL_TYPE
 end
 
 local function EnqueueNextBall()
     table.insert(ballQueue, NextBallType())
+end
+
+UnlockBallType = function(ballType)
+    if not BALL_TYPES[ballType] or unlockedBalls[ballType] then return end
+    unlockedBalls[ballType] = true
+    -- 把新车放进下一发槽位，不替换待发车，也不修改已在飞行中的车辆。
+    table.insert(ballQueue, 1, ballType)
+    print("[Game] ball unlocked: " .. ballType .. ", queued=" .. #ballQueue)
 end
 
 -- P11：把 activeWords 规则表展开为有序词条 id 列表，供 CreateMarble 注入。
@@ -402,6 +435,12 @@ local function LoadBalls()
     for _ = 1, #BALL_ORDER do EnqueueNextBall() end
     activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
     EnqueueNextBall()
+end
+
+local function CanOfferUpgrade(u)
+    return (not u.ballType or unlockedBalls[u.ballType] == true)
+        and (not u.unlockBallType or unlockedBalls[u.unlockBallType] ~= true)
+        and (upgradeStacks[u.id] or 0) < u.maxStacks
 end
 
 ResetGame = function()
@@ -452,6 +491,7 @@ ResetGame = function()
     upgradeChoices = nil
     upgradePicks = {}
     upgradeStacks = {}
+    unlockedBalls = { [STARTING_BALL_TYPE] = true }
     activeWords = {}    -- P11：词条重置
     clearStreak = 0
     bricksBroken = 0
@@ -782,7 +822,8 @@ local function LiftSlotsOffExisting(slots, shipW, shipH)
     end
 end
 
-SpawnWave = function()
+SpawnWave = function(availableSlots)
+    -- 首波无剩余名额参数，后续波仅使用当前场上仍可容纳的名额。
     -- v0.10.31：优先消费预抽的 nextWavePlan，保证 Dock 小图与真实刷怪同源。
     local plan = nextWavePlan
     if not plan or plan.wave ~= wave then
@@ -824,6 +865,7 @@ SpawnWave = function()
     end
 
     local count, baseSpeed, brickHp = GetWaveParams(wave)
+    count = math.min(count, availableSlots or count)
     local brickSize = GetBrickSize(wave)
     local aircraftKey = plan.aircraftKey
     if not AircraftData[aircraftKey] then
@@ -831,7 +873,9 @@ SpawnWave = function()
         return
     end
     local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
-    local formationKind = plan.formation or PickFormation(wave, count, aircraftKey)
+    local formationKind = (availableSlots and count < plan.count)
+        and PickFormation(wave, count, aircraftKey)
+        or (plan.formation or PickFormation(wave, count, aircraftKey))
     local slots, usedKind = ComputeFormationSlots(formationKind, count, aircraftWidth, aircraftHeight)
     LiftSlotsOffExisting(slots, aircraftWidth, aircraftHeight)
 
@@ -878,7 +922,15 @@ end
 --
 -- 目的：圆与 AABB 重叠时，按归一化穿透较大的轴反射速度并推出表面。
 -- 边界：相切不算命中；推出 0.5 设计单位避免重复卡碰。
+-- 先以本子步的线段包围盒粗筛整架/单格，覆盖擦边和高速穿越。
 -- v0.10.27：高速球除分子步进，还对本帧位移做线段-AABB 扫掠，避免擦边/对角穿格丢失碰撞。
+local function SegmentNearRect(x0, y0, x1, y1, rx, ry, rw, rh, radius)
+    return math.max(x0, x1) + radius >= rx
+        and math.min(x0, x1) - radius <= rx + rw
+        and math.max(y0, y1) + radius >= ry
+        and math.min(y0, y1) - radius <= ry + rh
+end
+
 local function IntersectsBrick(marble, rx, ry, rw, rh)
     local closestX = math.max(rx, math.min(marble.x, rx + rw))
     local closestY = math.max(ry, math.min(marble.y, ry + rh))
@@ -1117,7 +1169,7 @@ RollUpgradeChoices = function(opts)
     local chosenThisRoll = {}
     if heldUpgradeId then
         for _, u in ipairs(UPGRADE_POOL) do
-            if u.id == heldUpgradeId and (upgradeStacks[u.id] or 0) < u.maxStacks then
+            if u.id == heldUpgradeId and CanOfferUpgrade(u) then
                 upgradeChoices[1] = u
                 chosenThisRoll[u.id] = true
                 if u.rarity ~= "common" then forcedRareDone = true end
@@ -1157,7 +1209,7 @@ RollUpgradeChoices = function(opts)
         local avail = {}
         for _, u in ipairs(UPGRADE_POOL) do
             local stacks = upgradeStacks[u.id] or 0
-            if stacks < u.maxStacks and not chosenThisRoll[u.id] then
+            if CanOfferUpgrade(u) and not chosenThisRoll[u.id] then
                 local w = u.weight
                 if u.id == "repair" and stacks >= 4 then w = w * 0.4 end
                 if u.id == "xp" and stacks >= 4 then w = w * 0.5 end
@@ -1198,7 +1250,7 @@ RollUpgradeChoices = function(opts)
             for _, picked in ipairs(upgradeChoices) do
                 if picked.id == u.id then duplicate = true; break end
             end
-            if not duplicate and (upgradeStacks[u.id] or 0) < u.maxStacks then
+            if not duplicate and CanOfferUpgrade(u) then
                 upgradeChoices[#upgradeChoices + 1] = u
             end
         end
@@ -1213,7 +1265,7 @@ end
 function Game.PickUpgrade(index)
     if gameState ~= "levelup" or not upgradeChoices then return false end
     local choice = upgradeChoices[index]
-    if not choice then return false end
+    if not choice or not CanOfferUpgrade(choice) then return false end
 
     local stacks = upgradeStacks[choice.id] or 0
     local times = math.min(choice.maxStacks - stacks, 1)
@@ -1256,6 +1308,7 @@ function Game.GetUpgradeChoices()
         table.insert(list, {
             id = c.id, name = c.name, desc = c.desc, detail = c.detail,
             value = c.value, rarity = c.rarity, kind = c.kind or "buff",
+            ballType = c.ballType, unlockBallType = c.unlockBallType,
             stacks = upgradeStacks[c.id] or 0, maxStacks = c.maxStacks,
             tradeoff = c.tradeoff,
             held = heldUpgradeId == c.id,
@@ -1548,6 +1601,7 @@ local function CreateSplitMarble(source, angle, originBrick)
         bounceCount = source.bounceCount,
         isPrimary = false,
         generation = source.generation + 1,
+        flightTime = 0,
         ignoredBrick = originBrick,
         giantPiercing = false,
     }
@@ -1701,6 +1755,7 @@ local function LaunchMarble(dx, dy, power)
     activeBall.vy = -dy / length * speed
     activeBall.speed = speed
     activeBall.onSling = false
+    activeBall.flightTime = 0
     hasLaunched = true
     table.insert(marbles, activeBall)
     Emit("marble_launched", {
@@ -1728,6 +1783,10 @@ local function UpdateAiming()
     end
 end
 
+-- 允许弹珠在场上持续发挥作用，但纯水平发射可能永不越过回收线；
+-- 极端长飞行兜底回收避免无界累积，不改变分裂概率或正常轨迹。
+local MAX_MARBLE_FLIGHT_TIME = 60
+
 UpdateMarbles = function(dt)
     local pendingMarbles = {}
     for i = #marbles, 1, -1 do
@@ -1738,6 +1797,7 @@ UpdateMarbles = function(dt)
         local steps = math.max(6, math.min(16, math.ceil(move / math.max(4, marble.radius * 0.32))))
         local subDt = dt / steps
         local frameHitBricks = {}
+        marble.flightTime = (marble.flightTime or 0) + dt
 
         for _ = 1, steps do
             if not marble.alive then break end
@@ -1803,7 +1863,11 @@ UpdateMarbles = function(dt)
             local best = nil
             local bestDist = 1e12
             for _, enemy in ipairs(veggies) do
-                if not enemy.dead then
+                if not enemy.dead
+                    and SegmentNearRect(prevX, prevY, marble.x, marble.y,
+                        enemy.x, enemy.y,
+                        enemy.gridW * enemy.brickSize, enemy.gridH * enemy.brickSize,
+                        marble.radius) then
                     for _, brick in ipairs(enemy.bricks) do
                         if brick ~= marble.ignoredBrick
                             and brick.alive and not brick.ejected
@@ -1812,21 +1876,24 @@ UpdateMarbles = function(dt)
                             local ry = enemy.y + (brick.row - 1) * enemy.brickSize + 1
                             local rw = enemy.brickSize - 2
                             local rh = enemy.brickSize - 2
-                            local overlap = IntersectsBrick(marble, rx, ry, rw, rh)
-                                or SweptHitsBrick(prevX, prevY, marble.x, marble.y,
-                                    marble.radius, rx, ry, rw, rh)
-                            if overlap then
-                                local cx = rx + rw * 0.5
-                                local cy = ry + rh * 0.5
-                                local dx = marble.x - cx
-                                local dy = marble.y - cy
-                                local dist = dx * dx + dy * dy
-                                if dist < bestDist then
-                                    bestDist = dist
-                                    best = {
-                                        enemy = enemy, brick = brick,
-                                        rx = rx, ry = ry, rw = rw, rh = rh,
-                                    }
+                            if SegmentNearRect(prevX, prevY, marble.x, marble.y,
+                                rx, ry, rw, rh, marble.radius) then
+                                local overlap = IntersectsBrick(marble, rx, ry, rw, rh)
+                                    or SweptHitsBrick(prevX, prevY, marble.x, marble.y,
+                                        marble.radius, rx, ry, rw, rh)
+                                if overlap then
+                                    local cx = rx + rw * 0.5
+                                    local cy = ry + rh * 0.5
+                                    local dx = marble.x - cx
+                                    local dy = marble.y - cy
+                                    local dist = dx * dx + dy * dy
+                                    if dist < bestDist then
+                                        bestDist = dist
+                                        best = {
+                                            enemy = enemy, brick = brick,
+                                            rx = rx, ry = ry, rw = rw, rh = rh,
+                                        }
+                                    end
                                 end
                             end
                         end
@@ -1894,6 +1961,12 @@ UpdateMarbles = function(dt)
                 marble.alive = false
                 break
             end
+        end
+
+        if marble.alive and marble.flightTime >= MAX_MARBLE_FLIGHT_TIME then
+            marble.alive = false
+            print("[Game][perf] expired marble id=" .. tostring(marble.id)
+                .. " flight=" .. string.format("%.1f", marble.flightTime))
         end
 
         if not marble.alive then
@@ -2176,8 +2249,10 @@ UpdateWaveLogic = function(dt)
     end
     interval = math.max(BALANCE.waveIntervalMin, interval)
 
-    -- 动态同屏上限：每 10 波 +1（v0.10.10 基数下调到 8，节奏更松）。
-    local concurrentCap = BALANCE.maxConcurrent + math.floor(wave / 10)
+    -- 动态同屏预算最多 12 架；后期密度不再无限增加，保留原本的
+    -- 波次速度与耐久增长。
+    local concurrentCap = math.min(BALANCE.maxConcurrent + 4,
+        BALANCE.maxConcurrent + math.floor(wave / 10))
 
     -- 安全窗口：场上已清空且距上次 spawn 超过 safeGap 时，给一次短喘息不强制刷。
     if #veggies == 0 then
@@ -2188,7 +2263,7 @@ UpdateWaveLogic = function(dt)
     if #veggies < concurrentCap then
         wave = wave + 1
         partsEarned = partsEarned + PARTS_PER_WAVE * (partsBoostTime > 0 and 2 or 1)
-        SpawnWave()
+        SpawnWave(concurrentCap - #veggies)
         EnsureNextWavePlan()
     end
     waveCooldown = interval
@@ -2534,6 +2609,7 @@ function Game.GetSnapshot()
     s.aimLine = ComputeAimLine()
     s.ballQueue = ballQueue
     s.ballOrder = BALL_ORDER
+    s.unlockedBalls = unlockedBalls
     s.width = DW
     s.height = DH
     s.dangerY = DANGER_Y

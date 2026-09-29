@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.12.11
-简述：HUD 失踪真凶修复——Lua 同文件 local 函数前向引用（v0.12.9 的 `DrawAmmoSlots` 调用后置定义的 `DrawIcon`）= 战斗中每帧 nil 调用；错误处理器 `ReportOverlayStageError` 同样先用后声明 → stage 出错时把可恢复错误升级为整个 overlay 回调崩溃、`nvgEndFrame` 被跳过、整帧 2D 被丢弃。修复=AB-100 前向声明模式 ×2，全库扫描 0 问题。同时建立本地真渲染离屏截图复现链路（UrhoXRuntime -tool_mode -graphicssurfaceless -screenshot）。v0.12.10 大厅时序结论已订正。多人 build+预览上传，本地菜单/战斗截图均正常。
-最后巩固：2026-09-29
+当前版本：0.12.12
+简述：本局开局只开放分裂车；冰冻、加速、巨型车分别靠升级卡解锁。解锁前自动补弹循环不会产出该车，专属天赋卡在所有抽选路径（保留／加权／不足回填／最终选择）均被过滤；解锁后新车插入下一发，后续补弹与天赋池立刻开放。Dock 明确「锁／待解锁」并撤掉误导的「点击切换」文案；每次重开重置解锁。官方多人 build+Preview 上传，本地升级与离屏战斗验证，Lua LSP 服务不可用。并发性能提交 e010e1c/9c441a2 被保留。
+最后巩固：2026-09-30
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，启用多人匹配但战斗客户端本地运行（服务端仅 IAP/钻石），raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -94,6 +94,8 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- 后期 3D/规则负载治理（e010e1c、9c441a2）：同屏机群由每十波递增改为最多 12，刷波按剩余容量生成；弹珠每个子步先粗筛整机／单格 AABB，再走原最近命中精判和扫掠，异常长达 60 秒的飞行球回收（纯水平轨道不再永久占场）。体素碎块由渲染层显式按 1.2 秒寿命和出生顺序回收、最多 24 个，不再扫描整个 World 或依赖过期计数；初始化失败主动回收孤儿 volume；冻结签名仅实际换色时变化，空粒子／瞄准线跳过重复提交；新局清理旧局同 ID 视觉节点。官方多人构建成功，850 帧 Linux 离屏战斗无 Lua 错误；该运行时无体素模块且 LSP daemon unavailable，真机体素碎块与后期帧时仍待测。
+- v0.12.12（单车开局与卡牌解锁）：用户明确要求「游戏开局只解锁其中一种车，剩余车辆需要升级后的卡牌解锁，未解锁的车的对应天赋卡不会一开始进入卡池，解锁后加入」。规则层 `unlockedBalls` 本局初始 `{normal=true}`，NextBallType 仅在已解锁集合中固定顺序轮换，普通回收／广告补弹合法；`UPGRADE_POOL` 新增 ice/speed/giant 三张一次性车型解锁卡，`UnlockBallType` 即时插队（下一发）、保留当前待发/在飞车；分裂裂变核、冰冻深寒涂层、加速疾速引擎及超载核心、巨型重型化均标注 `ballType`。`CanOfferUpgrade` 统一过滤持有卡、加权抽选、候选不足补齐及最终选卡，解锁后直接开放专属卡、已解锁解锁卡退池。UI 四槽未解锁置暗+「锁／待解锁」、卡片「新车型 · 本局解锁」，删原来误导的「点击切换」（原游戏不存在点槽换车）；最小回退 Dock 同步锁态。官方多人 build+预览上传、本地规则探针通过（真实 XP 触发升级/解锁两车/新车下一发/重开复位）、本地战斗渲染无 Lua 或 overlay stage 错误；随机第三车是否抽到取决于后续升级，未作保底。LSP 连接不可用。
 - v0.12.11（HUD 失踪真凶：前向引用 nil ×2 + 本地复现链路）：用户第三次发战斗截图「hud失踪」（22:50，晚于 v0.12.10 预览）→ 判定大厅时序理论错误，改用本地真渲染复现：`UrhoXRuntime -tool_mode -graphicssurfaceless -screenshot`（llvmpipe+GLES3.1 离屏真渲染，探针工程 `/home/Maker/urhox-probe-live/` 用 scripts+assets 拷贝）。逐层取证：菜单态覆盖层健康（letterbox=7,11,20）；探针订阅 Update 顶掉游戏 handler（单槽、后订阅者胜）→ 探针需手动链式 `_G.HandleUpdate`；修好探针后战斗态每帧 `Execute Lua function failed: Scene3DBackend.lua:948 attempt to call a nil value (global 'DrawIcon')`——v0.12.9 在 `DrawAmmoSlots`(948) 用了后置定义的 `DrawIcon`(1147)，且错误处理器 `ReportOverlayStageError` 同样先用后声明（nil）→ stage pcall 接住原始错误后调用 nil 再抛 → 整个 NanoVGRender 回调崩溃、nvgEndFrame 跳过、整帧 2D 丢弃（菜单无此路径故正常）。修复：两处 AB-100 前向声明（`local X = nil` + 后置赋值），全库扫描器复扫 0 问题。BUILD_VERSION/大厅标题栏→0.12.11，本地菜单+战斗截图验证通过、官方多人 build+预览上传。
 - v0.12.10（大厅 UI 上下文自毁时机）⚠️ 根因已被 v0.12.11 订正：`shutdownLobbyUI` 提前到 onProgress>=1 的改动保留为顺序确定性加固，但 HUD 失踪与此无关；真凶是前向引用 nil 调用。
 - v0.12.9（高端 dark-tech UI 精修 + 8 量化像素素材 + overlay 容错）：用户 5 截图「UI不够贵」+「要生成设计很多新素材/自定义纹理nanovg代码」（0718-pixelimage-aigc + dark-tech-game-editor-ui）。8 张 32×32/8 可见色像素素材（补给箱/档案盾徽/能量核心/大奖章 + 四弹药图）走草案→bbox→LANCZOS→alpha 二值化→量化管线入包（manifest/uuid 验证）。`DrawMachinedPanel` 机加工表面（微渐层/内槽线/铆点/边缘电路刻纹，宽面板限用）、精密进度条统一；HUD 三栏重排、Dock 图标化、暂停资源卡+去 P 键、战斗档案英雄区+里程碑、仪表盘转盘、补给弹窗奖励区、CTA 主题图标；RenderOverlay 分 stage pcall+最小回退（v0.12.11 证实真因是前向引用 nil；本纵深保留并已修复其错误处理器）。多人 build+上传，LSP daemon unavailable 如实记录。

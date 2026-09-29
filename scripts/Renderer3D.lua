@@ -50,13 +50,17 @@ local voxelDepthVoxels_ = 2
 ---@type integer
 local voxelDebrisDepth_ = 1
 local MAX_VOXEL_DEBRIS = 24
-local voxelDebrisCount_ = 0
+local VOXEL_DEBRIS_LIFETIME = 1.2  -- 先于世界的 1.4 秒回收，预算以本层存活对象为准
+local voxelDebris_ = {}          -- 按出生顺序保存本层创建的碎块
+local voxelDebrisClock_ = 0
 local consumedEjectIds_ = {}
 -- 命中缺口必须同帧重建，不再用每帧 4 架预算把缺口拖到后续帧。
 local particleSets_ = nil    -- {spark=..., shard=..., smoke=...}
+local particleSetActive_ = {spark = false, shard = false, smoke = false}
 local particleMaterials_ = nil
 local particleNodes_ = nil
 local aimLineSet_ = nil
+local aimLineActive_ = false
 local aimLineNode_ = nil
 local aimLineMaterial_ = nil
 local lastRenderElapsed_ = nil
@@ -239,11 +243,11 @@ local function CreateMetalPanelTexture()
     return texture
 end
 
-local function GetEnemySignature(enemy)
-    -- WO-13/P2：冻结按比例量化进签名，使冷色偏移/霜冻高光随冻结态变化触发重建，
-    -- 但量化档位足够粗（以避免每次帧级冻结衰减都重建）。HP 仍不进入签名。
-    local freezeBucket = math.floor((enemy.freezeRatio or 0) * 8 + 0.5)
-    local parts = {enemy.aircraftKey, "F" .. tostring(freezeBucket)}
+local function GetEnemySignature(enemy, frozen)
+    -- 两条渲染路径都只在实际换色时重建：后备网格在 frozen>0 变色，
+    -- 体素色板在 freezeRatio>0.35 切槽位。冻结比例的其余档位不影响几何。
+    if frozen == nil then frozen = (enemy.frozen or 0) > 0 end
+    local parts = {enemy.aircraftKey, frozen and "F" or "N"}
     for _, brick in ipairs(enemy.bricks) do
         parts[#parts + 1] = brick.alive and "1" or "0"
     end
@@ -496,20 +500,26 @@ local function CreateEnemyVolume(enemy, visualCatalog)
         print("[Renderer3D] CreateVolume failed: " .. tostring(volume))
         return nil
     end
-    FillEnemyVolume(volume, enemy, visualCatalog)
-    -- 编队主体必须是静态体积：动态体 Node 在质心，每帧把 position 设回网格最小角
-    -- 会把整机平移出视野（Preview 上表现为敌机消失、只剩 1:1:2 碎块）。
-    -- 规则层仍用 AABB；体素只做表现，每帧只改静态 Node 位置，不让 Jolt 推编队。
-    volume.destructible = false
-    volume.evictable = false
-    volume.collisionLayer = 1
-    volume.collisionMask = 0
-    volume.material = voxelWorld_:GetPaletteMaterial(0, VOXEL_COLOR_DOMAIN)
-    voxelWorld_:FinalizeVolume(volume)
-    volume:RebuildGeometry()
-    local node = volume:GetNode()
-    if node then
-        node.position = origin
+    local okFill, errFill = pcall(function()
+        FillEnemyVolume(volume, enemy, visualCatalog)
+        -- 编队主体必须是静态体积：动态体 Node 在质心，每帧把 position 设回网格最小角
+        -- 会把整机平移出视野（Preview 上表现为敌机消失、只剩 1:1:2 碎块）。
+        -- 规则层仍用 AABB；体素只做表现，每帧只改静态 Node 位置，不让 Jolt 推编队。
+        volume.destructible = false
+        volume.evictable = false
+        volume.collisionLayer = 1
+        volume.collisionMask = 0
+        volume.material = voxelWorld_:GetPaletteMaterial(0, VOXEL_COLOR_DOMAIN)
+        voxelWorld_:FinalizeVolume(volume)
+        volume:RebuildGeometry()
+        local node = volume:GetNode()
+        if node then node.position = origin end
+    end)
+    if not okFill then
+        pcall(function() voxelWorld_:RemoveVolume(volume) end)
+        print("[Renderer3D] enemy volume init failed id=" .. tostring(enemy.id)
+            .. " error=" .. tostring(errFill))
+        return nil
     end
     print("[Renderer3D] enemy volume id=" .. tostring(enemy.id)
         .. " " .. tostring(enemy.aircraftKey)
@@ -649,35 +659,37 @@ local function SpawnVoxelDebris(record, event, visualCatalog)
         pcall(function() voxelWorld_:RemoveVolume(debris) end)
         return false
     end
-    voxelDebrisCount_ = voxelDebrisCount_ + 1
+    -- 碎块由本层单独登记并显式回收，预算不依赖体素世界的其他 volume
+    -- 或枚举顺序。
+    voxelDebris_[#voxelDebris_ + 1] = {volume = debris, born = voxelDebrisClock_}
     return true
 end
 
-local function ForEachVolume(fn)
-    local count = voxelWorld_:GetVolumeCount()
-    -- 同时兼容 0 基与 1 基索引；空槽直接跳过。
-    for i = 0, count do
-        local vol = voxelWorld_:GetVolume(i)
-        if vol then fn(vol) end
+-- 主动管理本层碎块的寿命与预算，避免引擎自动老化后 Lua 计数失准。
+-- 新碎块只在下一次场景同步中老化，上一帧旧碎块优先移除。
+local function TrimVoxelDebris()
+    if not voxelWorld_ then return end
+    for i = #voxelDebris_, 1, -1 do
+        local entry = voxelDebris_[i]
+        if voxelDebrisClock_ - entry.born >= VOXEL_DEBRIS_LIFETIME then
+            voxelWorld_:RemoveVolume(entry.volume)
+            table.remove(voxelDebris_, i)
+        end
+    end
+    while #voxelDebris_ > MAX_VOXEL_DEBRIS do
+        voxelWorld_:RemoveVolume(voxelDebris_[1].volume)
+        table.remove(voxelDebris_, 1)
     end
 end
 
-local function TrimVoxelDebris()
-    if not voxelWorld_ then return end
-    local extra = voxelDebrisCount_ - MAX_VOXEL_DEBRIS
-    if extra <= 0 then return end
-    -- 超预算时优先删最老的可驱逐碎块；编队主体 evictable=false，不会被误删。
-    local toRemove = {}
-    ForEachVolume(function(vol)
-        if extra <= #toRemove then return end
-        if vol.evictable then
-            toRemove[#toRemove + 1] = vol
+local function ClearVoxelDebris()
+    if voxelWorld_ then
+        for _, entry in ipairs(voxelDebris_) do
+            pcall(function() voxelWorld_:RemoveVolume(entry.volume) end)
         end
-    end)
-    for i = 1, #toRemove do
-        voxelWorld_:RemoveVolume(toRemove[i])
     end
-    voxelDebrisCount_ = math.max(0, voxelDebrisCount_ - #toRemove)
+    voxelDebris_ = {}
+    voxelDebrisClock_ = 0
 end
 
 local function SyncVoxelEnemies(game, presentation)
@@ -693,7 +705,8 @@ local function SyncVoxelEnemies(game, presentation)
                 if volume then
                     record = {
                         volume = volume,
-                        signature = GetEnemySignature(enemy),
+                        signature = GetEnemySignature(enemy,
+                            (enemy.freezeRatio or 0) > 0.35),
                         voxelSize = enemy.brickSize * WORLD_SCALE,
                         gridW = math.tointeger(enemy.gridW) or 1,
                         gridH = math.tointeger(enemy.gridH) or 1,
@@ -719,7 +732,8 @@ local function SyncVoxelEnemies(game, presentation)
     for _, enemy in ipairs(game.veggies) do
         local record = enemyMeshes_[enemy.id]
         if record and record.volume and not enemy.dead then
-            SyncEnemyVolumeCells(record, enemy, visualCatalog, GetEnemySignature(enemy))
+            SyncEnemyVolumeCells(record, enemy, visualCatalog,
+                GetEnemySignature(enemy, (enemy.freezeRatio or 0) > 0.35))
         end
     end
 
@@ -749,7 +763,6 @@ local function SyncVoxelEnemies(game, presentation)
     for id in pairs(consumedEjectIds_) do
         if not liveEjectIds[id] then consumedEjectIds_[id] = nil end
     end
-    TrimVoxelDebris()
 
     for id, record in pairs(enemyMeshes_) do
         if not active[id] then
@@ -763,7 +776,7 @@ local function SyncVoxelEnemies(game, presentation)
     end
 end
 
--- CustomGeometry 回退路径：签名变化（拓扑/冻结档）同帧重建，保证缺口即时可见。
+-- CustomGeometry 回退路径：签名变化（拓扑/实际冻结色切换）同帧重建，保证缺口即时可见。
 local function SyncEnemyMeshes(game, presentation)
     local active = {}
     local visualCatalog = presentation.visualCatalog
@@ -1306,10 +1319,13 @@ local function SyncParticles(presentation)
         end
     end
     for kind, set in pairs(particleSets_) do
-        for i = used[kind] + 1, PARTICLE_SLOTS[kind] do
-            set:GetBillboard(i - 1).enabled = false
+        if used[kind] > 0 or particleSetActive_[kind] then
+            for i = used[kind] + 1, PARTICLE_SLOTS[kind] do
+                set:GetBillboard(i - 1).enabled = false
+            end
+            set:Commit()
         end
-        set:Commit()
+        particleSetActive_[kind] = used[kind] > 0
     end
 end
 
@@ -1325,6 +1341,7 @@ local AIM_LINE_COLOR = Color(0.30, 0.90, 1.0, 1)
 local function SyncAimLine(game)
     if not aimLineSet_ then return end
     local line = game.aimLine
+    if not line and not aimLineActive_ then return end
     local activeCount = 0
     if line then
         -- 相机是 46° 斜俯视正交（非纯俯视），z 会投影到屏幕 Y：
@@ -1370,6 +1387,7 @@ local function SyncAimLine(game)
         aimLineSet_:GetBillboard(i - 1).enabled = false
     end
     aimLineSet_:Commit()
+    aimLineActive_ = line ~= nil
 end
 
 local function CreateWhiteTexture()
@@ -1399,8 +1417,11 @@ function Renderer3D.Init(scene, voxelWorld)
     voxelWorld_ = voxelWorld
     voxelPhysicsEnabled_ = voxelWorld ~= nil
     voxelPaletteReady_ = false
-    voxelDebrisCount_ = 0
+    voxelDebris_ = {}
+    voxelDebrisClock_ = 0
     consumedEjectIds_ = {}
+    particleSetActive_ = {spark = false, shard = false, smoke = false}
+    aimLineActive_ = false
     lastRenderElapsed_ = nil
     modelBox_ = cache:GetResource("Model", "Models/Box.mdl")
 
@@ -1480,11 +1501,41 @@ function Renderer3D.GetVehicleAnchor(x, y, marble)
     return GetVehicleAnchorWorld({x = x, y = y, radius = marble.radius})
 end
 
+local function ClearRunVisuals()
+    ClearVoxelDebris()
+    for id, record in pairs(enemyMeshes_) do
+        if record.volume and voxelWorld_ then
+            voxelWorld_:RemoveVolume(record.volume)
+        elseif record.root then
+            RemoveNode(record.root)
+        end
+        enemyMeshes_[id] = nil
+    end
+    for id, record in pairs(vehicleRecords_) do
+        RemoveNode(record.root)
+        vehicleRecords_[id] = nil
+    end
+    for id, node in pairs(ejectedBoxNodes_) do
+        RemoveNode(node)
+        ejectedBoxNodes_[id] = nil
+    end
+    for id, node in pairs(debrisNodes_) do
+        RemoveNode(node)
+        debrisNodes_[id] = nil
+    end
+    consumedEjectIds_ = {}
+    lastRenderElapsed_ = nil
+    print("[Renderer3D][perf] new run: previous 3D objects cleared")
+end
+
 function Renderer3D.Render(game, presentation, skin)
     if not initialized_ then return end
     selectedSkin_ = skin or "default"
 
     local elapsed = game.elapsed or 0
+    if lastRenderElapsed_ and elapsed < lastRenderElapsed_ - 0.0001 then
+        ClearRunVisuals()
+    end
     local dt = 1 / 60
     if lastRenderElapsed_ then
         if elapsed >= lastRenderElapsed_ then
@@ -1494,9 +1545,15 @@ function Renderer3D.Render(game, presentation, skin)
     lastRenderElapsed_ = elapsed
 
     if voxelPhysicsEnabled_ then
-        local okSync, syncErr = pcall(SyncVoxelEnemies, game, presentation)
+        voxelDebrisClock_ = voxelDebrisClock_ + dt
+        local okSync, syncErr = pcall(function()
+            TrimVoxelDebris()
+            SyncVoxelEnemies(game, presentation)
+            TrimVoxelDebris()
+        end)
         if not okSync then
             print("[Renderer3D] voxel sync failed, fallback CustomGeometry: " .. tostring(syncErr))
+            ClearVoxelDebris()
             voxelPhysicsEnabled_ = false
             for id, record in pairs(enemyMeshes_) do
                 if record.volume and voxelWorld_ then
@@ -1522,6 +1579,7 @@ function Renderer3D.Render(game, presentation, skin)
 end
 
 function Renderer3D.Shutdown()
+    ClearVoxelDebris()
     for _, record in pairs(vehicleRecords_) do RemoveNode(record.root) end
     for _, record in pairs(enemyMeshes_) do
         if record.volume and voxelWorld_ then
@@ -1542,6 +1600,7 @@ function Renderer3D.Shutdown()
         for _, mat in ipairs(particleMaterials_) do mat:Dispose() end
     end
     particleSets_ = nil
+    particleSetActive_ = {spark = false, shard = false, smoke = false}
     particleMaterials_ = nil
     particleNodes_ = nil
     if aimLineNode_ then RemoveNode(aimLineNode_) end
@@ -1549,6 +1608,7 @@ function Renderer3D.Shutdown()
     if aimLineMaterial_ then aimLineMaterial_:Dispose() end
     aimLineNode_ = nil
     aimLineSet_ = nil
+    aimLineActive_ = false
     aimLineMaterial_ = nil
     vehicleRecords_ = {}
     enemyMeshes_ = {}
@@ -1557,7 +1617,8 @@ function Renderer3D.Shutdown()
     voxelWorld_ = nil
     voxelPhysicsEnabled_ = false
     voxelPaletteReady_ = false
-    voxelDebrisCount_ = 0
+    voxelDebris_ = {}
+    voxelDebrisClock_ = 0
     consumedEjectIds_ = {}
     materialCache_ = {}
     vehicleMaterialSets_ = {}

@@ -3,6 +3,15 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 性能修复（e010e1c / 9c441a2，与 v0.12.12 解锁功能并行独立提交）：
+  - **后期负载控制**：同屏机群预算由 `8+floor(wave/10)` 改为最多 12 架，刷波只按剩余名额生成；弹珠碰撞先用子步线段 AABB 对整机和单格粗筛，仍保留原最近格精判/扫掠。极端 60 秒持续飞行（例如纯水平球）有回收兜底，不动 5% 递归分裂机制。
+  - **3D 碎块与重建**：本地体素碎块由渲染器按出生顺序和 1.2 秒寿命显式回收，24 个预算不再依赖可能过时的计数或扫描体素世界；体素创建后中途出错主动回收孤儿。冻结只有实际换色时触发网格重建；空闲粒子批次/瞄准线跳过重复 `Commit`。新局时清理上局同 ID 可见对象，避免错误复用。
+  - **验证边界**：官方多人构建成功并上传预览；Linux 无体素模块，本地真渲染 850 帧无 Lua/overlay 错误，只覆盖 `CustomGeometry` 回退。LSP daemon unavailable，未声称 0 Error；后期体素实机性能和碎块清理仍待 Preview 量测。
+- 版本: 0.12.12（局内车型逐步解锁）：
+  - **开局仅有分裂车**：`Game.lua` 的 `unlockedBalls` 每局重置为 `{normal=true}`；`NextBallType` 固定顺序跳过未解锁车型，开局待发车与储备队列均只含分裂车。冰冻/加速/巨型各新增一张一次性「解锁××车」升级卡，选中后把新车插入队首（下一发可见，不修改当前待发/飞行车辆），后续补弹纳入循环；重开新局重新锁定。
+  - **专属强化门控**：升级定义加 `ballType`（分裂裂变核、冰冻深寒涂层、加速疾速引擎+超载核心、巨型重型化），`CanOfferUpgrade` 同时用于保留卡、加权抽选、候选不足回填和最终选卡；未解锁车型的专属卡不会进池，解锁后立即纳入。通用卡与全弹通用 `word` 不误锁；已解锁的解锁卡不再出现。快照新增 `unlockedBalls` 供渲染只读。
+  - **界面**：四槽原位置不变，未解锁车置暗+「锁／待解锁」，已解锁仍显示待命/待发/库存；顶部提示改「升级解锁车辆 · 拖拽发射」（旧「点击切换」在规则里并不存在）；升级卡显示「新车型 · 本局解锁」。最小 Dock 回退也展示锁定态。BUILD_VERSION 和大厅版本→0.12.12。
+  - **验证**：官方多人 build+预览上传成功，本地真实规则探针从敌机碎块正常获得 XP 并抽到两张解锁卡，核对开局单车、未解锁专属卡不入池、解锁即插队、重开复位；真渲染探针进战斗零 `overlay stage failed`/零 Lua 错误，截图非空。⚠️ 随机卡池未保证一局内三车全部解锁；真机 Dock 锁态观感待 Preview。Lua LSP 服务仍不可用，未声称诊断通过。并发性能优化已由其他会话独立提交 e010e1c/9c441a2，本批次保留不覆盖。
 - 版本: 0.12.11（HUD 失踪真凶落网：Lua 前向引用 nil 调用 + 错误处理器自身崩溃）：
   - **真根因（本地真渲染复现 + 日志实锤，订正 v0.12.10 的大厅时序误判）**：v0.12.9 在 `DrawAmmoSlots`（~948 行）新增 `DrawIcon(ctx, ammoIcons[ballType], ...)` 调用，但 `DrawIcon` 的 `local function` 定义在其后（~1147 行）——**先用后声明的 local 函数解析成全局 nil**（AB-100 同类）。战斗中该阶段每帧抛 `attempt to call a nil value`；更致命的是错误处理器 `ReportOverlayStageError` 也犯同一错误（定义在 RenderOverlay 之后）→ stage 的 pcall 接住原始错误后调用它 → **再抛一次** → 整个 NanoVGRender 回调崩溃、`nvgEndFrame` 被跳过 → **该帧全部 NanoVG 绘制被丢弃**；菜单不经过这两个调用点所以正常，一进战斗 2D 全灭、只剩 3D——三张用户截图的完整解释。日志里此前只见 `attempt to call a nil value (global 'ReportOverlayStageError')`，原始 stage 错误被吞。
   - **修复**：两处都改为 AB-100 前向声明模式——`local DrawIcon = nil`（DrawAmmoSlots 之前）+ 后置定义改赋值 `DrawIcon = function(...)`；`local ReportOverlayStageError = nil`（ApplyOverlayDesignTransform 之前）+ 后置改赋值。全仓库前向引用扫描器（local function / local x = function，调用点早于定义）复扫 **0 问题**（Scene3DBackend/MetaUI/client_main 及全部 scripts）。BUILD_VERSION→0.12.11、大厅标题栏同步。
@@ -96,6 +105,11 @@
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
 - 上次交付: v0.12.11 HUD 失踪真凶修复（Lua 同文件 local 函数前向引用 nil 调用 ×2 + 本地真渲染复现链路；v0.12.10 大厅时序结论已订正）
+
+## 本批次新增避雷（后期负载治理 e010e1c/9c441a2）
+- ⚠️ **不能把后期卡顿直接归为 GPU 3D**：每弹每帧 6–16 子步遍历全部敌机砖块，原同屏上限 `8+floor(wave/10)` 无界且可整波超额，CPU 玩法碰撞也会拖慢 3D 和 UI。先比较同屏敌机/弹珠数和规则/渲染时段，再定位 draw calls。现在机群最多 12 架，刷波按剩余名额补。
+- ⚠️ **体素碎块的 Lua 计数不能代表真实体积数**：世界有自动年龄回收，本层原 `voxelDebrisCount_` 只增不随自动回收递减。现在本层登记每个创建的碎块，先于引擎自动回收时限按 1.2 秒删除，按出生顺序裁至 24；切回 `CustomGeometry` 或 Shutdown 时清理自身碎块，禁止重新扫描全 World 并猜索引和遍历顺序。Linux 无体素模块时该路径仍待真机测。
+- ⚠️ **冻结重建条件要与实际换色一致**：体素仅 `freezeRatio>0.35` 才换色，后备网格只判断是否仍 `enemy.frozen>0`，不可用每 1/8 衰减比例都重建整机网格；每格死亡仍需同帧重建，保留 `[Renderer3D][voxel-repair]` 日志。
 
 ## 本批次新增避雷（v0.12.11 前向引用真凶 + 本地复现链路）
 - 🔴 **同文件 local 函数前向引用会解析成全局 nil——本项目已两次踩雷（v0.12.11 实锤）**：`local function X` 声明在其使用点**之后**时，使用点读到的是全局 `X`（nil）。v0.12.9 一次踩两处：①`DrawAmmoSlots`（948）调用后置定义的 `DrawIcon`（1147）→ 战斗中每帧 `attempt to call a nil value (global 'DrawIcon')`；②错误处理器 `ReportOverlayStageError` 也是先用后声明 → stage pcall 接住①后调用它再次抛错 → **整个 NanoVGRender 回调崩溃、nvgEndFrame 被跳过、该帧全部 2D 绘制被丢弃**（菜单不经过该死点所以正常）。修法固定为 AB-100 模式：用点前 `local X = nil`，后置定义改 `X = function(...)`。**交付前跑全库前向引用扫描**（匹配 `local function N` / `local N = function` 与其前的调用点），本次复扫 0 问题。
