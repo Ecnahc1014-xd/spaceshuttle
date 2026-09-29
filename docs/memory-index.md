@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.12.13
-简述：开局初始弹药从 5 辆（1 待发+4 备弹）减到 3 辆（1 待发+2 备弹）——`Game.lua` 新增 `BASE_AMMO_SPARE=2` 并由 `LoadBalls` 消费，补弹仍维持「回收一辆补一辆」；车辆种类仍是 4 种，解锁车插入时总量 +1。官方多人 build+Preview 上传，本地规则探针（900 帧）核对开局 3 辆、播放期总量=3+已解锁新车数、重开复位；真渲染战斗态零 Lua/overlay 错误。Lua LSP 服务不可用。
+当前版本：0.12.14
+简述：修「UI Inspector requested but failed to load」——平台无广告 SDK 时引擎用 `urhox-libs/FakeAd` 模拟激励视频，它只 require UI 的 **Core** 并在未初始化时调 `UI.Init`；而 `UI.Inspector` 只由聚合模块 `urhox-libs/UI` 赋值，游戏 Runtime 从不加载聚合模块 → 首播广告时 `UI.Inspector` 为 nil，preview 环境自动请求 F9 检查器落空 → 上报 ERROR。新增 `scripts/ui/UIInspectorCompat.lua`（先装聚合模块，失败才兜底空实现），`AdService.Show` 调用一次。本地探针模拟 preview+FakeAd 路径：修复前 1 次、修复后 0 次；官方多人 build+预览上传，游戏启动/战斗渲染回归正常。
 最后巩固：2026-09-30
 
 ## 项目概况
@@ -95,6 +95,7 @@
 
 ## 最近变更
 - 后期 3D/规则负载治理（e010e1c、9c441a2）：同屏机群由每十波递增改为最多 12，刷波按剩余容量生成；弹珠每个子步先粗筛整机／单格 AABB，再走原最近命中精判和扫掠，异常长达 60 秒的飞行球回收（纯水平轨道不再永久占场）。体素碎块由渲染层显式按 1.2 秒寿命和出生顺序回收、最多 24 个，不再扫描整个 World 或依赖过期计数；初始化失败主动回收孤儿 volume；冻结签名仅实际换色时变化，空粒子／瞄准线跳过重复提交；新局清理旧局同 ID 视觉节点。官方多人构建成功，850 帧 Linux 离屏战斗无 Lua 错误；该运行时无体素模块且 LSP daemon unavailable，真机体素碎块与后期帧时仍待测。
+- v0.12.14（修 UI Inspector 报错）：平台错误上报「UI Inspector requested but failed to load」。根因：平台无广告 SDK 时（编辑器/预览）引擎用 `urhox-libs/FakeAd` 模拟激励视频，FakeAd **只 require** `urhox-libs/UI/Core/UI` 并在 UI 未初始化时调 `UI.Init`；`UI.Inspector` 字段只由聚合模块 `urhox-libs/UI/init.lua` 赋值，游戏 Runtime 从不加载聚合模块 → `UI.Inspector` 为 nil；preview 环境（`GetTapMakerEnvString()=="preview"`）下 `UI.Init` 自动请求 F9 检查器落空 → 打 ERROR 上报。本地复现：把 `GetTapMakerEnvString` 改成返回 "preview"、只 require Core 再 `UI.Init` → 稳定 1 次 ERROR，补装聚合模块后 0 次。修复：新增 `scripts/ui/UIInspectorCompat.lua`（`Ensure()` 先装聚合模块拿真检查器，失败才兜底空实现），`AdService.Show` 发广告前幂等调用（不进启动路径）；顺带消除 `UI.Shutdown` 里 `UI.Inspector.Shutdown()` 的空指针风险。BUILD_VERSION/大厅版本→0.12.14。验证：探针模拟 preview+FakeAd 路径修复前 1 次→修复后 0 次且 Inspector 为真模块；游戏启动与战斗态离屏渲染回归正常；官方多人 build+预览上传 ✅。
 - v0.12.13（初始弹药 5→3 辆）：用户「车辆基础数量-2」，确认后指初始装载车辆数而非车辆种类。`Game.lua` 新增 `BASE_AMMO_SPARE=2`，`LoadBalls` 由「装 #BALL_ORDER 辆」改为「装备弹 N 辆 → 取 1 辆待发 → 再补 1 辆」，开局总装载 5 辆 → 3 辆（1 待发 + 2 备弹）；车辆种类仍 4 种，底部四槽/解锁卡/卡池门控不变；BUILD_VERSION 与大厅标题 →0.12.13。本地规则探针（900 帧、35 次发射、含升级解锁）核对开局 `ready=1 spare=2 total=3`、播放期总量恒等于「3 + 已解锁新车数」（解锁插入新车是预期追加，不是泄漏）、重开复位为 3；本地真渲染战斗态零 overlay stage 失败与 Lua 错误。⚠️ 3 辆是否偏紧的手感待 Preview。POST-3 判定：随行记忆无需变更（纯数值调参，无跨项目偏好）。
 - v0.12.12（单车开局与卡牌解锁）：用户明确要求「游戏开局只解锁其中一种车，剩余车辆需要升级后的卡牌解锁，未解锁的车的对应天赋卡不会一开始进入卡池，解锁后加入」。规则层 `unlockedBalls` 本局初始 `{normal=true}`，NextBallType 仅在已解锁集合中固定顺序轮换，普通回收／广告补弹合法；`UPGRADE_POOL` 新增 ice/speed/giant 三张一次性车型解锁卡，`UnlockBallType` 即时插队（下一发）、保留当前待发/在飞车；分裂裂变核、冰冻深寒涂层、加速疾速引擎及超载核心、巨型重型化均标注 `ballType`。`CanOfferUpgrade` 统一过滤持有卡、加权抽选、候选不足补齐及最终选卡，解锁后直接开放专属卡、已解锁解锁卡退池。UI 四槽未解锁置暗+「锁／待解锁」、卡片「新车型 · 本局解锁」，删原来误导的「点击切换」（原游戏不存在点槽换车）；最小回退 Dock 同步锁态。官方多人 build+预览上传、本地规则探针通过（真实 XP 触发升级/解锁两车/新车下一发/重开复位）、本地战斗渲染无 Lua 或 overlay stage 错误；随机第三车是否抽到取决于后续升级，未作保底。LSP 连接不可用。
 - v0.12.11（HUD 失踪真凶：前向引用 nil ×2 + 本地复现链路）：用户第三次发战斗截图「hud失踪」（22:50，晚于 v0.12.10 预览）→ 判定大厅时序理论错误，改用本地真渲染复现：`UrhoXRuntime -tool_mode -graphicssurfaceless -screenshot`（llvmpipe+GLES3.1 离屏真渲染，探针工程 `/home/Maker/urhox-probe-live/` 用 scripts+assets 拷贝）。逐层取证：菜单态覆盖层健康（letterbox=7,11,20）；探针订阅 Update 顶掉游戏 handler（单槽、后订阅者胜）→ 探针需手动链式 `_G.HandleUpdate`；修好探针后战斗态每帧 `Execute Lua function failed: Scene3DBackend.lua:948 attempt to call a nil value (global 'DrawIcon')`——v0.12.9 在 `DrawAmmoSlots`(948) 用了后置定义的 `DrawIcon`(1147)，且错误处理器 `ReportOverlayStageError` 同样先用后声明（nil）→ stage pcall 接住原始错误后调用 nil 再抛 → 整个 NanoVGRender 回调崩溃、nvgEndFrame 跳过、整帧 2D 丢弃（菜单无此路径故正常）。修复：两处 AB-100 前向声明（`local X = nil` + 后置赋值），全库扫描器复扫 0 问题。BUILD_VERSION/大厅标题栏→0.12.11，本地菜单+战斗截图验证通过、官方多人 build+预览上传。

@@ -155,7 +155,8 @@
 
 - [AB-121] [跨项目][`pkill -f` 会匹配到执行它的 shell 自身：一条命令静默自尽] 在单条 bash 命令开头写 `pkill -f '<模式>'` 清理后台进程时，该模式会命中这条命令**自己的命令行**（命令文本里就含这个模式）→ pkill 杀掉自己的 shell，整条命令以退出码 2 静默中止，后续步骤（如重写探针文件、跑运行时）根本没执行，极易误判成「探针失败」或「改动没生效」。规避：用括号打断自匹配（`pgrep -af "[U]rhoXRuntime"`），或先 pgrep 再按 PID 杀，不要在同一命令里同时 pkill 和做事。⚠️ 怀疑「命令没输出就退出」时先核对目标文件的 mtime/内容，确认步骤是否真的执行过。（击碎，飞机大战/v0.12.13）
 
+- [AB-122] [跨项目][聚合模块才赋值的字段：绕过聚合只 require Core 的调用者会拿到空字段] 引擎内置库常有「聚合入口 + Core」两层（如 `urhox-libs/UI/init.lua` 聚合、`urhox-libs/UI/Core/UI.lua` 核心）：**`UI.Inspector` 这类字段只在聚合入口被赋值**，Core 里的 `UI.Init` 却会读它。引擎自己的 `urhox-libs/FakeAd`（无广告 SDK 平台模拟激励视频）只 require Core，于是它在预览环境调用 `UI.Init` 时字段为 nil → `UI.Init` 自动请求 F9 检查器落空 → 平台错误上报「UI Inspector requested but failed to load」。修法（不改引擎库）：在会触发该路径的业务点（本项目=`AdService.Show`）先 `pcall(require, "<聚合模块>")` 把聚合装载一次（拿到真实现），失败再兜底一个 `{Init=function() end, Shutdown=function() end}` 空实现；两处细节：①聚合加载是幂等且覆盖式的，真模块随后加载会覆盖兜底，不会污染；②`UI.Shutdown()` 里 `UI.Inspector.Shutdown()` 未加保护，空兜底同时消掉这个空指针。验证套路：本地把 `GetTapMakerEnvString` 改成返回 `"preview"` 即可离线复现该分支（本地 Linux 运行时默认没有这个全局）。（击碎，飞机大战/v0.12.14）
+
 ## 同步记录
 
-- 最近一次同步：2026-09-30 击碎，飞机大战 v0.12.13（新增 AB-121 pkill -f 自匹配陷阱）
-
+- 最近一次同步：2026-09-30 击碎，飞机大战 v0.12.14（新增 AB-122 聚合/Core 字段分离导致 Inspector 报错）

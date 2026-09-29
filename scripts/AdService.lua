@@ -5,6 +5,8 @@
 -- 以保证：① 返回值 + 回调双通道都被处理；② 迟到回调不重复发奖；③ UI 不会卡在加载态。
 -- 本模块不直接接触表现层，成功/失败都通过回调交回编排层（main.lua）决定后续。
 
+local UIInspectorCompat = require "ui.UIInspectorCompat"
+
 local AdService = {}
 
 -- 两次广告之间的最小间隔（秒）。引擎侧自身还有防抖，这里再兜一层避免连点。
@@ -67,6 +69,11 @@ function AdService.Show(opts)
     local onReward = opts.onReward
     local onFail = opts.onFail
     local onBusy = opts.onBusy or onFail
+
+    -- v0.12.14：平台用 urhox-libs/FakeAd 模拟激励视频时会调用 UI.Init 初始化 UI 系统，
+    -- 而 UI.Init 在预览环境会自动请求 F9 检查器；必须先保证 UI 侧的 Inspector 字段存在，
+    -- 否则每次首播广告都会写一条「UI Inspector requested but failed to load」ERROR。
+    UIInspectorCompat.Ensure()
 
     if inFlight then
         onBusy("广告加载中，请稍候")

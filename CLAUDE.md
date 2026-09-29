@@ -3,6 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.14（修「UI Inspector requested but failed to load」）：
+  - **根因（本地已复现）**：平台没有广告 SDK 时（编辑器/预览）引擎用 `urhox-libs/FakeAd` 模拟激励视频；FakeAd **只 require UI 的 Core**（`urhox-libs/UI/Core/UI`），并在 UI 未初始化时调用 `UI.Init`。而 `UI.Inspector` 字段**只由聚合模块 `urhox-libs/UI/init.lua` 赋值**——本作游戏 Runtime 从不加载聚合模块（游戏 UI 全是 raw NanoVG），于是首播广告时 `UI.Inspector == nil`；preview 环境（`GetTapMakerEnvString()=="preview"`）会让 `UI.Init` 自动请求 F9 检查器，请求落空即 `log:Write(LOG_ERROR, "UI Inspector requested but failed to load")`，被平台错误上报收集（帧号 1847 ≈ 玩家点了结算/暂停里的广告）。复现：本地运行时把 `GetTapMakerEnvString` 改成返回 "preview"，只 require Core 再 `UI.Init` → 稳定复现 1 次该 ERROR；补装聚合模块后 0 次。
+  - **修复**：新增 `scripts/ui/UIInspectorCompat.lua`（`Ensure()`：先 `pcall(require,"urhox-libs/UI")` 装载聚合模块拿真正的检查器，失败才兜底 `{Init/Shutdown 空实现}`），`AdService.Show` 发广告前调用一次（幂等、按需加载，不进启动路径）。F9 检查器在预览里仍可用，且 `UI.Shutdown()` 里未加保护的 `UI.Inspector.Shutdown()` 也不会再空指针。BUILD_VERSION 与大厅版本→0.12.14。
+  - **验证**：官方多人 build+预览上传 ✅；本地探针（模拟 preview + FakeAd 初始化路径）修复前 1 次 ERROR → 修复后 **0 次**且 `UI.Inspector` 为真模块；游戏启动与战斗态离屏渲染回归正常（截图非空、零 Lua/overlay 错误）。
+  - ⚠️ **库的「聚合模块 vs Core 模块」字段分离**：`UI.Inspector` 这类字段只在聚合入口 `urhox-libs/UI/init.lua` 赋值；绕过聚合直接 require Core 的引擎内置模块（FakeAd 就是这样）拿到的表里它们为空。凡「引擎内部会替玩家调用 UI.Init」的路径，都要先保证聚合模块装载过。
 - 版本: 0.12.13（初始弹药装载 5 辆 → 3 辆）：
   - **开局装载减量**：`Game.lua` 新增 `BASE_AMMO_SPARE = 2`（另有 1 辆待发），`LoadBalls` 按它装载 → 开局总装载 5 辆（1 待发 + 4 备弹）→ **3 辆（1 待发 + 2 备弹）**。补弹仍按「回收一辆补一辆」维持总量；`UnlockBallType` 插入新车时总量 +1（v0.12.12 行为，不是泄漏）。车辆种类仍为 4 种，底部四槽、解锁卡与卡池门控不变。BUILD_VERSION 与大厅版本→0.12.13。
   - **验证**：官方多人 build+预览上传 ✅；本地规则探针（900 帧 / 35 次发射）核对开局 `ready=1 spare=2 total=3`、播放期总量恒等于「3 + 已解锁新车数」、重开复位为 3；本地真渲染战斗态零 `overlay stage failed`、零 Lua 错误。⚠️ 真机手感（3 辆是否偏紧）待 Preview。
