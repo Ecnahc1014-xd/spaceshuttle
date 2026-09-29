@@ -3,6 +3,10 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.12.8（主菜单像素字标轮播批次：AI 生图 → 0718 管线后处理 → 每 5 秒切换）：
+  - **像素字标成品图（用户指定用 `0718-pixelimage-aigc` skill，并要求"图标太无聊，没有游戏元素介入"）**：`batch_generate_images`（nanobanana, 1344×768 草案, 4 seed）出 4 张「击碎飞机」字标，每张融合游戏元素（①重卡弹道击碎「碎」字+右上 8bit 敌机；②小货车点状弹道+飞碟+橙色碎块；③「击」字裂纹+invader 嵌在飞字前+底部砖墙被撞穿；④像素弹丸撞碎「碎」字+俯冲小敌机）。后处理按 skill 管线手写定制脚本（skill 自带 postprocess.py 只支持方形母版，字标需按内容纵横比）：包围盒裁切 → LANCZOS 等比缩到 **120 高母版**（宽 207/235/244/264 随字标比例）→ alpha 二值化(128) → **7 色 dark-tech 量化**（#10131F 轮廓/#252A3A 影/#009694 青暗/#00E5D0 青/#7FF2E6 青亮/#F1EEF0 白/#FFFFFF，全 ≤9 色达标）。成品 `assets/image/ui_logo_{a,b,c,d}_20260929162106.png` + 22hex uuid .meta（已验重、已进 dist manifest）。草案 png 已移出 assets（→ /home/Maker/logo_pp/drafts，不占包体）。
+  - **主页轮播（用户指定：进主页随机一个、每 5 秒变化）**：`Scene3DBackend` 新增 `LOGO_PATHS`（含逐图宽 w）/`LoadLogoTitles()`（Init 里 LoadIcons 之后调，`nvgCreateImage(..., NVG_IMAGE_NEAREST)`，**可选资源**：全失败也只是回退，不进 Init 成功条件）/`PickLogoImage(elapsed, uiStateEnter_)`——`(floor(t/5)+logoRollOffset_) % n + 1`。`logoRollOffset_` 在 `UpdateUiState` 检测到进入 menu 态时 `math.random(0,3)` 摇一次（⚠️ 只在状态切换摇，禁止每帧 random）。`DrawMenu` ①区改：有字标则 `nvgImagePattern` **1× 等比居中**（lx=(w-图宽)/2, y=90..210，与断线 218/CTA 262 无冲突，已用 PIL 合成图验证），无字标回退 `DrawPixelLogo` 整串 zpix。BUILD_VERSION→0.12.8。
+  - 验证：多人 build（内置 LSP 语法检查）🎉 成功 + 预览上传；4 张字标 + uuid 均进 dist manifest；云端 `lua_lsp_client` 本时段不可用（build 第 4 步已覆盖语法校验）。⚠️ 待 Preview：字标真机 NEAREST 硬边观感、5 秒轮播节奏、随机起点效果。
 - 版本: 0.12.7（截图反馈整改批次：大厅换皮 + logo 空框修复 + 开局零自动弹窗 + 签到并入充值 + 钱包语义修正）：
   - **大厅加载页 dark-tech 换皮（用户否决裸 UI）**：`lobby_runtime.lua` 重写为窗口壳风格——深底 COL 令牌、panel 窗口（cyanDim 边 + 46px 标题栏：青识别条 +「击碎，飞机大战」+ 右侧版本号）、1px 断线、状态文案「正在连接服务器」+ 青色进度 fill + 「N 秒后自动进入单机模式」倒计时 + 三扫描点随机闪。状态迁移：onMatchFound→「正在接入战斗服务器」+setFill(0.5)；onProgress>=1→「连接完成，正在进入」+stopWaiting；SN onError / client OnError→「服务器不可用/连接失败，进入单机模式」。⚠️ urhox-libs/UI **无 ref 机制**：控件全部先建局部变量再组装进 children；`SetText`/`SetStyle` 动态更新用 pcall。契约保留：`shutdownLobbyUI()`（hideBanner+Destroy+UI.Shutdown+UnregisterHandler）、五秒兜底、banner 换皮通道。
   - **logo 空框修复（用户截图点名「还是个空框」）**：v0.12.6 的 `DrawPixelLogo` 用 utf8.codes **逐码位**在 104px 下渲染，zpix 位图字体超大号逐字退化成空心框（只剩阴影层成框）。改回**整串一次 nvgText + 右下硬偏移阴影双层**（与 36px 旧版同一条已验证路径）。BUILD_VERSION→0.12.7。
@@ -75,7 +79,14 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.12.7 截图整改批次（大厅 dark-tech 换皮、logo 空框修复为整串+阴影、开局零自动弹窗、签到并入充值界面、钱包条删误导箭头改金充值钮）
+- 上次交付: v0.12.8 主菜单像素字标轮播批次（AI 生 4 张融合游戏元素的字标 → 0718 管线量化 120 高母版 → 进主页随机起点每 5 秒轮播、NEAREST 1× 居中）
+
+## 本批次新增避雷（v0.12.8 像素字标轮播）
+- ⚠️ **AI 生图≠像素素材成品，必须过管线后处理才能进包（v0.12.8）**：高分辨率草案（1344×768）直接进资源会带抗锯齿/颜色漂移/主体占比失控。`0718-pixelimage-aigc` 管线：包围盒裁切 → LANCZOS 缩母版 → alpha 二值化(阈值 128) → 色板量化（映射到项目色板，可见色 ≤9）。字标这类非方形主体别用 skill 自带 `postprocess.py`（它 `--master` 只支持正方形），按内容纵横比手写（固定高、宽=round(高×宽高比)）。
+- ⚠️ **像素图运行时装载三铁律（v0.12.8）**：①加载必须 `nvgCreateImage(..., NVG_IMAGE_NEAREST)`，默认线性过滤会糊；②显示尺寸只能是母版的整数倍（本项目母版=显示尺寸 1×，禁止非整数拉伸）；③多张字标纵横比不同时，逐图存各自宽度 w 居中绘制，不要强塞同一矩形。
+- ⚠️ **轮播的随机起点只在状态切换摇一次（v0.12.8）**：`UpdateUiState` 检测 `state=="menu"` 时 `math.random(0,3)` 写 `logoRollOffset_`；索引 `(floor(t/5)+offset)%n+1`。禁止每帧 random（会疯狂跳变）；t 用 `game.elapsed - uiStateEnter_`（进菜单归零）。
+- ⚠️ **装饰性大图一律可选资源（v0.12.8，同 v0.11.4 手势图）**：`LoadLogoTitles` 全失败也不能崩 Init 成功条件，`DrawMenu` 无字标回退 `DrawPixelLogo` 整串 zpix 大字。缺图=UI 全没/卡死的头号诱因。
+- ⚠️ **沙箱坑：`/workspace/.tmp` 被 root 占（drwxr-xr-x 不可写）**，临时脚本/中间产物写 `/home/Maker/`；`Write` 工具对 /workspace 外路径也可能报 Internal error，改小段 `printf >> file` 或写 /home/Maker。
 
 ## 本批次新增避雷（v0.12.7 截图整改）
 - 🔴 **zpix 位图字体逐字绘制在超大字号退化成空心框（v0.12.7 实测）**：`DrawPixelLogo` 曾用 utf8.codes 逐码位 nvgText 画 104px 中文，真机只剩阴影层是框、主层空白——大字号必须**整串一次绘制**（36px 旧版即此路径），想做首尾异色也别拆单字（可拆「前缀串+后缀串」两段整串，不能拆单码位）。

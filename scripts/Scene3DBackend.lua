@@ -70,6 +70,8 @@ local nvgFontZpix_ = -1
 -- 渲染时据此计算淡入/滑入进度，避免硬切（不破坏酸性风格，纯透明度/位移 easing）。
 local uiState_ = nil
 local uiStateEnter_ = 0
+-- v0.12.8：像素字标轮播随机起点（在下方 LOGO 块初始化前由 UpdateUiState 写入）。
+local logoRollOffset_ = 0
 
 -- WO-16/P9：FXAA 能力探测。尝试在渲染路径中定位 FXAA 后处理命令，
 -- 任何异常或缺失都判定不可用，保持关闭以保全 3D 画面（绝不强制启用）。
@@ -405,7 +407,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.12.7"
+local BUILD_VERSION = "0.12.8"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -735,6 +737,10 @@ local function UpdateUiState(game)
     if game.state ~= uiState_ then
         uiState_ = game.state
         uiStateEnter_ = game.elapsed
+        if game.state == "menu" then
+            -- v0.12.8：每次进主页重新摇字标轮播起点（仅状态切换时一次）。
+            logoRollOffset_ = math.random(0, 3)
+        end
     end
 end
 
@@ -981,6 +987,48 @@ local function LoadIcons()
     local total = 0
     for _ in pairs(ICON_PATHS) do total = total + 1 end
     print("[Scene3DBackend] pixel icons loaded=" .. loaded .. "/" .. total)
+end
+
+-- ============================================================================
+-- v0.12.8：AI 生图像素字标（0718-pixelimage-aigc 管线：草案 → 包围盒裁切 →
+-- LANCZOS 等比缩到 120 高母版 → alpha 二值化 → 7 色 dark-tech 量化）。
+-- 主页轮播：进菜单随机起点，每 5 秒切换下一张，NEAREST 1× 显示。
+-- ⚠️ 可选资源：缺图只回退整串 zpix 大字，绝不进 Init 成功条件。
+-- ============================================================================
+-- 母版 = 显示尺寸（各字标按内容等比裁到 120 高，宽 207–264 不等），1× 最近邻。
+local LOGO_PATHS = {
+    { path = "image/ui_logo_a_20260929162106.png", w = 207 },
+    { path = "image/ui_logo_b_20260929162106.png", w = 235 },
+    { path = "image/ui_logo_c_20260929162106.png", w = 244 },
+    { path = "image/ui_logo_d_20260929162106.png", w = 264 },
+}
+local LOGO_H = 120
+local LOGO_SWITCH_SECONDS = 5
+
+---@type {img: integer, w: number}[]
+local logoImages_ = {}
+-- 随机起点 logoRollOffset_ 已在文件前部与 uiState_ 一起声明，由 UpdateUiState 写入。
+
+local function LoadLogoTitles()
+    logoImages_ = {}
+    for _, item in ipairs(LOGO_PATHS) do
+        local ok, img = pcall(function()
+            return nvgCreateImage(vg_, item.path, NVG_IMAGE_NEAREST)
+        end)
+        if ok and type(img) == "number" and img > 0 then
+            logoImages_[#logoImages_ + 1] = { img = img, w = item.w }
+        end
+    end
+    print("[Scene3DBackend] pixel logo titles loaded=" .. #logoImages_ .. "/" .. #LOGO_PATHS)
+end
+
+-- 当前应显示的字标；未加载任何图时返回 nil（调用方回退 zpix 整串）。
+local function PickLogoImage(elapsed, enteredAt)
+    local n = #logoImages_
+    if n == 0 then return nil end
+    local t = math.max(0, (elapsed or 0) - (enteredAt or 0))
+    local idx = (math.floor(t / LOGO_SWITCH_SECONDS) + logoRollOffset_) % n + 1
+    return logoImages_[idx]
 end
 
 ---@param ctx any
@@ -1297,8 +1345,20 @@ local function DrawMenu(ctx, game, meta)
     DrawMicroGrid(ctx, 16, 84, 96, 120, 12, 16)
     DrawMicroGrid(ctx, game.width - 112, game.height - 220, 96, 140, 12, 14)
 
-    -- ① 像素超大打字标题（用户点名：logo 本身要大字化）
-    DrawPixelLogo(ctx, game.width * 0.5, 96, GAME_SHORT_TITLE, 104, C.cyan)
+    -- ① 像素字标标题（v0.12.8）：AI 生成+管线量化的成品图，母版 120 高，
+    -- NEAREST 1× 等比居中显示，每 5 秒轮播下一张（起点在进菜单时随机）；
+    -- 缺图回退 zpix 整串大 logo。
+    local logo = PickLogoImage(game.elapsed, uiStateEnter_)
+    if logo then
+        local lx = (game.width - logo.w) * 0.5
+        nvgBeginPath(ctx)
+        nvgRect(ctx, lx, 90, logo.w, LOGO_H)
+        nvgFillPaint(ctx, nvgImagePattern(ctx, lx, 90, logo.w, LOGO_H,
+            0, logo.img, 1))
+        nvgFill(ctx)
+    else
+        DrawPixelLogo(ctx, game.width * 0.5, 96, GAME_SHORT_TITLE, 104, C.cyan)
+    end
     DrawSegmentedRule(ctx, 120, 218, game.width - 240, 12, C.cyanDim)
     DrawPixelText(ctx, game.width * 0.5, 232, "拖拽发射重卡 · 逐块撕碎敌机编队", 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -2168,6 +2228,7 @@ function Backend.Init()
     handImage_ = nvgCreateImage(vg_, HAND_IMAGE_PATH, 0)
     -- ⚠️ 必须在 vg_ 创建之后加载；vg_ 为 nil 时所有图标都会静默失败。
     LoadIcons()
+    LoadLogoTitles()
     if not handImage_ or handImage_ <= 0 then
         handImage_ = -1
         print("[Scene3DBackend] hand hint image unavailable: " .. HAND_IMAGE_PATH)
