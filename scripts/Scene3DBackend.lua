@@ -407,7 +407,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.12.8"
+local BUILD_VERSION = "0.12.9"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -590,10 +590,6 @@ local function DrawMachinedPanel(ctx, x, y, w, h, fill, border, radius, emphasis
             {border[1], border[2], border[3], math.min(95, border[4] or 95)}, math.max(1, r - 2), 0.7)
         DrawLine(ctx, x + r + 3, y + 1.5, x + w - r - 3, y + 1.5,
             {255, 255, 255, emphasis and 24 or 13}, 1)
-    end
-    if w > 150 and h > 52 then
-        DrawCircuitTexture(ctx, x + w - math.min(58, w * 0.32) - 4, y + 4,
-            math.min(58, w * 0.32), math.min(26, h - 8), border, emphasis and 25 or 14)
     end
     if emphasis and w > 80 and h > 36 then
         for _, px in ipairs({x + 9, x + w - 9}) do
@@ -1326,6 +1322,9 @@ local function DrawHud(ctx, game, presentation)
 
     DrawPixelText(ctx, 14, 5, "本局得分", 13, C.dim)
     DrawPixelText(ctx, 14, 20, string.format("%d", game.score), 28, C.text)
+    local cloud = presentation and presentation.cloudStatus
+    local cloudColor = cloud == "ok" and C.cyan or (cloud == "unavailable" and C.warn or C.cyanDim)
+    DrawRect(ctx, 140, 8, 5, 5, cloudColor, 3)
     DrawPixelText(ctx, 14, 58, "最高 " .. tostring(game.highScore), 12, C.dim)
 
     local centerX = 264
@@ -1412,15 +1411,18 @@ local function DrawMenu(ctx, game, meta)
     DrawPixelText(ctx, game.width * 0.5, 232, "拖拽发射重卡 · 逐块撕碎敌机编队", 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    -- ② 主 CTA（开局点击/松手确认仍走原有 startArmed 通道，纯视觉引导）
+    -- ② 主 CTA：用游戏标识与外层硬件导轨建立主次，不改开始点击/松手确认的命中几何。
     local ctaY = 262
-    DrawRect(ctx, 40, ctaY, game.width - 80, 92, C.cyan, 8)
-    DrawPixelText(ctx, game.width * 0.5, ctaY + 16, "开始战斗", 34, C.ink,
+    DrawMachinedPanel(ctx, 34, ctaY - 5, game.width - 68, 102, C.rail, C.warnDim, 10, true)
+    DrawRect(ctx, 42, ctaY, game.width - 84, 92, C.cyan, 7)
+    DrawRect(ctx, 54, ctaY + 4, game.width - 108, 1, {255, 255, 255, 110}, 0)
+    DrawIcon(ctx, "premium_supply_crate", 164, ctaY + 28, 32, 1)
+    DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 14, "开始战斗", 31, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, ctaY + 58, "点 击 · 松 手 确 认", 16, C.ink,
+    DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 56, "点击 · 松手确认", 14, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, ctaY + 102,
-        "v" .. BUILD_VERSION .. " · " .. GAME_TITLE, 14, C.dim,
+        "v" .. BUILD_VERSION .. " · " .. GAME_TITLE, 13, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     -- ③ 变现闭环三段式：钱包连接器 + 今日福利(赚) + 养成收藏(花) + 图鉴/排行（布局/命中同源 MetaUI）
@@ -2047,67 +2049,151 @@ local function DrawSystemBanner(ctx)
     nvgRestore(ctx)
 end
 
+local function ApplyOverlayDesignTransform()
+    nvgResetScissor(vg_)
+    nvgResetTransform(vg_)
+    nvgGlobalAlpha(vg_, 1.0)
+    nvgScale(vg_, scale_, scale_)
+    nvgTranslate(vg_, offsetX_, offsetY_)
+end
+
+local function RunOverlayStage(stage, callback)
+    nvgSave(vg_)
+    local ok, err = pcall(callback)
+    nvgRestore(vg_)
+    if not ok then ReportOverlayStageError(stage, err) end
+    return ok
+end
+
+local function DrawMinimalHudFallback(game)
+    ApplyOverlayDesignTransform()
+    nvgBeginPath(vg_)
+    nvgRect(vg_, 0, 0, game.width, HUD_HEIGHT)
+    nvgFillColor(vg_, nvgRGBA(C.panel[1], C.panel[2], C.panel[3], 255))
+    nvgFill(vg_)
+    nvgBeginPath(vg_)
+    nvgRect(vg_, 0, HUD_HEIGHT - 2, game.width, 2)
+    nvgFillColor(vg_, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 255))
+    nvgFill(vg_)
+    UseTechFont(vg_)
+    nvgFontSize(vg_, 17)
+    nvgFillColor(vg_, nvgRGBA(C.text[1], C.text[2], C.text[3], 255))
+    nvgText(vg_, 12, 16, "得分 " .. tostring(game.score or 0), nil)
+    nvgTextAlign(vg_, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgText(vg_, game.width * 0.5, 16, "第 " .. tostring(game.wave or 1) .. " 波", nil)
+    nvgTextAlign(vg_, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    nvgText(vg_, game.width - 48, 16,
+        "基地 " .. tostring(game.baseHp or 0) .. "/" .. tostring(game.maxBaseHp or 0), nil)
+end
+
+local function DrawMinimalDockFallback()
+    ApplyOverlayDesignTransform()
+    nvgBeginPath(vg_)
+    nvgRect(vg_, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y)
+    nvgFillColor(vg_, nvgRGBA(C.panel[1], C.panel[2], C.panel[3], 255))
+    nvgFill(vg_)
+    nvgBeginPath(vg_)
+    nvgRect(vg_, 0, BOTTOM_DOCK_Y, DESIGN_W, 2)
+    nvgFillColor(vg_, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 255))
+    nvgFill(vg_)
+    UseTechFont(vg_)
+    nvgFontSize(vg_, 13)
+    nvgFillColor(vg_, nvgRGBA(C.dim[1], C.dim[2], C.dim[3], 255))
+    nvgText(vg_, 12, BOTTOM_DOCK_Y + 6, "弹药矩阵", nil)
+    nvgFontSize(vg_, 15)
+    for i, ballType in ipairs(SLOT_TYPES) do
+        local x = (i <= 2 and 10 or DESIGN_W - 10 - 2 * 64 - 6)
+            + ((i - 1) % 2) * 70
+        local y = BOTTOM_DOCK_Y + 26
+        nvgBeginPath(vg_)
+        nvgRoundedRect(vg_, x, y, 64, 64, 5)
+        nvgFillColor(vg_, nvgRGBA(C.card[1], C.card[2], C.card[3], 255))
+        nvgFill(vg_)
+        nvgStrokeColor(vg_, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 255))
+        nvgStrokeWidth(vg_, 1)
+        nvgStroke(vg_)
+        nvgTextAlign(vg_, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        nvgFillColor(vg_, nvgRGBA(C.text[1], C.text[2], C.text[3], 255))
+        nvgText(vg_, x + 32, y + 24, SLOT_NAMES[ballType], nil)
+    end
+end
+
 local function RenderOverlay(game, presentation, meta)
     if not vg_ then return end
-    nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
-    nvgResetTransform(vg_)
-    nvgResetScissor(vg_)
-    nvgGlobalAlpha(vg_, 1.0)
-    nvgScale(vg_, scale_, scale_)
-    DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
-    nvgTranslate(vg_, offsetX_, offsetY_)
-    nvgSave(vg_)
-    DrawCornerBrackets(vg_, 2, 2, DESIGN_W - 4, DESIGN_H - 4, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 140}, 18, 1.4)
-    DrawBrokenFrame(vg_, 0.5, 0.5, DESIGN_W - 1, DESIGN_H - 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 42)
-    if game.state == "playing" then
-        if presentation.screenShake > 0 then
-            local amplitude = presentation.screenShake * 13
-            nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
-                math.cos(game.elapsed * 73) * amplitude * 0.65)
-        end
-        DrawBaseImpactFeedback(vg_, game, presentation)
-        DrawShockRings(vg_, game, presentation)
-        DrawFloatTexts(vg_, game, presentation)
-        DrawWaveBanner(vg_, game, presentation)
+    local beginOk, beginErr = pcall(nvgBeginFrame, vg_, logicalWidth_, logicalHeight_, dpr_)
+    if not beginOk then
+        ReportOverlayStageError("begin-frame", beginErr)
+        return
     end
-    nvgRestore(vg_)
 
-    nvgResetScissor(vg_)
-    nvgResetTransform(vg_)
-    nvgScale(vg_, scale_, scale_)
-    nvgTranslate(vg_, offsetX_, offsetY_)
-    nvgGlobalAlpha(vg_, 1.0)
-    -- v0.12.6：菜单不再画战斗 HUD（分数/波次/防线对局读数不属于首页）——
-    -- 顶部钱包条由 MetaUI.DrawMenuBar 提供，HUD 只在有对局语义的状态出现。
-    if game.state ~= "menu" then
-        DrawHud(vg_, game, presentation)
-    end
+    RunOverlayStage("letterbox", function()
+        nvgResetScissor(vg_)
+        nvgResetTransform(vg_)
+        nvgGlobalAlpha(vg_, 1.0)
+        nvgScale(vg_, scale_, scale_)
+        DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
+    end)
+
+    RunOverlayStage("frame-decoration", function()
+        ApplyOverlayDesignTransform()
+        DrawCornerBrackets(vg_, 2, 2, DESIGN_W - 4, DESIGN_H - 4,
+            {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 140}, 18, 1.4)
+        DrawBrokenFrame(vg_, 0.5, 0.5, DESIGN_W - 1, DESIGN_H - 1,
+            {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 42)
+    end)
+
     if game.state == "playing" then
-        DrawItemSlots(vg_, game)
-        DrawPullHint(vg_, game)
-        DrawAmmoSlots(vg_, game, presentation)
-        DrawDamageVignette(vg_, game, presentation)
-    elseif game.state == "menu" then
-        DrawMenu(vg_, game, meta)
-    elseif game.state == "gameover" then
-        DrawGameOver(vg_, game, presentation)
-    elseif game.state == "levelup" then
-        DrawLevelUp(vg_, game, presentation)
-    elseif game.state == "paused" then
-        DrawPaused(vg_, game, meta, presentation)
+        RunOverlayStage("world-fx", function()
+            ApplyOverlayDesignTransform()
+            if presentation.screenShake > 0 then
+                local amplitude = presentation.screenShake * 13
+                nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
+                    math.cos(game.elapsed * 73) * amplitude * 0.65)
+            end
+            DrawBaseImpactFeedback(vg_, game, presentation)
+            DrawShockRings(vg_, game, presentation)
+            DrawFloatTexts(vg_, game, presentation)
+            DrawWaveBanner(vg_, game, presentation)
+        end)
     end
-    -- v0.11.0 商业化：元层功能面板与每日补给弹窗画在最上层（含模态遮罩）。
+
+    ApplyOverlayDesignTransform()
+    if game.state ~= "menu" then
+        if not RunOverlayStage("hud", function() DrawHud(vg_, game, presentation) end) then
+            RunOverlayStage("hud-fallback", function() DrawMinimalHudFallback(game) end)
+        end
+    end
+
+    if game.state == "playing" then
+        if not RunOverlayStage("playing-dock", function()
+            DrawAmmoSlots(vg_, game, presentation)
+            DrawItemSlots(vg_, game)
+            DrawPullHint(vg_, game)
+        end) then
+            RunOverlayStage("dock-fallback", DrawMinimalDockFallback)
+        end
+        RunOverlayStage("damage-vignette", function() DrawDamageVignette(vg_, game, presentation) end)
+    elseif game.state == "menu" then
+        RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
+    elseif game.state == "gameover" then
+        RunOverlayStage("gameover", function() DrawGameOver(vg_, game, presentation) end)
+    elseif game.state == "levelup" then
+        RunOverlayStage("levelup", function() DrawLevelUp(vg_, game, presentation) end)
+    elseif game.state == "paused" then
+        RunOverlayStage("paused", function() DrawPaused(vg_, game, meta, presentation) end)
+    end
+
     if meta and meta.screen then
-        MetaUI.DrawScreen(vg_, DESIGN_W, meta)
+        RunOverlayStage("meta-screen", function() MetaUI.DrawScreen(vg_, DESIGN_W, meta) end)
     end
     if meta and meta.supplyOpen then
-        MetaUI.DrawSupplyPopup(vg_, DESIGN_W, meta)
+        RunOverlayStage("supply", function() MetaUI.DrawSupplyPopup(vg_, DESIGN_W, meta) end)
     end
-    nvgResetScissor(vg_)
-    nvgGlobalAlpha(vg_, 1.0)
-    -- v0.12.5：顶端通知条画在最上层（元层面板之上），限时自动消失。
-    DrawSystemBanner(vg_)
-    nvgEndFrame(vg_)
+    ApplyOverlayDesignTransform()
+    RunOverlayStage("system-banner", function() DrawSystemBanner(vg_) end)
+
+    local endOk, endErr = pcall(nvgEndFrame, vg_)
+    if not endOk then ReportOverlayStageError("end-frame", endErr) end
 end
 
 -- ============================================================================
@@ -2125,12 +2211,29 @@ local lastGame_ = nil
 local lastPresentation_ = nil
 ---@type table|nil
 local lastMeta_ = nil
+local overlayStageErrors_ = {}
+local overlayFirstFrameLogged_ = false
+local overlaySnapshotLogged_ = false
+
+local function ReportOverlayStageError(stage, err)
+    if overlayStageErrors_[stage] then return end
+    overlayStageErrors_[stage] = true
+    print("[Scene3DBackend] overlay stage failed: " .. stage .. " / " .. tostring(err))
+end
 
 ---@param eventType string
 ---@param eventData any
 local function HandleBackendNanoVGRender(eventType, eventData)
     if not vg_ then return end
+    if not overlayFirstFrameLogged_ then
+        overlayFirstFrameLogged_ = true
+        print("[Scene3DBackend] NanoVGRender callback active; waiting for game snapshot")
+    end
     if lastGame_ and lastPresentation_ then
+        if not overlaySnapshotLogged_ then
+            overlaySnapshotLogged_ = true
+            print("[Scene3DBackend] overlay snapshot active state=" .. tostring(lastGame_.state))
+        end
         RenderOverlay(lastGame_, lastPresentation_, lastMeta_)
         return
     end

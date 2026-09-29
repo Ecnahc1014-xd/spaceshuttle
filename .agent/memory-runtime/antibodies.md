@@ -144,8 +144,11 @@
 - [AB-110] [跨项目][像素图 NanoVG 装载：NEAREST + 整数倍 + 逐图宽度] ①`nvgCreateImage(vg, path, NVG_IMAGE_NEAREST)`，默认(0)线性过滤缩放会糊；②显示尺寸只能是母版整数倍，禁止非整数拉伸（本项目母版=显示尺寸 1×）；③一批字标/图标纵横比不一致时，每张各存自己的显示宽 w、按各自宽度居中画，别把它们塞进同一固定矩形（会拉伸变形）。加载走 pcall+可选资源：全失败也不能崩 Init 成功条件，绘制处留程序化回退。（击碎，飞机大战/v0.12.8）
 - [AB-111] [跨项目][轮播随机起点只在状态切换摇一次] 做"进页面随机一张、每 N 秒切"的轮播：索引=`(floor((elapsed-enteredAt)/N)+offset) % n + 1`，`offset` 只在**检测到进入该状态的那一帧** `math.random(0,n-1)` 摇一次（放在状态机 transition 分支里，如 UpdateUiState 判 `state=="menu"`）。⚠️ 绝不能在每帧或 Pick 函数里 random——会疯狂跳变根本停不下来。计时基准用规则快照的 elapsed（menu 态也递增），enteredAt 用状态进入时刻，进页面自动归零。（击碎，飞机大战/v0.12.8）
 - [AB-112] [跨项目][主视觉"无聊"往往是缺游戏身份，不是缺字号] 用户先要"像素超大 logo"，纯程序化大字体做出来又判"图标太无聊啦，没有游戏元素介入"——他要的是**标题承载玩法叙事**（重卡弹道把字撞碎、8bit 敌机、砖墙裂纹这类元素融进字标），而不只是把名字放大。首页主视觉允许是精心量化的贴图而非纯代码，且要"活"（轮播动效）。做主视觉时先问：要不要融合游戏内符号？（击碎，飞机大战/v0.12.8）
-- [AB-113] [沙箱/环境][别假设 /workspace/.tmp 可写；Write 工具可能整体 Internal error] 本沙箱 `/workspace/.tmp` 被 root 占有（drwxr-xr-x，当前 Maker 用户不可写），临时脚本/中间产物写 `/home/Maker/`。且 `mcp__mkr__Write` 工具一度对任意路径都返回 "Writing file failed: Internal error"——退化用 `printf '%s\n' ... >> file` 小段拼接落盘（每段 < 25 行，避免长 heredoc 触发工具异常）。Read 也读不了 /workspace 外的 PNG，需把待查看产物 cp 进 /workspace 子目录再看。（击碎，飞机大战/v0.12.8）
+- [AB-113] [沙箱/环境][别假设 /workspace/.tmp 可写；Write 工具可能整体 Internal error] 本沙箱 `/workspace/.tmp` 被 root 占有（drwxr-xr-x，当前 Maker 用户不可写），临时脚本/中间产物写 `/home/Maker/`。且 `mcp__mkr__Write` 工具一度对任意路径都返回 "Writing file failed: Internal error"——退化用 `printf` 小段拼接落盘（避免长 heredoc 触发工具异常）。Read 也读不了 /workspace 外的 PNG，需把待查看产物 cp 进 /workspace 子目录再看。（击碎，飞机大战/v0.12.8）
+- [AB-114] [跨项目][AI 像素素材规格要同时锁定母版、色数与原生显示尺寸] 先定 32×32 母版/透明边/色板，再生成草案；量化实际可见像素时 alpha=0 属透明，不应把透明像素计入“色数”（本批 8 个可见色+透明=9 个值）。游戏显示直接 32×32 1×；禁止为填槽把 32 图缩放成 28/36/48 等非整数倍率，优先调图标容器留白。（击碎，飞机大战/v0.12.9）
+- [AB-115] [跨项目][NanoVG overlay 每个阶段独立保护，避免 FX 错误吞 HUD] 截图只剩 3D 战场、HUD / Dock / 2D 面板全失时，先查 NanoVGRender 订阅、快照分发和 RenderOverlay 中途错误；若 world FX 抛错，线性同一回调会跳过后续 HUD 与 `nvgEndFrame`。按 letterbox / FX / HUD / Dock / modal / banner 分阶段 pcall，每层重设 transform/scissor，`nvgEndFrame` 独立保证；HUD/Dock 留最小可读回退并只记录一次 stage 错误。截图早于当前 build 时要标注旧包，同时仍需为系统性缺层留容错。（击碎，飞机大战/v0.12.9）
+- [AB-116] [跨项目][高级感来自表面与层级，不是全屏加亮描边] 用户说 UI“不够贵”时，统一工艺语言：短幅低对比层次、内槽线、稀疏边缘电路纹理、少量黄铜铆点；青只给焦点，金只给奖励/付费。纹理局限在空白边缘，不穿正文；不要全屏霓虹、粗描边和装饰堆叠。可见 CTA/卡片重排时视觉框与命中矩形必须同步。（击碎，飞机大战/v0.12.9）
 
 ## 同步记录
 
-- 最近一次同步：2026-09-29 击碎，飞机大战 v0.12.8（新增 AB-109~113：AI 生图必过量化管线 / 像素图 NEAREST+整数倍+逐图宽 / 轮播随机起点只摇一次 / 主视觉要游戏身份 / 沙箱 .tmp 与 Write 工具坑）
+- 最近一次同步：2026-09-29 击碎，飞机大战 v0.12.9（AB-114~116：像素母版/色数/原生尺寸验收；NanoVG overlay 容错；高级 UI 表面工艺）

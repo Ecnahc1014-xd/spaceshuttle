@@ -174,7 +174,7 @@ end
 ---@return table close
 local function Shell(ctx, w, h, title, subtitle)
     local C = Colors()
-    D.backdrop(ctx, 0, 92, w, h - 92)
+    D.backdrop(ctx, 0, 0, w, h)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
     D.shell(ctx, x, y, sw, sh, 48)
@@ -327,12 +327,12 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
 
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
-    D.icon(ctx, "parts", L.wallet.x + 15, L.wallet.y + 14, 28)
+    D.icon(ctx, "parts", L.wallet.x + 12, L.wallet.y + 12, 32)
     D.text(ctx, L.wallet.x + 52, L.wallet.y + 8, "零件", 13, C.dim)
     D.text(ctx, L.wallet.x + 52, L.wallet.y + 26, string.format("%d", meta.parts or 0), 23, C.text)
     D.rect(ctx, L.wallet.x + 184, L.wallet.y + 10, 1, L.wallet.h - 20,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 110}, 0)
-    D.icon(ctx, "premium_energy_core", L.wallet.x + 196, L.wallet.y + 14, 28)
+    D.icon(ctx, "premium_energy_core", L.wallet.x + 194, L.wallet.y + 12, 32)
     D.text(ctx, L.wallet.x + 232, L.wallet.y + 8, "钻石", 13, C.dim)
     D.text(ctx, L.wallet.x + 232, L.wallet.y + 26,
         meta.offline and "—" or string.format("%d", meta.gems or 0), 23, C.warn)
@@ -412,24 +412,32 @@ end
 ---@param meta MetaState
 function MetaUI.DrawSupplyPopup(ctx, w, meta)
     local C = Colors()
-    -- v0.12.6：菜单态不再绘制战斗 HUD，弹窗遮罩必须铺满整屏（旧值从 y=92 起）。
     D.backdrop(ctx, 0, 0, w, 960)
-    local x, y, sw, sh = 40, 300, w - 80, 340
-    D.shell(ctx, x, y, sw, sh, 44)
-    D.rect(ctx, x, y + 44, 3, 20, C.cyan, 0)
-    D.text(ctx, x + 16, y + 10, "每日补给", 20, C.cyan)
+    local x, y, sw, sh = 40, 284, w - 80, 372
+    D.shell(ctx, x, y, sw, sh, 46)
+    D.rect(ctx, x, y + 46, 3, 22, C.cyan, 0)
+    D.icon(ctx, "premium_supply_crate", x + 14, y + 7, 32)
+    D.text(ctx, x + 54, y + 10, "每日补给", 19, C.text)
+    D.text(ctx, x + sw - 16, y + 14, "补给批次  /  01", 12, C.dim,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    D.text(ctx, w * 0.5, y + 74, "今日补给已就绪", 26, C.text,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    D.text(ctx, w * 0.5, y + 116, string.format("零件 ×%d", meta.supplyReward or 0), 34, C.warn,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    D.text(ctx, w * 0.5, y + 166, "看广告可再翻一倍", 16, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    D.grid(ctx, x + 20, y + 200, sw - 40, 40, 12, 14)
+    local hero = {x=x+20,y=y+64,w=sw-40,h=150}
+    D.panel(ctx, hero.x, hero.y, hero.w, hero.h, C.rail, C.cyanDim, 8)
+    D.panel(ctx, hero.x + 20, hero.y + 31, 88, 88, C.panel, C.warnDim, 8)
+    D.icon(ctx, "premium_supply_crate", hero.x + 48, hero.y + 59, 32, 1)
+    D.text(ctx, hero.x + 128, hero.y + 23, "今日物资配额", 13, C.cyanDim)
+    D.text(ctx, hero.x + 128, hero.y + 50,
+        string.format("%d", meta.supplyReward or 0), 36, C.warn)
+    D.text(ctx, hero.x + 128, hero.y + 94, "零件", 14, C.dim)
+    D.progress(ctx, hero.x + 128, hero.y + 120, hero.w - 148, 1, C.warn, 7)
+    D.text(ctx, x + 22, y + 232, "选择领取方式", 13, C.dim)
+    D.rect(ctx, x + 128, y + 240, sw - 150, 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 75}, 0)
+    D.grid(ctx, x + 16, y + sh - 72, sw - 32, 48, 12, 8)
 
     local claim, double = GetSupplyLayout(w)
-    Button(ctx, claim, "直接领取", "", "ghost")
-    Button(ctx, double, "看广告 双倍", string.format("共 %d", (meta.supplyReward or 0) * 2), "ad")
+    Button(ctx, claim, "直接领取", "零件 ×" .. tostring(meta.supplyReward or 0), "ghost")
+    Button(ctx, double, "看广告 · 双倍补给",
+        "共 " .. tostring((meta.supplyReward or 0) * 2) .. " 零件", "ad")
 end
 
 ---@return string|nil action
@@ -710,61 +718,70 @@ end
 -- 战斗档案（累计击碎方块升级，逐级领取免费零件）
 -- ============================================================================
 
--- 档案奖励按已领取等级滑动；一屏最多五项，绘制/命中共用同一行几何。
 local function GetPassRewardRect(content, index)
-    return { x = content.x, y = content.y + 180 + (index - 1) * 84,
-        w = content.w, h = 72 }
+    return { x = content.x, y = content.y + 174 + (index - 1) * 92,
+        w = content.w, h = 82 }
 end
 
--- v0.12.5：付费档案轨不再占常驻大面板行（用户否决 v0.12.4 显示）。
--- v0.12.7：启动自动弹窗被用户否决删除后，付费轨解锁入口收回本面板内一个
--- 紧凑按钮（打开面板才可见，绝不自动弹），与「升级获得零件…」文案同行右侧。
 local function GetPassUnlockRect(content)
-    return { x = content.x + content.w - 152, y = content.y + 138, w = 140, h = 40 }
+    return { x = content.x + content.w - 156, y = content.y + 110, w = 144, h = 42 }
 end
 
 local function DrawPass(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "战斗档案",
-        meta.premiumPass and "双轨奖励" or "免费奖励")
+        meta.premiumPass and "双轨奖励" or "精英档案")
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
-    D.icon(ctx, "pass", content.x + 16, content.y + 18, 32)
-    D.text(ctx, content.x + 60, content.y + 14,
-        string.format("等级 %d", meta.passLevel or 1), 26, C.text)
-    D.text(ctx, content.x + 16, content.y + 68,
-        string.format("累计击碎 %d / %d 块", meta.passProgress or 0, meta.passTarget or 1), 17, C.dim)
-    ProgressBar(ctx, content.x + 16, content.y + 102, content.w - 32,
-        (meta.passProgress or 0) / math.max(1, meta.passTarget or 1), C.cyan)
-    D.text(ctx, content.x + 16, content.y + 148,
-        meta.premiumPass and "已解锁付费轨 · 每级奖励 ×2"
-            or "升级获得零件 · 已解锁等级可逐级领取", 16,
-        meta.premiumPass and C.warn or C.dim)
-    local rewards = meta.passRewards or {}
-    for i, item in ipairs(rewards) do
-        local r = GetPassRewardRect(content, i)
-        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, item.claimable and C.cyan or C.cyanDim, 6)
-        D.icon(ctx, "record", r.x + 14, r.y + 20, 32, item.unlocked and 1 or 0.4)
-        D.text(ctx, r.x + 60, r.y + 6, "档案等级 " .. tostring(item.level), 18, C.text)
-        if meta.premiumPass then
-            D.text(ctx, r.x + 60, r.y + 38,
-                string.format("+%d 零件（%d ×2）", item.reward, item.baseReward or item.reward),
-                17, C.warn)
-        else
-            D.text(ctx, r.x + 60, r.y + 38, "+" .. tostring(item.reward) .. " 零件", 17, C.warn)
-        end
-        local btn = { x = r.x + r.w - 136, y = r.y + 12, w = 120, h = 48 }
-        Button(ctx, btn, item.claimed and "已领取" or (item.claimable and "领取" or "未解锁"), "",
-            item.claimable and "primary" or "disabled")
-    end
-    -- v0.12.7：付费轨解锁入口（金色=钻石付费；仅未解锁时显示，绝不自动弹）
-    if not meta.premiumPass then
+
+    local hero = {x=content.x, y=content.y+2, w=content.w, h=160}
+    D.panel(ctx, hero.x, hero.y, hero.w, hero.h, C.rail,
+        meta.premiumPass and C.warnDim or C.cyanDim, 8)
+    D.icon(ctx, "premium_pass_crest", hero.x + 14, hero.y + 12, 32)
+    D.text(ctx, hero.x + 56, hero.y + 10, "精英航空档案", 13, C.cyanDim)
+    D.text(ctx, hero.x + 56, hero.y + 29,
+        string.format("等级 %02d", meta.passLevel or 1), 27, C.text)
+    D.text(ctx, hero.x + hero.w - 16, hero.y + 12, "本级奖励", 12, C.dim,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    local currentReward = 100 + (meta.passLevel or 1) * 100
+    D.text(ctx, hero.x + hero.w - 16, hero.y + 31,
+        "+" .. tostring(currentReward), 21, C.warn, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    D.text(ctx, hero.x + 16, hero.y + 72,
+        string.format("击碎 %d / %d 块", meta.passProgress or 0, meta.passTarget or 1), 13, C.dim)
+    ProgressBar(ctx, hero.x + 16, hero.y + 91, hero.w - 32,
+        (meta.passProgress or 0) / math.max(1, meta.passTarget or 1), C.cyan, 9)
+    if meta.premiumPass then
+        D.text(ctx, hero.x + 16, hero.y + 116, "精英轨已启用", 13, C.warn)
+        D.text(ctx, hero.x + 16, hero.y + 137, "每级零件奖励翻倍", 12, C.dim)
+    else
+        D.text(ctx, hero.x + 16, hero.y + 119, "免费轨 · 持续作战即可升级", 13, C.dim)
         local ur = GetPassUnlockRect(content)
         local affordable = (not meta.offline) and (meta.gems or 0) >= (meta.premiumPassCost or 100)
-        local label = "钻石不足"
-        if meta.offline then label = "需联网"
-        elseif affordable then label = string.format("%d 钻石解锁", meta.premiumPassCost or 100) end
-        Button(ctx, ur, label, "", affordable and "gold" or "disabled")
+        local label = meta.offline and "需联网" or (affordable and
+            string.format("%d 钻石解锁", meta.premiumPassCost or 100) or "钻石不足")
+        Button(ctx, ur, label, "精英轨 · 奖励×2", affordable and "gold" or "disabled")
+    end
+
+    for i, item in ipairs(meta.passRewards or {}) do
+        local r = GetPassRewardRect(content, i)
+        local border = item.claimable and C.cyan or (item.unlocked and C.cyanDim or C.widget)
+        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, border, 7)
+        if item.claimable then D.rect(ctx, r.x, r.y + 8, 3, r.h - 16, C.cyan, 0) end
+        D.icon(ctx, "premium_energy_core", r.x + 13, r.y + 25, 32,
+            item.unlocked and 1 or 0.38)
+        D.text(ctx, r.x + 58, r.y + 10,
+            string.format("里程碑  /  %02d", item.level), 13, C.dim)
+        D.text(ctx, r.x + 58, r.y + 34,
+            string.format("+%d 零件", item.reward), 18,
+            item.claimable and C.warn or (item.unlocked and C.text or C.dim))
+        if meta.premiumPass then
+            D.text(ctx, r.x + 58, r.y + 60, "精英轨 ×2", 11, C.warn)
+        else
+            D.text(ctx, r.x + 58, r.y + 60, item.unlocked and "免费轨" or "继续战斗解锁", 11, C.dim)
+        end
+        local btn = { x = r.x + r.w - 136, y = r.y + 17, w = 120, h = 48 }
+        local label = item.claimed and "已领取" or (item.claimable and "领取奖励" or "未解锁")
+        Button(ctx, btn, label, "", item.claimable and "primary" or "disabled")
     end
     nvgRestore(ctx)
     return content, close
@@ -784,8 +801,7 @@ local function HitTestPass(uiX, uiY, w, meta)
     end
     for i, item in ipairs(meta.passRewards or {}) do
         local row = GetPassRewardRect(content, i)
-        local r = { x = row.x + row.w - 136,
-            y = row.y + 12, w = 120, h = 48 }
+        local r = { x = row.x + row.w - 136, y = row.y + 17, w = 120, h = 48 }
         if item.claimable and Inside(r, uiX, uiY) then return "claim_pass", item.level end
     end
     return nil, nil
@@ -800,7 +816,7 @@ end
 ---@return number cy
 ---@return number radius
 local function GetWheelLayout(w)
-    local cx, cy, radius = w * 0.5, 420, 150
+    local cx, cy, radius = w * 0.5, 406, 166
     return { x = cx - 120, y = 660, w = 240, h = 58 }, cx, cy, radius
 end
 
@@ -811,46 +827,103 @@ end
 ---@return table close
 local function DrawWheel(ctx, w, meta)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "幸运转盘", "每日一次")
+    local content, close = Shell(ctx, w, 960, "幸运转盘", meta.wheelReady and "今日机会  /  01" or "今日机会已用")
     local spin, cx, cy, radius = GetWheelLayout(w)
     local prizes = MetaCatalog.GetWheelPrizes()
     local n = #prizes
     local step = math.pi * 2 / n
     local palette = { C.cyanDim, C.warn, C.cyan, C.warn, C.cyanDim, C.warn, C.cyan, C.warn }
+    local ring = radius + 20
+
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, cy, ring + 10)
+    nvgFillColor(ctx, nvgRGBA(C.panel[1], C.panel[2], C.panel[3], 255))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, cy, ring + 9)
+    nvgStrokeColor(ctx, nvgRGBA(C.warnDim[1], C.warnDim[2], C.warnDim[3], 230))
+    nvgStrokeWidth(ctx, 2)
+    nvgStroke(ctx)
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, cy, ring)
+    nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 200))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+    for i = 0, 23 do
+        local a = math.pi * 2 * i / 24 - math.pi * 0.5
+        local inner = ring + (i % 3 == 0 and 2 or 5)
+        local outer = ring + 10
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, cx + math.cos(a) * inner, cy + math.sin(a) * inner)
+        nvgLineTo(ctx, cx + math.cos(a) * outer, cy + math.sin(a) * outer)
+        local tc = i % 3 == 0 and C.warn or C.cyanDim
+        nvgStrokeColor(ctx, nvgRGBA(tc[1], tc[2], tc[3], i % 3 == 0 and 200 or 120))
+        nvgStrokeWidth(ctx, i % 3 == 0 and 1.4 or 0.8)
+        nvgStroke(ctx)
+    end
 
     nvgSave(ctx)
+    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, cy, radius)
+    nvgFillColor(ctx, nvgRGBA(C.card[1], C.card[2], C.card[3], 255))
+    nvgFill(ctx)
     for i = 1, n do
         local a0 = (i - 1) * step - math.pi * 0.5
         local a1 = a0 + step
+        local mid = (a0 + a1) * 0.5
         local col = palette[i] or C.cyanDim
         nvgBeginPath(ctx)
         nvgMoveTo(ctx, cx, cy)
         nvgArc(ctx, cx, cy, radius, a0, a1, NVG_CW)
         nvgClosePath(ctx)
-        nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], 46))
+        nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], 35))
         nvgFill(ctx)
-        nvgStrokeColor(ctx, nvgRGBA(col[1], col[2], col[3], 170))
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, cx, cy)
+        nvgLineTo(ctx, cx + math.cos(a0) * (radius - 3), cy + math.sin(a0) * (radius - 3))
+        nvgStrokeColor(ctx, nvgRGBA(col[1], col[2], col[3], 160))
         nvgStrokeWidth(ctx, 1)
         nvgStroke(ctx)
-        -- 扇区金额
-        local mid = (a0 + a1) * 0.5
+
         local tx = cx + math.cos(mid) * radius * 0.72
         local ty = cy + math.sin(mid) * radius * 0.72
-        D.text(ctx, tx, ty - 8, tostring(prizes[i]), 16, col,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.panel(ctx, tx - 25, ty - 13, 50, 26, C.panel, col, 5)
+        D.text(ctx, tx, ty - 7, tostring(prizes[i]), 13,
+            prizes[i] >= 480 and C.warn or C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, cy, 27)
+    nvgFillColor(ctx, nvgRGBA(C.widget[1], C.widget[2], C.widget[3], 255))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, cy, 27)
+    nvgStrokeColor(ctx, nvgRGBA(C.warn[1], C.warn[2], C.warn[3], 230))
+    nvgStrokeWidth(ctx, 2)
+    nvgStroke(ctx)
+    D.icon(ctx, "premium_wheel_medal", cx - 16, cy - 16, 32, 1)
     nvgRestore(ctx)
-    D.stroke(ctx, cx - radius, cy - radius, radius * 2, radius * 2, C.cyanDim, radius, 2)
 
-    local label = meta.wheelReady and "看广告 免费抽一次" or "今日已抽取"
+    -- 固定奖针朝下，不随机旋转；指向顶部扇区，奖额永远可读。
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, cx - 12, cy - radius - 16)
+    nvgLineTo(ctx, cx + 12, cy - radius - 16)
+    nvgLineTo(ctx, cx, cy - radius + 2)
+    nvgClosePath(ctx)
+    nvgFillColor(ctx, nvgRGBA(C.warn[1], C.warn[2], C.warn[3], 255))
+    nvgFill(ctx)
+
+    local label = meta.wheelReady and "看广告 · 免费抽取" or "今日抽取已完成"
     Button(ctx, spin, label,
-        meta.wheelReady and "必得 120 零件以上" or "明日再来", meta.wheelReady and "ad" or "disabled")
-    D.text(ctx, w * 0.5, spin.y + spin.h + 48,
-        "每日限抽一次 · 八档零件奖励", 15, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        meta.wheelReady and "每日一次 · 八档零件奖励" or "明日再来", meta.wheelReady and "ad" or "disabled")
     if meta.wheelPrize and meta.wheelPrize > 0 then
-        D.text(ctx, w * 0.5, spin.y + spin.h + 14,
-            string.format("恭喜获得 %d 零件", meta.wheelPrize), 18, C.warn,
+        D.panel(ctx, cx - 158, spin.y - 52, 316, 40, C.rail, C.warnDim, 6)
+        D.text(ctx, cx, spin.y - 42,
+            string.format("今日获得  +%d 零件", meta.wheelPrize), 17, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        D.text(ctx, w * 0.5, spin.y - 34,
+            "每次抽取必得至少 120 零件", 14, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     return content, close
