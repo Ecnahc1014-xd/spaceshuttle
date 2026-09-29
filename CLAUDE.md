@@ -3,7 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.12.10（HUD 全消失真因修复批次：大厅 UI 上下文自毁时机）：
+- 版本: 0.12.11（HUD 失踪真凶落网：Lua 前向引用 nil 调用 + 错误处理器自身崩溃）：
+  - **真根因（本地真渲染复现 + 日志实锤，订正 v0.12.10 的大厅时序误判）**：v0.12.9 在 `DrawAmmoSlots`（~948 行）新增 `DrawIcon(ctx, ammoIcons[ballType], ...)` 调用，但 `DrawIcon` 的 `local function` 定义在其后（~1147 行）——**先用后声明的 local 函数解析成全局 nil**（AB-100 同类）。战斗中该阶段每帧抛 `attempt to call a nil value`；更致命的是错误处理器 `ReportOverlayStageError` 也犯同一错误（定义在 RenderOverlay 之后）→ stage 的 pcall 接住原始错误后调用它 → **再抛一次** → 整个 NanoVGRender 回调崩溃、`nvgEndFrame` 被跳过 → **该帧全部 NanoVG 绘制被丢弃**；菜单不经过这两个调用点所以正常，一进战斗 2D 全灭、只剩 3D——三张用户截图的完整解释。日志里此前只见 `attempt to call a nil value (global 'ReportOverlayStageError')`，原始 stage 错误被吞。
+  - **修复**：两处都改为 AB-100 前向声明模式——`local DrawIcon = nil`（DrawAmmoSlots 之前）+ 后置定义改赋值 `DrawIcon = function(...)`；`local ReportOverlayStageError = nil`（ApplyOverlayDesignTransform 之前）+ 后置改赋值。全仓库前向引用扫描器（local function / local x = function，调用点早于定义）复扫 **0 问题**（Scene3DBackend/MetaUI/client_main 及全部 scripts）。BUILD_VERSION→0.12.11、大厅标题栏同步。
+  - **本地真渲染验证链路（本次新建，务必复用）**：`URHO3D_PREFIX_PATH=/workspace/.cli LD_LIBRARY_PATH=/workspace/.cli .cli/UrhoXRuntime <script> -tapcode_dir=<probe项目> -tool_mode -graphicssurfaceless -screenshot=<png> -screenshot-frame=<N>`（llvmpipe + GLES3.1 离屏真渲染并截图；普通模式缺 .cli/Data 会段错误 139，**必须 -tool_mode**）。探针工程在 `/home/Maker/urhox-probe-live/`（scripts+assets 拷贝 + probe_play.lua 自动开局探针）。⚠️ 该运行时**每个脚本实例只保留一个 Update handler，后订阅者顶掉先订阅者**——探针订阅 Update 必须手动链式调用游戏自己的 `_G.HandleUpdate`，否则游戏主循环静默不跑。修复后本地截图确认：战斗 HUD 三栏/波次横幅/道具标签/弹药矩阵四卡全部渲染、零 stage 失败、零 Lua 错误。
+  - 验证：本地离屏截图（菜单 + 战斗）✅、全库前向引用扫描 0 ✅、官方多人 build + 预览上传 ✅。⚠️ 待 Preview：真机进战斗确认 HUD/弹药栏恢复。
+- 版本: 0.12.10（大厅 UI 上下文自毁时机）⚠️ **根因判断已被 v0.12.11 订正**：当批次的 `shutdownLobbyUI` 提前到 onProgress>=1 的改动保留（顺序确定性属于良性加固，符合 AB-117），但它**不是** HUD 失踪的原因；真凶是 v0.12.11 记录的前向引用 nil 调用。原文如下：
   - **根因（两张"战场有、2D 全没"截图 + 源码/库证据闭环）**：`nvgCreate` 是**全局单例**（`GetNanoVGContext` 文档自述 lazy singleton alias for nvgCreate），urhox-libs/UI 内部 `nvg_` 与 `Scene3DBackend.vg_` 其实是**同一个 NanoVG 上下文**，"双上下文"模型不成立。真正的危险是反向的：`UI.Shutdown()` 内部 `nvgDelete(nvg_)` 会把共享上下文整个销毁。v0.12.7 重写大厅时把成功路径改成只 `stopWaiting()`、`shutdownLobbyUI()` 留给引擎的 `stop()`——引擎不保证在切脚本后**立刻**调 stop：stop() 晚于 `ClientMain.Start` 跑，`UI.Shutdown` 的 nvgDelete 把游戏刚拿到的上下文连带销毁（订阅挂在对象上，随后 nvgCreate 复用底层单例但旧事件订阅已断），症状=3D 正常、NanoVG 输出归零、无任何 stage 错误日志（回调根本没再触发）。此前 AB-093/088c 的"先 Destroy 再 Shutdown"防的是降级双起，但**把 Shutdown 推迟到 stop() 恰恰制造了这个新坑**。
   - **修复**：`lobby_runtime.lua` onProgress>=1（连接完成、即将切脚本）当场 `shutdownLobbyUI()`（幂等，stop() 路径保留原样作兜底）——把两条 stop() 时序收敛为唯一安全顺序：销毁大厅订阅+上下文 → 引擎切换 → 新脚本 `nvgCreate` 拿到干净单例。BUILD_VERSION→0.12.10、大厅标题栏同步。验证：多人 build+预览上传 ✅；⚠️ **待实机验收**：进战斗 HUD/弹药 Dock/暂停页是否恢复（预览日志应见 `[Lobby] server connection completed` 后紧跟 `[Scene3DBackend] NanoVGRender callback active`，且无 overlay stage failed）。
 - 版本: 0.12.9（高端 dark-tech UI 全局精修 + 8 张量化像素素材 + NanoVG HUD 容错）：
@@ -90,7 +95,14 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.12.10 HUD 全消失真因修复批次（大厅 UI 上下文幂等自毁时机，收敛 stop() 两条时序；stage 容错+最小回退保留为纵深防御）
+- 上次交付: v0.12.11 HUD 失踪真凶修复（Lua 同文件 local 函数前向引用 nil 调用 ×2 + 本地真渲染复现链路；v0.12.10 大厅时序结论已订正）
+
+## 本批次新增避雷（v0.12.11 前向引用真凶 + 本地复现链路）
+- 🔴 **同文件 local 函数前向引用会解析成全局 nil——本项目已两次踩雷（v0.12.11 实锤）**：`local function X` 声明在其使用点**之后**时，使用点读到的是全局 `X`（nil）。v0.12.9 一次踩两处：①`DrawAmmoSlots`（948）调用后置定义的 `DrawIcon`（1147）→ 战斗中每帧 `attempt to call a nil value (global 'DrawIcon')`；②错误处理器 `ReportOverlayStageError` 也是先用后声明 → stage pcall 接住①后调用它再次抛错 → **整个 NanoVGRender 回调崩溃、nvgEndFrame 被跳过、该帧全部 2D 绘制被丢弃**（菜单不经过该死点所以正常）。修法固定为 AB-100 模式：用点前 `local X = nil`，后置定义改 `X = function(...)`。**交付前跑全库前向引用扫描**（匹配 `local function N` / `local N = function` 与其前的调用点），本次复扫 0 问题。
+- 🔴 **本地真渲染复现链路（诊断「3D 正常、2D 异常」的银弹，先复现再推理）**：`URHO3D_PREFIX_PATH=/workspace/.cli LD_LIBRARY_PATH=/workspace/.cli /workspace/.cli/UrhoXRuntime <script相对scripts> -tapcode_dir=<探针项目> -tool_mode -graphicssurfaceless -screenshot=<png> -screenshot-frame=<N> > run.log 2>&1`。要点：必须 `-tool_mode`（普通模式找 .cli/Data 会段错误 139）；加 `stdbuf -oL -eL` 防 stdout 缓冲丢日志；探针工程用 scripts+assets 拷贝（`/home/Maker/urhox-probe-live/`），不污染 /workspace。**判读法**：letterbox 颜色 = C.bg(7,11,20) → 覆盖层活着；(0,0,0) → 覆盖层没画；整块画布纯 C.bg 无内容 → 走了首帧兜底（快照没到）。日志搜 `Execute Lua function failed` / `overlay stage failed`。
+- ⚠️ **探针订阅 Update 的陷阱**：该运行时每个脚本实例**只有一个 Update handler 槽，后订阅者顶掉先订阅者**（实锤：探针订阅后 `client_main.HandleUpdate` 完全不再被调用、无报错）。探针必须只订阅一个 handler，内部显式链式调用 `_G.HandleUpdate(eventType, eventData)`。
+- ⚠️ **Shell heredoc 会把正则里的 `!` 改写成 `\!`**（本地实测）：`(?<!...)` 负向断言写进 heredoc 变成 `(?<\!...)` 导致 `re.error` 崩溃，且退出码 1 时工具可能不显示任何输出——排查「无输出的 exit 1」先怀疑脚本自身崩了；规避：正则不用 `!`，或先落盘脚本再执行。
+- ⚠️ **诊断顺序教训（v0.12.10→v0.12.11）**：拿到「3D 正常、2D 全没」别先做架构归因推演（上批次误判为大厅 stop() 时序并据此改了代码）；本地跑一次真渲染、看 `Execute Lua function failed` 的实际行号与符号名即可分钟级定位。截图只用于确认症状边界（菜单 vs 战斗）。
 
 ## 本批次新增避雷（v0.12.10 HUD 全消失真因）
 - 🔴 **NanoVG 上下文是全局单例，"双上下文抢帧"心智模型作废（订正 v0.12.3/v0.12.4 的机制描述）**：`nvgCreate` 与 `GetNanoVGContext` 是同一底层对象；urhox-libs/UI 内部 `nvg_` 与 raw NanoVG 后端 `vg_` 拿到的是**同一个 ctx**。危险是反向的——**`UI.Shutdown()` 里的 `nvgDelete(nvg_)` 会销毁共享上下文**。若大厅 Shutdown 发生在游戏 `Backend.Init` 之后（引擎不保证切脚本后立刻调旧脚本 `stop()`），游戏侧订阅挂在已销毁对象上、后续 `nvgCreate` 复用单例但旧事件绑定已断 → **3D 正常、全部 2D 静默消失、零报错**。

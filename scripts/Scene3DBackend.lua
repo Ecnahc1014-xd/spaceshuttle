@@ -407,7 +407,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.12.10"
+local BUILD_VERSION = "0.12.11"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -885,6 +885,12 @@ local function DrawNextWavePreview(ctx, game)
         plan.isBoss and C.error or C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 end
 
+-- v0.12.11 修复（AB-100 前向引用）：DrawIcon 的 local function 定义在本文件后段
+-- （图标表区域，~1141 行），而 DrawAmmoSlots 等调用点早于它——不加前向声明时调用点
+-- 解析成全局 nil，战斗中每帧 attempt to call a nil value，nvgEndFrame 被跳过 =
+-- 整个 NanoVG 帧被丢弃 = 「3D 正常、2D 全没」。
+local DrawIcon = nil
+
 local function DrawAmmoSlots(ctx, game, presentation)
     local queueCounts = {}
     for _, ballType in ipairs(game.ballQueue or {}) do
@@ -1138,7 +1144,7 @@ end
 ---@param size number
 ---@param alpha number|nil
 ---@return boolean drawn
-local function DrawIcon(ctx, key, x, y, size, alpha)
+DrawIcon = function(ctx, key, x, y, size, alpha)
     local img = iconImages_[key]
     if not img then return false end
     nvgBeginPath(ctx)
@@ -2049,6 +2055,11 @@ local function DrawSystemBanner(ctx)
     nvgRestore(ctx)
 end
 
+-- v0.12.11 修复（AB-100 前向引用）：同样先用后声明——此前任何 stage 出错时
+-- 错误处理器本身是 nil，把可恢复的绘制错误升级成整个 overlay 回调崩溃
+-- （nvgEndFrame 被跳过、整帧丢弃、且真实错误被吞掉）。
+local ReportOverlayStageError = nil
+
 local function ApplyOverlayDesignTransform()
     nvgResetScissor(vg_)
     nvgResetTransform(vg_)
@@ -2215,7 +2226,7 @@ local overlayStageErrors_ = {}
 local overlayFirstFrameLogged_ = false
 local overlaySnapshotLogged_ = false
 
-local function ReportOverlayStageError(stage, err)
+ReportOverlayStageError = function(stage, err)
     if overlayStageErrors_[stage] then return end
     overlayStageErrors_[stage] = true
     print("[Scene3DBackend] overlay stage failed: " .. stage .. " / " .. tostring(err))
