@@ -153,6 +153,9 @@
 - [AB-119] [跨项目][本地真渲染复现链路：图形类 bug 先本地截图复现，别对着截图做架构推演] UrhoX 可本地离屏真渲染：`URHO3D_PREFIX_PATH=/workspace/.cli LD_LIBRARY_PATH=/workspace/.cli .cli/UrhoXRuntime <script相对scripts> -tapcode_dir=<探针拷贝> -tool_mode -graphicssurfaceless -screenshot=<png> -screenshot-frame=<N>`（llvmpipe+GLES3.1；缺 `-tool_mode` 会因找 `.cli/Data` 段错误 139；stdbuf -oL 防日志丢失）。探针=scripts+assets 拷贝到 /home/Maker，不污染工程。**判读法**：letterbox=C.bg(7,11,20)→覆盖层活；(0,0,0)→覆盖层没画；整画布纯 C.bg→走了首帧兜底（快照缺失）。⚠️ 两个环境坑：①该运行时**每脚本实例只有一个 Update handler 槽，后订阅顶掉先订阅**（探针订阅后 client_main.HandleUpdate 静默不跑）→ 探针须单订阅+手动链式 `_G.HandleUpdate`；②shell heredoc 会把正则里的 `!` 改写成 `\!` 导致脚本崩溃，且「无输出的 exit 1」多半是脚本自身挂了（输出重定向到文件再看）。（击碎，飞机大战/v0.12.11）
 - [AB-120] [跨项目][截图 bug 报告先问「哪个状态」：菜单 vs 战斗是二分关键] 三张用户截图全是战斗态黑 2D，菜单态从未在图里——从「菜单正常、战斗黑」能立刻把嫌疑缩到战斗专属渲染路径（HUD/Dock/道具/波次横幅），而不是大厅/启动/全局上下文。收到 UI 消失类截图先确认「菜单是否正常」，能省掉一整轮错误归因（本项目 v0.12.10 曾据此误判大厅时序）。（击碎，飞机大战/v0.12.11）
 
+- [AB-121] [跨项目][`pkill -f` 会匹配到执行它的 shell 自身：一条命令静默自尽] 在单条 bash 命令开头写 `pkill -f '<模式>'` 清理后台进程时，该模式会命中这条命令**自己的命令行**（命令文本里就含这个模式）→ pkill 杀掉自己的 shell，整条命令以退出码 2 静默中止，后续步骤（如重写探针文件、跑运行时）根本没执行，极易误判成「探针失败」或「改动没生效」。规避：用括号打断自匹配（`pgrep -af "[U]rhoXRuntime"`），或先 pgrep 再按 PID 杀，不要在同一命令里同时 pkill 和做事。⚠️ 怀疑「命令没输出就退出」时先核对目标文件的 mtime/内容，确认步骤是否真的执行过。（击碎，飞机大战/v0.12.13）
+
 ## 同步记录
 
-- 最近一次同步：2026-09-29 击碎，飞机大战 v0.12.11（AB-118 Lua 前向引用=全局 nil 且错误处理器放大成全屏黑；AB-119 本地真渲染复现链路+单 Update 槽+heredoc 坑；AB-120 先分菜单/战斗；订正 AB-117）
+- 最近一次同步：2026-09-30 击碎，飞机大战 v0.12.13（新增 AB-121 pkill -f 自匹配陷阱）
+

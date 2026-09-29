@@ -85,6 +85,9 @@ local BALL_TYPES = {
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
 local STARTING_BALL_TYPE = "normal"
+-- 开局装载的备弹车辆数（另有 1 辆在弹弓待发）。v0.12.13：开局总装载 5 辆 → 3 辆。
+-- 补弹按「回收一辆补一辆」维持这个总量（主球回收时 EnqueueNextBall）。
+local BASE_AMMO_SPARE = 2
 local unlockedBalls = { [STARTING_BALL_TYPE] = true }
 
 -- P11 词条系统（规则层）：弹珠可携带的"词条"修饰，影响伤害/弹道/反馈行为。
@@ -432,7 +435,8 @@ end
 local function LoadBalls()
     ballQueue = {}
     ballCycleIndex = 0
-    for _ = 1, #BALL_ORDER do EnqueueNextBall() end
+    -- 先装 BASE_AMMO_SPARE 辆备弹，取一辆待发，再补回一辆 → 待发 1 + 备弹 BASE_AMMO_SPARE。
+    for _ = 1, BASE_AMMO_SPARE do EnqueueNextBall() end
     activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
     EnqueueNextBall()
 end
