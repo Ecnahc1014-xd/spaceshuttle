@@ -69,6 +69,7 @@ local MetaUI = {}
 ---@field rect fun(ctx:any, x:number, y:number, w:number, h:number, color:table, r:number|nil)
 ---@field stroke fun(ctx:any, x:number, y:number, w:number, h:number, color:table, r:number|nil, width:number|nil)
 ---@field panel fun(ctx:any, x:number, y:number, w:number, h:number, fill:table, border:table, r:number|nil)
+---@field progress fun(ctx:any, x:number, y:number, w:number, ratio:number, color:table, height:number|nil)
 ---@field shell fun(ctx:any, x:number, y:number, w:number, h:number, titleH:number)
 ---@field corner fun(ctx:any, x:number, y:number, w:number, h:number, color:table, len:number, width:number)
 ---@field grid fun(ctx:any, x:number, y:number, w:number, h:number, step:number, alpha:number)
@@ -112,30 +113,31 @@ local function Button(ctx, r, label, sub, kind)
     if kind == "primary" then
         border, labelColor, fill = C.cyan, C.ink, C.cyan
     elseif kind == "ad" then
-        -- 绿色＝看广告（免费获取），与青色主操作、金色稀有三分。
         border, labelColor, fill = C.ad, C.ad, C.card
     elseif kind == "disabled" then
         border, labelColor, fill = C.cyanDim, C.dim, C.widget
     elseif kind == "gold" then
-        -- 金色＝钻石付费（与广告绿、免费青三分）。
         border, labelColor, fill = C.warn, C.warn, C.card
     elseif kind == "danger" then
         border, labelColor, fill = C.error, C.error, C.card
     else
         border, labelColor, fill = C.cyanDim, C.text, C.card
     end
-    D.rect(ctx, r.x, r.y, r.w, r.h, fill, 6)
-    if kind ~= "primary" then
-        D.stroke(ctx, r.x, r.y, r.w, r.h, border, 6, 1.4)
+
+    D.panel(ctx, r.x, r.y, r.w, r.h, fill, border, 6)
+    if kind == "primary" then
+        D.rect(ctx, r.x + 6, r.y + 2, math.max(0, r.w - 12), 1, {255, 255, 255, 90}, 0)
+    else
+        D.rect(ctx, r.x, r.y + 2, 3, math.max(0, r.h - 4), border, 1)
     end
     local cx = r.x + r.w * 0.5
     if sub ~= "" then
-        D.text(ctx, cx, r.y + r.h * 0.5 - 20, label, 17, labelColor,
+        D.text(ctx, cx, r.y + r.h * 0.5 - 18, label, 16, labelColor,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        D.text(ctx, cx, r.y + r.h * 0.5 + 4, sub, 14,
+        D.text(ctx, cx, r.y + r.h * 0.5 + 5, sub, 13,
             kind == "primary" and C.ink or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
-        D.text(ctx, cx, r.y + r.h * 0.5 - 9, label, 17, labelColor,
+        D.text(ctx, cx, r.y + r.h * 0.5 - 8, label, 16, labelColor,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 end
@@ -146,12 +148,9 @@ end
 ---@param w number
 ---@param ratio number
 ---@param color table
-local function ProgressBar(ctx, x, y, w, ratio, color)
+local function ProgressBar(ctx, x, y, w, ratio, color, height)
     local C = Colors()
-    local h = 8
-    D.rect(ctx, x, y, w, h, C.widget, 4)
-    local fill = math.max(0, math.min(1, ratio)) * w
-    if fill > 0 then D.rect(ctx, x, y, fill, h, color, 4) end
+    D.progress(ctx, x, y, w, ratio, color, height or 8)
 end
 
 -- 面板壳的纯几何（不含绘制）：命中判定与绘制共用，禁止两处各写一套。
@@ -178,18 +177,34 @@ local function Shell(ctx, w, h, title, subtitle)
     D.backdrop(ctx, 0, 92, w, h - 92)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
-    D.shell(ctx, x, y, sw, sh, 48)  -- 几何与 GetShellLayout 必须一致
+    D.shell(ctx, x, y, sw, sh, 48)
     D.rect(ctx, x, y + 48, 3, 22, C.cyan, 0)
-    D.text(ctx, x + 16, y + 10, title, 22, C.cyan)
+
+    local headerIcon = {
+        ["每日任务"] = "task",
+        ["敌机图鉴"] = "codex",
+        ["全服排行榜"] = "rank",
+        ["商城"] = "shop",
+        ["幸运转盘"] = "premium_wheel_medal",
+        ["战斗档案"] = "premium_pass_crest",
+    }
+    local iconKey = headerIcon[title]
+    local titleX = x + 16
+    if iconKey and D.icon(ctx, iconKey, x + 12, y + 8, 32, 1) then
+        titleX = x + 52
+    end
+    D.text(ctx, titleX, y + 10, title, 22, C.text)
     if subtitle ~= "" then
-        D.text(ctx, x + sw - 58, y + 14, subtitle, 15, C.dim,
+        D.rect(ctx, x + sw - 178, y + 14, 2, 18, C.warn, 0)
+        D.text(ctx, x + sw - 58, y + 14, subtitle, 14, C.dim,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
     local content, close = GetShellLayout(w)
-    D.stroke(ctx, close.x, close.y, close.w, close.h, C.cyanDim, 6, 1.2)
-    D.text(ctx, close.x + close.w * 0.5, close.y + 7, "X", 20, C.dim,
+    D.panel(ctx, close.x, close.y, close.w, close.h, C.card, C.cyanDim, 6)
+    D.text(ctx, close.x + close.w * 0.5, close.y + 6, "×", 21, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    D.grid(ctx, x + 14, y + 56, sw - 28, 20, 12, 14)
+    D.grid(ctx, x + 14, y + 56, sw - 28, 20, 12, 10)
+    D.rule(ctx, x + 16, y + 54, sw - 32, 12, C.cyanDim, 4)
     return content, close
 end
 
@@ -271,13 +286,13 @@ end
 local function GetDailyDefs(meta)
     local taskCount = CountClaimableTasks(meta.tasks)
     return {
-        { action = "supply", icon = "supply", label = "每日补给",
+        { action = "supply", icon = "premium_supply_crate", label = "每日补给",
           sub = meta.supplyAvailable and "待领取" or "明日再来",
           hot = meta.supplyAvailable, tone = "free" },
         { action = "open_tasks", icon = "task", label = "每日任务",
           sub = taskCount > 0 and string.format("%d 项可领", taskCount) or "对战积累",
           hot = taskCount > 0, tone = "free" },
-        { action = "open_wheel", icon = "wheel", label = "幸运转盘",
+        { action = "open_wheel", icon = "premium_wheel_medal", label = "幸运转盘",
           sub = meta.wheelReady and "看广告免费" or "今日已抽取",
           hot = meta.wheelReady, tone = "ad" },
     }
@@ -291,7 +306,7 @@ local function GetGrowDefs(meta)
     return {
         { action = "open_shop", icon = "shop", label = "涂装商城",
           sub = "零件换车漆", hot = false, tone = "free" },
-        { action = "open_pass", icon = "pass", label = "战斗档案",
+        { action = "open_pass", icon = "premium_pass_crest", label = "战斗档案",
           sub = passSub, hot = meta.passClaimable, tone = "free" },
         { action = "open_codex", icon = "codex", label = "敌机图鉴",
           sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
@@ -308,55 +323,53 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     local C = Colors()
     local L = GetMenuBarLayout()
 
-    -- ① 图鉴展示条（青色=已收录剪影，点击进图鉴）
     MetaUI.DrawHomeFleet(ctx, w, meta)
 
-    -- ② 钱包连接器：左半零件（软货币）、右半钻石+充值（付费货币）。整条可点进充值。
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
-    -- 左块：零件（软货币，对战/福利产出）
-    D.icon(ctx, "parts", L.wallet.x + 16, L.wallet.y + 14, 28)
-    D.text(ctx, L.wallet.x + 52, L.wallet.y + 8, "零件", 14, C.dim)
-    D.text(ctx, L.wallet.x + 52, L.wallet.y + 26, string.format("%d", meta.parts or 0), 24, C.text)
-    -- 中块：钻石（氪金代币，服务端权威）
-    D.icon(ctx, "gem", L.wallet.x + 200, L.wallet.y + 14, 28)
-    D.text(ctx, L.wallet.x + 236, L.wallet.y + 8, "钻石", 14, C.dim)
-    D.text(ctx, L.wallet.x + 236, L.wallet.y + 26,
-        meta.offline and "—" or string.format("%d", meta.gems or 0), 24, C.warn)
-    -- 右块：明确的充值按钮（金色=付费；不再用误导性的「零件→钻石」箭头）
-    local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 10, w = 96, h = 36 }
-    D.rect(ctx, wb.x, wb.y, wb.w, wb.h, C.warn, 6)
-    D.text(ctx, wb.x + wb.w * 0.5, wb.y + 8, "充值", 17, C.ink,
+    D.icon(ctx, "parts", L.wallet.x + 15, L.wallet.y + 14, 28)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 8, "零件", 13, C.dim)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 26, string.format("%d", meta.parts or 0), 23, C.text)
+    D.rect(ctx, L.wallet.x + 184, L.wallet.y + 10, 1, L.wallet.h - 20,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 110}, 0)
+    D.icon(ctx, "premium_energy_core", L.wallet.x + 196, L.wallet.y + 14, 28)
+    D.text(ctx, L.wallet.x + 232, L.wallet.y + 8, "钻石", 13, C.dim)
+    D.text(ctx, L.wallet.x + 232, L.wallet.y + 26,
+        meta.offline and "—" or string.format("%d", meta.gems or 0), 23, C.warn)
+
+    local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 9, w = 96, h = 38 }
+    D.panel(ctx, wb.x, wb.y, wb.w, wb.h, C.warn, C.warn, 6)
+    D.rect(ctx, wb.x + 6, wb.y + 3, wb.w - 12, 1, {255, 255, 255, 100}, 0)
+    D.icon(ctx, "premium_energy_core", wb.x + 8, wb.y + 5, 28)
+    D.text(ctx, wb.x + 64, wb.y + 11, "充值", 16, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    -- ③ 今日福利（免费领零件）/ ④ 养成收藏（花零件与付费加速）。两行小标签区分语义。
     local rows = {
         { label = "今日福利", rects = L.daily, defs = GetDailyDefs(meta) },
-        { label = "养成收藏", rects = L.grow,  defs = GetGrowDefs(meta) },
+        { label = "养成收藏", rects = L.grow, defs = GetGrowDefs(meta) },
     }
     for _, rowDef in ipairs(rows) do
         D.text(ctx, 18, rowDef.rects[1].y - 14, rowDef.label, 15, C.cyanDim)
+        D.rect(ctx, 112, rowDef.rects[1].y - 7, 36, 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 0)
         for i, def in ipairs(rowDef.defs) do
             local rr = rowDef.rects[i]
-            local border
-            if def.hot then
-                border = def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.cyan)
-            else
-                border = C.cyanDim
-            end
-            D.rect(ctx, rr.x, rr.y, rr.w, rr.h, C.card, 6)
-            D.stroke(ctx, rr.x, rr.y, rr.w, rr.h, border, 6, def.hot and 1.6 or 1.1)
-            local drewIcon = D.icon(ctx, def.icon, rr.x + rr.w * 0.5 - 14, rr.y + 12, 28,
-                def.hot and 1 or 0.75)
-            D.text(ctx, rr.x + rr.w * 0.5, drewIcon and (rr.y + 46) or (rr.y + 16),
-                def.label, 16, def.hot and C.text or C.dim,
+            local border = def.hot and (def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.cyan))
+                or C.cyanDim
+            D.panel(ctx, rr.x, rr.y, rr.w, rr.h, C.card, border, 6)
+            D.rect(ctx, rr.x + 9, rr.y + 1, rr.w - 18, 1,
+                {border[1], border[2], border[3], def.hot and 100 or 40}, 0)
+            D.panel(ctx, rr.x + rr.w * 0.5 - 21, rr.y + 7, 42, 40, C.rail, border, 5)
+            local drewIcon = D.icon(ctx, def.icon, rr.x + rr.w * 0.5 - 16, rr.y + 11, 32,
+                def.hot and 1 or 0.82)
+            D.text(ctx, rr.x + rr.w * 0.5, rr.y + (drewIcon and 51 or 18),
+                def.label, 15, def.hot and C.text or C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-            local lines = D.wrap(ctx, def.sub, 13, rr.w - 10)
-            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 68, lines[1] or "", 13,
+            local lines = D.wrap(ctx, def.sub, 12, rr.w - 10)
+            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 72, lines[1] or "", 12,
                 def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.dim),
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
             if def.hot then
-                D.rect(ctx, rr.x + rr.w - 12, rr.y + 8, 8, 8, border, 4)
+                D.rect(ctx, rr.x + rr.w - 12, rr.y + 7, 5, 5, border, 3)
             end
         end
     end
