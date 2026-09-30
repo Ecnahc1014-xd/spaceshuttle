@@ -939,6 +939,7 @@ GetVehicleAnchorWorld = function(marble)
     return GameToWorld(marble.x, marble.y, -VEHICLE_LOCAL_CENTER_Z * scaleFactor)
 end
 
+local function SyncDebris(presentation)
     -- 碎片走内置 Box 模型；该资源缺失时直接跳过，禁止让可选碎片拖垮整个 3D 初始化。
     if not modelBox_ then return end
     local active = {}

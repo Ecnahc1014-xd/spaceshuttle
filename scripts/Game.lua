@@ -1255,8 +1255,14 @@ end
 -- P11 五异常反应系统（规则层）：砖块可携带 burn/shock/corrode/freeze/volatile 五种异常状态，
 -- 由命中弹珠的词条或类型施加；状态间存在反应（冻结+灼烧=融穿、电击+冻结=碎裂）额外结算。
 -- 仅记录计时与伤害，视觉染色由表现层推迟消费 status 事件。
+local STATUS_BITS = {burn = 1, shock = 2, corrode = 4, freeze = 8, volatile = 16}
+local STATUS_ORDER = {"burn", "shock", "corrode", "freeze", "volatile"}
+
 local function ApplyBrickStatus(brick, status, duration, power)
     brick.status = brick.status or {}
+    brick.statusMask = brick.statusMask or 0
+    local bit = STATUS_BITS[status]
+    if bit then brick.statusMask = brick.statusMask | bit end
     local cur = brick.status[status] or {time = 0, power = 0}
     cur.time = math.max(cur.time, duration)
     cur.power = math.max(cur.power, power or 1)
@@ -1308,7 +1314,7 @@ local function TickBrickStatus(enemy, brick, dt)
         end
         Emit("status_reaction", {enemyId = enemy.id, kind = "volatile", x = x, y = y})
     end
-    for _, status in ipairs({"burn", "shock", "corrode", "freeze", "volatile"}) do
+    for _, status in ipairs(STATUS_ORDER) do
         local s = brick.status[status]
         if s and s.time > 0 then s.time = s.time - dt end
     end

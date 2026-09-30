@@ -168,9 +168,15 @@ end
 ---@field gridH number
 ---@field cells AircraftPreviewCell[]
 
+---@type table<string, AircraftPreview>
+local aircraftPreviews = {}
+
 ---@param aircraftKey string
 ---@return AircraftPreview|nil
 function VisualCatalog.GetAircraftPreview(aircraftKey)
+    -- 机型像素网格与配色是静态目录：战斗每帧都会画同一预告，缓存解析后的只读 cells。
+    local cached = aircraftPreviews[aircraftKey]
+    if cached then return cached end
     local data = AircraftData[aircraftKey]
     if not data then return nil end
     local styleMap = aircraftStyles[aircraftKey] or BuildAircraftStyle(aircraftKey)
@@ -200,6 +206,7 @@ function VisualCatalog.GetAircraftPreview(aircraftKey)
     end
     ---@type AircraftPreview
     local preview = { gridW = data.gridW, gridH = data.gridH, cells = cells }
+    aircraftPreviews[aircraftKey] = preview
     return preview
 end
 

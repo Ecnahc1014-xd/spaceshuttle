@@ -54,6 +54,7 @@ local LABEL_W = 44         -- 左侧星级门槛栏宽（按横行标注，从�
 local SCROLLBAR_GUTTER = 28
 local SCROLLBAR_HIT_W = 24
 local ROW_STEP = 160       -- 相邻阶段的纵向间距
+local DETAIL_RESERVE = 166
 local LANE_STAGE_OFFSETS = { general_b = 0.5, ice = 0.5, giant = 0.5 }
 
 -- ============================================================================
@@ -79,7 +80,7 @@ local function GetLayout(w)
     local content = { x = x + 14, y = headerY + 30, w = sw - 28, h = sh - 72 - 30 }
     -- 浮窗展开时，内容可视区底部上收，避免被浮窗遮住（几何与命中同源）。
     if selectedId_ then
-        content.h = math.max(160, content.h - 98)
+        content.h = math.max(160, content.h - DETAIL_RESERVE)
     end
     local close = { x = x + sw - 46, y = y + 8, w = 36, h = 36 }
     local lanes = #TalentCatalog.LANES
@@ -283,7 +284,8 @@ function TalentTree.Draw(ctx, w, meta)
                 local isOwned = owned[node.id] == true
                 local prereqMet = TalentCatalog.IsPrereqMet(node, owned, stars)
                 local canBuy = (not isOwned) and prereqMet and parts >= node.cost
-                local col = LaneColor(node.tint)
+                local laneColor = LANE_COLORS[lane] or C.cyan
+                local col = C.cyan
                 local fill, width
                 if isOwned then
                     fill, width = C.widget, 3
@@ -292,6 +294,7 @@ function TalentTree.Draw(ctx, w, meta)
                     col = C.warn
                 elseif prereqMet then
                     fill, width = C.card, 2
+                    col = LaneColor(node)
                 else
                     fill, width = C.rail, 1.6
                     col = C.cyanDim
@@ -363,11 +366,11 @@ end
 ---@param w number
 ---@return table
 function TalentTree.GetDetailLayout(w)
-    local pw = w - 60
-    local ph = 132
+    local x, y = 30, 960 - 236
+    local pw, ph = w - 60, 160
     return {
-        x = 30, y = 960 - ph - 18, w = pw, h = ph,
-        btn = { x = 30 + pw - 150, y = 960 - ph - 18 + ph - 50, w = 132, h = 40 },
+        x = x, y = y, w = pw, h = ph,
+        btn = { x = x + 14, y = y + 112, w = pw - 28, h = 38 },
     }
 end
 
@@ -386,7 +389,7 @@ function TalentTree.DrawDetail(ctx, w, meta)
     local prereqMet = TalentCatalog.IsPrereqMet(node, owned, stars)
 
     D.panel(ctx, L.x, L.y, L.w, L.h, C.panel, C.cyanDim, 8)
-    D.rect(ctx, L.x, L.y, 3, L.h, LaneColor(node.tint), 0)
+    D.rect(ctx, L.x, L.y, 3, L.h, LaneColor(node), 0)
     D.text(ctx, L.x + 14, L.y + 10, node.name or "天赋", 19, C.text)
     D.text(ctx, L.x + L.w - 14, L.y + 13,
         string.format("%s · 阶段 %d", TalentCatalog.LANE_NAMES[node.lane] or "", node.stage),
@@ -441,20 +444,32 @@ function TalentTree.HitTest(uiX, uiY, w, meta)
     end
 
     -- 圆形卡命中（取最近圆心）
+    if Inside(L.scrollbarHit, uiX, uiY) then return nil, nil end
     if Inside(L.content, uiX, uiY) then
         local lanes = TalentCatalog.LANES
-        local bestId, bestDist = nil, (CARD_R + 6) * (CARD_R + 6)
+        local bestId, bestCy, bestLaneIndex, bestStage = nil, nil, nil, nil
+        local bestDist = (CARD_R + 6) * (CARD_R + 6)
         for li, lane in ipairs(lanes) do
             local laneNodes = TalentCatalog.GetLaneNodes(lane)
             for si, node in ipairs(laneNodes) do
                 local cx, cy = NodeCenter(L, li, si)
                 local dx, dy = uiX - cx, uiY - cy
                 local d2 = dx * dx + dy * dy
-                if d2 < bestDist then bestId, bestDist = node.id, d2 end
+                if d2 < bestDist then
+                    bestId, bestCy, bestLaneIndex, bestStage, bestDist = node.id, cy, li, si, d2
+                end
             end
         end
         if bestId then
             selectedId_ = bestId
+            local detail = TalentTree.GetDetailLayout(w)
+            local newLayout = GetLayout(w)
+            local minCy = newLayout.content.y + CARD_R + 4
+            local maxCy = detail.y - CARD_R - 10
+            local targetCy = math.max(minCy, math.min(maxCy, bestCy))
+            local _, newCy = NodeCenter(newLayout, bestLaneIndex, bestStage)
+            scrollY_ = scrollY_ + targetCy - newCy
+            ClampScroll(newLayout)
             return "select_talent", bestId
         end
     end
@@ -471,11 +486,25 @@ end
 ---@return boolean consumed
 function TalentTree.ScrollBegin(uiX, uiY, w)
     local L = GetLayout(w)
-    if not Inside(L.content, uiX, uiY) then return false end
+    if not Inside(L.scrollbarHit, uiX, uiY) and not Inside(L.content, uiX, uiY) then
+        return false
+    end
     dragging_ = true
     dragLastY_ = uiY
     dragStartY_ = uiY
     dragMoved_ = false
+    scrollbarDragging_ = Inside(L.scrollbarHit, uiX, uiY)
+    if scrollbarDragging_ then
+        local thumb = GetScrollbarThumb(L)
+        if thumb and Inside(thumb, uiX, uiY) then
+            scrollbarPointerOffset_ = uiY - thumb.y
+        else
+            scrollbarPointerOffset_ = thumb and thumb.h * 0.5 or 0
+            SetScrollFromThumb(L, uiY, scrollbarPointerOffset_)
+            dragMoved_ = true
+        end
+        ClampScroll(L)
+    end
     return true
 end
 
@@ -485,9 +514,13 @@ end
 function TalentTree.ScrollMove(uiY, w)
     if not dragging_ then return false end
     local L = GetLayout(w)
-    scrollY_ = scrollY_ + (uiY - dragLastY_)
-    dragLastY_ = uiY
     if math.abs(uiY - dragStartY_) > 6 then dragMoved_ = true end
+    if scrollbarDragging_ then
+        SetScrollFromThumb(L, uiY, scrollbarPointerOffset_)
+    else
+        scrollY_ = scrollY_ + (uiY - dragLastY_)
+    end
+    dragLastY_ = uiY
     ClampScroll(L)
     return true
 end
@@ -496,7 +529,9 @@ end
 function TalentTree.ScrollEnd()
     if not dragging_ then return false end
     dragging_ = false
-    return dragMoved_
+    local moved = dragMoved_
+    scrollbarDragging_ = false
+    return moved
 end
 
 ---@return boolean

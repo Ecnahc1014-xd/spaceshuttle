@@ -995,6 +995,12 @@ local function HandleMetaPointerDown(uiX, uiY)
     return false
 end
 
+local function HandleMetaPointerClick(uiX, uiY)
+    if not metaState.screen then return end
+    local action, index = RenderBackend.HitTestMetaScreen(uiX, uiY, metaState)
+    if action then HandleMetaAction(action, index) end
+end
+
 -- 主菜单上的元层点击（鼠标/触摸共用）。返回 true 表示本次输入已被元层消费。
 ---@param screenX number
 ---@param screenY number
@@ -1524,44 +1530,24 @@ end
 
 function HandleMouseUp(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
-    -- v0.13.8：天赋树拖拽收尾——真拖拽过则吞掉本次抬手（不当作点击选卡）。
     if talentScrollArmed then
         local moved = TalentTree.ScrollEnd()
         talentScrollArmed = false
-        if moved then
-            metaPointerConsumed = false
-            return
-        end
-        -- 未拖拽：走点击路径（选卡/解锁/关闭）
+        metaPointerConsumed = false
+        if moved then return end
         local screenX, screenY = GetScreenCoordinates(eventData)
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-        HandleMetaPointerDown(uiX, uiY)
+        HandleMetaPointerClick(uiX, uiY)
         return
     end
     if stageSelectScrollArmed then
         local moved = StageSelect.ScrollEnd()
         stageSelectScrollArmed = false
-        if moved then
-            metaPointerConsumed = false
-            return
-        end
-        -- 未拖拽：走点击路径（选关/买道具/关闭）
+        metaPointerConsumed = false
+        if moved then return end
         local screenX, screenY = GetScreenCoordinates(eventData)
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-        HandleMetaPointerDown(uiX, uiY)
-        return
-    end
-    if stageSelectScrollArmed then
-        local moved = StageSelect.ScrollEnd()
-        stageSelectScrollArmed = false
-        if moved then
-            metaPointerConsumed = false
-            return
-        end
-        -- 未拖拽：走点击路径（选关/买道具/关闭）
-        local screenX, screenY = GetScreenCoordinates(eventData)
-        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-        HandleMetaPointerDown(uiX, uiY)
+        HandleMetaPointerClick(uiX, uiY)
         return
     end
     if Game.IsGameOver() then
@@ -1576,7 +1562,6 @@ function HandleMouseUp(eventType, eventData)
         HandleStageWinPointerUp(uiX, uiY)
         return
     end
-    -- v0.10.24：升级态的按下已在 Down 分支消费，禁止其穿透成玩法 PointerUp。
     if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     if metaPointerConsumed then
@@ -1682,13 +1667,21 @@ function HandleTouchEnd(eventType, eventData)
     if talentScrollArmed then
         local moved = TalentTree.ScrollEnd()
         talentScrollArmed = false
-        if moved then
-            metaPointerConsumed = false
-            return
-        end
+        metaPointerConsumed = false
+        if moved then return end
         local screenX, screenY = GetScreenCoordinates(eventData)
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-        HandleMetaPointerDown(uiX, uiY)
+        HandleMetaPointerClick(uiX, uiY)
+        return
+    end
+    if stageSelectScrollArmed then
+        local moved = StageSelect.ScrollEnd()
+        stageSelectScrollArmed = false
+        metaPointerConsumed = false
+        if moved then return end
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleMetaPointerClick(uiX, uiY)
         return
     end
     if Game.IsGameOver() then
