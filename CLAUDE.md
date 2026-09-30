@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.21b（词条卡归入通用卡并加天赋门控 + 卡池分类审计；提交 2216994）：
+  - **用户点名（原话「加速车分裂的专属词条还是天赋树没解锁就在局内被允许出现了」「合着这几个还有寒冰车的词条都不是天赋树规定的专属天赋卡范畴？给我优化管理！」）**：探针复现——无任何天赋时 `word_pierce/word_chain/word_momentum` 三张词条卡**都在池里**。根因：词条卡既无 `ballType`（不是车型卡）也无 `requiresCard`（不是通用卡），**两套门控都没覆盖它**，成了"三不管"常驻卡。
+  - **修复（用户裁定归类）**：词条卡归**「通用卡（无车型）」**，与 xp/ammo 同一套 `requiresCard` 门控。①`Game.lua` 三张词条卡各加 `requiresCard = "word_pierce"/"word_chain"/"word_momentum"`；②`TalentCatalog` 通用卡线 `general_b` 扩为 **1阶=xp、2阶=贯穿、3阶=ammo、4阶=连锁、5阶=动量**（6/7 阶仍为结算零件 +5% 填充）；③`ICON_BY_CARD` 补三张词条卡 → `talent_word`。
+  - **卡池分类最终定版（5 类，全部有明确门控）**：`通用卡(常驻)` damage/repair/armor/glass_cannon ｜ `通用卡(需天赋)` xp/ammo/word_×3 → `requiresCard` ｜ `车型基础卡` base_×4 → `ballType`(车已解锁) ｜ `车型专属卡` giant/split/speed/ice/overclock → `ballType` + 天赋 `ballCard` 节点 ｜ `解锁车卡` unlock_×4 → 天赋 `ballUnlock` 节点。**新增卡时必须落进这 5 类之一**。
+  - **验证**：官方多人 build+预览上传 ✅；探针 `probe_wordgate` PASS（①无天赋→三张词条卡都不进池 ②解锁 `general_b_2/4/5` → 三张都进池 ③节点存在且 lane=general_b、kind=cardUnlock）；`audit.py` 全池审计 **0 张漏门控**。
+  - ⚠️ **新增升级卡必须显式归类，不能"裸卡"进池**：本项目踩过两次——`ballCard`（v0.13.16）与词条卡（v0.13.21）都是"定义了但没被任何门控覆盖"，静默常驻。交付前跑一次全池审计（`audit.py` 模式：逐卡打印 kind/ballType/unlockBallType/requiresCard 并归类），确认没有落不进 5 类的卡。
 - 版本: 0.13.21（尾迹回归 3D BillboardSet——「圆形版跟随正常」那条路；提交 2a558be）：
   - **用户第三次打回并给了决定性线索**：「还是没跟上，但是最开始的圆形的完全可以跟随啊」——最早那版（v0.13.3 软圆 billboard）**画在 3D 场景里、与车共用同一相机投影**，所以天然贴车、永不脱节；后面两次（v0.13.12 overlay / v0.13.19b 修回缩与宽度）都是**手工屏幕投影**，才反复错位。**根因不是参数，是通道选错了**。
   - **修法**：`Renderer3D` 尾迹回归 3D BillboardSet（每弹种一批、颜色烘焙进软圆 + DiffAlpha，与碰撞粒子同一条已验证可见路径）。为消除当年的"珠子感"：采样改**密集重叠**（0.022s 间隔、0.22s 寿命、每车 10 点）+ **头到尾强收束**，读起来是一道连续渐隐的光带而非离散点；z 相对车辆锚点再远 `TRAIL_BEHIND_Z=0.10`，保证尾迹在车体**之后**而不是压在上面（overlay 版"图层比车高"的教训）。沿用 flightTime 回绕防 id 复用串轨、瞬移/静止清轨、非 playing/重开/Shutdown 清空。
