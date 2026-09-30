@@ -3,6 +3,7 @@
 
 local AircraftData = require "AircraftPixelData"
 local StageCatalog = require "StageCatalog"
+local TalentCatalog = require "TalentCatalog"
 
 local Game = {}
 
@@ -199,10 +200,22 @@ local partsBoostTime = 0
 ---@field kind string|nil
 ---@field ballType string|nil 仅对应车型可用的强化
 ---@field unlockBallType string|nil 未解锁时才进入卡池的车型解锁卡
+---@field requiresCard string|nil 需天赋树解锁的通用卡 id（xp/ammo）；未解锁不进卡池
 ---@field apply fun(stacks: integer)
 
 local UnlockBallType -- 解锁卡先于补弹函数声明，应用时再调用规则层函数
 local IncreaseAmmo   -- 「弹药扩容」同上：卡池先定义，apply 时再调用规则层函数
+
+-- v0.13.5 天赋树派生状态：必须在 UPGRADE_POOL 之前声明——repair 卡的 apply 闭包会读血量加成。
+---@type table<string, boolean>
+local talentOwned = {}
+local talentMaxHpBonus = 0     -- 已解锁节点数 × 每节点血量加成
+local talentPartsPct = 0       -- 结算零件百分比加成（来自通用线路非卡节点）
+local talentBallStats = {}     -- 车线路数值增强：ballType -> {stat, value, mul}
+local talentUnlockedCards = {} -- 天赋解锁的通用卡 id 集合（xp / ammo）
+local talentUnlockedBalls = {} -- 天赋解锁的车（局内出场资格）
+---@type fun(): table<string, boolean>|nil
+local talentProvider = nil     -- 编排层注入；ResetGame 时拉取最新解锁集合
 
 ---@type UpgradeDef[]
 local UPGRADE_POOL = {
@@ -229,7 +242,7 @@ local UPGRADE_POOL = {
     { id = "repair", name = "前线维修", desc = "立即恢复 25 点基地生命",
       detail = "立刻回 25 点基地生命。",
       weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+25 生命",
-      apply = function(stacks) baseHp = math.min(BASE_HP, baseHp + 25) end },
+      apply = function(stacks) baseHp = math.min(BASE_HP + talentMaxHpBonus, baseHp + 25) end },
     { id = "armor", name = "装甲强化", desc = "防线受创伤害 -1（最低 1）",
       detail = "每次被撞少掉 1 点血。",
       weight = 1, rarity = "common", maxStacks = 2, tradeoff = false, value = "-1 受创",
@@ -237,6 +250,7 @@ local UPGRADE_POOL = {
     { id = "xp", name = "数据回收", desc = "经验获取 +20%",
       detail = "经验 +20%，升级更快。",
       weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+20% 经验",
+      requiresCard = "xp",
       apply = function(stacks) BALL_TUNING.xpMul = BALL_TUNING.xpMul + 0.2 end },
     -- WO-09/P5 抉择型：同时改正负规则变量，高风险高回报（仍只改 BALL_TUNING/baseHp）。
     { id = "glass_cannon", name = "玻璃巨炮", desc = "伤害 +2 但越线伤害 +1",
@@ -268,11 +282,33 @@ local UPGRADE_POOL = {
       weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "巨型车入队",
       kind = "unlock", unlockBallType = "giant",
       apply = function(stacks) UnlockBallType("giant") end },
-    -- 通用弹药卡：任何车型都能用，把本局弹药总量 +1（最多三级）。
+    -- 通用弹药卡：需天赋树解锁（3 阶通用卡节点）后才会进入卡池。
     { id = "ammo", name = "弹药扩容", desc = "本局弹药数量 +1",
       detail = "本局弹药数量 +1。",
       weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 弹药",
+      requiresCard = "ammo",
       apply = function(stacks) IncreaseAmmo() end },
+    -- v0.13.5 基础天赋池重构：四车各补一张「基础数值」卡（不依赖解锁卡，车解锁即可抽）。
+    { id = "base_split", name = "分裂增幅", desc = "分裂车分裂概率 +2%",
+      detail = "分裂小车概率 +2%。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+2% 概率",
+      ballType = "normal", kind = "base",
+      apply = function(stacks) BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.02 end },
+    { id = "base_ice", name = "寒能扩散", desc = "冰冻时长 +0.5 秒",
+      detail = "冰冻时间 +0.5 秒。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 秒",
+      ballType = "ice", kind = "base",
+      apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 0.5 end },
+    { id = "base_speed", name = "引擎调校", desc = "加速车极速 +4%",
+      detail = "加速车最高速度 +4%。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+4% 极速",
+      ballType = "speed", kind = "base",
+      apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.04 end },
+    { id = "base_giant", name = "弹体增重", desc = "巨型车贯穿范围 +0.5 格",
+      detail = "巨型车爆炸范围 +0.5 格。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 格",
+      ballType = "giant", kind = "base",
+      apply = function(stacks) BALL_TUNING.giantArea = BALL_TUNING.giantArea + 0.5 end },
     -- P11 词条系统：全车型通用效果，新生成弹珠自动携带。
     { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带贯穿效果",
       detail = "弹珠穿透第一块继续飞。",
@@ -444,15 +480,82 @@ end
 local function CanOfferUpgrade(u)
     return (not u.ballType or unlockedBalls[u.ballType] == true)
         and (not u.unlockBallType or unlockedBalls[u.unlockBallType] ~= true)
+        and (not u.requiresCard or talentUnlockedCards[u.requiresCard] == true)
         and (upgradeStacks[u.id] or 0) < u.maxStacks
+end
+
+-- v0.13.5：编排层开局前注入天赋树解锁集合；把节点 id 汇总成规则层可用的加成。
+-- 幂等：可多次调用（每次重算派生值）。开局前调用一次即可。
+---@param owned table<string, boolean>|nil
+function Game.SetTalents(owned)
+    talentOwned = {}
+    talentMaxHpBonus = 0
+    talentPartsPct = 0
+    talentBallStats = {}
+    talentUnlockedCards = {}
+    talentUnlockedBalls = {}
+    if type(owned) ~= "table" then return end
+    local count = 0
+    for id, v in pairs(owned) do
+        if v then
+            talentOwned[id] = true
+            local node = TalentCatalog.GetNode(id)
+            if node then
+                count = count + 1
+                if node.kind == "cardUnlock" then
+                    talentUnlockedCards[node.cardId] = true
+                elseif node.kind == "ballUnlock" then
+                    talentUnlockedBalls[node.ballType] = true
+                elseif node.kind == "partsPct" then
+                    talentPartsPct = talentPartsPct + (node.value or 0)
+                elseif node.kind == "stat" then
+                    local acc = talentBallStats[node.ballType]
+                    if not acc then
+                        acc = { stat = node.stat, mul = node.mul == true, add = 0, factor = 1.0 }
+                        talentBallStats[node.ballType] = acc
+                    end
+                    if node.mul then acc.factor = acc.factor * (node.value or 1.0)
+                    else acc.add = acc.add + (node.value or 0) end
+                end
+            end
+        end
+    end
+    talentMaxHpBonus = count * TalentCatalog.MAX_HP_PER_NODE
+    local cardCount, ballCount = 0, 0
+    for _ in pairs(talentUnlockedCards) do cardCount = cardCount + 1 end
+    for _ in pairs(talentUnlockedBalls) do ballCount = ballCount + 1 end
+    print(string.format("[Game] talents applied: nodes=%d hpBonus=%d partsPct=%d%% cards=%d balls=%d",
+        count, talentMaxHpBonus, talentPartsPct, cardCount, ballCount))
+end
+
+-- 本局基地生命上限 = 基础 + 天赋血量加成。
+local function GetMaxBaseHp()
+    return BASE_HP + talentMaxHpBonus
+end
+
+-- 供界面读取：当前注入天赋派生出的加成摘要（只读）。
+---@return {hpBonus:integer, partsPct:integer, nodeCount:integer}
+function Game.GetTalentBonuses()
+    local n = 0
+    for _ in pairs(talentOwned) do n = n + 1 end
+    return { hpBonus = talentMaxHpBonus, partsPct = talentPartsPct, nodeCount = n }
+end
+
+-- v0.13.5：编排层注册一次天赋提供者；每次 ResetGame（含选关/下一关/重开）自动重新拉取，
+-- 避免在多个开局入口各写一次注入。
+---@param provider fun(): table<string, boolean>
+function Game.SetTalentProvider(provider)
+    talentProvider = provider
 end
 
 -- startStage：选关界面挑选的关卡（v0.13.4）。默认 1；wave 换算为全局累计波号，
 -- 使每日任务「抵达第 N 波」在后期关卡仍按真实进度计量。
 ResetGame = function(startStage)
     startStage = math.max(1, math.floor(tonumber(startStage) or 1))
+    -- v0.13.5：每次开局重新拉取天赋解锁集合，派生加成在本局生效。
+    if talentProvider then Game.SetTalents(talentProvider()) end
     score = 0
-    baseHp = BASE_HP
+    baseHp = GetMaxBaseHp()
     stage = startStage
     stageWave = 1
     wave = (startStage - 1) * StageCatalog.WAVES_PER_STAGE + 1
@@ -503,6 +606,10 @@ ResetGame = function(startStage)
     upgradePicks = {}
     upgradeStacks = {}
     unlockedBalls = { [STARTING_BALL_TYPE] = true }
+    -- v0.13.5：天赋解锁的车开局即可用（初始分裂车始终可用）。
+    for ballType in pairs(talentUnlockedBalls) do
+        if BALL_TYPES[ballType] then unlockedBalls[ballType] = true end
+    end
     ammoCapacity = BASE_AMMO_TOTAL
     activeWords = {}    -- P11：词条重置
     clearStreak = 0
@@ -514,6 +621,18 @@ ResetGame = function(startStage)
     BALL_TUNING.iceBonus = 0
     BALL_TUNING.lineDamageBonus = 0
     BALL_TUNING.xpMul = 1.0
+    -- v0.13.5：叠加天赋树的车线路数值增强（加法先、乘法后，量级可控）。
+    for _, acc in pairs(talentBallStats) do
+        if acc.stat == "splitBonus" then
+            BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + acc.add
+        elseif acc.stat == "giantArea" then
+            BALL_TUNING.giantArea = BALL_TUNING.giantArea + acc.add
+        elseif acc.stat == "iceBonus" then
+            BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + acc.add
+        elseif acc.stat == "speedMul" then
+            BALL_TUNING.speedMul = BALL_TUNING.speedMul * acc.factor
+        end
+    end
     LoadBalls()
     Emit("game_reset")
 end
@@ -1052,7 +1171,8 @@ local function CollideBrick(marble, rx, ry, rw, rh)
 end
 
 -- 发射单个方块的碎裂视觉事件（火花 + 独立飞散箱体）。不修改存活状态，由调用方负责。
-local function EmitBrickShatterFx(enemy, brick, x, y)
+-- scoreValue 为本次击碎的真实得分；越线碎裂（惩罚）不传，表现层据此不飘分数。
+local function EmitBrickShatterFx(enemy, brick, x, y, scoreValue)
     local angle = Random() * math.pi * 2
     -- v0.10.23：降低飞散速度/上抛，避免碎片飞到屏顶长期堆积、与新小粒子抢戏。
     local speed = 120 + Random() * 150
@@ -1060,7 +1180,7 @@ local function EmitBrickShatterFx(enemy, brick, x, y)
     Emit("brick_hit", {
         enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
         col = brick.col, row = brick.row, x = x, y = y,
-        destroyed = true, score = 0,
+        destroyed = true, score = scoreValue or 0,
     })
     Emit("brick_ejected", {
         enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
@@ -1090,7 +1210,7 @@ EjectBrick = function(enemy, brick)
     bricksBroken = bricksBroken + 1
     partsEarned = partsEarned + PARTS_PER_BRICK * (partsBoostTime > 0 and 2 or 1)
     GainXp(XP_PER_BRICK)
-    EmitBrickShatterFx(enemy, brick, x, y)
+    EmitBrickShatterFx(enemy, brick, x, y, data.score)
     return true
 end
 
@@ -1438,7 +1558,7 @@ end
 
 ---@return boolean
 function Game.CanPauseHeal()
-    return gameState == "paused" and pauseHealUsed < PAUSE_HEAL_MAX and baseHp < BASE_HP
+    return gameState == "paused" and pauseHealUsed < PAUSE_HEAL_MAX and baseHp < GetMaxBaseHp()
 end
 
 ---@return integer 剩余可用次数
@@ -1450,7 +1570,7 @@ end
 function Game.PauseHeal()
     if not Game.CanPauseHeal() then return false end
     pauseHealUsed = pauseHealUsed + 1
-    baseHp = math.min(BASE_HP, baseHp + PAUSE_HEAL_AMOUNT)
+    baseHp = math.min(GetMaxBaseHp(), baseHp + PAUSE_HEAL_AMOUNT)
     Emit("base_healed", {amount = PAUSE_HEAL_AMOUNT, hp = baseHp})
     print("[Game] pause supply: base healed to " .. baseHp)
     return true
@@ -2381,7 +2501,7 @@ end
 -- 通关评级（v0.13.4）：剩余防线血量决定星级；额外分数与零件奖励进结算。
 -- 一星=险胜（<40%）、两星=优良（40~74%）、三星=完美（>=75%）。
 local function ComputeStageResult()
-    local ratio = baseHp / BASE_HP
+    local ratio = baseHp / GetMaxBaseHp()
     local stars, rating
     if ratio >= 0.75 then stars, rating = 3, "完美"
     elseif ratio >= 0.40 then stars, rating = 2, "优良"
@@ -2433,7 +2553,7 @@ UpdateWaveLogic = function(dt)
                 stage = stage, wave = wave,
                 stars = stageResult.stars, rating = stageResult.rating,
                 bonusScore = stageResult.bonusScore, bonusParts = stageResult.bonusParts,
-                baseHp = baseHp, maxBaseHp = BASE_HP,
+                baseHp = baseHp, maxBaseHp = GetMaxBaseHp(),
             })
             print("[Game] stage " .. stage .. " cleared: " .. stageResult.rating
                 .. " " .. stageResult.stars .. "星")
@@ -2691,9 +2811,12 @@ function Game.SettleParts(multiplier)
     partsSettled = true
     local delta = math.max(0, partsEarned - settledParts)
     settledParts = partsEarned
+    -- v0.13.5：天赋树通用线路的结算零件百分比加成（在广告倍数前叠加）。
+    local pctBonus = math.floor(delta * talentPartsPct / 100 + 0.5)
+    delta = delta + pctBonus
     lastSettledParts = delta * math.max(1, math.floor(multiplier or 1))
     if multiplier and multiplier > 1 then partsDoubled = true end
-    print("[Game] parts settled: +" .. lastSettledParts)
+    print("[Game] parts settled: +" .. lastSettledParts .. " (pctBonus=" .. pctBonus .. ")")
     return lastSettledParts
 end
 
@@ -2808,7 +2931,9 @@ function Game.GetSnapshot()
     s.newRecord = (gameState == "gameover" or gameState == "stagewin")
         and score > previousHighScore and score > 0
     s.baseHp = baseHp
-    s.maxBaseHp = BASE_HP
+    s.maxBaseHp = GetMaxBaseHp()
+    s.talentHpBonus = talentMaxHpBonus
+    s.talentPartsPct = talentPartsPct
     s.wave = wave
     s.stage = stage
     s.stageWave = stageWave

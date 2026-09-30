@@ -705,9 +705,9 @@ local function DrawFloatTexts(ctx, game, presentation)
     for _, f in ipairs(presentation.floatTexts or {}) do
         local sx, sy = ProjectGamePoint(f.x, f.y)
         local lifeT = math.max(0, math.min(1, f.life / (f.maxLife or 0.9)))
-        -- 末段淡出 + 轻微放大，提升命中正反馈。
+        -- 末段淡出；入场弹性放大（出生 1.42 倍、二次收拢），数字"跳"出来更有冲击感。
         local alpha = math.floor(235 * math.min(1, lifeT * 3))
-        local pop = 1 + 0.18 * (1 - lifeT)
+        local pop = 1 + 0.42 * lifeT * lifeT
         local size = math.floor((f.size or 32) * pop)
         local col = f.color or {255, 240, 180}
         nvgFontSize(ctx, size)

@@ -3,6 +3,19 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.5-floattext（跳字特效修复：真实得分 + 就近聚合 + 越线不飘分；版本号行由并发会话统一推进，本批只改 `Game.lua`/`Presentation.lua`/`Scene3DBackend.lua` 的相关 hunk）：
+  - **根因（用户点名「频繁的 +0」）**：`brick_hit` 的 `score` 在 `EmitBrickShatterFx`/`DamageBrick` 两处都硬编码 0——真实得分只在 `EjectBrick` 里累加进规则层 `score` 变量、从未外发；而 `Presentation.brickSpark` 对每次 `destroyed` 击碎无条件 `SpawnFloatText("+" .. event.score)`，于是每次击碎都飘 "+0"、真实得分从未显示。越线碎裂（惩罚）复用同一视觉事件，也错误地飘分。
+  - **规则层**：`EmitBrickShatterFx(enemy, brick, x, y, scoreValue)` 新增第 5 参；`EjectBrick` 传 `data.score`（80~320/砖，随机型），`ShatterBreachedBrick` 不传（=0）——得分击碎与惩罚碎裂从此在事件数据上可分。
+  - **表现层**：`SpawnFloatText` 加 `kind` 字段并返回对象；新增 `SpawnScoreFloat`——`kind=="score"` 的飘字在 46 设计像素内自动聚合累加（数字变大、寿命刷新重跳、按总值 24/27/30px 三档尺寸），同屏上限 6 条（超出时并入最近一条，**不丢分**）；`brickSpark` 只在 `event.score > 0` 时飘分。跳字手感：出生初速 -70~-90 上飘 + 线性减速到停（不回坠），绘制端入场 1.42 倍弹性收拢。
+  - **验证**：LSP 0 Error（19 files 744 诊断）；纯规则/表现探针 `probe_floattext` PASS（真实击碎事件 score 与 `AircraftPixelData[key].score` 逐机型一致；越线碎裂 score=0；合成事件下 5 个近距击碎合并为 1 条 `+500`、10 个分散击碎被钳到 6 条且总值 1700 无丢失、score=0 不生成飘字）；真渲染 `probe_floatshot`（维持 playing + 持续注入合成击碎）零 Lua/零 overlay stage 失败，截图确认 `+300`/`+105200` 两条聚合飘字与深色描边渲染正常。官方多人 build + 预览上传 ✅。⚠️ 待 Preview：真机聚合节奏、数字跳动与尺寸分档手感。
+- 版本: 0.13.5（天赋树：主页入口 + 阶段解锁 + 基础天赋池重构）：
+  - **天赋树（`scripts/TalentCatalog.lua` 纯数据 + `scripts/ui/TalentTree.lua` 界面）**：6 行（2 通用线 + 4 车线）× 7 阶段。阶段星级门槛 `0/3/9/18/27/36/45`（第 3 阶起 +9），满星 15 关 × 3 = 45。每阶段 6 节点、**点一次即满**（单级）。解锁需 ①该阶段星级达标 ②同线路上一阶段节点已解锁（链式）。主菜单「养成收藏」行新增「天赋树」入口（现 5 卡，`GetMenuBarLayout.row()` 改为自适应卡宽防溢出）。
+  - **节点类型**：通用线路 `general_a` 1 阶=解锁「数据回收」（经验卡）、`general_b` 3 阶=解锁「弹药扩容」，其余阶段=结算零件 +5%；车线路 1 阶=允许该车局内出场、2 阶=解锁该车专属卡、3/4/6/7 阶=小幅数值、5 的倍数阶=专属卡效果增强（数值更大）。**初始分裂车的 1 阶节点自动拥有**（`TalentCatalog.AUTO_OWNED = {normal_1}`，`EnsureAutoOwnedTalents` 幂等补上）。
+  - **每个已解锁节点 +1 基地生命上限**（`TalentCatalog.MAX_HP_PER_NODE`）；血量上限不再由通用卡提供，改由 `Game.GetMaxBaseHp() = BASE_HP + talentMaxHpBonus` 统一（`repair`/暂停急救/星级评级/快照全部走它，保证上限与评级一致）。
+  - **规则层接入（`Game.lua`）**：`Game.SetTalentProvider(fn)` 注册一次，`ResetGame` 每次开局自动拉取（覆盖选关/下一关/重开，避免在多入口重复注入）；`SetTalents` 把节点汇总为 `talentMaxHpBonus`（血量）、`talentPartsPct`（结算零件%）、`talentBallStats`（车线路 splitBonus/iceBonus/speedMul/giantArea 叠加）、`talentUnlockedCards`（xp/ammo）、`talentUnlockedBalls`（开局即解锁的车）。`CanOfferUpgrade` 新增 `requiresCard` 门控；`SettleParts` 在广告倍数前叠加零件百分比。⚠️ 天赋派生变量块**必须在 `UPGRADE_POOL` 之前声明**——`repair` 卡的 `apply` 闭包读 `talentMaxHpBonus`，后置声明会变成全局 nil（AB-100 同类）。
+  - **基础天赋池重构**：`xp`/`ammo` 卡加 `requiresCard`（未解锁不进池）；四车各补一张基础数值卡（`base_split/base_ice/base_speed/base_giant`，`kind="base"`、`ballType` 门控）。
+  - **存档（`PlayerData.lua`）**：新增 `talents`（节点 id→bool，`AsBoolMap` 读写，云合并取并集）；新增 `GetTotalStars`（星级总和，供阶段门槛）/`HasTalent`/`GetTalents`/`TalentCount`/`UnlockTalent`（扣零件+落盘）/`EnsureAutoOwnedTalents`。解锁动作由编排层 `HandleMetaAction("unlock_talent", nodeId)` 处理（`TalentCatalog.CanUnlock` 校验 stars/prereq/parts，失败给具体 toast）。
+  - **验证**：LSP workspace 0 Error；前向引用扫描 0；纯规则探针 `probe_talent`（阶段门槛/线路链/节点类型/5阶>3阶/CanUnlock 三因/Game 注入血量与车解锁）PASS，`probe_talent2`（未解锁 xp/ammo 不进池、解锁后进池、零件%累加）PASS，`probe_stageflow` 回归 PASS；真渲染 probe_play 零 Lua/overlay 错误、截图非黑且 letterbox=深底。官方多人 build + 预览上传 ✅。BUILD_VERSION/大厅 →0.13.5。⚠️ 待 Preview：天赋树真机布局/点击、节点数值手感、菜单 5 卡信息密度。
 - 版本: 0.13.4（关卡式：选关界面 + 胜利结算 + 星级/解锁存档）：
   - **选关入口**：主菜单「开始战斗」不再直接开局，改为打开 `scripts/ui/StageSelect.lua`（插件式注册进 `MetaUI.RegisterScreen("stage_select")`，复用注入令牌，零 urhox-libs/UI）。15 关按 5 列铺格，显示每关历史星级（★）与「未解锁」程序化锁形；点已解锁格 `HandleMetaAction("play_stage", index)` → `Game.StartStageAt(index)`。`Game.PointerDown/Up` 在 menu 态不再开局（`startArmed` 退化为防误触守卫）；键盘回车在 menu 同样转开选关。
   - **胜利结算态 `stagewin`（不再自动进下一关）**：`Game` 新增状态，Boss 击败即置 `stageResult`（含 stage/stars/rating/bonusScore/bonusParts）+ 提交最高分 + `gameState="stagewin"`；v0.13.0 的 4 秒休整自动进关逻辑（`stageClearPending`/`stageBreak`）整体删除。`Scene3DBackend.DrawStageWin` 复用 `DrawAnimatedWindow("game")` 弹动窗 + 命中逆变换；按钮「下一关 `Game.NextStage()` / 再战本关 `Game.RetryStage()` / 回主菜单 `Game.GoToMenu()`」由 `client_main` 松手确认（`HandleStageWinPointerDown/Up`，仿 gameover 模态）。`UpdateUiState` 的 leaving 快照三处 state 判定全部加进 stagewin，避免旧窗残影。
@@ -139,6 +152,19 @@
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
 - 上次交付: v0.13.3 车辆飞行尾迹（3D BillboardSet 四弹种合批）+ 全窗口渐显渐隐弹动过渡（命中逆变换、遮罩不缩放、退场残影作废）
+
+## 本批次新增避雷（v0.13.5-floattext 跳字特效）
+- 🔴 **玩法事件里的"展示用字段"必须真的带上数据（v0.13.5-floattext）**：`brick_hit` 的 `score` 自早期版本起就是硬编码 0（真实分数只在规则层变量里累加），表现层却一直拿它拼 "+N" → 每次击碎飘 "+0"，且真实得分从未显示。**审计规则**：凡是表现层/UI 消费的事件字段（score/hp/damage/amount…），交付前确认规则层真的填了值，而不是常量占位；同类风险是"不同语义共用同一事件"（玩家击碎 vs 越线惩罚碎裂）——需要显式字段（score=0）或标记区分，表现层才能分流。
+- ⚠️ **高频同类飘字必须聚合 + 限流（v0.13.5-floattext）**：一次范围击碎/贯穿连发多个 `brick_hit`，逐块飘字刷屏且互相重叠。规则：同 `kind` 飘字在 46 设计像素内自动合并累加（寿命刷新重跳、尺寸按总值 24/27/30 三档），同屏上限 6 条，**超出时并入最近一条而不是丢弃最旧**（数值不丢）。新增伤害数字/掉落提示类高频反馈按此模式。
+- ⚠️ **飘字文本先判"值有无意义"再生成（v0.13.5-floattext）**：`"+0"` 比不飘更糟——纯噪音且会让玩家怀疑计分坏了。别把"事件发生了"当作"有内容可展示"；表现层生成文本前过滤 0/空值（`event.score > 0`）。
+- ⚠️ **「跳字」手感三件套（v0.13.5-floattext）**：初速上飘（-70~-90）+ 线性减速到停（`math.min(0, vy + 170*dt)`，不回坠）替代旧指数阻尼 `vy*0.96`；绘制端入场 1.42 倍二次收拢（`pop = 1 + 0.42*lifeT²`）替代线性 1.18；聚合/重跳靠刷新 `life` 触发自然重播入场动画，不额外加 bump 字段。
+
+## 本批次新增避雷（v0.13.5 天赋树）
+- 🔴 **「升级池闭包读到的派生变量」必须声明在池之前（v0.13.5）**：`UPGRADE_POOL` 里 `repair` 卡的 `apply` 闭包读 `talentMaxHpBonus`（天赋血量加成）。若把该变量声明在池**之后**，闭包捕获的是全局 nil → 运行时崩，且 LSP 报 `undefined global variable`。修法：把天赋派生状态块（`talentOwned/talentMaxHpBonus/talentPartsPct/...`）整体前移到 `UPGRADE_POOL` 之前。**通用规则**：任何被 `UPGRADE_POOL` 闭包引用的规则变量，其 `local` 声明必须在池定义之前（AB-100 前向引用的同族，但这里是闭包捕获而非函数调用，扫描器要额外覆盖「池内闭包引用的外部 local」）。
+- ⚠️ **血量上限要收敛到单一函数（v0.13.5）**：天赋给的是「生命上限加成」，凡是写死 `BASE_HP` 的地方（repair 卡回血封顶、暂停急救 `CanPauseHeal/PauseHeal`、星级评级 `baseHp/BASE_HP` 比例、快照 `maxBaseHp`、`stage_cleared` 事件）都必须改走 `GetMaxBaseHp()`，否则「上限涨了但评级按 100 算」会出现 3 星判定错位。新增任何「按血量比例」的逻辑前先 grep `BASE_HP` 找齐依赖方。
+- ⚠️ **天赋解锁集合要走「provider 拉取」而不是各入口手动注入（v0.13.5）**：开局有 5+ 个入口（选关/下一关/再战/重开/复活），逐个调 `Game.SetTalents` 必漏。做法：`Game.SetTalentProvider(fn)` 注册一次，`ResetGame` 内部拉取——覆盖所有开局路径。玩家中途解锁节点不影响进行中的一局（下局生效），符合「局外养成」语义。
+- ⚠️ **天赋节点必须「单级」+ 前置链（v0.13.5）**：用户规格「每个节点点一次就满了」——不要复用 `maxStacks` 那套多级逻辑；解锁判定要同时校验 ①阶段星级 ②同线路上一阶段节点（`IsPrereqMet`），且**星级门槛与前置链是两把独立的锁**（探针易只测一把：`CanUnlock` 先判星级再判前置，传错星级会拿到 `stars` 而非 `prereq`）。
+- ⚠️ **整数键/布尔键 map 进存档各用各的解码器（v0.13.5 复用 v0.13.4 教训）**：`talents` 是 `table<string,boolean>` 用 `AsBoolMap`；`stageStars` 是 `table<integer,integer>` 用 `AsStageStars`（`tonumber(k)` 还原）。两者别混用，云合并都是取并集/更大值。
 
 ## 本批次新增避雷（v0.13.4 选关 + 胜利结算 + 星级存档）
 - 🔴 **新增一个可弹窗玩法状态，必须把上一个同类态（gameover）的每个命中点都补齐（v0.13.4）**：stagewin 要在 ①`Game.PointerDown/Up` 早退、`GoToMenu`、`TakeSettlementStats`/`SettleParts`；②`UpdateUiState` 的 leaving/visual 三处 state 判定；③`RenderOverlay` 的 `currentWindow` + `game-window-in/out` 分发；④`client_main` 六个 Mouse/Touch 处理器 + `HandleKeyDown` + 结算入库块 —— 全部并列处理。漏任一处分别表现为「点了没反应 / 旧窗残影 / 胜利页不入库 / 键盘穿透」。做法：`grep -n gameover` 拿到全部出现点逐条加 stagewin 分支。

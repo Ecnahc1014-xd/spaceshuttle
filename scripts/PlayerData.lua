@@ -23,6 +23,7 @@ local DATA_VERSION = 1
 ---@field codex table<string, boolean> 已解锁敌机 key
 ---@field stageStars table<integer, integer> 关卡号 -> 历史最佳星级（1..3）
 ---@field maxStage integer 已解锁的最大关卡号（选关界面开放范围）
+---@field talents table<string, boolean> 已解锁的天赋节点 id
 ---@field skins table<string, boolean> 已解锁车型，沿用旧涂装存档 key
 ---@field selectedSkin string 当前使用的车型 key
 ---@field shopBought table<string, boolean> 商城一次性商品
@@ -49,6 +50,7 @@ local function NewState()
         codex = {},
         stageStars = {},
         maxStage = 1,
+        talents = {},
         skins = { default = true },
         selectedSkin = "default",
         shopBought = {},
@@ -157,6 +159,7 @@ function PlayerData.Load()
     state.codex        = AsBoolMap(d.codex)
     state.stageStars   = AsStageStars(d.stageStars)
     state.maxStage     = math.max(1, AsInt(d.maxStage))
+    state.talents      = AsBoolMap(d.talents)
     state.shopBought   = AsBoolMap(d.shopBought)
     state.passClaimed  = math.max(0, AsInt(d.passClaimed))
     state.firstGiftClaimed = d.firstGiftClaimed == true
@@ -250,6 +253,8 @@ function PlayerData.ImportFromCloud(text)
         if (state.stageStars[stage] or 0) < stars then state.stageStars[stage] = stars end
     end
     state.maxStage = math.max(state.maxStage, math.max(1, AsInt(d.maxStage)))
+    -- 天赋解锁跨设备取并集（任一台设备买过即保留）。
+    for k in pairs(AsBoolMap(d.talents)) do state.talents[k] = true end
     for k in pairs(cloudSkins) do state.skins[k] = true end
     local cloudSelected = AsStr(d.selectedSkin)
     if state.selectedSkin == "default" and state.skins[cloudSelected] then
@@ -516,6 +521,66 @@ end
 ---@return boolean
 function PlayerData.IsStageUnlocked(stage)
     return stage >= 1 and stage <= state.maxStage
+end
+
+---@return integer 所有关卡历史最佳星级之和（天赋树阶段门槛用）
+function PlayerData.GetTotalStars()
+    local n = 0
+    for _, stars in pairs(state.stageStars) do n = n + stars end
+    return n
+end
+
+-- ============================================================================
+-- 天赋树（v0.13.5）：节点解锁集合 + 零件消费
+-- ============================================================================
+
+---@param nodeId string
+---@return boolean
+function PlayerData.HasTalent(nodeId)
+    return state.talents[nodeId] == true
+end
+
+---@return table<string, boolean> 已解锁节点集合（只读副本，供规则层/界面消费）
+function PlayerData.GetTalents()
+    local out = {}
+    for k, v in pairs(state.talents) do out[k] = v end
+    return out
+end
+
+---@return integer 已解锁节点数
+function PlayerData.TalentCount()
+    local n = 0
+    for _ in pairs(state.talents) do n = n + 1 end
+    return n
+end
+
+-- 解锁一个天赋节点：扣零件并写入解锁集合（幂等）。校验由 TalentCatalog 负责。
+---@param nodeId string
+---@param cost integer
+---@return boolean ok
+function PlayerData.UnlockTalent(nodeId, cost)
+    if state.talents[nodeId] then return false end
+    local price = math.max(0, math.floor(tonumber(cost) or 0))
+    if state.parts < price then return false end
+    state.parts = state.parts - price
+    state.totalSpent = state.totalSpent + price
+    state.talents[nodeId] = true
+    PlayerData.Save()
+    print("[PlayerData] talent unlocked " .. nodeId .. " cost=" .. price)
+    return true
+end
+
+-- 幂等地补上开局应自动拥有的节点（初始分裂车的"允许局内出场"）。
+---@param nodeIds string[]
+function PlayerData.EnsureAutoOwnedTalents(nodeIds)
+    local changed = false
+    for _, id in ipairs(nodeIds or {}) do
+        if not state.talents[id] then
+            state.talents[id] = true
+            changed = true
+        end
+    end
+    if changed then PlayerData.Save() end
 end
 
 -- 通关记录：刷新该关最佳星级并解锁下一关。stars=1..3。

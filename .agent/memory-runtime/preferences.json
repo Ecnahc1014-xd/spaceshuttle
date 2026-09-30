@@ -110,7 +110,9 @@
       "require_non_overlapping_aircraft_layout": true,
       "require_stage_select_entry": true,
       "require_manual_stage_advance": true,
-      "require_star_and_unlock_persistence": true
+      "require_star_and_unlock_persistence": true,
+      "require_real_data_in_feedback_events": true,
+      "require_feedback_aggregation_and_cap": true
     }
   }
 }

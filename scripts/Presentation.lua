@@ -119,14 +119,60 @@ local function SpawnParticles(x, y, color, count, kind)
     end
 end
 
-local function SpawnFloatText(x, y, text, color, sizeMul)
+local function SpawnFloatText(x, y, text, color, sizeMul, kind)
     local f = table.remove(floatPool) or {}
-    f.x = x; f.y = y; f.vy = -40
+    f.x = x; f.y = y
+    -- 跳字手感：出生带随机初速的上飘，UpdateFloatTexts 中线性减速到停（不回坠）。
+    f.vy = -(70 + math.random() * 20)
     f.life = 0.9; f.maxLife = 0.9
     f.text = text
     f.color = color or {255, 255, 255}
     f.size = (sizeMul or 1) * 32
+    f.kind = kind or "text"
+    f.value = nil
     floatTexts[#floatTexts + 1] = f
+    return f
+end
+
+-- 击碎分数飘字：一次范围击碎会连发多个 brick_hit，逐块飘字会刷屏且互相重叠。
+-- 这里做就近聚合——同一片区域内的分数累加到同一条飘字上（数字变大、寿命刷新重跳），
+-- 并设同屏数量上限，超出时并入最近一条，保证「少而准」。
+local SCORE_FLOAT_MAX = 6
+local SCORE_MERGE_DIST = 46
+
+local function ScoreFloatSize(value)
+    if value >= 600 then return 30 end
+    if value >= 250 then return 27 end
+    return 24
+end
+
+local function SpawnScoreFloat(x, y, value)
+    local best, bestDist2, count = nil, nil, 0
+    local mergeDist2 = SCORE_MERGE_DIST * SCORE_MERGE_DIST
+    for _, f in ipairs(floatTexts) do
+        if f.kind == "score" then
+            count = count + 1
+            local dx, dy = f.x - x, f.y - y
+            local d2 = dx * dx + dy * dy
+            if not bestDist2 or d2 < bestDist2 then best, bestDist2 = f, d2 end
+        end
+    end
+    if best then
+        -- 附近且仍年轻的分数字直接吸收；达到上限时即使较远也并入最近一条（不丢分）。
+        local near = bestDist2 <= mergeDist2 and best.life > best.maxLife * 0.3
+        if near or count >= SCORE_FLOAT_MAX then
+            best.value = (best.value or 0) + value
+            best.text = "+" .. best.value
+            best.size = ScoreFloatSize(best.value)
+            best.life = best.maxLife
+            return
+        end
+    end
+    local f = SpawnFloatText(x + (math.random() - 0.5) * 20, y - 4,
+        "+" .. value, {255, 240, 180}, 1, "score")
+    f.value = value
+    f.size = ScoreFloatSize(value)
+    f.life = 0.78; f.maxLife = 0.78
 end
 
 local function SpawnBrickDebris(event, color)
@@ -228,7 +274,11 @@ local FEEDBACK_HANDLERS = {
                      math.min(255, color.g * 0.5 + 60),
                      math.min(255, color.b * 0.5 + 70)}, 1, "smoke")
             end
-            SpawnFloatText(event.x, event.y - 4, "+" .. event.score, {255, 240, 180}, 0.8)
+            -- 仅真实得分（玩家击碎）才飘分数字；越线碎裂 score=0，不飘（其惩罚由防线提示承接）。
+            local gained = event.score or 0
+            if gained > 0 then
+                SpawnScoreFloat(event.x, event.y, gained)
+            end
             -- v0.10.23：约 1/3 击毁给一个扩散白环，作为点缀式冲击波。
             if math.random() < 0.34 then
                 shockRings[#shockRings + 1] = {
@@ -404,7 +454,8 @@ local function UpdateFloatTexts(dt)
             floatPool[#floatPool + 1] = f
         else
             f.y = f.y + f.vy * dt
-            f.vy = f.vy * 0.96
+            -- 上飘线性减速到停（不回坠），数字停在顶点淡出，避免飘出屏幕。
+            f.vy = math.min(0, f.vy + 170 * dt)
         end
     end
 end

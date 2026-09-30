@@ -15,11 +15,13 @@ local AdService = require "AdService"
 local MetaCatalog = require "MetaCatalog"
 local AircraftPixelData = require "AircraftPixelData"
 local StageCatalog = require "StageCatalog"
+local TalentCatalog = require "TalentCatalog"
 local GameMode = require "GameMode"
 local NetClient = require "network.Client"
 local MetaUI = require "MetaUI"
 local RechargeShop = require "ui.RechargeShop"
 local StageSelect = require "ui.StageSelect"
+local TalentTree = require "ui.TalentTree"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
 
@@ -405,6 +407,26 @@ RefreshMeta = function()
     metaState.maxStage = PlayerData.GetMaxStage()
     metaState.stageTotal = StageCatalog.STAGE_COUNT
 
+    -- 天赋树界面数据（v0.13.5）：已解锁节点 + 星级汇总。
+    metaState.talents = PlayerData.GetTalents()
+    metaState.totalStars = PlayerData.GetTotalStars()
+    metaState.talentCount = PlayerData.TalentCount()
+    -- 是否有「当前可负担且前置满足」的节点（菜单红点）。
+    do
+        local owned = metaState.talents
+        local parts = metaState.parts
+        local stars = metaState.totalStars
+        local affordable = false
+        for _, node in ipairs(TalentCatalog.GetNodes()) do
+            if not owned[node.id] and TalentCatalog.IsPrereqMet(node, owned, stars)
+                and parts >= node.cost then
+                affordable = true
+                break
+            end
+        end
+        metaState.talentAffordable = affordable
+    end
+
     local skins = {}
     for _, skin in ipairs(MetaCatalog.GetSkins()) do
         if PlayerData.HasSkin(skin.key) then skins[skin.key] = true end
@@ -766,6 +788,33 @@ local function HandleMetaAction(action, index)
         RefreshMeta()
     elseif action == "open_stage_select" then
         OpenMetaScreen("stage_select")
+    elseif action == "open_talent" then
+        OpenMetaScreen("talent")
+    elseif action == "unlock_talent" and index then
+        -- 天赋树节点解锁：TalentCatalog 校验前置/星级/零件，PlayerData 落盘。
+        local nodeId = index
+        local node = TalentCatalog.GetNode(nodeId)
+        if node then
+            local owned = PlayerData.GetTalents()
+            local ok, reason = TalentCatalog.CanUnlock(nodeId, owned,
+                PlayerData.GetTotalStars(), PlayerData.GetParts())
+            if ok then
+                if PlayerData.UnlockTalent(nodeId, node.cost) then
+                    PlayerData.Save()
+                    SavePlayerDataToCloud()
+                    SetMetaToast(string.format("已解锁「%s」", node.name))
+                    print("[Main] talent unlocked: " .. nodeId)
+                end
+            else
+                local msg = (reason == "stars" and "星级不足，尚未开放该阶段")
+                    or (reason == "prereq" and "需先解锁同一线路的上一阶段")
+                    or (reason == "parts" and "零件不足")
+                    or (reason == "owned" and "已解锁")
+                    or "无法解锁"
+                SetMetaToast(msg)
+            end
+            RefreshMeta()
+        end
     elseif action == "play_stage" and index then
         -- 选关界面点某关：解锁校验（StageSelect 命中已过滤，这里兜底），关面板后开该关。
         if PlayerData.IsStageUnlocked(index) then
@@ -1157,8 +1206,15 @@ function ClientMain.Start(opts)
     -- v0.13.4：选关界面同样复用游戏令牌（插件式注册，不反向依赖渲染后端）。
     StageSelect.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("stage_select", StageSelect.Draw, StageSelect.HitTest)
+    -- v0.13.5：天赋树界面同源注册。
+    TalentTree.Init(MetaUI.GetDeps())
+    MetaUI.RegisterScreen("talent", TalentTree.Draw, TalentTree.HitTest)
 
     PlayerData.Load()
+    -- 开局自动拥有初始分裂车的「允许局内出场」节点（幂等；必须在 Load 之后）。
+    PlayerData.EnsureAutoOwnedTalents(TalentCatalog.AUTO_OWNED)
+    -- v0.13.5：天赋提供者——每次开局（选关/下一关/重开）Game 自动拉取最新解锁集合。
+    Game.SetTalentProvider(function() return PlayerData.GetTalents() end)
     metaDate = os.date("%Y-%m-%d")
     -- ⚠️ 全程 pcall：联机层任何异常都不允许中断游戏启动
     --    （曾经因为 NetClient.Start 为 nil，在这里抛出，导致后面的事件订阅全部没执行，

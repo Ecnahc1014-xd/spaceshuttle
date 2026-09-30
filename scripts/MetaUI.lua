@@ -52,6 +52,13 @@ local MetaUI = {}
 ---@field rankTotal integer
 ---@field myRank integer|nil 当前玩家全服名次，nil 表示未上榜或尚未加载
 ---@field myRankLoading boolean
+---@field stageStars table<integer, integer> 关卡号 -> 历史最佳星级
+---@field maxStage integer 已解锁的最大关卡号
+---@field stageTotal integer 关卡总数
+---@field talents table<string, boolean> 已解锁的天赋节点
+---@field totalStars integer 星级总和
+---@field talentCount integer 已解锁节点数
+---@field talentAffordable boolean 是否存在可负担且前置满足的节点
 ---@field skins table<string, boolean>
 ---@field selectedSkin string
 ---@field giftUsed table<string, integer>
@@ -221,9 +228,10 @@ end
 ---@field grow table[]
 
 local function GetMenuBarLayout()
-    local bw, gap = 120, 8
-    -- 行卡按数量水平居中（v0.12.7：签到并入充值后，今日福利只剩 3 卡）
+    local gap = 8
+    -- 行卡按数量水平居中，并自适应卡宽（grow 行现为 5 卡，120 宽会溢出 504）。
     local function row(y, h, n)
+        local bw = math.min(120, math.floor((504 - (n - 1) * gap) / n))
         local total = n * bw + (n - 1) * gap
         local x0 = 18 + (504 - total) * 0.5
         local r = {}
@@ -236,7 +244,7 @@ local function GetMenuBarLayout()
         fleet  = { x = 18, y = 390, w = 504, h = 92 },
         wallet = { x = 18, y = 496, w = 504, h = 56 },
         daily  = row(588, 92, 3),
-        grow   = row(716, 92, 4),
+        grow   = row(716, 92, 5),
     }
 end
 
@@ -312,6 +320,9 @@ local function GetGrowDefs(meta)
         { action = "open_codex", icon = "codex", label = "敌机图鉴",
           sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
           hot = meta.codexClaimable, tone = "free" },
+        { action = "open_talent", icon = "levelup", label = "天赋树",
+          sub = string.format("已解锁 %d", meta.talentCount or 0),
+          hot = meta.talentAffordable, tone = "free" },
         { action = "open_rank", icon = "rank", label = "排行榜",
           sub = "全服最高分", hot = false, tone = "free" },
     }
