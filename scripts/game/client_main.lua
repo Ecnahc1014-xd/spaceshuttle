@@ -929,7 +929,12 @@ local function HandleMetaPointerDown(uiX, uiY)
         return true
     end
     if metaState.screen then
-        -- v0.13.8：天赋树是可滚动面板——按下先交给它起手拖拽（内容区内）。
+        -- v0.13.8：天赋树是可滚动面板——按下先交给它记录起点（内容区内），
+        -- 但是否算「拖拽」要等抬手时才定（见 HandleMouseUp/TouchEnd 的 ScrollEnd）。
+        -- ⚠️ 这里不能直接 return：否则点击永远走不到 HitTestMetaScreen，
+        -- 卡片选不中、底部浮窗不弹（v0.13.13 修复）。
+        -- v0.13.13：天赋树的「点卡片选卡」放在抬手时判定——
+        -- 真拖拽过就吞掉抬手（只滚动不选卡），没拖拽过才当作点击。
         if metaState.screen == "talent" and TalentTree.ScrollBegin(uiX, uiY, designWidth_) then
             talentScrollArmed = true
             return true
