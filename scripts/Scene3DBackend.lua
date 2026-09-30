@@ -14,7 +14,6 @@ local DESIGN_H = 960
 local HUD_HEIGHT = 92
 local BOTTOM_DOCK_Y = 866
 local MENU_CONTENT_TOP = HUD_HEIGHT
-local MENU_CONTENT_BOTTOM = BOTTOM_DOCK_Y
 
 local scene_ = nil
 local cameraNode_ = nil
@@ -53,8 +52,6 @@ local offsetX_ = 0
 local offsetY_ = 0
 local projectionOffsetX_ = 0
 local projectionOffsetY_ = 0
-local projectionOriginNdcX_ = 0
-local projectionOriginNdcY_ = 0
 local projectionScaleX_ = 1
 local projectionScaleY_ = 1
 -- v0.13.16：world Z 到屏幕设计像素的线性系数（46° 斜俯视正交下 z 会进屏幕 Y）。
@@ -464,8 +461,9 @@ local function UpdateProjectionMetrics(logMetrics)
     local origin = camera_:WorldToScreenPoint(WorldFromGame(0, 0))
     local xAxis = camera_:WorldToScreenPoint(WorldFromGame(DESIGN_W, 0))
     local yAxis = camera_:WorldToScreenPoint(WorldFromGame(0, DESIGN_H))
-    projectionOriginNdcX_ = origin.x
-    projectionOriginNdcY_ = origin.y
+    -- v0.13.16：删除 projectionOriginNdcX_/Y_（写而不读的死变量）。
+    -- 主块 local 数量逼近 Lua 上限 200——超限即 LoadChunk failed、整模块加载失败
+    -- （真渲染才暴露，LSP/build 不报）。新增模块级 local 前先数槽位、优先收进表。
     projectionOffsetX_ = origin.x * DESIGN_W
     projectionOffsetY_ = origin.y * DESIGN_H
     projectionScaleX_ = (xAxis.x - origin.x)
@@ -668,8 +666,8 @@ local function DrawScanBand(ctx, x, y, w, h, elapsed)
     DrawRect(ctx, x, bandY - 5, w, 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 22}, 0)
     if uiPulse_ > 0.28 then
         local ghostY = y + ((elapsed * 18) - 27) % h
-        DrawRect(ctx, x + 6, ghostY, math.max(0, w - 12), 2, 0,
-            {C.wash[1], C.wash[2], C.wash[3], math.floor(28 + 70 * uiPulse_)})
+        DrawRect(ctx, x + 6, ghostY, math.max(0, w - 12), 2,
+            {C.wash[1], C.wash[2], C.wash[3], math.floor(28 + 70 * uiPulse_)}, 0)
     end
 end
 

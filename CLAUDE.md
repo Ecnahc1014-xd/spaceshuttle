@@ -3,6 +3,15 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.17（skill 固化 + dark-tech 氛围层实装 + 旧图标重出 + 死代码清理；版本号由并发会话推进，本批未动 BUILD_VERSION）：
+  - **用户两点要求**：①「skill 没有我们有的，规范补进 skill，比如生图工作流」②「补充图标的部分。然后对照我们没用上的使劲用上优化画面」。
+  - **skill 补充（`.agent/skills/`，本批主要产出之一）**：①**dark-tech-game-editor-ui** 新增 `references/pipeline.md`（「界面素材生成与落地管线」：三类素材分类 / 项目 8 色板量化 / 32×32 母版 / 非方形字标 / `.meta` uuid / `ICON_PATHS`+NEAREST 装载 / 死键检查 / 全流程清单），SKILL.md 挂链接 + 工作流加「元素先分类」步 + 验收补 3 条；`references/atmosphere.md` 加「**克制实装**」一节（默认档：只上底噪/扫描带/半调/残影，不接强调色切换与文本异变；判据「这层会不会出现在玩家要读的东西上」）。②**0718-pixelimage-aigc** 新增 `references/urhox-icon-integration.md`（UI 图标统一规格 / 图标只画主体 / 非方形字标 / `.meta`+`ICON_PATHS` / 死键检查 / **存量色数审计** / 重出流程），SKILL.md §5 加 5.1–5.3 + 验收补 2 条。
+  - **UI 氛围层（`Scene3DBackend.lua`，克制档）**：新增 `AnomalyPulse`（全屏共享 0..1 标量；基线 `0.08+0.06·sin` 不为 0、取模周期尖峰而非随机）+ 原未用原语 `DrawDashLine/DrawCrossMark/DrawTickRing/DrawHalftone/DrawScanBand` + `DrawModalTechDecor`；C 表补 `wash/washDim/ghost/klein/halftone/ash/railMark`。落点：**菜单**（半调网点 + 右侧装饰位扫描带 + 两侧虚线轴 + 十字取样点）、**结算/胜利/暂停窗**（环形刻度 + 虚线轴 + 半调底纹 + 十字）。**HUD 与战斗读数区一律不进装饰**。
+  - **接上/清理死代码**：①`DrawBossPhaseBar` + `FindBoss` 定义了却**从未调用**（Boss 阶段条此前根本不显示）→ 接进 RenderOverlay 的 playing 分支（Boss 在场才画）。②5 个「已加载却从未绘制」图标键：`gem`→钱包条钻石（`premium_energy_core` 留给充值钮）、`boost`→HUD 零件 ×2 增益；`wheel/supply/pass` 已被 premium_* 取代 → 从 ICON_PATHS 删除（41→38）。③删对应 3 张 PNG + `.meta`。
+  - **旧图标重出（0718 管线）**：审计发现早期 **26 张 `ui_icon_*` 实测 100–583 种颜色**（AI 原图直接缩到 32×32、没过管线；v0.12.9 之后的图标都是 8–9 色）。按原语义**重出 21 张**（nanobanana 512 草案 → bbox 裁切 → LANCZOS 缩到主体 26 → alpha 二值化 128 → 量化到项目 8 色 → 居中贴 32×32），全部 6–8 色达标；**沿用旧文件名覆盖**（ICON_PATHS 与 `.meta` 不变、零路径风险），另删 3 张失效（pass/supply/wheel）。
+  - **验证**：官方多人 build + 预览上传 ✅；LSP 我改的 `Scene3DBackend/MetaUI` **0 Error**；全库前向引用扫描 0；真渲染探针（菜单 + `Game.StartStageAt(1)` 战斗态）**零 overlay stage 失败**，截图确认菜单新图标全渲染 + 氛围层克制可见、战斗 HUD/Dock/弹药槽/下一波预览正常。⚠️ 探针抓到真 bug：`DrawScanBand` 把 `DrawRect` 的 radius 与颜色表**参数写反**（`0, {color}` 应为 `{color}, 0`）→ 菜单 stage 报 `attempt to index a number value (local 'color')`；已修。
+  - **并发会话 v0.13.17（天赋树布局/交互修复，本批未提交其文件）**：`TalentTree.lua` ROW_STEP 128→160、general_b/ice/giant 线路错开半阶段、新增右侧固定可拖滚动条、节点选中后滚到浮窗上缘以上并按线路色区分三态；根因=鼠标/触摸 Down 已启动 `ScrollBegin`、未移动的 Up/End 又重调 `HandleMetaPointerDown` 再次 `ScrollBegin` → `HitTest` 从不触发；`client_main.lua` 新增 release-only `HandleMetaPointerClick`，两个拖拽页面都走它。其 `TALENT-RELEASE`/`TALENT-INTERACT` 探针 PASS。
+  - ⚠️ 本批只提交 `Scene3DBackend.lua`/`MetaUI.lua`/21 张图标 + 3 张删除 + 两个 skill；`TalentTree.lua`/`client_main.lua`/`VisualCatalog.lua`/版本号（BUILD_VERSION + lobby → 0.13.17）属并发会话，未触碰。
 - 版本: 0.13.16-talent 补充二（天赋树滚动条引导；提交 0b69a26）：
   - **用户反馈（附截图，红框圈出滚动条）**：「这个引导性不强，后面加一个灰色的轨道，不然玩家怎么知道这个可以滑动」。
   - **两处根因**：①原轨道用 `C.rail`（22,36,56）与深色底（7,11,20）**几乎同色**，肉眼看不见；②更关键——旧 `DrawScrollbar` 把**整条滚动条（含轨道）**都放在 `GetScrollbarThumb` 之后并 `if not thumb then return end`，而 `thumb` 只在 `maxScroll > 0` 时存在 → **不选中节点/内容不够高时连轨道都不画**，完全没有"这里能滑"的提示。
@@ -572,6 +581,15 @@
 6. 详细规则见 memory-system skill（`**/skills/memory-system/SKILL.md`）
 
 ## 避雷清单
+
+## 本批次新增避雷（v0.13.17 skill 固化 + 氛围层 + 图标重出）
+- 🔴 **自绘绘制函数的参数顺序要靠「真渲染探针」验，LSP/build 都查不到（v0.13.17 实锤）**：新写的 `DrawScanBand` 调 `DrawRect(ctx,x,y,w,h, color, radius)` 时把 `0`（radius）和颜色表写反 → 运行时 `attempt to index a number value (local 'color')`，菜单整段 stage 被 pcall 吞掉。LSP 的 undefined-field 只看**字段名**、不看**实参顺序**，构建也只查语法——**这类错只有跑一次真渲染（探针日志里搜 `overlay stage failed`）才抓得到**。写新绘制辅助后，务必真渲染冒烟一次再交付。
+- ⚠️ **氛围层要「克制档」落地，别照抄全量（v0.13.17）**：skill 的 atmosphere.md 默认全量（强调色切换 + 文本异变 + 乱码），但游戏 HUD/战斗界面全量会干扰读数。做法：机制照旧（全屏共享一个标量、基线不为 0、非等距阈值），但**只实现低位阈值症状**（底噪/扫描带/半调/残影），且**装饰不进入任何玩家要读的东西**（HUD 读数、按钮文字、正文、命中区）。判据：「这层会不会出现在玩家要读的东西上？会 → 关掉」。
+- ⚠️ **`ICON_PATHS` 会积累「已加载却从未绘制」的死键（v0.13.17 实测 5 个）**：`gem/wheel/supply/pass/boost` 白占显存还误导。交付前**逐 key grep 一次调用点**：有语义的接上（gem→钻石、boost→增益），被新资源取代的删掉（wheel/supply/pass 已被 premium_* 取代）。同时**删对应的 PNG + `.meta`**，别留孤儿资源。
+- ⚠️ **「AI 原图直接缩到 32×32」= 不是像素画，只能重出（v0.13.17 实测）**：早期 26 张 `ui_icon_*` 实测 **100–583 种颜色**（v0.12.9 之后按管线走的都是 8–9 色）。判定方法就是**数每张图 >128 alpha 的唯一 RGB 数**：≤9 合规、100+ 必是原图缩放。这类补量化救不回来（原图没有干净色块边界）→ 按原语义走 0718 管线重出。**重出后沿用旧文件名覆盖**（ICON_PATHS/.meta 不动、零路径风险），别改名（改名必须同步代码路径 + 可能漏 .meta）。
+- ⚠️ **会话内生成的草案 PNG 会直接落进 `assets/`（v0.13.17）**：`batch_generate_images` 的产物直接写 `assets/image/`，会占包体。流程：**生成后立刻 `mv` 到 `/home/Maker/<batch>/drafts/`**，后处理成品再按目标文件名放回 assets；`assets/` 里不要留 `iconregen_*` 之类中间文件（连 `.meta` 残片也要清）。
+- ⚠️ **并发会话的展示版本号归其所有（v0.13.17）**：`BUILD_VERSION` 与 `lobby_runtime` 的 `v0.13.17` 由并发会话推进；提交时用 `git diff` 逐行核对，只 `git add` 自己的文件，**不要整文件暂存混有他人 hunk 的版本常量**。
+
 - POST 是记忆存活唯一入口，每次交付后必须执行 3 步 POST
 - `Game.lua` 是引擎无关的权威规则层，禁止加入 NanoVG、Scene/Node、材质、颜色、粒子、震屏或按键枚举
 - 主循环时序契约：`main.lua` 先用上一帧 Presentation 状态决定 hitStop，再调用 `Game.Update()`；随后重新获取 `Game.GetSnapshot()`，同一份更新后快照同时传给 `Presentation.Update()` 和渲染变量，禁止把更新前快照传给表现层或渲染层
