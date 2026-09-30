@@ -203,9 +203,15 @@
 - [AB-152] [跨项目][图标表会积累已加载却从未绘制的死键] 字符串键的图标表（`ICON_PATHS`）容易留下白占显存、误导维护的死键。交付前逐 key grep 调用点：有语义的接上、被新资源取代的删除（并删对应 PNG + `.meta`，别留孤儿）。（击碎，飞机大战 v0.13.17）
 - [AB-153] [跨项目][AI 生图产物会直接落进资源目录] 批量生图工具把草案直接写进 `assets/`，占包体。流程应为：生成后立刻移到工作区外草稿目录，后处理成品再按目标名放回；清掉中间文件与其 `.meta` 残片。（击碎，飞机大战 v0.13.17）
 
+- [AB-154] [跨项目][Lua 主块 200 个顶层 local 是编译期硬限，构建/LSP 都不检查，只有真运行时炸] 单文件大 Lua 模块持续加功能（每个特性 +1~2 个模块级 local）会无声逼近 `LUA_MAXLOCALS=200`，越线即 `LoadChunk failed: too many local variables`——**整个模块 require 失败**，若这是渲染后端就意味着黑屏。工具链全部漏检：emmylua 不报、构建语法检查只过 parser（运行时才做 slot 分配）、CI 全绿。防线：①大文件（本项目 Scene3DBackend/Game）新增模块级 local 前跑槽位统计（python：匹配行首 `local ` 声明、拆多变量名计数）；②逼近 190 就把同族变量收进一张 table（如 `local fx = {state=nil, enter=0}`）；③清理"写而不读"的死变量（`x_ = ...` 有写、grep 无读）几乎总存在且零成本回收；④任何"2D 全没/模块没跑"的真渲染冒烟先看 LoadChunk 行。
+（击碎，飞机大战/v0.13.18）
+
+- [AB-155] [跨项目]["资源订阅"会随构建清单固化，运行时下载失败刷成平台错误上报] 引擎平台常有"采纳官方素材/包"动作（本项目 `.build/asset_adopt.json` 记录了 `__official_pinned_refs__.json` #blocking），一次订阅会被后续**每次构建**注入 client/server 清单、运行时按引用闭包 DWP 下载整个材质集（可能含几十 MB 天空盒/贴图）。预览 CDN 拉不动时表现为成串的 `XMLHttpRequest response: {}` + 最终 `Could not find resource <uuid>.ktx`，被平台收集成错误上报——错误文案完全不提"订阅/pin"，极易往游戏代码里猜。排查法：报错里的 uuid 先在**构建缓存/清单**（`.build/manifest_cache/*.json`、`dist/**/manifest-*.json`）grep 定位来源与引用链，再确认代码是否真的用到该源（`GetResource` 路径逐一比对 sources 归属）；不用则从 sources/订阅直接移除（比逐个 ignore 治本）。交付"零官方素材依赖"的程序化项目时，检查项应包含：sources 列表、adopt/pin 文件、uuid:// 残留引用。
+（击碎，飞机大战/v0.13.18）
+
 ## 同步记录
 
-- 最近一次同步：2026-09-30 击碎，飞机大战 v0.13.17（新增 AB-150~153：自绘实参顺序/素材色数审计/图标死键/AI 生图落盘）
+- 最近一次同步：2026-09-30 击碎，飞机大战 v0.13.18（新增 AB-154 Lua 主块 200 local 编译期硬限、AB-155 素材订阅随清单固化导致 XHR 报错链。前次 v0.13.17 为 AB-150~153）
 - 2026-09-30 击碎，飞机大战 v0.13.15b（新增 AB-142 贴 3D 物体的 overlay 特效必须带 world Z 投影；前次 v0.13.15 为 AB-141）
 
 - [AB-136] [跨项目][CustomGeometry 空顶点缓冲报错：新建后先禁用节点，清空/收尾不要 Commit 0 顶点] 引擎在节点启用时会绘制其 CustomGeometry，而**刚创建（或刚 Clear()）的几何体顶点缓冲是空的** → 报 `VertexBuffer is empty\!Material ,compute:(nil),vertexBufferSize:1,geomerty type:0`。三处高发：①新建 CustomGeometry 后还没提交几何、节点就已启用（本项目尾迹批次，日志时序可见 `ready` 后 ~76ms 报错）；②清理路径 `Clear()` 之后又 `BeginGeometry+Commit` 提交了 0 顶点；③每帧同步时"本该有内容"的分支因数据为空而提交了空几何。正确做法：**创建后立即 `node.enabled=false`，等提交了非空几何再 `enabled=true`；清空/收尾只 `Clear()`+禁用节点，绝不 Commit 空内容；同步时先判 `#verts>0` 再重建**。⚠️ 这类错误**只在真渲染时出现，LSP 与 build 都发现不了**——新增任何程序化几何（CustomGeometry/动态网格）都要在本地真渲染跑一遍并 `grep VertexBuffer`。（击碎，飞机大战/v0.13.11）
