@@ -72,7 +72,9 @@ local BALL_TYPES = {
     },
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
-local STARTING_BALL_TYPE = "normal"
+-- v0.13.19：初始车从分裂车改为**加速车**（用户指定「基础的车改为加速车」）。
+-- 其余三车（分裂/冰冻/巨型）仍靠局内升级卡「解锁××车」进入本局队列。
+local STARTING_BALL_TYPE = "speed"
 -- 开局装载的车辆总数（1 辆待发 + ammoCapacity-1 辆备弹）。
 -- v0.12.15：开局 3 辆 → 1 辆（只有待发，没有备弹）；「弹药扩容」通用升级每级 +1（最多三级）。
 -- 补弹按「回收一辆补一辆」维持这个总量（主球回收时 EnqueueNextBall）。
@@ -279,6 +281,13 @@ local UPGRADE_POOL = {
           BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
           baseHp = math.max(1, baseHp - 8)
       end },
+    -- v0.13.19：四车都能靠局内卡解锁。初始车是加速车（见 STARTING_BALL_TYPE），
+    -- 所以「解锁分裂车」也进池；加速车自己已解锁，其解锁卡由 unlockBallType 门控自动退池。
+    { id = "unlock_normal", name = "解锁分裂车", desc = "分裂车加入本局弹药队列",
+      detail = "解锁分裂车，命中后分裂小弹。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "分裂车入队",
+      kind = "unlock", unlockBallType = "normal",
+      apply = function(stacks) UnlockBallType("normal") end },
     { id = "unlock_ice", name = "解锁冰冻车", desc = "冰冻车加入本局弹药队列",
       detail = "解锁冰冻车，命中可冻结敌机。",
       weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "冰冻车入队",
@@ -1674,7 +1683,8 @@ end
 function Game.PauseReload()
     if not Game.CanPauseReload() then return false end
     pauseReloadUsed = true
-    local nextType = ballQueue[1] or (activeBall and activeBall.ballType) or "normal"
+    -- v0.13.19：兜底用初始车类型（加速车），不再写死分裂车。
+    local nextType = ballQueue[1] or (activeBall and activeBall.ballType) or STARTING_BALL_TYPE
     table.insert(ballQueue, 1, nextType)
     if not activeBall then
         activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())

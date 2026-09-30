@@ -445,7 +445,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.18"
+local BUILD_VERSION = "0.13.19"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -824,10 +824,11 @@ local function DrawVehicleTrails(ctx, game, presentation)
     for _, group in ipairs(trails) do
         local base = SLOT_COLORS[group.ballType] or SLOT_COLORS.normal
         local z = Renderer3D.VehicleDepthZ(group.radius)
+        local alphaMax = group.alphaMax or 165
         for _, seg in ipairs(group.polys) do
             local a = seg.a
             if a > 4 then
-                local mix = TRAIL_WHITE_MIX * (a / 200)
+                local mix = TRAIL_WHITE_MIX * (a / alphaMax)
                 local r = math.floor(base[1] + (255 - base[1]) * mix)
                 local g = math.floor(base[2] + (255 - base[2]) * mix)
                 local b = math.floor(base[3] + (255 - base[3]) * mix)
@@ -847,7 +848,7 @@ local function DrawVehicleTrails(ctx, game, presentation)
                 nvgStrokeColor(ctx, nvgRGBA(
                     math.min(255, r + 60), math.min(255, g + 60), math.min(255, b + 60),
                     math.floor(a * 0.9)))
-                nvgStrokeWidth(ctx, math.max(1.2, (a / 200) * 3.2))
+                nvgStrokeWidth(ctx, math.max(1.0, (a / alphaMax) * 2.4))
                 nvgStroke(ctx)
             end
         end

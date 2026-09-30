@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.19（初始车改加速车 + 四车都能局内解锁；提交 78cac51）：
+  - **用户澄清机制分工（原话「天賦树解锁局内卡，局内卡解锁惧内车另外基础的车改为加速车」）**：①**天赋树**解锁「专属卡」（v0.13.16 已做：`ballCard` 节点）；②**局内卡**解锁「车」（保留 `unlock_*`）；③**初始车从分裂车改为加速车**。上一轮我把「封锁卡片还在局内生成」误读成要删局内解锁卡——用户指的是**另一件事**：他以为车只该由天赋树解锁，实际设计是「局内卡解锁车 + 天赋树解锁专属卡」两层，现在明确了。
+  - **改动**：`STARTING_BALL_TYPE` `"normal"` → **`"speed"`**（连带把 `PauseReload` 里写死的 `or "normal"` 兜底改成 `or STARTING_BALL_TYPE`）；`TalentCatalog.AUTO_OWNED` `normal_1` → **`speed_1`**（初始车的「允许出场」节点自动拥有）；新增 `unlock_normal`（解锁分裂车）卡，四车都有对应解锁卡——初始车自己的解锁卡由 `unlockBallType` 门控自动退池，不会出现。
+  - **验证**：官方多人 build+预览上传 ✅；规则探针 `probe_start` PASS——①开局 `unlockedBalls.speed=true / normal≠true` ②`AUTO_OWNED = speed_1` ③无天赋时 `unlock_normal/ice/giant` 都在池、`unlock_speed` 已退池 ④分裂车未解锁时 `base_split`/`split` 都不进池；战斗真渲染冒烟零 overlay/Lua 错误。
+  - ⚠️ **两层解锁是正交的，别把任一层当"多余"删掉**：`unlock_*` 卡（车）与天赋 `ballUnlock`/`ballCard` 节点（出场资格 / 专属卡）各管一段；`CanOfferUpgrade` 的门控链是「车解锁 → base 卡」「车 + 天赋 ballCard 节点 → 专属卡」「`unlockBallType` 未解锁 → 解锁卡」，三者缺一不可。
+## 当前状态
 - 版本: 0.13.18（修平台报错链：官方素材 pin 订阅 + 主块 local 超限黑屏）：
   - **用户上报（12 条 / 2 唯一）**：`Error processing XMLHttpRequest response: {}` ×11 + `Could not find resource <official-res>/assets/DgRecSAR4qVdwosqqNXg2Hhe-5dd512f9.ktx`。根因链（全在构建产物里取证闭环）：`.build/asset_adopt.json` 记录项目「采纳订阅」了官方资产 `BgCviebF...=generated/__official_pinned_refs__.json`（#blocking），构建时注入 client/server 清单 → 运行时按链 DWP 拉取 18 个官方材质闭包（M_CarPaint/CelToon/PBRTriplanar/M_Grass_3D/**DiffSkyboxFog→Skybox.xml→Skybox.ktx 14MB**+shadercache .pak），预览环境拉 14MB 天空盒反复 XHR 失败（`{}`×11）→ 最终报找不到该 ktx。我们的代码**零依赖** official-res（8 类资源全在 engine-res，材质全程序化）→ **`settings.json` sources 删除 `official-res`**（治本：pin 随源消失，新清单 sources=[engine-res]、pinned=False）；同时删除已无引用的旧皮卡 `assets/model/6d5f1062...`（v0.3.x MDL 时代遗留，内含 4 个 uuid:// 远程引用；v0.13.1 六车型程序化后无人加载）。
   - **顺带揪出阻塞级黑屏 bug（真渲染冒烟时发现）**：`Scene3DBackend.lua` 主块顶层 local 达 **201 个 > Lua LUA_MAXLOCALS=200** → `LoadChunk failed: too many local variables` → 模块加载不了 → **整游戏黑屏 2D 全没**。⚠️ **官方 build 与 LSP 都不检查这条编译期上限，只有真运行时暴露**。回收 2 槽 →198：删 `projectionOriginNdcX_/Y_`（写而不读死变量）与 `MENU_CONTENT_BOTTOM`（零引用）。⚠️ 并发会话 v0.13.17 又向该文件加了 9 个模块级 local——**此后任何人给 Scene3DBackend 加顶层 local 前必须数槽位**（脚本统计法见避雷），逼近 200 就把同族变量收进一张表。

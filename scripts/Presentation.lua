@@ -101,22 +101,22 @@ local function UpdateVehicleTrails(dt, gameSnapshot)
             if #pts < 2 then return end
             count = count + 1
             local radius = marble.radius or 20
-            -- 光带头部回缩到车尾之后：尾迹从车背后"拖"出来，不覆盖车体
-            -- （车屏幕半长约 22.6*(radius/20) 设计像素，取 radius*1.15 近似）。
+            -- v0.13.19 头部锚点修正（二次打回的真根因）：车头局部长度 ±1.8m
+            -- ≈ 1.19×radius 游戏单位，旧回缩 radius*1.15 **钳到采样间隙 5.5px**
+            -- 实际只回缩了几个像素，粗亮头直接糊在车上。现在直接按**速度反方向**
+            -- 退到车尾之后（飞行中车辆显示朝向即速度朝向，Renderer3D 同约定），
+            -- 与采样间隙无关、无越界反向问题。
             local headX, headY = marble.x, marble.y
-            local lastP = pts[#pts]
-            local hx0, hy0 = headX - lastP.x, headY - lastP.y
-            local hl = math.sqrt(hx0 * hx0 + hy0 * hy0)
-            if hl > 0.5 then
-                -- 钳制：回缩不得超过头段间隙一半，否则慢速时头点越过尾点、光带反向。
-                local pullback = math.min(radius * 1.15, hl * 0.5)
-                headX = headX - hx0 / hl * pullback
-                headY = headY - hy0 / hl * pullback
+            local vlen = math.sqrt((marble.vx or 0) ^ 2 + (marble.vy or 0) ^ 2)
+            if vlen > 1 then
+                local back = radius * 1.30
+                headX = marble.x - (marble.vx / vlen) * back
+                headY = marble.y - (marble.vy / vlen) * back
             end
             -- 颜色不在这里定：后端按 ballType 用 SLOT_COLORS 统一注入（样式单一来源）。
             local group = polysByType[ballType]
             if not group then
-                group = {ballType = ballType, radius = radius, polys = {}}
+                group = {ballType = ballType, radius = radius, polys = {}, alphaMax = 165}
                 polysByType[ballType] = group
                 result[#result + 1] = group
             end
@@ -131,13 +131,15 @@ local function UpdateVehicleTrails(dt, gameSnapshot)
                 local slen = math.sqrt(sdx * sdx + sdy * sdy)
                 if slen > 0.5 then
                     local nx, ny = -sdy / slen, sdx / slen
-                    -- 尾细头粗：半宽沿采样序列线性放大（t=0 尾 → t=1 头）
+                    -- 尾细头粗。⚠️ 宽度必须是车的**配角**：头段全宽 ≈ 8.8px
+                    -- （radius20）明显窄于车头（~15px 宽），不再盖过车体。
                     local t0 = (i - 1) / n
                     local t1 = i / n
-                    local wa = (2.2 + 12.5 * t0) * widthScale
-                    local wb = (2.2 + 12.5 * t1) * widthScale
+                    local wa = (1.0 + 3.4 * t0) * widthScale
+                    local wb = (1.0 + 3.4 * t1) * widthScale
                     local lifeA = 1 - pts[i].age / TRAIL_LIFETIME
-                    local alpha = 200 * (t1 ^ 1.25) * math.min(1, lifeA + 0.35)
+                    -- 165 = 峰值 alpha，绘制端按 group.alphaMax 归一（不再新增模块级 local）。
+                    local alpha = 165 * (t1 ^ 1.25) * math.min(1, lifeA + 0.35)
                     local poly = group.polys
                     poly[#poly + 1] = {
                         x1 = ax + nx * wa, y1 = ay + ny * wa,
