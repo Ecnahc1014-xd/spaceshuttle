@@ -21,6 +21,8 @@ local DATA_VERSION = 1
 ---@field dailyProgress table<string, integer> 任务 id -> 当前进度
 ---@field dailyClaimed table<string, boolean> 任务 id -> 是否已领取
 ---@field codex table<string, boolean> 已解锁敌机 key
+---@field stageStars table<integer, integer> 关卡号 -> 历史最佳星级（1..3）
+---@field maxStage integer 已解锁的最大关卡号（选关界面开放范围）
 ---@field skins table<string, boolean> 已解锁车型，沿用旧涂装存档 key
 ---@field selectedSkin string 当前使用的车型 key
 ---@field shopBought table<string, boolean> 商城一次性商品

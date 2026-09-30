@@ -3,6 +3,8 @@ local StageCatalog = {}
 
 StageCatalog.WAVES_PER_STAGE = 10
 StageCatalog.MAX_FLEET = 12
+-- 关卡总数：第 15 关后没有「下一关」；选关界面按此数量铺格。
+StageCatalog.STAGE_COUNT = 15
 
 local ELITE_KEYS = {
     "elite_hook", "elite_fork", "elite_razor", "elite_spiral", "elite_anchor",
@@ -34,9 +36,11 @@ function StageCatalog.GetSpecialKey(stage, stageWave)
     return nil
 end
 
--- 关卡越往后普通编队越密，至七架封顶；精英波另有护航机。
+-- v0.13.1：用户要求「一波 = 原先两波以上」——每波编队量取旧基线 2 倍，
+-- 波内随进度阶梯递增（6→8→10），逐关 +1；硬顶 12 = MAX_FLEET（同屏预算不放宽）。
 function StageCatalog.GetNormalCount(stage, stageWave)
-    return math.min(7, 3 + math.floor((stageWave - 1) / 3) + stage - 1)
+    return math.min(StageCatalog.MAX_FLEET,
+        6 + 2 * math.floor((stageWave - 1) / 3) + (stage - 1))
 end
 
 function StageCatalog.GetEscortCount(stage)

@@ -28,7 +28,6 @@ local PARTS_PER_BRICK = 1          -- 击碎一个方块
 local PARTS_PER_CLEAR = 10         -- 清掉整支编队
 local PARTS_PER_WAVE = 25          -- 每推进一波
 local BASE_XP_TO_NEXT = 26         -- 第一次升级所需经验（单架侦察机约 50 格，约两架升一级）
-local STAGE_BREAK_SECONDS = 4.0
 
 -- 数值平衡表（WO-01/P1）：局内不可变数值集中管理，便于调参与离线模拟。
 -- 旧常量名仍作为本表的初始化来源，保持向后可读别名。
@@ -130,9 +129,9 @@ local ResetItems                   -- 前向声明：ResetGame 里要调用；�
 local wave = 1
 local stage = 1
 local stageWave = 1
-local stageClearPending = false
-local stageBreak = 0
 local bossDefeated = false
+---@type {stage:integer, stars:integer, rating:string, bonus:integer}|nil
+local stageResult = nil   -- stagewin 态展示与存档用（星级/评级）
 local elapsed = 0
 local waveCooldown = 0
 -- 本局是否成功发射过弹珠。用于「新手下拉手势提示」：玩家还没做过任何操作时循环播放。
@@ -448,15 +447,17 @@ local function CanOfferUpgrade(u)
         and (upgradeStacks[u.id] or 0) < u.maxStacks
 end
 
-ResetGame = function()
+-- startStage：选关界面挑选的关卡（v0.13.1）。默认 1；wave 换算为全局累计波号，
+-- 使每日任务「抵达第 N 波」在后期关卡仍按真实进度计量。
+ResetGame = function(startStage)
+    startStage = math.max(1, math.floor(tonumber(startStage) or 1))
     score = 0
     baseHp = BASE_HP
-    wave = 1
-    stage = 1
+    stage = startStage
     stageWave = 1
-    stageClearPending = false
-    stageBreak = 0
+    wave = (startStage - 1) * StageCatalog.WAVES_PER_STAGE + 1
     bossDefeated = false
+    stageResult = nil
     elapsed = 0
     veggies = {}
     marbles = {}
@@ -517,14 +518,21 @@ ResetGame = function()
     Emit("game_reset")
 end
 
-local function StartGame()
+-- 从选关界面进入某关。stageNum 缺省为 1。
+local function StartGameAt(stageNum)
     previousHighScore = highScore
-    ResetGame()
+    ResetGame(stageNum)
     gameState = "playing"
     SpawnWave()
     waveCooldown = StageCatalog.GetInterval(stage, stageWave)
     EnsureNextWavePlan()
-    print("[Game] game started")
+    -- 第 2 关起（含选关跳关/胜利后下一关）入场播报关号；第 1 关沿用波次横幅。
+    if stage > 1 then Emit("stage_started", {stage = stage}) end
+    print("[Game] game started at stage " .. stage)
+end
+
+local function StartGame()
+    StartGameAt(1)
 end
 
 local function GetAircraftSize(aircraftKey, brickSize)
@@ -2370,26 +2378,25 @@ UpdateReload = function()
     if not activeBall and #ballQueue > 0 then QueueNextBall() end
 end
 
+-- 通关评级（v0.13.1）：剩余防线血量决定星级；额外分数与零件奖励进结算。
+-- 一星=险胜（<40%）、两星=优良（40~74%）、三星=完美（>=75%）。
+local function ComputeStageResult()
+    local ratio = baseHp / BASE_HP
+    local stars, rating
+    if ratio >= 0.75 then stars, rating = 3, "完美"
+    elseif ratio >= 0.40 then stars, rating = 2, "优良"
+    else stars, rating = 1, "险胜" end
+    return {
+        stage = stage,
+        stars = stars,
+        rating = rating,
+        bonusScore = 200 * stars,
+        bonusParts = 50 * stars,
+    }
+end
+
 UpdateWaveLogic = function(dt)
     if gameState ~= "playing" or pendingLevelUps > 0 then return end
-
-    if stageClearPending then
-        stageBreak = math.max(0, stageBreak - dt)
-        waveCooldown = stageBreak
-        if stageBreak > 0 then return end
-        stage = stage + 1
-        stageWave = 1
-        wave = (stage - 1) * StageCatalog.WAVES_PER_STAGE + 1
-        stageClearPending = false
-        bossDefeated = false
-        nextWavePlan = PlanWave(wave)
-        waveCooldown = StageCatalog.GetInterval(stage, 1)
-        SpawnWave(StageCatalog.MAX_FLEET - #veggies)
-        EnsureNextWavePlan()
-        Emit("stage_started", {stage = stage})
-        print("[Game] stage " .. stage .. " started")
-        return
-    end
 
     if stageWave == StageCatalog.WAVES_PER_STAGE then
         local bossStillAlive = false
@@ -2406,11 +2413,13 @@ UpdateWaveLogic = function(dt)
             SpawnWave(StageCatalog.MAX_FLEET - #veggies)
             return
         end
-        -- 首领击败即结束本关；残余护航与召唤机在关卡休整时退出战场，不必漫长等待其落地。
+        -- v0.13.1：首领击败即**结束本关并进入胜利结算态**（不再自动进下一关）。
+        -- 残余护航与召唤机退场；星级由剩余防线血量决定，玩家看完结算后手动进关。
         if bossDefeated then
-            stageClearPending = true
-            stageBreak = STAGE_BREAK_SECONDS
-            waveCooldown = stageBreak
+            stageResult = ComputeStageResult()
+            score = score + stageResult.bonusScore
+            partsEarned = partsEarned + stageResult.bonusParts * (partsBoostTime > 0 and 2 or 1)
+            if score > highScore then highScore = score end
             nextWavePlan = nil
             aiming = false
             if activeBall then activeBall.x, activeBall.y = SLING_X, SLING_Y end
@@ -2419,8 +2428,15 @@ UpdateWaveLogic = function(dt)
                 Emit("enemy_withdrawn", {enemyId = enemy.id, aircraftKey = enemy.aircraftKey})
                 table.remove(veggies, i)
             end
-            Emit("stage_cleared", {stage = stage, wave = wave})
-            print("[Game] stage " .. stage .. " cleared")
+            gameState = "stagewin"
+            Emit("stage_cleared", {
+                stage = stage, wave = wave,
+                stars = stageResult.stars, rating = stageResult.rating,
+                bonusScore = stageResult.bonusScore, bonusParts = stageResult.bonusParts,
+                baseHp = baseHp, maxBaseHp = BASE_HP,
+            })
+            print("[Game] stage " .. stage .. " cleared: " .. stageResult.rating
+                .. " " .. stageResult.stars .. "星")
         end
         return
     end
@@ -2483,12 +2499,6 @@ function Game.Update(dt)
     end
 
     UpdateAiming()
-    if stageClearPending then
-        UpdateMarbles(dt)
-        UpdateReload()
-        UpdateWaveLogic(dt)
-        return
-    end
     partsBoostTime = math.max(0, partsBoostTime - dt)
     UpdateMarbles(dt)
     if gameState ~= "playing" then return end
@@ -2504,12 +2514,12 @@ end
 
 function Game.PointerDown(px, py)
     if gameState == "menu" then
-        -- v0.10.24：仅武装，松手才真正开始，给结算画面留出阅读时间、防误触。
-        startArmed = true
+        -- v0.13.1：菜单不再直接开局——开始按钮由编排层路由到选关界面，
+        -- 玩法层在菜单态不接收任何指针输入。
         return
     end
-    if gameState == "gameover" then
-        -- 结算点击由编排层按 UI 按钮几何分发，规则层不接收玩法 PointerDown。
+    if gameState == "gameover" or gameState == "stagewin" then
+        -- 结算/胜利页按钮由编排层按 UI 几何分发，规则层不接收玩法 PointerDown。
         return
     end
     startArmed = false
@@ -2548,7 +2558,7 @@ function Game.PointerUp(px, py)
         end
         return
     end
-    if gameState == "gameover" then
+    if gameState == "gameover" or gameState == "stagewin" then
         return
     end
     startArmed = false
@@ -2573,12 +2583,32 @@ function Game.HandleAction(action, pressed)
     if action == "start" and gameState == "menu" then
         StartGame()
     elseif action == "restart" and gameState == "gameover" then
-        StartGame()
+        StartGameAt(stage)
     end
+end
+
+-- 选关界面确认后由编排层直接调用；stageNumber 已按解锁进度校验。
+function Game.StartStageAt(stageNumber)
+    if gameState ~= "menu" then return false end
+    StartGameAt(math.max(1, math.floor(tonumber(stageNumber) or 1)))
+    return true
+end
+
+-- 胜利结算页「下一关」：仅当下一关存在时有效。
+function Game.NextStage()
+    if gameState ~= "stagewin" or not stageResult then return false end
+    local nextStage = stageResult.stage + 1
+    if nextStage > StageCatalog.STAGE_COUNT then return false end
+    StartGameAt(nextStage)
+    return true
 end
 
 function Game.IsGameOver()
     return gameState == "gameover"
+end
+
+function Game.IsStageWin()
+    return gameState == "stagewin"
 end
 
 function Game.CanRevive()
@@ -2710,7 +2740,8 @@ end
 -- v0.12.5：主动回主菜单（暂停页「返回主菜单」/ 结算页「回主菜单」出口）。
 -- 升级态必须先选完卡（面板是强制三选一），不走这里。
 function Game.GoToMenu()
-    if gameState == "playing" or gameState == "paused" or gameState == "gameover" then
+    if gameState == "playing" or gameState == "paused" or gameState == "gameover"
+        or gameState == "stagewin" then
         gameState = "menu"
         Emit("game_reset")
         print("[Game] returned to menu")
@@ -2766,14 +2797,15 @@ function Game.GetSnapshot()
     s.state = gameState
     s.score = score
     s.highScore = highScore
-    s.newRecord = gameState == "gameover" and score > previousHighScore and score > 0
+    s.newRecord = (gameState == "gameover" or gameState == "stagewin")
+        and score > previousHighScore and score > 0
     s.baseHp = baseHp
     s.maxBaseHp = BASE_HP
     s.wave = wave
     s.stage = stage
     s.stageWave = stageWave
     s.wavesPerStage = StageCatalog.WAVES_PER_STAGE
-    s.stageClearPending = stageClearPending
+    s.stageResult = stageResult
     s.elapsed = elapsed
     s.playerLevel = playerLevel
     s.xp = xp

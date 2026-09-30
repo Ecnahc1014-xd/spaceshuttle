@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.3（车辆飞行尾迹 + 全窗口渐显渐隐弹动过渡）：
+  - **3D 车辆尾迹（用户点名恢复）**：`Renderer3D` 新增 `SyncVehicleTrails`——只给**飞行中**（`not onSling`）车辆沿轨迹采样软圆点：0.035s 间隔、寿命 0.3s、每车最多 6 点、同弹种最多 8 车，四种弹药各一个 `BillboardSet`（DiffAlpha 颜色烘焙纹理，沿用 v0.10.21 透明粒子显色契约，4 draw call 封顶）；点尺寸锚定 `marble.radius*WORLD_SCALE` 随生命收缩，z 取车辆锚点 -0.05（斜俯视投影贴车）。非 playing 态、重开（ClearRunVisuals）与 Shutdown 均清空；`flightTime` 回绕检测防 id 复用串轨；静止/暂停采样不推进。规则层未改。
+  - **窗口过渡动画**：`Scene3DBackend` 新增统一 `DrawAnimatedWindow`——入场 0.32s 渐显 + 弹性缩放（0.91→1.03→1.0，EaseOutCubic 两段），退场 0.18s 渐隐 + 微缩；覆盖**结算/升级/暂停**三个游戏窗口与**元层面板（任务/图鉴/排行/商城/档案/转盘/充值）+ 每日补给弹窗**，窗口按快照 state/screen/supplyOpen 变化驱动，独立视觉时钟 `uiClock_`（game.elapsed 差分、重开归零）与玩法解耦。旧四模态的 `ModalIntro` 整层 alpha 改为仅遮罩/内容分层处理（遮罩不随缩放、避免边缘漏底），主菜单保留原全屏淡入。
+  - **命中同源逆变换**：窗口弹动期间输入不漂移——`WindowInput()` 对 `HitTestGameOverButton/HitTestUpgradePanel/HitTestPausePanel/HitTestMetaScreen/HitTestSupplyPopup` 做缩放逆变换后再判命中；退场残影在开新窗时立即作废（leaving 快照取消），防快速关闭重开叠绘。peer 会话点名的两个风险（backdrop 随缩放漏遮、残影叠绘）均已处理。
+  - **验证**：LSP workspace 0 Error（17 files 652 诊断）；全库前向引用扫描 0；真渲染探针发射→暂停→恢复零 `overlay stage failed`/零 Lua 错误、`vehicle trails ready` 日志确认；官方多人 build + 预览上传 ✅（BUILD_VERSION 与大厅标题 →0.13.3，避让并发批次 0.13.1 六车型 / 0.13.2 弹药）。⚠️ 待 Preview：真机尾迹密度与帧率、窗口弹动手感、快速开关时遮罩是否仍漏。
+  - ⚠️ **v0.10.0「废弃弹珠尾迹」契约已被用户于本批次显式推翻**：当时嫌的是 2D 球形弹珠的拖尾；3D 重卡飞行无尾迹反而显得"干"，恢复时按新契约执行（见避雷清单更新）。
 - 版本: 0.13.2-ammo（开局弹药减为 1 辆 + 通用「弹药扩容」卡；版本号行由并发会话统一推进，本批次只改 `Game.lua`）：
   - **开局弹药 3 → 1**：`Game.lua` 新增 `BASE_AMMO_TOTAL = 1` 与 `ammoCapacity`（本局弹药总量）。`LoadBalls` 改为「先放 1 辆待发，再排入 `ammoCapacity-1` 辆备弹」——开局只有待发车、**没有备弹**；发射后要等球回收才补弹。
   - **通用天赋「弹药扩容」**：`id="ammo"`、common、weight 1、**maxStacks = 3**，apply → `IncreaseAmmo()`（`ammoCapacity + 1` 并**立刻**补一辆进队列；之后主球回收仍按「回收一辆补一辆」维持新总量）。它是通用卡（无 `ballType`/`unlockBallType`），任何车型、任何解锁状态都能抽到。
@@ -125,7 +131,15 @@
   - `Game` 更新后在 `Update` 中同步场景与体素；`NanoVGRender` 仅绘制覆盖层，防止 3D Viewport 已渲染才提交几何。
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
-- 上次交付: v0.12.11 HUD 失踪真凶修复（Lua 同文件 local 函数前向引用 nil 调用 ×2 + 本地真渲染复现链路；v0.12.10 大厅时序结论已订正）
+- 上次交付: v0.13.3 车辆飞行尾迹（3D BillboardSet 四弹种合批）+ 全窗口渐显渐隐弹动过渡（命中逆变换、遮罩不缩放、退场残影作废）
+
+## 本批次新增避雷（v0.13.3 车辆尾迹 + 窗口弹动过渡）
+- 🔴 **动画窗口必须做命中逆变换，否则弹动期间按钮点不准（v0.13.3）**：窗口内容用 `nvgTranslate(center)+nvgScale(s)` 绘制时，输入侧必须 `WindowInput(x,y)` 以同一 scale 做逆变换再进 `HitTest*`。只改绘制不改命中=「看得到点不到」，用户必然截图打回（历史上弹窗按钮漂移被点过名）。
+- ⚠️ **遮罩不能跟着窗口内容一起缩放（v0.13.3 peer 点名）**：全屏/半屏 backdrop 若画在缩放变换内部，scale<1 时边缘内缩会漏出下层世界层/菜单层。正确做法：遮罩在 `ApplyOverlayDesignTransform` 后**先以恒等变换画**，再进 translate+scale 画内容。alpha 可以整层统一（遮罩+内容同淡入淡出）。
+- ⚠️ **开新窗立即作废旧窗退场残影（v0.13.3）**：退场快照（leaving）若不与入场互斥，快速「关→重开」会在新面板下面叠一份 0.18s 旧残影。规则：任何 state/screen/supplyOpen 切换时清同类 leaving 槽。
+- ⚠️ **尾迹 id 复用必须用 flightTime 回绕判定清轨（v0.13.3）**：marble.id 会复用（回收→再发射），单按 id 存轨迹采样会把上一颗球的尾迹串给新车。`flightTime` 变小 = 同 id 新球，立刻重建采样；重开/非 playing 也要 `ClearTrailSamples`（否则暂停时旧尾迹冻结在屏上）。
+- ⚠️ **BillboardSet 批次特效沿用「颜色烘焙 + DiffAlpha」**（v0.10.21 契约复用）：透明软圆尾迹不要用顶点色染色（DiffAlpha 不读顶点 rgb），四弹种各自一张烘焙软圆纹理 + 各自一个 set，48 槽/类型封顶，空闲帧跳过 Commit。
+- ⚠️ **历史契约被用户推翻时要同步改写，不留双真相（v0.13.3）**：v0.10.0 曾「废弃全部尾迹」，本次用户点名恢复 3D 车辆尾迹。若只加代码不改契约条目，下个会话会按旧契约把它再删掉。v0.10.0 嫌的对象（2D 球形弹珠拖尾）与新需求（3D 重卡飞行尾迹）不同源，条目里要写清区别。
 
 ## 本批次新增避雷（后期负载治理 e010e1c/9c441a2）
 - ⚠️ **不能把后期卡顿直接归为 GPU 3D**：每弹每帧 6–16 子步遍历全部敌机砖块，原同屏上限 `8+floor(wave/10)` 无界且可整波超额，CPU 玩法碰撞也会拖慢 3D 和 UI。先比较同屏敌机/弹珠数和规则/渲染时段，再定位 draw calls。现在机群最多 12 架，刷波按剩余名额补。
@@ -411,7 +425,7 @@
 - 相机推近契约：防线受创时 `camera_.orthoSize = 18.0 - baseBarrierFlash*1.6`，仍正交投影仅瞬时缩放，flash 归零自动复原，绝不变透视
 - 敌人行为分化契约：四类 aircraft 的摆动/下移差异只能由 `AircraftPixelData.behavior[aircraftKey]` 单一来源驱动（swayAmp/swayFreq/descentMul/agility/accent），`Game.CreateEnemy` 仅消费该表并叠加随机抖动，禁止把行为数值硬编码进 Game 其他分支或渲染层
 - 模态缓动契约：四模态（menu/gameover/levelup/paused）淡入由 `ModalIntro(game)`（EaseOutCubic，0.28s）经 `nvgGlobalAlpha` 控制，波次横幅 `DrawWaveBanner` 由 `presentation.waveBannerTimer` 驱动滑入淡出；仅表现层瞬时状态，不得写规则层
-- 预瞄轨迹与尾迹契约：产品当前不绘制预瞄线、2D 弹珠尾迹或 3D 车辆尾迹；拖拽瞄准仍只负责发射输入，不向渲染快照生成轨迹。
+- 预瞄轨迹与尾迹契约：v0.13.3 更新——3D 飞行车辆**有**尾迹（见 0.13.3 条目）；仍不绘制预瞄线与 2D 球形弹珠拖尾；拖拽瞄准只负责发射输入，尾迹只读规则快照采样，不向渲染快照写入轨迹。
 - 敌方箱体契约：alive occupied cells 仍来自 AircraftPixelData 并保持单敌人 CustomGeometry；`VOXEL_GAP` 只缩小视觉箱体，中心 pitch 继续等于 `brickSize * WORLD_SCALE`；面使用官方木箱材质，缺失时才回退顶点色材质。
 - 撞飞箱体契约：命中方块通过 `ejected=true` 立即退出规则碰撞和编队主体，`brick_ejected` 事件带随机速度、角速度和生命周期；Presentation 维护飞散状态，Renderer3D 以独立箱体节点消费，未撞方块继续使用 AABB 碰撞。
 - 飞机布局契约：SpawnWave 对飞机完整二维 AABB（含间距）进行候选检查，失败时仅向更高层确定性错位，禁止接受重叠候选。
