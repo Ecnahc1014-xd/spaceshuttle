@@ -186,4 +186,59 @@ function MetaCatalog.GetDailySupplyBase()
     return DAILY_SUPPLY_BASE
 end
 
+-- ============================================================================
+-- 天赋 / 升级卡图标（v0.13.8）
+-- 卡片 id → ICON_PATHS 键。升级卡与天赋树节点共用同一份映射，
+-- 保证同一效果在两处视觉一致。未列出的 id 回退为按类型取通用图标。
+-- ============================================================================
+
+---@type table<string, string>
+local TALENT_ICONS = {
+    damage = "talent_damage",
+    armor = "talent_armor",
+    repair = "talent_repair",
+    xp = "talent_xp",
+    glass_cannon = "talent_glass",
+    overclock = "talent_overclock",
+    ammo = "talent_ammo",
+    word_pierce = "talent_word",
+    word_chain = "talent_word",
+    word_momentum = "talent_word",
+    unlock_ice = "talent_unlock",
+    unlock_speed = "talent_unlock",
+    unlock_giant = "talent_unlock",
+    base_split = "ammo_normal",
+    split = "ammo_normal",
+    base_ice = "ammo_ice",
+    ice = "ammo_ice",
+    base_speed = "ammo_speed",
+    speed = "ammo_speed",
+    base_giant = "ammo_giant",
+    giant = "ammo_giant",
+}
+
+-- 天赋树节点类型/线路的通用图标回退（节点 id 无精确映射时使用）。
+---@type table<string, string>
+local TALENT_KIND_ICONS = {
+    cardUnlock = "talent_xp",
+    ballUnlock = "talent_unlock",
+    ballCard = "talent_word",
+    partsPct = "parts",
+    stat = "talent_damage",
+}
+
+---@param id string|nil
+---@return string|nil ICON_PATHS 键
+function MetaCatalog.GetTalentIcon(id)
+    if not id then return nil end
+    return TALENT_ICONS[id]
+end
+
+---@param kind string|nil
+---@return string|nil
+function MetaCatalog.GetTalentKindIcon(kind)
+    if not kind then return nil end
+    return TALENT_KIND_ICONS[kind]
+end
+
 return MetaCatalog

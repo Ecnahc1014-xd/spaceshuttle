@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.9（天赋树改圆形爬塔卡 + 局内升级卡图标化）：
+  - **天赋树重做（用户给参考图 + 明确规格）**：`ui/TalentTree.lua` 整体重写为**纵向爬塔式**——6 条线路各占一列（2 通用 + 4 车），每条线路阶段 1 在**最下方**、阶段越高越往上，节点为**圆形卡**（圆底 + 彩色圆环 + 32px 图标 + 状态角标），相邻阶段之间画**连线**（已解锁亮青、未解锁暗）。内容高于可视区 → **拖拽上下滑动**（`ScrollBegin/ScrollMove/ScrollEnd`，编排层从鼠标/触摸转发，拖拽后抑制本次点击）。顶部固定表头（线路名 + 星级门槛 0★/3★/…），点圆形卡 → **底部方形浮窗**（天赋名 + 线路·阶段 + 详情 + 按钮四态：解锁 N / 已解锁 / 未开放 / 零件不足 还差 X）。
+  - **线路配色**：通用线路=品牌青；四条车线路用各自弹种色（分裂青 / 冰冻浅蓝 / 加速蓝 / 巨型金），与底部弹药槽一致。
+  - **9 张天赋图标**：nanobanana 草案 → `0718-pixelimage-aigc` 管线（bbox 裁切→LANCZOS 32×32→alpha 二值化 128→项目 8 色板量化），色数 5–9 全达标、22hex uuid 全库唯一，NEAREST 加载。`assets/image/ui_icon_talent_{damage,repair,armor,xp,glass,overclock,ammo,unlock,word}.png`。⚠️ 草案先移出 assets（`/home/Maker/talent_icons/drafts`）再放成品。
+  - **映射单一来源**：`TalentCatalog.ICON_BY_CARD/ICON_BY_KIND/ICON_BY_BALL` 是卡片/节点→图标键的**唯一映射**（节点构造时 `DecorateNode` 赋 `icon/tint`）；`Scene3DBackend` 与 `TalentTree` 都查它，禁止各写一套。`MetaCatalog` 也提供 `GetTalentIcon/GetTalentKindIcon` 供元层查。
+  - **局内三选一升级卡加图标并重排 UI**：卡片顶部 34px 图标 + 暗色圆角底板（描边取稀有度色），「锁定/保留」角标移到右上避让图标；卡名 y74→86、稀有度 y102→114、分隔线 y124→136、详情上移到 y146 且最多 2 行（原 3 行）——因为顶部让出图标区。图标按卡 id → kind → ballType 回退。
+  - **验证**：LSP 0 Error（本批文件；`Renderer3D.lua` 的 10 个 `TRAIL_*` 报错属并发会话在途改动，未触碰）；`probe_talentui` PASS（图标/tint/空白命中/滚动 begin-move-end）；真渲染截图确认天赋树（线路名+星级表头、圆形卡+连线、弹种配色、浮窗）与升级卡（图标全渲染）均正常、零 overlay/Lua 错误；官方多人 build+预览上传。BUILD_VERSION/大厅 →0.13.9。⚠️ 待 Preview：真机拖拽滚动手感、圆形卡密度、图标观感。
 - 版本: 0.13.8（主菜单布局调间距 + 天赋树做成明确可点入口）：
   - **主页上下间距**：`MetaUI.GetMenuBarLayout` 整体下移并拉开行距——fleet 390/92→**400/106**、wallet 496/56→**524/62**、daily 588→**628**(h102)、grow 716→**770**(h102)。原先内容止于 ~808 而画布高 960，底部留约 150px 空白；现收束到 ~872，上下呼吸更匀。wallet 内容（图标/标签/数值/分隔线/充值胶囊）与 daily/grow 卡内图标框（42×40→46×44）、标签 y51→58、副行 y72→80 同步按新高度重排；底部 toast 848→**892**（原值会与新的养成行底边 872 重叠）。
   - **天赋树入口「像个能点进去的东西」**：`MetaUI.DrawHomeFleet` 重写——左侧 68×68 大图标框（`premium_energy_core`）+ 标题 21px + 「已解锁 N/M 节点」+ 解锁进度条 + **右侧青色实心「进入 ›」胶囊按钮**；有可解锁节点时整框描边青色高亮 + 右上红点，无则 `cyanDim` 压暗。仍整框命中 `open_talent`（`HitTestMenuBar` 未改，几何同源）。

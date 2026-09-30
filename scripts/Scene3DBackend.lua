@@ -4,6 +4,7 @@
 local Renderer3D = require "Renderer3D"
 local SkyUtils = require "urhox-libs.Rendering.SkyUtils"
 local VisualCatalog = require "VisualCatalog"
+local TalentCatalog = require "TalentCatalog"
 local MetaUI = require "MetaUI"
 
 local Backend = {}
@@ -1199,6 +1200,16 @@ local ICON_PATHS = {
     ammo_ice = "image/ui_ammo_frost_shard.png",
     ammo_speed = "image/ui_ammo_velocity_coil.png",
     ammo_giant = "image/ui_ammo_giant_shell.png",
+    -- v0.13.8 天赋/升级卡图标（0718-pixelimage-aigc 后处理，32×32/≤9 色）。
+    talent_damage = "image/ui_icon_talent_damage.png",
+    talent_repair = "image/ui_icon_talent_repair.png",
+    talent_armor = "image/ui_icon_talent_armor.png",
+    talent_xp = "image/ui_icon_talent_xp.png",
+    talent_glass = "image/ui_icon_talent_glass.png",
+    talent_overclock = "image/ui_icon_talent_overclock.png",
+    talent_ammo = "image/ui_icon_talent_ammo.png",
+    talent_unlock = "image/ui_icon_talent_unlock.png",
+    talent_word = "image/ui_icon_talent_word.png",
 }
 
 ---@type table<string, integer>
@@ -1843,6 +1854,18 @@ local function GetHoldBadgeRect(cx, cardTop, cardW)
     return { x = cx - cardW * 0.5 + 6, y = cardTop + 6, w = 46, h = 22 }
 end
 
+-- v0.13.8：升级卡图标——优先按卡 id 取专属图标，其次按 kind/ballType 回退。
+local function UpgradeCardIconKey(choice)
+    local key = TalentCatalog.ICON_BY_CARD[choice.id]
+    if key then return key end
+    if choice.ballType and TalentCatalog.ICON_BY_BALL[choice.ballType] then
+        return TalentCatalog.ICON_BY_BALL[choice.ballType]
+    end
+    if choice.kind == "unlock" then return TalentCatalog.ICON_BY_KIND.ballUnlock end
+    if choice.kind == "word" then return TalentCatalog.ICON_BY_KIND.ballCard end
+    return TalentCatalog.ICON_BY_KIND.stat
+end
+
 local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local x = cx - cardW * 0.5
     local y = cy - cardH * 0.5
@@ -1852,21 +1875,35 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawCornerBrackets(ctx, x + 4, y + 4, cardW - 8, cardH - 8, accent, 10, 1.2)
     DrawRect(ctx, x, y, 3, cardH, accent, 0)
 
-    DrawPixelText(ctx, x + 6, y + 7, choice.held and "保留" or "锁定", 14,
-        choice.held and C.warn or C.cyanDim)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 24, choice.name or "强化", 22, C.text,
+    -- 图标：卡片顶部居中 34px（与局内道具槽同源），下衬暗色圆角底板提升可读性
+    local iconKey = UpgradeCardIconKey(choice)
+    local iconSize = 34
+    local iconX = x + cardW * 0.5 - iconSize * 0.5
+    local iconY = y + 32
+    DrawRect(ctx, iconX - 6, iconY - 6, iconSize + 12, iconSize + 12, C.rail, 8)
+    DrawStroke(ctx, iconX - 6, iconY - 6, iconSize + 12, iconSize + 12,
+        {accent[1], accent[2], accent[3], 120}, 8, 1)
+    if not DrawIcon(ctx, iconKey, iconX, iconY, iconSize, 1) then
+        DrawPixelText(ctx, x + cardW * 0.5, iconY + 4, (choice.name or "?"):sub(1, 1), 24,
+            C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
+    -- 锁定角标移到右上（避让顶部图标）
+    DrawPixelText(ctx, x + cardW - 6, y + 7, choice.held and "保留" or "锁定", 14,
+        choice.held and C.warn or C.cyanDim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, x + cardW * 0.5, y + 86, choice.name or "强化", 22, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, x + cardW * 0.5, y + 52,
+    DrawPixelText(ctx, x + cardW * 0.5, y + 114,
         (choice.kind == "word" and "特殊效果 · " or "") .. rare.tag, 16, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawSegmentedRule(ctx, x + 14, y + 76, cardW - 28, 6, C.cyanDim)
+    DrawSegmentedRule(ctx, x + 14, y + 136, cardW - 28, 6, C.cyanDim)
 
     local detailLines = WrapTextLines(ctx,
         choice.detail or choice.desc or "提升当前弹珠性能", 17, cardW - 18)
     local detailLineH = 25
-    local maxDetailLines = 3
+    local maxDetailLines = 2
     local detailCount = math.min(maxDetailLines, #detailLines)
-    local detailAreaTop = y + 88
+    local detailAreaTop = y + 146
     local detailAreaBottom = y + cardH - 98
     local detailTop = detailAreaTop
         + math.max(0, (detailAreaBottom - detailAreaTop - detailCount * detailLineH) * 0.5)

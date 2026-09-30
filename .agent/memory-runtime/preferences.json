@@ -69,7 +69,8 @@
       "date": "2026-09-30",
       "scope": "gamedev",
       "text": "主页/面板布局要调上下间距（区块间距均匀、别整体偏上或底部留白过大）；入口必须'像一个可以点进去的东西'——纯信息面板（标题+进度条）不算，需实心按钮/胶囊 + 大图标 + 可交互高亮态作为点击落点视觉。命中区存在不等于可点性。"
-    }
+    },
+    "界面重做要给参考截图+结构描述；天赋树=圆形大卡+连线+向上可滑动爬塔，节点图标按车辆/通用配色，点卡底部弹方形浮窗（解锁按钮四态：花零件/已解锁/未开放/零件不足还差x）；局内三选一升级卡也要图标并重排 UI"
   ],
   "implicit_preferences": [
     "重视可维护性和后续 3D 迁移成本",
@@ -122,7 +123,9 @@
       "require_real_data_in_feedback_events": true,
       "require_feedback_aggregation_and_cap": true,
       "require_star_gated_talent_tree": true,
-      "require_single_level_talent_nodes": true
+      "require_single_level_talent_nodes": true,
+      "require_circular_talent_cards": true,
+      "require_icon_on_upgrade_cards": true
     }
   }
 }

@@ -58,16 +58,57 @@ local BALL_STAT = {
 ---@field stat string|nil
 ---@field value number|nil
 ---@field mul boolean|nil
+---@field icon string|nil ICON_PATHS 键（v0.13.8 圆形卡图标）
+---@field tint string|nil 线路配色："cyan"（通用）|"gold"（稀有/付费感）
 
 ---@type TalentNode[]
 local NODES = {}
 ---@type table<string, TalentNode>
 local NODE_BY_ID = {}
 
+-- 车线路配色（通用线路用青色）。
+local LANE_TINT = {
+    general_a = "cyan", general_b = "cyan",
+    normal = "cyan", ice = "cyan", speed = "cyan", giant = "cyan",
+}
+
+-- 节点图标与配色的统一回退（v0.13.8）：精确 cardId 映射优先，否则按 kind 取通用图标。
+-- 稀有/付费感节点（专属卡、解锁、通用卡解锁）用金色描边，其余用线路色。
+local function DecorateNode(node)
+    node.tint = LANE_TINT[node.lane] or "cyan"
+    local icon = node.cardId and TalentCatalog.ICON_BY_CARD[node.cardId] or nil
+    if not icon then icon = TalentCatalog.ICON_BY_KIND[node.kind] end
+    -- 车线路按弹种取弹药图标，视觉与底部弹药槽一致。
+    if node.ballType then
+        icon = TalentCatalog.ICON_BY_BALL[node.ballType] or icon
+    end
+    node.icon = icon
+end
+
 local function AddNode(node)
+    DecorateNode(node)
     NODES[#NODES + 1] = node
     NODE_BY_ID[node.id] = node
 end
+
+-- 图标映射表（与 MetaCatalog 的 ICON_PATHS 键一致；在下方赋值，避免前向引用）。
+---@type table<string, string>
+TalentCatalog.ICON_BY_CARD = {
+    xp = "talent_xp", ammo = "talent_ammo",
+}
+---@type table<string, string>
+TalentCatalog.ICON_BY_KIND = {
+    cardUnlock = "talent_xp",
+    ballUnlock = "talent_unlock",
+    ballCard = "talent_word",
+    partsPct = "parts",
+    stat = "talent_damage",
+}
+---@type table<string, string>
+TalentCatalog.ICON_BY_BALL = {
+    normal = "ammo_normal", ice = "ammo_ice",
+    speed = "ammo_speed", giant = "ammo_giant",
+}
 
 -- 通用线路：a = 成长线（1 阶经验卡），b = 通用卡线（3 阶弹药卡）。其余阶段=结算零件 +5%。
 local GENERAL_CARD = { general_a = { [1] = "xp" }, general_b = { [3] = "ammo" } }

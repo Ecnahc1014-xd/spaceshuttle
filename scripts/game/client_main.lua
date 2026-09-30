@@ -42,6 +42,10 @@ local menuArmed = false
 -- v0.13.4：胜利结算页松手确认（避免误触直接跳关）。
 local stageWinArmed = nil
 local metaPointerConsumed = false
+-- v0.13.8：天赋树拖拽滚动是否已起手（Move/Up 转发给 TalentTree.Scroll*）。
+local talentScrollArmed = false
+-- 设计宽度缓存（天赋树命中/滚动用；Init 时由 GetDesignSize 填）。
+local designWidth_ = 540
 local CLOUD_HIGH_SCORE_KEY = "high_score"
 local CLOUD_META_KEY = "player_meta"
 local metaCloudSynced = false
@@ -792,7 +796,11 @@ local function HandleMetaAction(action, index)
     elseif action == "open_stage_select" then
         OpenMetaScreen("stage_select")
     elseif action == "open_talent" then
+        TalentTree.SetSelected(nil)
         OpenMetaScreen("talent")
+    elseif action == "select_talent" then
+        -- 点圆形卡：TalentTree 内部已记录选中并弹浮窗，这里只需重绘（无副作用）。
+        RefreshMeta()
     elseif action == "unlock_talent" and index then
         -- 天赋树节点解锁：TalentCatalog 校验前置/星级/零件，PlayerData 落盘。
         local nodeId = index
@@ -921,6 +929,11 @@ local function HandleMetaPointerDown(uiX, uiY)
         return true
     end
     if metaState.screen then
+        -- v0.13.8：天赋树是可滚动面板——按下先交给它起手拖拽（内容区内）。
+        if metaState.screen == "talent" and TalentTree.ScrollBegin(uiX, uiY, designWidth_) then
+            talentScrollArmed = true
+            return true
+        end
         local action, index = RenderBackend.HitTestMetaScreen(uiX, uiY, metaState)
         if action then HandleMetaAction(action, index) end
         return true
@@ -1261,6 +1274,7 @@ function ClientMain.Start(opts)
     end
 
     local width, height = RenderBackend.GetDesignSize()
+    designWidth_ = width
     Game.Init({
         width = width, height = height, seed = os.time(),
         highScore = PlayerData.GetHighScore(),
@@ -1299,6 +1313,15 @@ end
 ---@return boolean
 function ClientMain.IsOffline()
     return GameMode.IsOffline()
+end
+
+-- v0.13.8：仅供本地离屏探针/验收使用的窄接口——直接打开某个元层界面，
+-- 不改变任何游戏逻辑（正常游玩路径仍走输入 → HandleMetaAction）。
+---@param name string|nil
+function ClientMain.DebugOpenScreen(name)
+    metaState.screen = name
+    RefreshMeta()
+    RefreshSnapshots()
 end
 
 ---@param eventType string
@@ -1450,6 +1473,20 @@ end
 
 function HandleMouseUp(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
+    -- v0.13.8：天赋树拖拽收尾——真拖拽过则吞掉本次抬手（不当作点击选卡）。
+    if talentScrollArmed then
+        local moved = TalentTree.ScrollEnd()
+        talentScrollArmed = false
+        if moved then
+            metaPointerConsumed = false
+            return
+        end
+        -- 未拖拽：走点击路径（选卡/解锁/关闭）
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleMetaPointerDown(uiX, uiY)
+        return
+    end
     if Game.IsGameOver() then
         local screenX, screenY = GetScreenCoordinates(eventData)
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
@@ -1475,6 +1512,13 @@ function HandleMouseUp(eventType, eventData)
 end
 
 function HandleMouseMove(eventType, eventData)
+    -- v0.13.8：天赋树拖拽滚动优先于一切（元层面板打开时 IsMetaCapturing 会拦下后续）。
+    if talentScrollArmed then
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        TalentTree.ScrollMove(uiY, designWidth_)
+        return
+    end
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
         or IsMetaCapturing() or metaPointerConsumed then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
@@ -1532,6 +1576,12 @@ function HandleTouchBegin(eventType, eventData)
 end
 
 function HandleTouchMove(eventType, eventData)
+    if talentScrollArmed then
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        TalentTree.ScrollMove(uiY, designWidth_)
+        return
+    end
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
         or IsMetaCapturing() or metaPointerConsumed then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
@@ -1540,6 +1590,18 @@ function HandleTouchMove(eventType, eventData)
 end
 
 function HandleTouchEnd(eventType, eventData)
+    if talentScrollArmed then
+        local moved = TalentTree.ScrollEnd()
+        talentScrollArmed = false
+        if moved then
+            metaPointerConsumed = false
+            return
+        end
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleMetaPointerDown(uiX, uiY)
+        return
+    end
     if Game.IsGameOver() then
         local screenX, screenY = GetScreenCoordinates(eventData)
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)

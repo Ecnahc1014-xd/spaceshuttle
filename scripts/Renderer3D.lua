@@ -56,10 +56,9 @@ local aimLineSet_ = nil
 local aimLineActive_ = false
 local aimLineNode_ = nil
 local aimLineMaterial_ = nil
-local trailSets_ = nil
+local trailGeometries_ = nil   -- {ballType = {root, geometry}} 光带批次
 local trailNodes_ = nil
 local trailMaterials_ = nil
-local trailTextures_ = nil
 local trailSamples_ = {}
 local trailActive_ = {normal = false, ice = false, speed = false, giant = false}
 local lastRenderElapsed_ = nil
@@ -70,13 +69,18 @@ local initialized_ = false
 local PARTICLE_SLOTS = { spark = 64, shard = 40, smoke = 28 }
 local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
 
--- 飞行中的重卡才留下短尾迹；四种弹药各合批一次，避免每辆车创建节点。
+-- 飞行中的重卡才留下尾迹；v0.13.8 重做（用户否决圆点串珠"难看廉价"）：
+-- 沿运动折线构建渐窄渐暗的 **光带 ribbon**（CustomGeometry，DiffVCol+白底纹理，
+-- 与敌机网格同一条已验证显色路径；淡出靠收窄+压暗，不依赖顶点 alpha 与 billboard
+-- rotation 符号——本环境无法验证旋向，禁止押注未知约定）。四种弹种各一个几何批次。
 local TRAIL_TYPES = {"normal", "ice", "speed", "giant"}
 local TRAIL_VEHICLE_LIMIT = 8
 local TRAIL_POINTS_PER_VEHICLE = 6
-local TRAIL_SLOTS = TRAIL_VEHICLE_LIMIT * TRAIL_POINTS_PER_VEHICLE
 local TRAIL_LIFETIME = 0.30
 local TRAIL_SAMPLE_INTERVAL = 0.035
+local TRAIL_HALF_WIDTH_HEAD = 0.22  -- 头段半宽（× 权威碰撞半径 × WORLD_SCALE），窄于车身
+local TRAIL_HALF_WIDTH_TAIL = 0.02  -- 尾段半宽（渐收成束）
+local TRAIL_HEAD_GLOW = 1.65        -- 头段亮度倍数（尾段压暗到 0 形成长度感淡出）
 
 local BALL_COLORS = {
     normal = {1.00, 0.72, 0.12},
@@ -952,35 +956,68 @@ GetVehicleAnchorWorld = function(marble)
     return GameToWorld(marble.x, marble.y, -VEHICLE_LOCAL_CENTER_Z * scaleFactor)
 end
 
+-- 尾迹光带几何：沿运动折线的每对相邻采样点生成一个渐窄四边形（TRIANGLE_LIST），
+-- 头宽尾窄、头近白尾压暗（顶点色会被引擎钳到 0..1，亮头靠向白色插值表达）。
+-- 采样规则沿用 v0.13.3：静止/jump 清轨，flightTime 回绕防 id 复用串轨。
 local function ClearTrailSamples()
     trailSamples_ = {}
-    if not trailSets_ then return end
+    if not trailGeometries_ then return end
     for _, ballType in ipairs(TRAIL_TYPES) do
-        local set = trailSets_[ballType]
         if trailActive_[ballType] then
-            for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
-            set:Commit()
+            local record = trailGeometries_[ballType]
+            record.geometry:Clear()
+            record.geometry:SetNumGeometries(1)
+            record.geometry:BeginGeometry(0, TRIANGLE_LIST)
+            record.geometry:Commit()
         end
         trailActive_[ballType] = false
     end
 end
 
-local function SyncVehicleTrails(game, dt)
-    if not trailSets_ then return end
-    if game.state ~= "playing" then
-        if next(trailSamples_) or trailActive_.normal or trailActive_.ice
-            or trailActive_.speed or trailActive_.giant then ClearTrailSamples() end
-        return
-    end
+---@param verts table 追加 6 个顶点（一个四边形）
+---@param ax number 尾点 x
+---@param ay number 尾点 y
+---@param bx number 头点 x
+---@param by number 头点 y
+---@param wa number 尾点半宽
+---@param wb number 头点半宽
+local function AddTrailQuad(verts, ax, ay, az, bx, by, bz, wa, wb, ca, cb)
+    local dx, dy = bx - ax, by - ay
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len < 1e-5 then return end
+    local nx, ny = -dy / len, dx / len
+    verts[#verts + 1] = {p = Vector3(ax + nx * wa, ay + ny * wa, az), c = ca}
+    verts[#verts + 1] = {p = Vector3(ax - nx * wa, ay - ny * wa, az), c = ca}
+    verts[#verts + 1] = {p = Vector3(bx + nx * wb, by + ny * wb, bz), c = cb}
+    verts[#verts + 1] = {p = Vector3(bx + nx * wb, by + ny * wb, bz), c = cb}
+    verts[#verts + 1] = {p = Vector3(ax - nx * wa, ay - ny * wa, az), c = ca}
+    verts[#verts + 1] = {p = Vector3(bx - nx * wb, by - ny * wb, bz), c = cb}
+end
 
-    local visible = {}
-    local used = {normal = 0, ice = 0, speed = 0, giant = 0}
-    local tracked = {normal = 0, ice = 0, speed = 0, giant = 0}
-    for _, marble in ipairs(game.marbles or {}) do
-        local ballType = marble.ballType
-        if not marble.onSling and trailSets_[ballType]
-            and tracked[ballType] < TRAIL_VEHICLE_LIMIT then
-            tracked[ballType] = tracked[ballType] + 1
+local function TrailColor(base, t)
+    -- t: 0 尾 → 1 头。尾段快速压暗；头段向白热插值（钳 0..1 下唯一可信的变亮方式）。
+    local shade = 0.10 + 0.90 * (t ^ 1.7)
+    local hot = (t - 0.70) / 0.30
+    hot = math.max(0, hot) * math.max(0, hot) * 0.72
+    return Color(
+        math.min(1.0, base[1] * shade + (1 - base[1] * shade) * hot),
+        math.min(1.0, base[2] * shade + (1 - base[2] * shade) * hot),
+        math.min(1.0, base[3] * shade + (1 - base[3] * shade) * hot), 1.0)
+end
+
+local function SyncVehicleTrails(game, dt)
+    if not trailGeometries_ then return end
+
+    local tracksByType = nil
+    if game.state == "playing" then
+        tracksByType = {normal = {}, ice = {}, speed = {}, giant = {}}
+        local tracked = {normal = 0, ice = 0, speed = 0, giant = 0}
+        local visible = {}
+        for _, marble in ipairs(game.marbles or {}) do
+            local ballType = marble.ballType
+            if marble.onSling or not ballType or not tracksByType[ballType] then
+                goto nextMarble
+            end
             visible[marble.id] = true
             local pos = GetVehicleAnchorWorld(marble)
             local track = trailSamples_[marble.id]
@@ -1016,33 +1053,63 @@ local function SyncVehicleTrails(game, dt)
             end
             track.x, track.y, track.z = pos.x, pos.y, pos.z
             track.flightTime = marble.flightTime or 0
-            for i = 1, #points do
-                if used[ballType] >= TRAIL_SLOTS then break end
-                local point = points[i]
-                local life = 1 - point.age / TRAIL_LIFETIME
-                used[ballType] = used[ballType] + 1
-                local bb = trailSets_[ballType]:GetBillboard(used[ballType] - 1)
-                bb.enabled = true
-                bb.position = Vector3(point.x, point.y, point.z - 0.05)
-                local size = point.radius * WORLD_SCALE * (0.50 * life + 0.08)
-                bb.size = Vector2(size, size)
-                bb.color = Color(1, 1, 1, 1)
-                bb.rotation = 0
+            if #points >= 1 and tracked[ballType] < TRAIL_VEHICLE_LIMIT then
+                tracked[ballType] = tracked[ballType] + 1
+                local list = tracksByType[ballType]
+                list[#list + 1] = {points = points, head = pos, radius = marble.radius}
             end
+            ::nextMarble::
+        end
+        for id in pairs(trailSamples_) do
+            if not visible[id] then trailSamples_[id] = nil end
         end
     end
-    for id in pairs(trailSamples_) do
-        if not visible[id] then trailSamples_[id] = nil end
-    end
+
+    local anyActive = false
     for _, ballType in ipairs(TRAIL_TYPES) do
-        local count = used[ballType]
-        if count > 0 or trailActive_[ballType] then
-            local set = trailSets_[ballType]
-            for i = count, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
-            set:Commit()
+        local record = trailGeometries_[ballType]
+        local tracks = tracksByType and tracksByType[ballType] or nil
+        local active = tracks ~= nil and #tracks > 0
+        if active or trailActive_[ballType] then
+            local base = BALL_COLORS[ballType]
+            local verts = {}
+            if tracks ~= nil and #tracks > 0 then
+                for _, track in ipairs(tracks) do
+                    local samples = track.points
+                    local n = #samples
+                    local halfHead = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_HEAD
+                    local halfTail = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_TAIL
+                    for i = 1, n do
+                        local ax, ay, az = samples[i].x, samples[i].y, samples[i].z - 0.05
+                        local bx, by, bz
+                        if i < n then
+                            bx, by, bz = samples[i + 1].x, samples[i + 1].y, samples[i + 1].z - 0.05
+                        else
+                            bx, by, bz = track.head.x, track.head.y, track.head.z - 0.05
+                        end
+                        local t0 = (i - 1) / (n + 1 - 1)
+                        local t1 = i / (n + 1 - 1)
+                        AddTrailQuad(verts, ax, ay, az, bx, by, bz,
+                            halfTail + (halfHead - halfTail) * t0,
+                            halfTail + (halfHead - halfTail) * t1,
+                            TrailColor(base, t0), TrailColor(base, t1))
+                    end
+                end
+            end
+            record.geometry:Clear()
+            record.geometry:SetNumGeometries(1)
+            record.geometry:BeginGeometry(0, TRIANGLE_LIST)
+            for _, v in ipairs(verts) do
+                record.geometry:DefineVertex(v.p)
+                record.geometry:DefineNormal(Vector3(0, 0, -1))
+                record.geometry:DefineColor(v.c)
+            end
+            record.geometry:Commit()
         end
-        trailActive_[ballType] = count > 0
+        trailActive_[ballType] = active
+        if active then anyActive = true end
     end
+    return anyActive
 end
 
 local function SyncDebris(presentation)
@@ -1411,30 +1478,26 @@ function Renderer3D.Init(scene, voxelWorld)
     end
     aimLineSet_:Commit()
 
-    -- 车辆尾迹沿用已验证的 DiffAlpha 彩色软圆管线：纹理按弹种烘焙，
-    -- 每种一组固定槽位，回收与重开不留下独立节点。
-    trailSets_, trailNodes_, trailMaterials_, trailTextures_ = {}, {}, {}, {}
+    -- 车辆尾迹光带：每弹种一个 CustomGeometry 批次（DiffVCol+白底，与敌机网格
+    -- 同一条已验证显色路径），回收与重开不留下独立节点。
+    trailGeometries_, trailNodes_, trailMaterials_ = {}, {}, {}
     for _, ballType in ipairs(TRAIL_TYPES) do
-        local color = BALL_COLORS[ballType]
-        local texture = CreateSoftCircleTexture(color[1], color[2], color[3], 0.75, 0)
         local node = scene:CreateChild("VehicleTrail_" .. ballType)
-        local set = node:CreateComponent("BillboardSet")
-        set:SetNumBillboards(TRAIL_SLOTS)
-        set.castShadows = false
-        set.relative = false
+        local geometry = node:CreateComponent("CustomGeometry")
+        geometry.castShadows = false
+        local color = BALL_COLORS[ballType]
         local material = Material:new()
-        material:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffAlpha.xml"))
-        material:SetTexture(TU_DIFFUSE, texture)
+        material:SetTechnique(0,
+            cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
+        material:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
         material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
-        set:SetMaterial(material)
-        for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
-        set:Commit()
-        trailSets_[ballType] = set
+        material:SetCullMode(CULL_NONE)
+        geometry:SetMaterial(0, material)
+        trailGeometries_[ballType] = {root = node, geometry = geometry}
         trailNodes_[#trailNodes_ + 1] = node
         trailMaterials_[#trailMaterials_ + 1] = material
-        trailTextures_[#trailTextures_ + 1] = texture
     end
-    print("[Renderer3D] vehicle trails ready (4 types, 48 slots/type)")
+    print("[Renderer3D] vehicle trail ribbons ready (4 types)")
 
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
@@ -1570,16 +1633,13 @@ function Renderer3D.Shutdown()
     if trailNodes_ then
         for _, node in ipairs(trailNodes_) do RemoveNode(node) end
     end
-    if trailSets_ then
-        for _, set in pairs(trailSets_) do DisposeComponent(set) end
+    if trailGeometries_ then
+        for _, record in pairs(trailGeometries_) do DisposeComponent(record.geometry) end
     end
     if trailMaterials_ then
         for _, material in ipairs(trailMaterials_) do material:Dispose() end
     end
-    if trailTextures_ then
-        for _, texture in ipairs(trailTextures_) do texture:Dispose() end
-    end
-    trailSets_, trailNodes_, trailMaterials_, trailTextures_ = nil, nil, nil, nil
+    trailGeometries_, trailNodes_, trailMaterials_ = nil, nil, nil
     trailSamples_ = {}
     vehicleRecords_ = {}
     enemyMeshes_ = {}
