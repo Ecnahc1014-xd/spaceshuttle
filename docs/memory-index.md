@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.13.3
-简述：车辆飞行尾迹（3D 四弹种 BillboardSet 合批软圆采样，0.3s 寿命、8 车/种上限）+ 全窗口渐显渐隐弹动过渡（结算/升级/暂停 + 元层面板与补给弹窗，遮罩不随缩放、命中逆变换防漂移、开新窗作废旧残影）。此前：关卡制十波一关（3/6/8 精英、10 Boss，逐关 HP/数量加压）、六款独立车型商店、开局 1 辆弹药 + 通用扩容卡。LSP 0 Error、前向引用扫描 0、真渲染探针零错误、官方多人 build+预览上传；Linux 无体素模块且 BloomHDR 编译失败，真机体素/尾迹密度/弹动手感待 Preview 验收。
+当前版本：0.13.4
+简述：关卡式完善——主菜单「开始战斗」改为打开**选关界面**（15 关 5 列铺格、显历史星级、未解锁锁形，点已解锁格手动开局），Boss 击败进入**独立胜利结算态 `stagewin`**（不再 4 秒自动进关，由玩家选下一关/再战本关/回主菜单），按剩余防线血量折算**评级+星级**（完美/优良/险胜 = 3/2/1 星 + 200星分/50星零件），星级与解锁度写入 `PlayerData` 存档并跨设备云合并；普通波编队量翻倍（每波=旧两波以上，6→8→10 阶梯、硬顶同屏 12）。胜利/选关窗复用 v0.13.3 弹动过渡与命中逆变换。此前：车辆飞行尾迹 + 全窗口渐显渐隐弹动、关卡制十波一关（3/6/8 精英、10 Boss 召唤）、六款独立车型商店、开局 1 辆弹药 + 通用扩容卡。LSP 0 Error、规则探针（选关/密度/Boss→stagewin/星级/NextStage/入库）与真渲染冒烟零错误、官方多人 build+预览上传；真机弹动手感与六车型×关卡叠加帧时待 Preview 验收。
 最后巩固：2026-09-30
 
 ## 项目概况
@@ -23,7 +23,9 @@
 | 文件 | 用途 |
 |------|------|
 | `scripts/main.lua` | 纯编排入口；转发引擎输入和 Update，连接核心、表现、后端 |
-| `scripts/Game.lua` | 引擎无关的权威规则、碰撞、波次、输入动作、领域事件与游戏快照 |
+| `scripts/Game.lua` | 引擎无关的权威规则、碰撞、波次、关卡状态（stage/stageWave/stagewin 评级）、输入动作、领域事件与游戏快照 |
+| `scripts/StageCatalog.lua` | 关卡编排纯数据：十波一关、3/6/8 精英 + 10 Boss 槽位、逐关编队量/血量/间隔/召唤上限、15 关总数与波号↔关号换算（不含任何引擎/渲染 API） |
+| `scripts/ui/StageSelect.lua` | 选关界面（15 关铺格、星级/锁定态、点已解锁格 play_stage），插件式注册进 MetaUI，复用注入令牌，只画与命中 |
 | `scripts/Presentation.lua` | 消费领域事件，维护粒子、飘字、撞飞箱体、闪白、震屏、波次横幅、防线脉冲与冲击波 |
 | `scripts/VisualCatalog.lua` | 当前 2D 后端的弹珠样式和飞机采样砖块颜色映射 |
 | `scripts/AircraftPixelData.lua` | 独立低像素飞机 occupied cells、分数、速度倍率与采样 RGB 数据源 |
@@ -94,6 +96,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.13.4（关卡式：选关界面 + 胜利结算 + 星级/解锁存档）：用户澄清「一波 = 原先两波以上的密度」「关卡式要有独立选关界面、打完不自动进下一关而是出胜利界面供玩家选、按剩余防线血量给评级+星级、星级和解锁度入存档」。①`StageCatalog.GetNormalCount` 每波编队量翻倍（`6+2*floor((stageWave-1)/3)+(stage-1)`，6→8→10 阶梯、硬顶 MAX_FLEET=12），新增 `STAGE_COUNT=15`。②`Game` 新增 `stagewin` 态 + `stageResult`（`ComputeStageResult` 按 baseHp 折算：≥0.75 完美 3 星 / ≥0.40 优良 2 星 / else 险胜 1 星；bonus=200×星分 + 50×星零件计入 score/partsEarned）；Boss 击败只停在该态，**删除 v0.13.0 的 4 秒休整自动进关（stageClearPending/stageBreak）**；`StartStageAt/NextStage/RetryStage` 手动进关，`ResetGame(stage)` 后 `wave=(stage-1)*10+1` 换算累计波号；快照加 `stageResult/stageHasNext/stageTotal`。③新 `scripts/ui/StageSelect.lua`（5 列 15 格、★历史星级、未解锁程序化锁形、`HitTest→play_stage`），经 `MetaUI.RegisterScreen("stage_select")`；主菜单 CTA「开始战斗→选择关卡」改开选关（menu 态 PointerDown/回车均不再直接开局）。④`Scene3DBackend.DrawStageWin` 复用 v0.13.3 `DrawAnimatedWindow("game")`+`WindowInput` 逆变换；`HitTestStageWinButton/HitTestMenuCta` 与绘制同源；`UpdateUiState` leaving/visual 三处并入 stagewin。⑤`PlayerData` 加 `stageStars`+`maxStage`（`AsStageStars` 还原整数键钳 1..3、`RecordStageResult` 取 max、`ImportFromCloud` 跨设备合并）；`client_main` 结算块与 `TakeSettlementStats/SettleParts` 扩到 `gameover ∪ stagewin`，win 落库。验证：LSP 0 Error、官方多人 build+预览上传、BUILD_VERSION/大厅→0.13.4；`probe_stageflow` PASS、`probe_partial_boss`/`probe_boss_escape`/`probe_stage` 迁移新语义后 PASS、真渲染 probe_play 零 Lua/overlay 错误。⚠️ 待 Preview：选关/胜利窗弹动手感、六车型×关卡叠加真机帧时。并发批次（六车型/尾迹/窗口动画/弹药）各自提交未覆盖。
 - v0.13.3（车辆飞行尾迹 + 全窗口渐显渐隐弹动过渡）：用户「给车辆弹珠增加尾迹特效，给各种窗口加上渐显渐隐弹动的过渡动画」。①`Renderer3D` 新增 `SyncVehicleTrails`：只给飞行中（not onSling）车辆采样软圆尾迹，0.035s 间隔/0.3s 寿命/每车 6 点/同弹种 8 车，四弹种各一 BillboardSet（DiffAlpha 烘焙色纹理、48 槽、空闲跳 Commit），点尺寸锚 marble.radius、z 取车辆锚点 -0.05；非 playing、ClearRunVisuals、Shutdown 三处清空；flightTime 回绕判 id 复用即重建采样。规则层零改动。②`Scene3DBackend` 新增 `DrawAnimatedWindow`（入场 0.32s 渐显 + 0.91→1.03→1.0 弹性缩放，退场 0.18s 渐隐微缩）接管结算/升级/暂停三窗口与 MetaUI 面板（含充值/补给弹窗）；独立 uiClock_（elapsed 差分、回卷归零）驱动；遮罩在恒等变换下绘制不随缩放（防边缘漏底，peer 会话点名）；`WindowInput` 缩放逆变换接入 HitTestGameOverButton/UpgradePanel/PausePanel/MetaScreen/SupplyPopup（弹动期按钮仍可点）；任何开关切换立即清 leaving 残影槽（快速关→重开不叠影）。BUILD_VERSION/大厅 →0.13.3。验证：LSP 0 Error、前向引用扫描 0、真渲染探针（发射→暂停→恢复）零 overlay stage 失败/零 Lua 错误、trail ready 日志确认；官方多人 build+预览上传。⚠️ 待 Preview：真机尾迹密度/帧率、弹动手感、快速开关遮罩缝隙。尾迹与「暂停冻结尾迹」交互：playing 之外状态一律清采样，画面干净恢复。并发 StageCatalog/Game.lua 改动未触碰。
 - v0.13.2-ammo（开局弹药 1 辆 + 通用「弹药扩容」卡）：用户「初始弹药减少为1，加入通用天赋卡增加1点弹药数量，该天赋最多三级」。`Game.lua` 以 `BASE_AMMO_TOTAL = 1` + `ammoCapacity` 取代原 `BASE_AMMO_SPARE`，`LoadBalls` 改为「先放 1 辆待发 → 再排入 `ammoCapacity-1` 辆备弹」，开局只有待发车、没有备弹；`UPGRADE_POOL` 新增通用卡 `ammo`（弹药扩容，common/weight 1/**maxStacks 3**），apply → `IncreaseAmmo()`（`ammoCapacity+1` 并立刻补一辆进队列，之后回收补给维持新总量）；快照新增 `s.ammoCapacity`，重开复位。本地探针：开局 `ready=1/spare=0/total=1/capacity=1`、卡片 `maxStacks=3`、选中后 `capacity=2/spare=1/total=2`、600 帧长跑（含升级/解锁/重开）池子总量恒等于「`ammoCapacity` + 已解锁新车数」；官方多人 build + 预览上传。⚠️ 本批次只改 `Game.lua`（并发会话的 Scene3DBackend/Renderer3D 窗口动画改动未提交、未被覆盖）。
 - v0.13.1（六车型商店）：用户指出单纯涂装换色缺乏变化，明确允许不同车种且要六款。`MetaCatalog` 保留 default/arctic/crimson/jade/obsidian 老 key（已有购买记录及首充权益仍可用），加 rally，换成默认平头重卡/越野车/跑车/厢式车/装甲车/沙地越野车六种形体；`VehicleGeometry` 单网格六材质分区、几何顶点限定在权威碰撞圆，`Renderer3D` 改按选择构建形体而弹种配色独立。`MetaUI` 六行剪影与绘制/命中同源、免费补给仍保留；购买零件扣费/解锁/装备一次落盘，云继承默认车的选中款。首充展示越野车。LSP 0、多人 build 成功；六车战斗态全部切换且零 Lua/overlay 报错；六车顶点、商城按钮/免费礼包、购买幂等隔离探针通过。Linux llvmpipe HDR shader 编译失败导致 3D 层黑，外形观感仍需真机 Preview。提交 34cab19，尾迹和窗口动画均未包含。

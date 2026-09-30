@@ -50,7 +50,6 @@ local floatPool = {}
 -- HandleEvent 遍历命中事件触发对应反馈，所有反馈只写 Presentation 瞬时状态，不触达规则层。
 local FEEDBACK_MAP = {
     wave_started = {"waveBanner"},
-    stage_cleared = {"stageClearBanner"},
     stage_started = {"stageStartBanner"},
     boss_summoned = {"summonNotice"},
     brick_hit = {"brickSpark"},
@@ -203,10 +202,6 @@ local FEEDBACK_HANDLERS = {
         waveBannerStage = event.stage or 1
         waveBannerStageWave = event.stageWave or event.wave or 1
         waveBannerKey = event.aircraftKey
-    end,
-    stageClearBanner = function(event)
-        stageBannerTimer = 3.6
-        stageBannerNumber = event.stage or 1
     end,
     stageStartBanner = function(event)
         stageBannerTimer = 2.2

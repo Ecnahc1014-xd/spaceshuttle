@@ -130,7 +130,7 @@ local wave = 1
 local stage = 1
 local stageWave = 1
 local bossDefeated = false
----@type {stage:integer, stars:integer, rating:string, bonus:integer}|nil
+---@type {stage:integer, stars:integer, rating:string, bonusScore:integer, bonusParts:integer}|nil
 local stageResult = nil   -- stagewin 态展示与存档用（星级/评级）
 local elapsed = 0
 local waveCooldown = 0
@@ -299,8 +299,8 @@ local aimY = SLING_Y
 -- v0.10.15：全屏起手时记录手指按下点，拉弓量 = 当前点 - 按下点。
 local grabStartX = SLING_X
 local grabStartY = SLING_Y
--- v0.10.24：菜单/结算改为松手确认开始；只有按下时本就处于菜单/结算态才武装，
--- 避免死亡瞬间手指还按着、抬手即误重开。
+-- v0.10.24 遗留：菜单/结算松手确认的武装标志。v0.13.4 起菜单不再直接开局
+-- （改走选关界面），此处仅作死亡瞬间防误触的复位守卫。
 local startArmed = false
 -- v0.10.32：每局一次广告复活；结算页按钮由编排层消费几何。
 local reviveUsed = false
@@ -447,7 +447,7 @@ local function CanOfferUpgrade(u)
         and (upgradeStacks[u.id] or 0) < u.maxStacks
 end
 
--- startStage：选关界面挑选的关卡（v0.13.1）。默认 1；wave 换算为全局累计波号，
+-- startStage：选关界面挑选的关卡（v0.13.4）。默认 1；wave 换算为全局累计波号，
 -- 使每日任务「抵达第 N 波」在后期关卡仍按真实进度计量。
 ResetGame = function(startStage)
     startStage = math.max(1, math.floor(tonumber(startStage) or 1))
@@ -2378,7 +2378,7 @@ UpdateReload = function()
     if not activeBall and #ballQueue > 0 then QueueNextBall() end
 end
 
--- 通关评级（v0.13.1）：剩余防线血量决定星级；额外分数与零件奖励进结算。
+-- 通关评级（v0.13.4）：剩余防线血量决定星级；额外分数与零件奖励进结算。
 -- 一星=险胜（<40%）、两星=优良（40~74%）、三星=完美（>=75%）。
 local function ComputeStageResult()
     local ratio = baseHp / BASE_HP
@@ -2413,7 +2413,7 @@ UpdateWaveLogic = function(dt)
             SpawnWave(StageCatalog.MAX_FLEET - #veggies)
             return
         end
-        -- v0.13.1：首领击败即**结束本关并进入胜利结算态**（不再自动进下一关）。
+        -- v0.13.4：首领击败即**结束本关并进入胜利结算态**（不再自动进下一关）。
         -- 残余护航与召唤机退场；星级由剩余防线血量决定，玩家看完结算后手动进关。
         if bossDefeated then
             stageResult = ComputeStageResult()
@@ -2514,7 +2514,7 @@ end
 
 function Game.PointerDown(px, py)
     if gameState == "menu" then
-        -- v0.13.1：菜单不再直接开局——开始按钮由编排层路由到选关界面，
+        -- v0.13.4：菜单不再直接开局——开始按钮由编排层路由到选关界面，
         -- 玩法层在菜单态不接收任何指针输入。
         return
     end
@@ -2594,6 +2594,13 @@ function Game.StartStageAt(stageNumber)
     return true
 end
 
+-- 胜利结算页「再战本关」：重开当前关（保留已解锁进度，成长重置）。
+function Game.RetryStage()
+    if gameState ~= "stagewin" or not stageResult then return false end
+    StartGameAt(stageResult.stage)
+    return true
+end
+
 -- 胜利结算页「下一关」：仅当下一关存在时有效。
 function Game.NextStage()
     if gameState ~= "stagewin" or not stageResult then return false end
@@ -2667,8 +2674,9 @@ function Game.GetRunParts()
 end
 
 -- 跨局统计只认增量；复活后再次死亡不重复计「完成一局」与旧砖块。
+-- 胜利结算（stagewin）同样入库零件与统计。
 function Game.TakeSettlementStats()
-    if gameState ~= "gameover" or partsSettled then return 0, false end
+    if (gameState ~= "gameover" and gameState ~= "stagewin") or partsSettled then return 0, false end
     local delta = math.max(0, bricksBroken - settledBricks)
     settledBricks = bricksBroken
     local firstFinish = not runCounted
@@ -2806,6 +2814,9 @@ function Game.GetSnapshot()
     s.stageWave = stageWave
     s.wavesPerStage = StageCatalog.WAVES_PER_STAGE
     s.stageResult = stageResult
+    s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil
+        and stageResult.stage < StageCatalog.STAGE_COUNT) or false
+    s.stageTotal = StageCatalog.STAGE_COUNT
     s.elapsed = elapsed
     s.playerLevel = playerLevel
     s.xp = xp

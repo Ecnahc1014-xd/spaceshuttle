@@ -434,7 +434,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.13.3"
+local BUILD_VERSION = "0.13.4"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -895,7 +895,7 @@ local function UpdateUiState(game, meta)
     AdvanceUiClock(game)
     if game.state ~= uiState_ then
         local old = uiState_
-        if old == "gameover" or old == "levelup" or old == "paused" then
+        if old == "gameover" or old == "levelup" or old == "paused" or old == "stagewin" then
             uiGameLeaving_ = {state = old, visual = uiGameVisual_}
             uiGameLeaveAt_ = uiClock_
             uiGameVisual_ = nil
@@ -903,7 +903,8 @@ local function UpdateUiState(game, meta)
         uiState_ = game.state
         uiStateEnter_ = game.elapsed
         uiStateMotionEnter_ = uiClock_
-        if game.state == "gameover" or game.state == "levelup" or game.state == "paused" then
+        if game.state == "gameover" or game.state == "levelup" or game.state == "paused"
+            or game.state == "stagewin" then
             -- 重新开局立刻收掉旧窗口退场残影，避免旧快照叠在新窗口下面。
             uiGameLeaving_ = nil
         end
@@ -912,7 +913,8 @@ local function UpdateUiState(game, meta)
             logoRollOffset_ = math.random(0, 3)
         end
     end
-    if game.state == "gameover" or game.state == "levelup" or game.state == "paused" then
+    if game.state == "gameover" or game.state == "levelup" or game.state == "paused"
+        or game.state == "stagewin" then
         uiGameVisual_ = {game = CopyVisualState(game), meta = CopyVisualState(meta)}
         uiGameVisual_.game.upgradeChoices = CopyVisualState(game.upgradeChoices)
     end
@@ -1509,6 +1511,12 @@ local function DrawPixelLogo(ctx, cx, topY, title, size, bodyColor, shadowColor)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
+-- v0.13.4：主菜单「开始战斗」CTA 几何（绘制与命中共用，禁止两套常量）。
+local function GetMenuCtaRect(game)
+    local w = (game and game.width) or DESIGN_W
+    return { x = 42, y = 262, w = w - 84, h = 92 }
+end
+
 local function DrawMenu(ctx, game, meta)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, 0, game.width, game.height)
@@ -1543,15 +1551,16 @@ local function DrawMenu(ctx, game, meta)
     DrawPixelText(ctx, game.width * 0.5, 232, "拖拽发射重卡 · 逐块撕碎敌机编队", 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    -- ② 主 CTA：用游戏标识与外层硬件导轨建立主次，不改开始点击/松手确认的命中几何。
-    local ctaY = 262
+    -- ② 主 CTA：v0.13.4 起点击打开「选关界面」，不再直接开局。几何走 GetMenuCtaRect。
+    local cta = GetMenuCtaRect(game)
+    local ctaY = cta.y
     DrawMachinedPanel(ctx, 34, ctaY - 5, game.width - 68, 102, C.rail, C.warnDim, 10, true)
-    DrawRect(ctx, 42, ctaY, game.width - 84, 92, C.cyan, 7)
-    DrawRect(ctx, 54, ctaY + 4, game.width - 108, 1, {255, 255, 255, 110}, 0)
+    DrawRect(ctx, cta.x, cta.y, cta.w, cta.h, C.cyan, 7)
+    DrawRect(ctx, cta.x + 12, ctaY + 4, cta.w - 24, 1, {255, 255, 255, 110}, 0)
     DrawIcon(ctx, "premium_supply_crate", 164, ctaY + 28, 32, 1)
     DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 14, "开始战斗", 31, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 56, "点击 · 松手确认", 14, C.ink,
+    DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 56, "选择关卡", 14, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, ctaY + 102,
         "v" .. BUILD_VERSION .. " · " .. GAME_TITLE, 13, C.dim,
@@ -1698,6 +1707,104 @@ local function DrawGameOver(ctx, game, presentation)
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
         DrawPixelText(ctx, game.width * 0.5, menuBtn.y + menuBtn.h + 10, toast, 15, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+    nvgRestore(ctx)
+end
+
+-- ============================================================================
+-- v0.13.4：胜利结算界面（stagewin）。击败本关首领后弹出，展示按剩余防线血量
+-- 折算的评级 + 星级，由玩家手动选择「下一关 / 再战本关 / 回主菜单」。
+-- 视觉几何与命中判定共用 GetStageWinButtonLayout，禁止第二套常量。
+-- ============================================================================
+
+-- 三颗星横排（大字号，供胜利页中央展示）。filled=0..3。
+local function DrawStarRow(ctx, cx, cy, filled, cell, gapPx)
+    local total = 3 * cell + 2 * gapPx
+    local x0 = cx - total * 0.5
+    for i = 1, 3 do
+        local on = i <= filled
+        local col = on and C.warn or C.widget
+        local bx = x0 + (i - 1) * (cell + gapPx)
+        -- 程序化五角星用两块菱形近似拼出，避免外部贴图；未得星只画暗底。
+        DrawRect(ctx, bx, cy, cell, cell, col, math.floor(cell * 0.22))
+        if on then
+            DrawRect(ctx, bx + cell * 0.25, cy + cell * 0.12, cell * 0.5, cell * 0.76, C.ink, 1)
+            DrawRect(ctx, bx + cell * 0.12, cy + cell * 0.25, cell * 0.76, cell * 0.5, C.ink, 1)
+        end
+    end
+end
+
+local function GetStageWinButtonLayout(game)
+    local w = (game and game.width) or DESIGN_W
+    local btnH, gap = 48, 12
+    local rowW = 216
+    local rowPairW = rowW * 2 + gap
+    local rowX = (w - rowPairW) * 0.5
+    local menu = { x = (w - rowW) * 0.5, y = 496, w = rowW, h = btnH }
+    local retry = { x = rowX, y = menu.y + btnH + gap, w = rowW, h = btnH }
+    local nextBtn = { x = rowX + rowW + gap, y = retry.y, w = rowW, h = btnH }
+    return retry, nextBtn, menu
+end
+
+local function DrawStageWin(ctx, game, presentation)
+    local result = game.stageResult or {}
+    local stars = math.min(3, math.max(1, math.floor(result.stars or 1)))
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
+        game.width, game.height - MENU_CONTENT_TOP)
+    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+
+    local winX, winY = 24, 200
+    local winW, winH = game.width - 48, 468
+    DrawWindowShell(ctx, winX, winY, winW, winH, 48)
+    DrawPixelText(ctx, winX + 18, winY + 10, "防线守住", 22, C.cyan)
+    DrawPixelText(ctx, winX + winW - 16, winY + 14,
+        string.format("第 %d 关告捷", result.stage or game.stage or 1), 15, C.warn,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+
+    DrawPixelText(ctx, game.width * 0.5, winY + 70, result.rating or "通关", 34, C.text,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawStarRow(ctx, game.width * 0.5, winY + 120, stars, 40, 18)
+
+    DrawPixelText(ctx, game.width * 0.5, winY + 188,
+        string.format("剩余防线 %d / %d", math.floor(game.baseHp or 0), game.maxBaseHp or 100),
+        17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, winY + 214,
+        string.format("本关奖励  +%d 分   +%d 零件", math.floor(result.bonusScore or 0),
+            math.floor(result.bonusParts or 0)), 16, C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if game.newRecord then
+        DrawPixelText(ctx, game.width * 0.5, winY + 240, "刷新最高分", 16, C.warn,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
+    local retryBtn, nextBtn, menuBtn = GetStageWinButtonLayout(game)
+    -- 下一关：有下一关时青底主 CTA，通关到最后一关时置灰。
+    if game.stageHasNext then
+        DrawRect(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.cyan, 8)
+        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 12, "下一关", 20, C.ink,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        DrawRect(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.widget, 8)
+        DrawStroke(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.cyanDim, 8, 1)
+        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 12, "已通关全部", 18, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+    -- 再战本关（次级）+ 回主菜单（次级）。
+    DrawRect(ctx, retryBtn.x, retryBtn.y, retryBtn.w, retryBtn.h, C.card, 8)
+    DrawStroke(ctx, retryBtn.x, retryBtn.y, retryBtn.w, retryBtn.h, C.cyanDim, 8, 1.4)
+    DrawPixelText(ctx, retryBtn.x + retryBtn.w * 0.5, retryBtn.y + 12, "再战本关", 20, C.text,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    DrawRect(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.widget, 8)
+    DrawStroke(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.cyanDim, 8, 1.4)
+    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 10, 24, 1)
+    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 10, "回主菜单", 18, C.text,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    local toast = presentation and presentation.adToast
+    if toast and toast ~= "" then
+        DrawPixelText(ctx, game.width * 0.5, menuBtn.y + menuBtn.h + 22, toast, 15, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
@@ -2039,17 +2146,13 @@ local function DrawWaveBanner(ctx, game, presentation)
     local stageTime = presentation.stageBannerTimer or 0
     if stageTime > 0 then
         local number = presentation.stageBannerNumber or game.stage or 1
-        local isCleared = game.stageClearPending
-        local accent = isCleared and C.warn or C.cyan
-        local title = isCleared and string.format("第 %d 关完成", number)
-            or string.format("第 %d 关开始", number)
         nvgSave(ctx)
         nvgGlobalAlpha(ctx, math.min(1, stageTime / 0.4))
-        DrawBluePanel(ctx, game.width * 0.5 - 166, 250, 332, 92, C.card, accent, 6)
-        DrawPixelText(ctx, game.width * 0.5, 264, title, 27, accent,
+        DrawBluePanel(ctx, game.width * 0.5 - 166, 250, 332, 92, C.card, C.cyan, 6)
+        DrawPixelText(ctx, game.width * 0.5, 264, string.format("第 %d 关开始", number), 27, C.cyan,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawPixelText(ctx, game.width * 0.5, 306,
-            isCleared and "清除首领 · 即将进入下一关" or "十波防线 · 三精英一首领", 16, C.text,
+            "十波防线 · 三精英一首领", 16, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         nvgRestore(ctx)
         return
@@ -2364,20 +2467,23 @@ local function RenderOverlay(game, presentation, meta)
         RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
     end
 
-    local currentWindow = game.state == "gameover" or game.state == "levelup" or game.state == "paused"
+    local currentWindow = game.state == "gameover" or game.state == "levelup"
+        or game.state == "paused" or game.state == "stagewin"
     if uiGameLeaving_ and uiGameLeaving_.visual and not currentWindow then
         local old = uiGameLeaving_
         DrawAnimatedWindow("game-window-out", uiGameLeaveAt_, true, function()
             local oldGame = old.visual.game
             if old.state == "gameover" then DrawGameOver(vg_, oldGame, presentation)
             elseif old.state == "levelup" then DrawLevelUp(vg_, oldGame, presentation)
-            elseif old.state == "paused" then DrawPaused(vg_, oldGame, old.visual.meta, presentation) end
+            elseif old.state == "paused" then DrawPaused(vg_, oldGame, old.visual.meta, presentation)
+            elseif old.state == "stagewin" then DrawStageWin(vg_, oldGame, presentation) end
         end, "game")
     end
     if currentWindow then
         DrawAnimatedWindow("game-window-in", uiStateMotionEnter_, false, function()
             if game.state == "gameover" then DrawGameOver(vg_, game, presentation)
             elseif game.state == "levelup" then DrawLevelUp(vg_, game, presentation)
+            elseif game.state == "stagewin" then DrawStageWin(vg_, game, presentation)
             else DrawPaused(vg_, game, meta, presentation) end
         end, "game")
     end
@@ -2769,6 +2875,27 @@ function Backend.HitTestGameOverButton(uiX, uiY, game)
     -- v0.12.5：结算页「回主菜单」出口
     if inside(menu) then return "menu" end
     return nil
+end
+
+-- v0.13.4：胜利结算页命中（再战本关 / 下一关 / 回主菜单）。几何与 DrawStageWin 同源。
+function Backend.HitTestStageWinButton(uiX, uiY, game)
+    uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
+    local retry, nextBtn, menu = GetStageWinButtonLayout(game or {})
+    local function inside(btn)
+        return uiX >= btn.x and uiX <= btn.x + btn.w
+            and uiY >= btn.y and uiY <= btn.y + btn.h
+    end
+    if inside(retry) then return "retry" end
+    -- 「下一关」仅在还有下一关时可点。
+    if inside(nextBtn) then return (game and game.stageHasNext) and "next" or nil end
+    if inside(menu) then return "menu" end
+    return nil
+end
+
+-- v0.13.4：主菜单「开始战斗」CTA 命中（几何与 DrawMenu 共用 GetMenuCtaRect）。
+function Backend.HitTestMenuCta(uiX, uiY, game)
+    local cta = GetMenuCtaRect(game or {})
+    return (uiX >= cta.x and uiX <= cta.x + cta.w and uiY >= cta.y and uiY <= cta.y + cta.h)
 end
 
 -- v0.12.5 精简：升级面板命中（只保留免费重抽/看广告重抽/锁定/选卡）。

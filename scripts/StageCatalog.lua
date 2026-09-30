@@ -36,7 +36,7 @@ function StageCatalog.GetSpecialKey(stage, stageWave)
     return nil
 end
 
--- v0.13.1：用户要求「一波 = 原先两波以上」——每波编队量取旧基线 2 倍，
+-- v0.13.4：用户要求「一波 = 原先两波以上」——每波编队量取旧基线 2 倍，
 -- 波内随进度阶梯递增（6→8→10），逐关 +1；硬顶 12 = MAX_FLEET（同屏预算不放宽）。
 function StageCatalog.GetNormalCount(stage, stageWave)
     return math.min(StageCatalog.MAX_FLEET,

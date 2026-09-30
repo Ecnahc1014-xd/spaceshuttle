@@ -47,6 +47,8 @@ local function NewState()
         dailyProgress = {},
         dailyClaimed = {},
         codex = {},
+        stageStars = {},
+        maxStage = 1,
         skins = { default = true },
         selectedSkin = "default",
         shopBought = {},
@@ -97,6 +99,20 @@ local function AsBoolMap(src)
     return out
 end
 
+-- 关卡星级表：JSON 对象键是字符串，这里还原为整数键、1..3 星钳制。
+---@param src any
+---@return table<integer, integer>
+local function AsStageStars(src)
+    local out = {}
+    if type(src) ~= "table" then return out end
+    for k, v in pairs(src --[[@as table]]) do
+        local stage = math.floor(tonumber(k) or 0)
+        local stars = math.floor(tonumber(v) or 0)
+        if stage >= 1 and stars >= 1 then out[stage] = math.min(3, stars) end
+    end
+    return out
+end
+
 ---@return string
 local function Today()
     return os.date("%Y-%m-%d", os.time())
@@ -139,6 +155,8 @@ function PlayerData.Load()
     state.dailyProgress = AsIntMap(d.dailyProgress)
     state.dailyClaimed  = AsBoolMap(d.dailyClaimed)
     state.codex        = AsBoolMap(d.codex)
+    state.stageStars   = AsStageStars(d.stageStars)
+    state.maxStage     = math.max(1, AsInt(d.maxStage))
     state.shopBought   = AsBoolMap(d.shopBought)
     state.passClaimed  = math.max(0, AsInt(d.passClaimed))
     state.firstGiftClaimed = d.firstGiftClaimed == true
@@ -227,6 +245,11 @@ function PlayerData.ImportFromCloud(text)
     end
     state.highScore  = math.max(state.highScore, cloudHigh)
     for k in pairs(cloudCodex) do state.codex[k] = true end
+    -- 关卡星级跨设备取更大值；解锁范围取更远的关。
+    for stage, stars in pairs(AsStageStars(d.stageStars)) do
+        if (state.stageStars[stage] or 0) < stars then state.stageStars[stage] = stars end
+    end
+    state.maxStage = math.max(state.maxStage, math.max(1, AsInt(d.maxStage)))
     for k in pairs(cloudSkins) do state.skins[k] = true end
     local cloudSelected = AsStr(d.selectedSkin)
     if state.selectedSkin == "default" and state.skins[cloudSelected] then
@@ -472,6 +495,50 @@ function PlayerData.CodexCount()
     local n = 0
     for _ in pairs(state.codex) do n = n + 1 end
     return n
+end
+
+-- ============================================================================
+-- 关卡进度（选关界面 + 星级存档）
+-- ============================================================================
+
+---@param stage integer
+---@return integer 该关历史最佳星级（0 = 未通关）
+function PlayerData.GetStageStars(stage)
+    return state.stageStars[stage] or 0
+end
+
+---@return integer 已解锁的最大关卡号（至少 1）
+function PlayerData.GetMaxStage()
+    return state.maxStage
+end
+
+---@param stage integer
+---@return boolean
+function PlayerData.IsStageUnlocked(stage)
+    return stage >= 1 and stage <= state.maxStage
+end
+
+-- 通关记录：刷新该关最佳星级并解锁下一关。stars=1..3。
+---@param stage integer
+---@param stars integer
+function PlayerData.RecordStageResult(stage, stars)
+    stage = math.floor(tonumber(stage) or 0)
+    stars = math.min(3, math.max(1, math.floor(tonumber(stars) or 1)))
+    if stage < 1 then return end
+    local changed = false
+    if (state.stageStars[stage] or 0) < stars then
+        state.stageStars[stage] = stars
+        changed = true
+    end
+    if stage + 1 > state.maxStage then
+        state.maxStage = stage + 1
+        changed = true
+    end
+    if changed then
+        PlayerData.Save()
+        print("[PlayerData] stage " .. stage .. " stars=" .. stars
+            .. " unlocked to " .. state.maxStage)
+    end
 end
 
 -- ============================================================================

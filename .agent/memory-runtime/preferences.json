@@ -14,9 +14,10 @@
     "fixed_aspect_canvas": "raw NanoVG、3D Viewport 与输入共享同一 DPR-aware CONTAIN scale/offset；倾斜相机还需统一玩法平面投影逆变换，非目标比例只做 letterbox",
     "compact_ammo_layout": "底部弹药/状态槽使用紧凑小方形并靠左右两侧分组，中间保留玩法主体空间",
     "ui_safe_zones": "HUD、playing Dock 与 menu/gameover modal 使用不透明互斥安全层；按游戏状态隐藏不适用的轨迹、冲击反馈和弹药槽，菜单主视觉不得与 CTA 无意相交",
-    "survivor_loop": "肉鸽幸存者结构：基地生命高（100）、敌方编队推进且单块越线独立扣血、XP/升级三选一与局内强化池；升级效果只改规则变量并通过快照暴露给 UI；波次持续涌出并随进度收紧、受同屏上限约束；过高的加速技能要明确削弱",
+    "survivor_loop": "肉鸽幸存者结构：基地生命高（100）、敌方编队推进且单块越线独立扣血、XP/升级三选一与局内强化池；升级效果只改规则变量并通过快照暴露给 UI；关卡式：每关固定十波（3/6/8 精英、10 Boss），逐关加怪/时长、每三关血量成长；独立选关界面、Boss 击败出胜利结算由玩家手动进下一关、不自动续关；按剩余血量给评级+星级，星级与解锁度入存档。同波编队密度受同屏上限约束；过高的加速技能要明确削弱",
     "monetization_ui": "商业化 UI 三色语义：绿=看广告（免费获取）、金=付费/稀有、青=既有品牌强调色、红只留给错误/低血/危险；商业化元素不得顶开 HUD/Dock 安全层，必须重对齐既有命中常量；单局广告触点 ≤3–5 次",
-    "monetization_arch": "广告变现三件套（软货币/存档层/统一广告调度层）之上可叠加「单机间接联机」解锁内购：入口分流 + 服务端只做 IAP 发货与权威货币余额（serverCloud 事务 + orderId 幂等），不复制场景；离线短路云能力；业务代码禁止裸调 ShowRewardVideoAd；一次性兑换品服务端事务前查已购标志；发货标志搭余额推送顺风车、客户端本地幂等补发"
+    "monetization_arch": "广告变现三件套（软货币/存档层/统一广告调度层）之上可叠加「单机间接联机」解锁内购：入口分流 + 服务端只做 IAP 发货与权威货币余额（serverCloud 事务 + orderId 幂等），不复制场景；离线短路云能力；业务代码禁止裸调 ShowRewardVideoAd；一次性兑换品服务端事务前查已购标志；发货标志搭余额推送顺风车、客户端本地幂等补发",
+    "level_structure": "关卡式玩法（v0.13.4）：波→关两级；过关/进下一关不复用整局重置（会清成长），单列换算累计波号的入口；关卡推进必须玩家显式确认（选关/胜利结算），进度类结果（星级/解锁）落盘 + 跨设备取更优值合并"
   },
   "workflow_preferences": {
     "gamedev": "大规模 3D 开发前先建立可替换渲染边界，保持规则契约，并用菜单态、非目标比例 letterbox 与实际游戏态截图同时验证镜头和表现"
@@ -58,7 +59,9 @@
     "像素素材必须走 0718-pixelimage-aigc 流水线（AI 草案→包围盒→LANCZOS 母版→alpha 二值化→色板量化≤9 色），禁止 AI 原图直接进资源",
     "像素图 NanoVG 装载：NEAREST 采样 + 整数倍显示 + 多张纵横比不同时逐图按各自宽度居中，禁止非整数拉伸",
     "首页主视觉要融合玩法元素（重卡弹道/敌机/砖墙裂纹）并可轮播，纯程序化大字体会被判『太无聊、没有游戏元素介入』",
-    "高级暗科技 UI 用短幅材质层级、稀疏局部纹理和黄铜/品牌青小面积点缀；不要满屏发光、粗描边、花纹穿过正文"
+    "高级暗科技 UI 用短幅材质层级、稀疏局部纹理和黄铜/品牌青小面积点缀；不要满屏发光、粗描边、花纹穿过正文",
+    "关卡式要有独立选关界面、打完不自动进下一关而是出胜利结算供玩家选；按剩余防线血量给评级+星级；星级与关卡解锁度纳入存档",
+    "「一波」= 原先两波以上的怪量（要求每波编队密度翻倍），不是把节奏拆得更碎"
   ],
   "implicit_preferences": [
     "重视可维护性和后续 3D 迁移成本",
@@ -104,7 +107,10 @@
       "require_window_fade_bounce_transitions": true,
       "prefer_crate_textured_enemy_blocks": true,
       "require_ejected_blocks_to_stop_colliding_and_spin_away": true,
-      "require_non_overlapping_aircraft_layout": true
+      "require_non_overlapping_aircraft_layout": true,
+      "require_stage_select_entry": true,
+      "require_manual_stage_advance": true,
+      "require_star_and_unlock_persistence": true
     }
   }
 }

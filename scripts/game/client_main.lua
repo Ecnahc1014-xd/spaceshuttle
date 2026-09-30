@@ -14,10 +14,12 @@ local PlayerData = require "PlayerData"
 local AdService = require "AdService"
 local MetaCatalog = require "MetaCatalog"
 local AircraftPixelData = require "AircraftPixelData"
+local StageCatalog = require "StageCatalog"
 local GameMode = require "GameMode"
 local NetClient = require "network.Client"
 local MetaUI = require "MetaUI"
 local RechargeShop = require "ui.RechargeShop"
+local StageSelect = require "ui.StageSelect"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
 
@@ -35,6 +37,8 @@ local reviveArmed = false
 local doubleArmed = false
 local restartArmed = false
 local menuArmed = false
+-- v0.13.4：胜利结算页松手确认（避免误触直接跳关）。
+local stageWinArmed = nil
 local metaPointerConsumed = false
 local CLOUD_HIGH_SCORE_KEY = "high_score"
 local CLOUD_META_KEY = "player_meta"
@@ -249,6 +253,10 @@ local metaState = {
     gems = 0,
     highScore = 0,
     screen = nil,
+    -- 选关界面（v0.13.4）：星级 + 已解锁范围 + 关卡总数，供 StageSelect 只读渲染。
+    stageStars = {},
+    maxStage = 1,
+    stageTotal = 0,
     supplyOpen = false,
     supplyAvailable = false,
     supplyReward = 0,
@@ -387,6 +395,15 @@ RefreshMeta = function()
     metaState.aircraft = aircraftSilhouettes
     metaState.codexUnlocked = PlayerData.CodexCount()
     metaState.codexTotal = MetaCatalog.GetCodexTotal()
+
+    -- 选关界面数据（v0.13.4）：逐关星级 + 已解锁范围。
+    local stageStars = {}
+    for stage = 1, StageCatalog.STAGE_COUNT do
+        stageStars[stage] = PlayerData.GetStageStars(stage)
+    end
+    metaState.stageStars = stageStars
+    metaState.maxStage = PlayerData.GetMaxStage()
+    metaState.stageTotal = StageCatalog.STAGE_COUNT
 
     local skins = {}
     for _, skin in ipairs(MetaCatalog.GetSkins()) do
@@ -747,6 +764,16 @@ local function HandleMetaAction(action, index)
     if action == "close" then
         metaState.screen = nil
         RefreshMeta()
+    elseif action == "open_stage_select" then
+        OpenMetaScreen("stage_select")
+    elseif action == "play_stage" and index then
+        -- 选关界面点某关：解锁校验（StageSelect 命中已过滤，这里兜底），关面板后开该关。
+        if PlayerData.IsStageUnlocked(index) then
+            metaState.screen = nil
+            Game.StartStageAt(index)
+            RefreshSnapshots()
+            print("[Main] start stage from select: " .. tostring(index))
+        end
     elseif action == "open_shop" then
         OpenMetaScreen("shop")
     elseif action == "open_codex" then
@@ -844,6 +871,11 @@ local function HandleMetaPointerDown(uiX, uiY)
     if metaState.screen then
         local action, index = RenderBackend.HitTestMetaScreen(uiX, uiY, metaState)
         if action then HandleMetaAction(action, index) end
+        return true
+    end
+    -- v0.13.4：主菜单「开始战斗」CTA 打开选关界面（不再直接开局）。
+    if gameSnapshot and RenderBackend.HitTestMenuCta(uiX, uiY, gameSnapshot) then
+        HandleMetaAction("open_stage_select", nil)
         return true
     end
     local action = RenderBackend.HitTestMenuBar(uiX, uiY, metaState)
@@ -1072,6 +1104,29 @@ local function HandleGameOverPointerUp(uiX, uiY)
     return false
 end
 
+-- v0.13.4：胜利结算页（stagewin）松手确认。Down 只武装命中的按钮，Up 时才真正跳关/重开/回菜单。
+local function HandleStageWinPointerDown(uiX, uiY)
+    local hit = RenderBackend.HitTestStageWinButton(uiX, uiY, Game.GetSnapshot())
+    stageWinArmed = hit
+    return hit ~= nil
+end
+
+local function HandleStageWinPointerUp(uiX, uiY)
+    local hit = RenderBackend.HitTestStageWinButton(uiX, uiY, Game.GetSnapshot())
+    local armed = stageWinArmed
+    stageWinArmed = nil
+    if not armed or armed ~= hit then return armed ~= nil end
+    if armed == "next" then
+        Game.NextStage()
+    elseif armed == "retry" then
+        Game.RetryStage()
+    elseif armed == "menu" then
+        Game.GoToMenu()
+    end
+    RefreshSnapshots()
+    return true
+end
+
 local started_ = false
 
 -- 离线降级：云能力（云存档/排行榜/余额）在单机路径上全部短路，只读本地。
@@ -1099,6 +1154,9 @@ function ClientMain.Start(opts)
     -- v0.11.0 联机：充值弹层复用游戏 UI 的令牌与原语（UI 无污染）。
     RechargeShop.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("recharge", RechargeShop.Draw, RechargeShop.HitTest)
+    -- v0.13.4：选关界面同样复用游戏令牌（插件式注册，不反向依赖渲染后端）。
+    StageSelect.Init(MetaUI.GetDeps())
+    MetaUI.RegisterScreen("stage_select", StageSelect.Draw, StageSelect.HitTest)
 
     PlayerData.Load()
     metaDate = os.date("%Y-%m-%d")
@@ -1232,7 +1290,8 @@ function HandleUpdate(eventType, eventData)
     end
 
     -- v0.11.0 商业化：结算页一出现就按 ×1 把本局零件入库（幂等，同帧只结算一次）。
-    if snapshot.state == "gameover" and not snapshot.partsSettled then
+    -- v0.13.4：胜利结算（stagewin）同样入库，并记录该关星级 + 解锁下一关。
+    if (snapshot.state == "gameover" or snapshot.state == "stagewin") and not snapshot.partsSettled then
         local newBricks, firstFinish = Game.TakeSettlementStats()
         local granted = Game.SettleParts(1)
         if granted > 0 then PlayerData.AddParts(granted) end
@@ -1243,6 +1302,9 @@ function HandleUpdate(eventType, eventData)
         PlayerData.AddDailyProgress("reach_wave", math.floor(snapshot.wave or 1), true)
         if firstFinish then PlayerData.AddDailyProgress("play_runs", 1) end
         PlayerData.SetHighScore(math.floor(snapshot.highScore or 0))
+        if snapshot.state == "stagewin" and snapshot.stageResult then
+            PlayerData.RecordStageResult(snapshot.stageResult.stage, snapshot.stageResult.stars)
+        end
         local bonus = 0
         for _, key in ipairs(snapshot.runAircraft or {}) do
             if PlayerData.UnlockCodex(key) then
@@ -1290,6 +1352,11 @@ function HandleMouseDown(eventType, eventData)
         HandleGameOverPointerDown(uiX, uiY)
         return
     end
+    if Game.IsStageWin() then
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleStageWinPointerDown(uiX, uiY)
+        return
+    end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     if Game.IsLevelUp() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
@@ -1330,6 +1397,12 @@ function HandleMouseUp(eventType, eventData)
         HandleGameOverPointerUp(uiX, uiY)
         return
     end
+    if Game.IsStageWin() then
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleStageWinPointerUp(uiX, uiY)
+        return
+    end
     -- v0.10.24：升级态的按下已在 Down 分支消费，禁止其穿透成玩法 PointerUp。
     if Game.IsLevelUp() then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
@@ -1343,7 +1416,8 @@ function HandleMouseUp(eventType, eventData)
 end
 
 function HandleMouseMove(eventType, eventData)
-    if Game.IsLevelUp() or Game.IsGameOver() or IsMetaCapturing() or metaPointerConsumed then return end
+    if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
+        or IsMetaCapturing() or metaPointerConsumed then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerMove(x, y)
@@ -1360,6 +1434,11 @@ function HandleTouchBegin(eventType, eventData)
     if Game.IsGameOver() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         HandleGameOverPointerDown(uiX, uiY)
+        return
+    end
+    if Game.IsStageWin() then
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleStageWinPointerDown(uiX, uiY)
         return
     end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
@@ -1394,7 +1473,8 @@ function HandleTouchBegin(eventType, eventData)
 end
 
 function HandleTouchMove(eventType, eventData)
-    if Game.IsLevelUp() or Game.IsGameOver() or IsMetaCapturing() or metaPointerConsumed then return end
+    if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
+        or IsMetaCapturing() or metaPointerConsumed then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     Game.PointerMove(x, y)
@@ -1405,6 +1485,12 @@ function HandleTouchEnd(eventType, eventData)
         local screenX, screenY = GetScreenCoordinates(eventData)
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         HandleGameOverPointerUp(uiX, uiY)
+        return
+    end
+    if Game.IsStageWin() then
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleStageWinPointerUp(uiX, uiY)
         return
     end
     if Game.IsLevelUp() then return end
@@ -1423,6 +1509,11 @@ function HandleKeyDown(eventType, eventData)
     if key == KEY_SPACE or key == KEY_RETURN then
         if Game.IsGameOver() then
             Game.RestartFromOver()
+        elseif Game.IsStageWin() then
+            -- v0.13.4：胜利结算页要求显式点按钮，回车不自动跳关/重开。
+        elseif gameSnapshot and gameSnapshot.state == "menu" then
+            -- 主菜单回车与「开始战斗」CTA 一致：进选关界面，不再直接开局。
+            HandleMetaAction("open_stage_select", nil)
         else
             Game.HandleAction("start", true)
         end
@@ -1435,7 +1526,7 @@ function HandleKeyDown(eventType, eventData)
             metaState.supplyOpen = false
         elseif Game.IsPaused() then
             Game.Resume()
-        elseif not Game.IsLevelUp() and not Game.IsGameOver() then
+        elseif not Game.IsLevelUp() and not Game.IsGameOver() and not Game.IsStageWin() then
             Game.Pause()
         end
     end

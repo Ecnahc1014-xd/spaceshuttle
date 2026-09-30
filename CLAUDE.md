@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.4（关卡式：选关界面 + 胜利结算 + 星级/解锁存档）：
+  - **选关入口**：主菜单「开始战斗」不再直接开局，改为打开 `scripts/ui/StageSelect.lua`（插件式注册进 `MetaUI.RegisterScreen("stage_select")`，复用注入令牌，零 urhox-libs/UI）。15 关按 5 列铺格，显示每关历史星级（★）与「未解锁」程序化锁形；点已解锁格 `HandleMetaAction("play_stage", index)` → `Game.StartStageAt(index)`。`Game.PointerDown/Up` 在 menu 态不再开局（`startArmed` 退化为防误触守卫）；键盘回车在 menu 同样转开选关。
+  - **胜利结算态 `stagewin`（不再自动进下一关）**：`Game` 新增状态，Boss 击败即置 `stageResult`（含 stage/stars/rating/bonusScore/bonusParts）+ 提交最高分 + `gameState="stagewin"`；v0.13.0 的 4 秒休整自动进关逻辑（`stageClearPending`/`stageBreak`）整体删除。`Scene3DBackend.DrawStageWin` 复用 `DrawAnimatedWindow("game")` 弹动窗 + 命中逆变换；按钮「下一关 `Game.NextStage()` / 再战本关 `Game.RetryStage()` / 回主菜单 `Game.GoToMenu()`」由 `client_main` 松手确认（`HandleStageWinPointerDown/Up`，仿 gameover 模态）。`UpdateUiState` 的 leaving 快照三处 state 判定全部加进 stagewin，避免旧窗残影。
+  - **评级 + 星级 + 存档**：`ComputeStageResult` 按剩余 `baseHp` 比例折算（≥0.75=完美3星 / ≥0.40=优良2星 / else 险胜1星），bonus=200×星 分、50×星 零件，随 win 计入 score/partsEarned。`PlayerData` 新增 `stageStars`（关号→最佳星）+ `maxStage`（解锁上界，win 后 =stage+1），`RecordStageResult/GetStageStars/GetMaxStage/IsStageUnlocked`；`AsStageStars` 把 JSON 字符串键还原整数并钳 1..3；`ImportFromCloud` 跨设备取更大星级、更远 maxStage。入库守卫 `TakeSettlementStats`/`SettleParts` 与 `client_main` 结算块扩到 `gameover ∪ stagewin`，win 时落库。`RefreshMeta` 填 `metaState.stageStars/maxStage` 供选关只读。
+  - **验证**：LSP workspace 0 Error（build 上传 ✅）；纯规则探针 `probe_stageflow`（选关起点/波次密度翻倍/Boss→stagewin/星级映射/NextStage 累计波号/入库/hasNext 边界）PASS，`probe_partial_boss`（部分越线后击杀仍记 bossDefeated→stagewin）、`probe_boss_escape`（完全越线只扣血、血未归零重派同关第十波）迁移到新语义后 PASS；上一批 `probe_stage`（五关/50波/十精英/五Boss/召唤/184 色板无冲突 + 手动 NextStage）PASS。真渲染冒烟 probe_play 战斗帧零 Lua/overlay 错误。⚠️ 待 Preview：选关/胜利窗真机弹动手感、六车型 × 关卡节奏叠加后的真机帧时与手感。BUILD_VERSION/大厅 →0.13.4。
+  - ⚠️ **关卡切换绝不走 ResetGame**（会清成长）；`StartGameAt` 只重置局内态并把 `wave` 换算为 `(stage-1)*10+1` 累计波号（每日任务「抵达第N波」在后期关仍成立）。`stage_started` 横幅仅 stage>1 播报，stagewin 由独立界面承接、`stage_cleared` 事件不再驱动表现（FEEDBACK_MAP 已移除 stageClearBanner）。
+  - ⚠️ **多状态模态必须四处同步**：新增可弹窗玩法态（如 stagewin）要同时改 `UpdateUiState` 的 leaving/visual 判定、`RenderOverlay` 的 currentWindow/in/out 分发、规则层 `PointerDown/Up/GoToMenu/TakeSettlement`、`client_main` 六个输入处理器 + `HandleKeyDown` + 结算块——漏任一处就是「点不动/残影/入库丢」。用 grep 上一个同类态（gameover）的全部命中点逐一补齐。
 - 版本: 0.13.3（车辆飞行尾迹 + 全窗口渐显渐隐弹动过渡）：
   - **3D 车辆尾迹（用户点名恢复）**：`Renderer3D` 新增 `SyncVehicleTrails`——只给**飞行中**（`not onSling`）车辆沿轨迹采样软圆点：0.035s 间隔、寿命 0.3s、每车最多 6 点、同弹种最多 8 车，四种弹药各一个 `BillboardSet`（DiffAlpha 颜色烘焙纹理，沿用 v0.10.21 透明粒子显色契约，4 draw call 封顶）；点尺寸锚定 `marble.radius*WORLD_SCALE` 随生命收缩，z 取车辆锚点 -0.05（斜俯视投影贴车）。非 playing 态、重开（ClearRunVisuals）与 Shutdown 均清空；`flightTime` 回绕检测防 id 复用串轨；静止/暂停采样不推进。规则层未改。
   - **窗口过渡动画**：`Scene3DBackend` 新增统一 `DrawAnimatedWindow`——入场 0.32s 渐显 + 弹性缩放（0.91→1.03→1.0，EaseOutCubic 两段），退场 0.18s 渐隐 + 微缩；覆盖**结算/升级/暂停**三个游戏窗口与**元层面板（任务/图鉴/排行/商城/档案/转盘/充值）+ 每日补给弹窗**，窗口按快照 state/screen/supplyOpen 变化驱动，独立视觉时钟 `uiClock_`（game.elapsed 差分、重开归零）与玩法解耦。旧四模态的 `ModalIntro` 整层 alpha 改为仅遮罩/内容分层处理（遮罩不随缩放、避免边缘漏底），主菜单保留原全屏淡入。
@@ -132,6 +139,13 @@
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
 - 上次交付: v0.13.3 车辆飞行尾迹（3D BillboardSet 四弹种合批）+ 全窗口渐显渐隐弹动过渡（命中逆变换、遮罩不缩放、退场残影作废）
+
+## 本批次新增避雷（v0.13.4 选关 + 胜利结算 + 星级存档）
+- 🔴 **新增一个可弹窗玩法状态，必须把上一个同类态（gameover）的每个命中点都补齐（v0.13.4）**：stagewin 要在 ①`Game.PointerDown/Up` 早退、`GoToMenu`、`TakeSettlementStats`/`SettleParts`；②`UpdateUiState` 的 leaving/visual 三处 state 判定；③`RenderOverlay` 的 `currentWindow` + `game-window-in/out` 分发；④`client_main` 六个 Mouse/Touch 处理器 + `HandleKeyDown` + 结算入库块 —— 全部并列处理。漏任一处分别表现为「点了没反应 / 旧窗残影 / 胜利页不入库 / 键盘穿透」。做法：`grep -n gameover` 拿到全部出现点逐条加 stagewin 分支。
+- ⚠️ **过关绝不能复用 ResetGame；累计波号必须换算而非重置（v0.13.4）**：ResetGame 会清 level/upgrade/unlockedBalls。`StartGameAt(stage)` 走 ResetGame 后立即把 `wave=(stage-1)*10+1`，保证每日任务「抵达第N波」在后期关按真实进度计；stagewin→NextStage/RetryStage 也走 StartGameAt。胜利态只置 `stageResult` 并停住，不推进波次、不扣血。
+- ⚠️ **星级/解锁这类「整数键 map」进 JSON 存档要自建解码器（v0.13.4）**：`AsIntMap`/`AsBoolMap` 把键 `tostring`，关卡号需要 `table<integer,integer>`；新增 `AsStageStars` 用 `tonumber(k)` 还原并钳 `1..3`；`RecordStageResult` 取 max、`maxStage` 取更远，`ImportFromCloud` 跨设备同规则合并，否则换设备回退解锁进度。
+- ⚠️ **弹动窗口的胜利/结算页命中要过 WindowInput（v0.13.4 复用 v0.13.3 契约）**：`HitTestStageWinButton`/`HitTestMenuCta` 里先 `uiX,uiY=WindowInput(...)`（game-window 用 `uiStateMotionEnter_`，菜单 CTA 用恒等变换不套 WindowInput）再判矩形，与 `DrawStageWin` 几何同源。
+- ⚠️ **探针断言要跟规则语义同步（v0.13.4）**：改「自动进关→手动 stagewin」后，旧探针（认 stageClearPending、认游戏结束才 next）必红；升级优先于胜利结算，清 Boss 若同帧触发 levelup，探针要先 `PickUpgrade` 回 playing 再等下一帧 stagewin。红探针先分清「契约变更」vs「真 bug」，别为过探针回退正确设计。
 
 ## 本批次新增避雷（v0.13.3 车辆尾迹 + 窗口弹动过渡）
 - 🔴 **动画窗口必须做命中逆变换，否则弹动期间按钮点不准（v0.13.3）**：窗口内容用 `nvgTranslate(center)+nvgScale(s)` 绘制时，输入侧必须 `WindowInput(x,y)` 以同一 scale 做逆变换再进 `HitTest*`。只改绘制不改命中=「看得到点不到」，用户必然截图打回（历史上弹窗按钮漂移被点过名）。
