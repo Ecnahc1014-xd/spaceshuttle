@@ -102,7 +102,7 @@ local function GetLayout(w)
     -- 内容高度覆盖错位后最高线路的完整卡片与留白。
     local maxLaneOffset = 0.5
     local topPad = CARD_R + 16
-    local botPad = CARD_R + 24 + (selectedId_ and 160 or 0)
+    local botPad = CARD_R + 24
     local contentH = topPad + botPad
         + (TalentCatalog.MAX_STAGE - 1 + maxLaneOffset) * ROW_STEP
     return {
