@@ -101,10 +101,10 @@ local function GetLayout(w)
     }
     -- 内容高度覆盖错位后最高线路的完整卡片与留白。
     local maxLaneOffset = 0.5
-    local topPad = CARD_R + 16
-    local botPad = CARD_R + 24
+    local topPad = CARD_R + 4 + maxLaneOffset * ROW_STEP
+    local botPad = CARD_R + 24 + maxLaneOffset * ROW_STEP
     local contentH = topPad + botPad
-        + (TalentCatalog.MAX_STAGE - 1 + maxLaneOffset) * ROW_STEP
+        + (TalentCatalog.MAX_STAGE - 1) * ROW_STEP
     return {
         content = content, close = close, laneX = laneX, colW = colW, headerY = headerY,
         topPad = topPad, botPad = botPad, contentH = contentH,
@@ -160,14 +160,35 @@ local function SetScrollFromThumb(L, pointerY, pointerOffset)
 end
 
 local function DrawScrollbar(ctx, L)
-    local thumb = GetScrollbarThumb(L)
-    if not thumb then return end
     local C = Style()
     local track = L.scrollbarTrack
-    D.rect(ctx, track.x - 2, track.y, 8, track.h, C.rail, 4)
-    D.rect(ctx, thumb.x, thumb.y, thumb.w, thumb.h, C.cyanDim, 6)
-    D.rect(ctx, thumb.x + 4, thumb.y + math.max(4, thumb.h * 0.5 - 9),
-        4, 18, C.cyan, 2)
+    -- v0.13.16：原轨道用 C.rail（22,36,56）与深色底几乎同色 → 玩家看不出「这里有东西可滑」。
+    -- 改为**明显可见的灰色轨道**：外描边 + 中灰填充，做成标准滚动条观感。
+    -- ⚠️ 两个关键点：
+    --   ① 轨道**常驻**绘制（即使当前内容不需要滚动）——它是"这里能滑"的引导，不是状态指示；
+    --      旧实现把整条滚动条放在 GetScrollbarThumb 之后，没内容可滚时连轨道都不画 → 无提示。
+    --   ② 箭头画在轨道**上下外侧**，不占用轨道内部——滑块几何与命中（SetScrollFromThumb）
+    --      共用同一组数值，改内部会连带影响拖拽，所以这里只加装饰。
+    local trackColor = { 96, 112, 132, 255 }      -- 中灰（明显高于底色）
+    local trackEdge = { 148, 166, 188, 255 }      -- 浅灰描边
+    local tx, ty, tw, th = track.x - 2, track.y, 8, track.h
+    D.rect(ctx, tx, ty, tw, th, trackColor, 4)
+    D.stroke(ctx, tx, ty, tw, th, trackEdge, 4, 1.2)
+    -- 上下箭头（提示可滑动）：逐行收窄的矩形拼三角，放在轨道外侧
+    local arrowCol = { 196, 210, 226, 235 }
+    local ax = tx + tw * 0.5
+    for i = 0, 4 do
+        local w = (5 - i) * 2
+        D.rect(ctx, ax - w * 0.5, ty - 10 + i, w, 2, arrowCol, 0)         -- 上箭头
+        D.rect(ctx, ax - w * 0.5, ty + th + 6 - i, w, 2, arrowCol, 0)     -- 下箭头
+    end
+    -- 滑块：有内容可滚时才画（压在轨道上）
+    local thumb = GetScrollbarThumb(L)
+    if thumb then
+        D.rect(ctx, thumb.x, thumb.y, thumb.w, thumb.h, C.cyanDim, 6)
+        D.rect(ctx, thumb.x + 4, thumb.y + math.max(4, thumb.h * 0.5 - 9),
+            4, 18, C.cyan, 2)
+    end
 end
 
 -- ============================================================================
@@ -470,8 +491,8 @@ function TalentTree.HitTest(uiX, uiY, w, meta)
             local newLayout = GetLayout(w)
             local minCy = newLayout.content.y + CARD_R + 4
             local maxCy = math.min(
-                newLayout.content.y + newLayout.content.h - CARD_R - 4,
-                detail.y - CARD_R - 4)
+                newLayout.content.y + newLayout.content.h - CARD_R - 12,
+                detail.y - CARD_R - 12)
             local targetCy = math.max(minCy, math.min(maxCy, bestCy))
             local _, newCy = NodeCenter(newLayout, bestLaneIndex, bestStage)
             scrollY_ = scrollY_ + targetCy - newCy

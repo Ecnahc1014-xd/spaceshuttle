@@ -361,7 +361,8 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     D.text(ctx, L.wallet.x + 52, L.wallet.y + 29, string.format("%d", meta.parts or 0), 23, C.text)
     D.rect(ctx, L.wallet.x + 184, L.wallet.y + 12, 1, L.wallet.h - 24,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 110}, 0)
-    D.icon(ctx, "premium_energy_core", L.wallet.x + 194, L.wallet.y + 15, 32)
+    -- v0.13.17：钻石用 gem 图标（此前 gem 已加载却从未绘制）；premium_energy_core 留给充值按钮。
+    D.icon(ctx, "gem", L.wallet.x + 194, L.wallet.y + 15, 32)
     D.text(ctx, L.wallet.x + 232, L.wallet.y + 11, "钻石", 13, C.dim)
     D.text(ctx, L.wallet.x + 232, L.wallet.y + 29,
         meta.offline and "—" or string.format("%d", meta.gems or 0), 23, C.warn)

@@ -437,9 +437,18 @@ local C = {
     ad      = {46, 232, 107, 255},
     adDim   = {28, 138, 70, 220},
     error   = {232, 76, 76, 255},
+    -- v0.13.17：dark-tech skill 的「氛围层/装饰母题」令牌（tokens.md 同名）。
+    -- wash 与 cyan 同族但更脏，克制档下只用于装饰与残影，不顶替主强调色。
+    wash     = {0, 176, 168, 255},
+    washDim  = {0, 90, 88, 255},
+    ghost    = {186, 214, 255, 255},
+    klein    = {48, 80, 240, 255},
+    halftone = {20, 48, 120, 255},
+    ash      = {128, 148, 154, 255},
+    railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.15"
+local BUILD_VERSION = "0.13.17"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -573,6 +582,97 @@ local function DrawEdgeTicks(ctx, x, y, w, count, color)
     end
 end
 
+-- ============================================================================
+-- v0.13.17：dark-tech skill 的「氛围层 + 装饰母题」（atmosphere.md / elements.md §3）。
+-- 采用**克制档**（atmosphere.md「克制实装」）：只上底噪、扫描带、半调网点、残影、
+-- 虚线/十字/环形刻度；**不接**强调色切换、文本异变、乱码事件——HUD 与战斗读数区
+-- 一律不进入这些装饰，避免干扰可读性。全屏共享一个氛围标量（同帧只算一次）。
+-- ============================================================================
+local uiPulse_ = 0.0
+local uiPulseAt_ = -1.0
+
+-- 返回 0..1 的氛围标量：基线不为 0（界面不静止），偶发尖峰用取模周期而非随机。
+local function AnomalyPulse(elapsed)
+    if uiPulseAt_ == elapsed then return uiPulse_ end
+    local pulse = 0.08 + 0.06 * (0.5 + 0.5 * math.sin(elapsed * 0.19))
+    local cycle = (elapsed * 0.31) % 8.6
+    if cycle < 0.16 then pulse = 1.0
+    elseif cycle < 0.38 then pulse = 0.62
+    elseif cycle < 0.52 then pulse = 0.28 end
+    uiPulse_ = pulse
+    uiPulseAt_ = elapsed
+    return pulse
+end
+
+-- 虚线引线：标注、次级轴、关系连线
+local function DrawDashLine(ctx, x1, y1, x2, y2, color, width, dash, gap)
+    local dx, dy = x2 - x1, y2 - y1
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len < 1 then return end
+    local ux, uy = dx / len, dy / len
+    local drawn = 0.0
+    local d = dash or 4
+    local g = gap or 4
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    nvgStrokeWidth(ctx, width or 1)
+    while drawn < len do
+        local stop = drawn + d
+        if stop > len then stop = len end
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, x1 + ux * drawn, y1 + uy * drawn)
+        nvgLineTo(ctx, x1 + ux * stop, y1 + uy * stop)
+        nvgStroke(ctx)
+        drawn = stop + g
+    end
+end
+
+-- 十字标注点：取样点 / 定位点 / 激活标记
+local function DrawCrossMark(ctx, x, y, size, color)
+    DrawLine(ctx, x - size, y, x + size, y, color, 1)
+    DrawLine(ctx, x, y - size, x, y + size, color, 1)
+end
+
+-- 环形刻度：圆形主体外圈，每 3 段加长
+local function DrawTickRing(ctx, cx, cy, r, startDeg, endDeg, stepDeg, color)
+    local steps = math.floor((endDeg - startDeg) / stepDeg)
+    for idx = 0, steps do
+        local rad = math.rad(startDeg + idx * stepDeg)
+        local long = (idx % 3 == 0)
+        local inner = r - (long and 7 or 3)
+        local ox, oy = math.cos(rad), math.sin(rad)
+        DrawLine(ctx, cx + ox * inner, cy + oy * inner, cx + ox * r, cy + oy * r,
+            color, long and 1.3 or 0.7)
+    end
+end
+
+-- 半调网点阵：背景/面板底纹（逐点绘制，step 不要小于 7）
+local function DrawHalftone(ctx, x, y, w, h, step, alpha)
+    local s = (step or 8) * 2
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, x, y, w, h)
+    nvgFillColor(ctx, nvgRGBA(C.halftone[1], C.halftone[2], C.halftone[3], alpha or 16))
+    for gy = y, y + h, s do
+        for gx = x, x + w, s do
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, gx, gy, 0.9)
+            nvgFill(ctx)
+        end
+    end
+    nvgRestore(ctx)
+end
+
+-- 扫描带 + 拖尾：容器内部/装饰位。速度 18px/s，位置由 elapsed 决定（非随机）。
+local function DrawScanBand(ctx, x, y, w, h, elapsed)
+    local bandY = y + (elapsed * 18) % h
+    DrawRect(ctx, x, bandY, w, 1, {C.ash[1], C.ash[2], C.ash[3], 48}, 0)
+    DrawRect(ctx, x, bandY - 5, w, 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 22}, 0)
+    if uiPulse_ > 0.28 then
+        local ghostY = y + ((elapsed * 18) - 27) % h
+        DrawRect(ctx, x + 6, ghostY, math.max(0, w - 12), 2, 0,
+            {C.wash[1], C.wash[2], C.wash[3], math.floor(28 + 70 * uiPulse_)})
+    end
+end
+
 local function DrawStatusDots(ctx, x, y, count, color)
     for i = 0, count - 1 do
         nvgBeginPath(ctx)
@@ -651,6 +751,18 @@ local function DrawWindowShell(ctx, x, y, w, h, titleH)
     DrawCornerBrackets(ctx, x + 4, y + 4, w - 8, h - 8, C.cyanDim, 14, 1.2)
     DrawLine(ctx, x + 12, y + (titleH or 46), x + w - 12, y + (titleH or 46),
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 118}, 1)
+end
+
+-- v0.13.17：模态窗（结算/胜利/暂停）的 dark-tech 装饰叠加——环形刻度 + 虚线轴 + 半调底纹。
+-- 克制档：只做静态/低频装饰，不进入窗内正文与按钮命中区。
+local function DrawModalTechDecor(ctx, x, y, w, h, elapsed)
+    AnomalyPulse(elapsed)
+    DrawHalftone(ctx, x + 4, y + 4, w - 8, h - 10, 8, 16)
+    DrawTickRing(ctx, x + w - 40, y + 40, 22, -30, 210, 15,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 120})
+    DrawDashLine(ctx, x + 10, y + h - 14, x + 84, y + h - 14,
+        {C.klein[1], C.klein[2], C.klein[3], 80}, 1, 5, 4)
+    DrawCrossMark(ctx, x + 20, y + 20, 3, {C.ghost[1], C.ghost[2], C.ghost[3], 90})
 end
 
 local function DrawBaseImpactFeedback(ctx, game, presentation)
@@ -1235,10 +1347,7 @@ local ICON_PATHS = {
     codex  = "image/ui_icon_codex_20260928005024.png",
     task   = "image/ui_icon_task_20260928005023.png",
     rank   = "image/ui_icon_rank_20260928005022.png",
-    wheel  = "image/ui_icon_wheel_20260928005018.png",
     signin = "image/ui_icon_signin_20260928011015.png",
-    supply = "image/ui_icon_supply_20260928011008.png",
-    pass = "image/ui_icon_pass_20260928011014.png",
     reroll = "image/ui_icon_reroll_20260928011012.png",
     rarity = "image/ui_icon_rarity_20260928011021.png",
     double = "image/ui_icon_double_20260928011016.png",
@@ -1552,6 +1661,8 @@ local function DrawHud(ctx, game, presentation)
     DrawPixelText(ctx, 384, 68, "零件 +" .. tostring(game.runParts or 0), 12,
         (game.partsBoostTime or 0) > 0 and C.ad or C.warn)
     if (game.partsBoostTime or 0) > 0 then
+        -- v0.13.17：用上 boost 图标（此前已加载却从未绘制），标出「零件翻倍」增益生效。
+        DrawIcon(ctx, "boost", 464, 66, 16, 1)
         DrawPixelText(ctx, 490, 68, "×2", 12, C.ad, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
 
@@ -1603,6 +1714,17 @@ local function DrawMenu(ctx, game, meta)
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80}, 48)
     DrawMicroGrid(ctx, 16, 84, 96, 120, 12, 16)
     DrawMicroGrid(ctx, game.width - 112, game.height - 220, 96, 140, 12, 14)
+    -- v0.13.17 氛围层（克制档）：半调网点铺底 + 右侧装饰位扫描带 + 边角虚线轴 + 十字取样点。
+    -- 全部贴在装饰区（网格旁/贴边），不进入标题、CTA、卡片与任何命中区。
+    AnomalyPulse(game.elapsed)
+    DrawHalftone(ctx, 6, 6, game.width - 12, game.height - 12, 9, 14)
+    DrawScanBand(ctx, game.width - 116, 150, 104, 150, game.elapsed)
+    DrawDashLine(ctx, 18, 300, 18, 560,
+        {C.klein[1], C.klein[2], C.klein[3], 46}, 1, 5, 4)
+    DrawDashLine(ctx, game.width - 18, 300, game.width - 18, 560,
+        {C.klein[1], C.klein[2], C.klein[3], 46}, 1, 5, 4)
+    DrawCrossMark(ctx, 24, 640, 3, {C.ghost[1], C.ghost[2], C.ghost[3], 90})
+    DrawCrossMark(ctx, game.width - 24, 640, 3, {C.ghost[1], C.ghost[2], C.ghost[3], 90})
 
     -- ① 像素字标标题（v0.12.8）：AI 生成+管线量化的成品图，母版 120 高，
     -- NEAREST 1× 等比居中显示，每 5 秒轮播下一张（起点在进菜单时随机）；
@@ -1687,6 +1809,7 @@ local function DrawGameOver(ctx, game, presentation)
     local winX, winY = 24, 200
     local winW, winH = game.width - 48, 520
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
+    DrawModalTechDecor(ctx, winX, winY, winW, winH, game.elapsed)
     DrawPixelText(ctx, winX + 18, winY + 10, "防线失守", 22, C.cyan)
     DrawPixelText(ctx, winX + winW - 16, winY + 14, "本局结束", 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -1829,6 +1952,7 @@ local function DrawStageWin(ctx, game, presentation)
     local winX, winY = 24, 200
     local winW, winH = game.width - 48, 468
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
+    DrawModalTechDecor(ctx, winX, winY, winW, winH, game.elapsed)
     DrawPixelText(ctx, winX + 18, winY + 10, "防线守住", 22, C.cyan)
     DrawPixelText(ctx, winX + winW - 16, winY + 14,
         string.format("第 %d 关告捷", result.stage or game.stage or 1), 15, C.warn,
@@ -2163,6 +2287,7 @@ local function DrawPaused(ctx, game, meta, presentation)
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     local layout = GetPausePanelLayout(game.width)
     DrawWindowShell(ctx, layout.win.x, layout.win.y, layout.win.w, layout.win.h, 46)
+    DrawModalTechDecor(ctx, layout.win.x, layout.win.y, layout.win.w, layout.win.h, game.elapsed)
     DrawPixelText(ctx, layout.win.x + 18, layout.win.y + 10, "暂停控制台", 18, C.text)
     DrawPixelText(ctx, layout.win.x + layout.win.w - 16, layout.win.y + 14,
         "战斗已冻结", 13, C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -2561,6 +2686,11 @@ local function RenderOverlay(game, presentation, meta)
             RunOverlayStage("dock-fallback", function() DrawMinimalDockFallback(game) end)
         end
         RunOverlayStage("damage-vignette", function() DrawDamageVignette(vg_, game, presentation) end)
+        -- v0.13.17：Boss 在场时画阶段条（DrawBossPhaseBar 此前定义了却从未调用）。
+        RunOverlayStage("boss-phase", function()
+            local boss = FindBoss(game)
+            if boss then DrawBossPhaseBar(vg_, game, boss) end
+        end)
     elseif game.state == "menu" then
         RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
     end
