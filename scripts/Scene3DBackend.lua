@@ -6,6 +6,7 @@ local SkyUtils = require "urhox-libs.Rendering.SkyUtils"
 local VisualCatalog = require "VisualCatalog"
 local TalentCatalog = require "TalentCatalog"
 local MetaUI = require "MetaUI"
+local StageIntro = require "ui.StageIntro"
 
 local Backend = {}
 
@@ -2628,6 +2629,13 @@ local function RenderOverlay(game, presentation, meta)
             local boss = FindBoss(game)
             if boss then DrawBossPhaseBar(vg_, game, boss) end
         end)
+        -- v0.13.24：进关准备期过渡界面——画在 HUD/Dock 之后，作为模态压住整屏。
+        if (game.introTimer or 0) > 0 then
+            RunOverlayStage("stage-intro", function()
+                ApplyOverlayDesignTransform()
+                StageIntro.Draw(vg_, game)
+            end)
+        end
     elseif game.state == "menu" then
         RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
     end

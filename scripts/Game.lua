@@ -711,9 +711,9 @@ local function StartGameAt(stageNum)
     -- 期间玩法冻结（弹珠/敌机/波次都不推进），给玩家「关卡开始」的过渡感。
     introTimer = INTRO_SECONDS
     EnsureNextWavePlan()
-    -- 第 2 关起（含选关跳关/胜利后下一关）入场播报关号；第 1 关沿用波次横幅。
-    if stage > 1 then Emit("stage_started", {stage = stage}) end
-    print("[Game] game started at stage " .. stage)
+    -- v0.13.24：关号播报改由「进关准备期」过渡界面承担（对所有关卡统一），
+    -- 原 stage_started 横幅会与过渡界面重复，故不再发出。
+    print("[Game] game started at stage " .. stage .. " (intro " .. INTRO_SECONDS .. "s)")
 end
 
 local function StartGame()

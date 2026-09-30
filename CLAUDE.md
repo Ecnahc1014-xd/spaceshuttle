@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.24（关卡号数字贴图 + 进关过渡/准备动画）：
+  - **用户两点要求**：①「让 ai 生成各个数字的贴图用于选关界面的数字显示替代」②「还有进入关卡的过渡和准备动画你也没做」。
+  - **数字贴图（0718 管线）**：nanobanana 生成 0–9（10 张）→ bbox 裁切 → **按高度归一**（`GLYPH_H=26`，保证 0–9 同高、不高低不齐）→ alpha 二值化(128) → 量化「白 + 轮廓」两色 → 母版 24×32 → `assets/image/ui_digit_{0..9}.png`（+.meta，uuid 唯一）。新增 `scripts/ui/DigitFont.lua`：**懒加载**（首帧用传入的 ctx 建图句柄——Scene3DBackend 不暴露 vg，故不依赖外部注入）、`nvgImagePatternTinted` **乘法叠色**（白=原色 / 青=当前关 / 压暗=未解锁，无需为每状态出图）、逐字宽度表 `DIGIT_W` 让多位数紧凑排版（避免等宽留白）、缺图回退 zpix 字体。`StageSelect.DrawStageNode` 已解锁与未解锁数字都改走贴图。
+  - **进关过渡 / 准备动画**：规则层 `Game` 新增 `INTRO_SECONDS=3` 与 `introTimer`——`StartGameAt` 置 3s 且**不再立刻 `SpawnWave`**；`Update` 在 `introTimer>0` 时只递减计时器并 `return`（玩法全冻结：弹丸/敌机/波次都不推进），归零才 `SpawnWave` + 置 `waveCooldown`；快照暴露 `introTimer/introTotal`。新增 `scripts/ui/StageIntro.lua`（**纯 ctx 绘制**，不依赖后端）：暗化遮罩 + 中央面板（弹性放大 + 青色折角）+ 大号关卡号贴图 + 「关卡准备」标题 + 倒计时条 + 黄色跳秒 + 横向扫描光带。`Scene3DBackend` 在 playing 分支的 HUD/Dock **之后**（模态层）按 `introTimer>0` 调 `StageIntro.Draw`。原 `stage_started` 横幅删除（与过渡界面重复）。
+  - **两个设计取舍**：①**不新增 gameState**——用 `introTimer` 冻结而非加状态，避免触碰 `UpdateUiState`/`RenderOverlay`/输入处理器里的所有 state 分支（本项目新增状态漏点踩过多次）；②**不加模块级 local**——Scene3DBackend 顶层 local 已 193（LUA_MAXLOCALS=200，v0.13.18 曾因 201 黑屏），故数字图集与过渡界面各成**新模块**，后端只多 1 个 `local StageIntro = require`（194，余量 6）。
+  - **验证**：官方多人 build + 预览上传 ✅；LSP 四文件（Game/Scene3DBackend/StageSelect/DigitFont）0 Error（顺带修掉 StageSelect 既有的 `---@param ctx` 错配）；前向引用扫描 0；真渲染探针——intro：`state=playing introTimer=3.0`、`[DigitFont] pixel digits loaded=10/10`、零 overlay 错误，截图确认过渡界面（面板/数字「1」/倒计时条/跳秒「2 秒后开战」/扫描带）；选关：数字「1」确认为**硬边像素贴图**（NEAREST 放大无插值、当前关染青）。
+  - ⚠️ 待 Preview：过渡 3s 时长手感、数字贴图真机清晰度与染青观感。
 - 版本: 0.13.23b（加速车软性递减；提交 162799c）：
   - **用户要求「小幅衰减」**（承接 v0.13.22 的「去掉速度上限」）：给加速加**软性递减**——**保留无硬上限**，但速度越高每次加速倍率越小，避免后期滚雪球。
   - **实现**：`BALL_TYPES.speed` 新增 `speedBoostFloor = 1.012`（衰减下限，恒 >1 所以速度永远在涨）与 `speedSoftCap = 1400`（到此速度降到下限）。`BoostSpeedMarble` 里按**从初速起算**的线性插值算倍率：`t = clamp((speed - 660) / (1400 - 660))`，`boost = 1.06 + (1.012 - 1.06) * t`。⚠️ **必须从初速起算**（第一版用 `speed/softCap` 导致初速 660 就吃到一半衰减、前期手感变钝，已修）。
@@ -658,6 +665,14 @@
 4. 自测：项目是什么？上次做了什么？下一步？不够清楚就多读文件
 5. 如有 likely_next_task → 预加载相关文件
 6. 详细规则见 memory-system skill（`**/skills/memory-system/SKILL.md`）
+
+## 本批次新增避雷（v0.13.24 数字贴图 + 进关过渡）
+- ⚠️ **「给选关数字做贴图」要按高度归一，不能按包围盒等比**（v0.13.24）：数字 0–9 的字形宽高比不同（1 窄、8 宽），若各自等比缩放，节点上的数字会**高低不齐**。正确做法：后处理统一缩到**同一字形高度**（本项目 GLYPH_H=26），宽度随字形浮动，逐字记宽度表用于多位数排版（否则等宽留白会让「11」中间空一条）。
+- ⚠️ **单色贴图用 `nvgImagePatternTinted` 染色，别为每个状态出图**（v0.13.24）：数字/图标只要做成「白 + 轮廓」两色，运行时就能乘任意色（白=原色、青=当前态、压暗=禁用）。⚠️ 是**乘法叠色**（压暗/染色），不是去饱和——乘灰只会变暗，做不出真灰度。省掉「正常版/禁用版/选中版」多套素材。
+- ⚠️ **`Scene3DBackend.lua` 顶层 local 逼近 200，新增功能优先新开模块**（v0.13.24，v0.13.18 教训延续）：加功能前先数顶层 local（本项目 193→加 1 到 194，余量 6）。数字图集、过渡界面都做成独立模块（`ui/DigitFont.lua`/`ui/StageIntro.lua`），后端只加 1 个 require，不塞 local 常量。
+- ⚠️ **「不新增 gameState」是加过渡/弹窗态的首选**（v0.13.24）：本项目新增可弹窗状态要在 `UpdateUiState`/`RenderOverlay`/六个输入处理器/结算块全部补分支（v0.13.4 stagewin 的教训），漏一处即「点不动/残影/入库丢」。进关过渡只需一个 `introTimer`（`Update` 里 `>0` 就冻结玩法并 return），零状态分支改动。**能用标志位就别加状态**。
+- ⚠️ **模块不要依赖「后端暴露 vg」**（v0.13.24）：`Scene3DBackend` 未导出 vg，新绘制模块改为**用 Draw 传入的 ctx 懒加载**图片句柄（NanoVG 上下文是进程级单例，ctx 即 vg），既免去后端加访问器，也避免本地验证时的注入顺序问题。
+- ⚠️ **`batch_generate_images` 会给草案也生成 `.meta`，且清理时容易漏**（v0.13.24）：生成后 `mv *.png` 出 assets 时，同名 `*.png.meta` **不会跟着走**（或跟走了但草稿目录里留下），assets 里会残留 `digit_x_<时间戳>.png.meta` 这类孤儿。清理时用 `rm assets/image/<batch>_*_2026*.png.meta` 一并扫掉，再确认 `ls assets/image/<batch>_*` 为空。
 
 ## 避雷清单
 

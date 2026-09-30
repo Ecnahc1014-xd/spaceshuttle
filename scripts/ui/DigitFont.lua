@@ -14,8 +14,6 @@
 
 local DigitFont = {}
 
----@type any
-local vg_ = nil
 ---@type table<integer, integer>
 local digitImages_ = {}
 -- 每张数字母版的「可见字形宽度」由后处理决定，逐字固定（同高 26）。
@@ -27,15 +25,16 @@ local MASTER_H = 32
 
 local DIGIT_PATH = "image/ui_digit_%d.png"
 
----@param deps {vg: any}
-function DigitFont.Init(deps)
-    vg_ = deps and deps.vg or nil
-    digitImages_ = {}
-    if not vg_ then return end
+-- 懒加载：首次绘制时用当帧 ctx 创建图片句柄（NanoVG 上下文是进程级单例，
+-- ctx 即 vg），避免模块需要外部注入 vg。只加载一次。
+local ensureDone_ = false
+local function Ensure(ctx)
+    if ensureDone_ then return end
+    ensureDone_ = true
     local loaded = 0
     for d = 0, 9 do
         local ok, img = pcall(function()
-            return nvgCreateImage(vg_, string.format(DIGIT_PATH, d), NVG_IMAGE_NEAREST)
+            return nvgCreateImage(ctx, string.format(DIGIT_PATH, d), NVG_IMAGE_NEAREST)
         end)
         if ok and type(img) == "number" and img > 0 then
             digitImages_[d] = img
@@ -80,6 +79,7 @@ end
 ---@param color table {r,g,b,a} 叠色（白=原色；青=当前关；低亮度=压暗）
 ---@return boolean drawn 是否用贴图绘制（false 表示调用方需回退字体）
 function DigitFont.DrawNumber(ctx, value, cx, topY, h, color)
+    Ensure(ctx)
     if not DigitFont.Ready() then return false end
     local s = tostring(math.floor(tonumber(value) or 0))
     local total = DigitFont.Measure(value, h)

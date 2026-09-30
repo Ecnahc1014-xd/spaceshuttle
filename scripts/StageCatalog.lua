@@ -14,6 +14,7 @@ local ELITE_KEYS = {
 }
 local BOSS_KEYS = { "boss_orrery", "boss_maw", "boss_citadel", "boss_prism", "boss_serpent" }
 local ELITE_SLOTS = { [3] = 1, [6] = 2, [8] = 3 }
+local NORMAL_WAVE_ORDINAL = { [1] = 1, [2] = 2, [4] = 3, [5] = 4, [7] = 5, [9] = 6 }
 
 local function GetStageProgress(stage)
     stage = math.max(1, math.floor(stage))
@@ -43,12 +44,14 @@ function StageCatalog.GetSpecialKey(stage, stageWave)
     return nil
 end
 
--- 普通波人数按关内段位与关卡分段共同爬升。
--- 首关 2/3/4；第 7 关 5/6/7；第 15 关 10/11/12；第 15 关末段触及同屏上限。
+-- 普通波按普通波序号推进：每两关增加一档、每两次普通波增加一架。
+-- 第1关 2/2/3/3/4/4；第7关 5/5/6/6/7/7；第15关 10/10/11/11/12/12。
+-- 12架同屏上限首次在第15关普通波后段触及。
 function StageCatalog.GetNormalCount(stage, stageWave)
     local stageProgress = GetStageProgress(stage)
     local stageRamp = math.floor(stageProgress * 4 / 7)
-    local waveRamp = math.floor((stageWave - 1) / 3)
+    local waveOrdinal = NORMAL_WAVE_ORDINAL[stageWave] or 1
+    local waveRamp = math.floor((waveOrdinal - 1) / 2)
     return math.min(StageCatalog.MAX_FLEET, 2 + stageRamp + waveRamp)
 end
 

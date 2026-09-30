@@ -188,7 +188,6 @@ local function CircleStroke(ctx, cx, cy, r, color, width)
 end
 
 -- 蜿蜒路径：把关卡圆心作为控制点串成平滑曲线（Catmull-Rom 近似 → 贝塞尔）。
----@param ctx any
 ---@param L StageSelectLayout
 local function PathPoints(L)
     ---@type table
