@@ -185,4 +185,6 @@
 
 ## 同步记录
 
-- 最近一次同步：2026-09-30 击碎，飞机大战 v0.13.10（新增 AB-134 尾迹显廉价根因与 ribbon 光带做法、AB-135 不可本地验证的渲染行为禁止押注）
+- 最近一次同步：2026-09-30 击碎，飞机大战 v0.13.11（新增 AB-136 CustomGeometry 空顶点缓冲报错三处高发与修法；前次 v0.13.10 为 AB-134/AB-135）
+
+- [AB-136] [跨项目][CustomGeometry 空顶点缓冲报错：新建后先禁用节点，清空/收尾不要 Commit 0 顶点] 引擎在节点启用时会绘制其 CustomGeometry，而**刚创建（或刚 Clear()）的几何体顶点缓冲是空的** → 报 `VertexBuffer is empty\!Material ,compute:(nil),vertexBufferSize:1,geomerty type:0`。三处高发：①新建 CustomGeometry 后还没提交几何、节点就已启用（本项目尾迹批次，日志时序可见 `ready` 后 ~76ms 报错）；②清理路径 `Clear()` 之后又 `BeginGeometry+Commit` 提交了 0 顶点；③每帧同步时"本该有内容"的分支因数据为空而提交了空几何。正确做法：**创建后立即 `node.enabled=false`，等提交了非空几何再 `enabled=true`；清空/收尾只 `Clear()`+禁用节点，绝不 Commit 空内容；同步时先判 `#verts>0` 再重建**。⚠️ 这类错误**只在真渲染时出现，LSP 与 build 都发现不了**——新增任何程序化几何（CustomGeometry/动态网格）都要在本地真渲染跑一遍并 `grep VertexBuffer`。（击碎，飞机大战/v0.13.11）

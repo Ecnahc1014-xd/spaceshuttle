@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.11（修平台报错「VertexBuffer is empty!」）：
+  - **根因（本地真渲染复现 + 日志时序实锤）**：用户上报 2 类错误，其中 `VertexBuffer is empty!Material ,compute:(nil),vertexBufferSize:1,geomerty type:0` 由**尾迹光带**造成——v0.13.10 新建 4 个 `VehicleTrail_*` 节点后，`CustomGeometry` 在**提交任何几何之前**节点就是启用状态，渲染器尝试绘制空顶点缓冲即报错（日志时序：`trail ribbons ready` 15:47:49.500 → ERROR 15:47:49.576，晚 76ms）。另两处同族：`ClearTrailSamples` 在收尾时 `Clear()` 后 `BeginGeometry+Commit` 提交 **0 顶点**几何；`SyncVehicleTrails` 在"有光带→无光带"收尾帧用空 `verts` 提交。
+  - **修复（三处，均不提交空几何）**：①创建尾迹节点后立即 `node.enabled = false`，等提交了非空几何再启用；②`ClearTrailSamples` 只 `geometry:Clear()` + `root.enabled = false`，不再 Commit 空内容；③`SyncVehicleTrails` 只在 `#verts > 0` 时 Clear+重建+启用，否则禁用节点。
+  - **另一类错误 `Error processing XMLHttpRequest response: {}`（29 次）**：项目代码内**零引用** `XMLHttpRequest`，来自平台云变量请求层（云不可用时重试）。所有云调用已有 `pcall` + `error`/`timeout` 回调兜底、`metaSaveInFlight` 串行守卫，**不影响游戏运行，也无法在游戏代码内消除**——已如实标注，不做假修复。
+  - **验证**：本地真渲染探针（`probe_trail` 启动期 + `probe_trail3` 完整一局含重开/清空重建路径）`VertexBuffer is empty` 由 **1 次 → 0 次**、overlay/Lua 错误 0；LSP 0 Error；官方多人 build+预览上传。BUILD_VERSION/大厅 →0.13.11。
+  - ⚠️ **教训**：`CustomGeometry` 是"先有节点后有几何"的组件——**新建后、提交几何前必须禁用节点**（或立刻提交有效几何），否则渲染器报空缓冲；同理"清空/收尾"不要 `Commit` 0 顶点，禁用节点即可。这类错误只在真渲染时出现，LSP/build 都发现不了。
 - 版本: 0.13.10（飞行尾迹重做 ribbon 光带）：
   - 用户否决 v0.13.3 尾迹「尾迹特难看廉价」——软圆串珠 + 不随朝向的等宽放大是廉价感根源。`Renderer3D` 尾迹改为沿运动折线的**渐窄渐暗光带 ribbon**：每弹种一个 `CustomGeometry` 批次（`DiffVCol` + 白底纹理 + CULL_NONE、法线 (0,0,-1)，敌机箱体同一条已验证显色路径），相邻采样点（末段接车辆当前位置）各出一个四边形；半宽头 0.22 → 尾 0.02 ×权威半径线性收束，顶点色按头程 `t^1.7` 压暗 + 头段向白热插值（引擎钳 Color 到 0..1，亮头只能靠白插值表达）；采样 0.035s/寿命 0.3s/每车 6 点/同弹种 8 车、jump/静止清轨、flightTime 回绕防 id 复用串轨、非 playing/重开/Shutdown 清空全沿用。规则层零改动。
   - **中间方案被弃**：billboard 沿运动朝向拉长的速度线——`Billboard.rotation` 屏幕旋向无法本地验证（llvmpipe BloomHDR 编译失败使离屏 3D 全黑、独立探针拿不到任何像素），不押注未知约定，改走可静态推导的几何 ribbon。

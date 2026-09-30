@@ -963,12 +963,13 @@ local function ClearTrailSamples()
     trailSamples_ = {}
     if not trailGeometries_ then return end
     for _, ballType in ipairs(TRAIL_TYPES) do
+        local record = trailGeometries_[ballType]
+        -- ⚠️ 只清几何并禁用节点，**不要**提交 0 顶点几何：BeginGeometry+Commit 空内容
+        -- 会让引擎报 "VertexBuffer is empty!"（本批次上报错误）。禁用节点即可不渲染，
+        -- 下次有采样时再 Clear+重建。
         if trailActive_[ballType] then
-            local record = trailGeometries_[ballType]
             record.geometry:Clear()
-            record.geometry:SetNumGeometries(1)
-            record.geometry:BeginGeometry(0, TRIANGLE_LIST)
-            record.geometry:Commit()
+            record.root.enabled = false
         end
         trailActive_[ballType] = false
     end
@@ -1070,44 +1071,53 @@ local function SyncVehicleTrails(game, dt)
         local record = trailGeometries_[ballType]
         local tracks = tracksByType and tracksByType[ballType] or nil
         local active = tracks ~= nil and #tracks > 0
-        if active or trailActive_[ballType] then
+        -- ⚠️ 只在"有光带"时提交几何；不活跃时**禁用节点**而不是提交空几何。
+        -- 提交 0 顶点几何会让引擎报 "VertexBuffer is empty!"（本批次上报错误之一）；
+        -- 禁用节点则保留上一次的非空几何且不参与渲染。
+        if active and tracks then
             local base = BALL_COLORS[ballType]
             local verts = {}
-            if tracks ~= nil and #tracks > 0 then
-                for _, track in ipairs(tracks) do
-                    local samples = track.points
-                    local n = #samples
-                    local halfHead = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_HEAD
-                    local halfTail = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_TAIL
-                    for i = 1, n do
-                        local ax, ay, az = samples[i].x, samples[i].y, samples[i].z - 0.05
-                        local bx, by, bz
-                        if i < n then
-                            bx, by, bz = samples[i + 1].x, samples[i + 1].y, samples[i + 1].z - 0.05
-                        else
-                            bx, by, bz = track.head.x, track.head.y, track.head.z - 0.05
-                        end
-                        local t0 = (i - 1) / (n + 1 - 1)
-                        local t1 = i / (n + 1 - 1)
-                        AddTrailQuad(verts, ax, ay, az, bx, by, bz,
-                            halfTail + (halfHead - halfTail) * t0,
-                            halfTail + (halfHead - halfTail) * t1,
-                            TrailColor(base, t0), TrailColor(base, t1))
+            for _, track in ipairs(tracks) do
+                local samples = track.points
+                local n = #samples
+                local halfHead = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_HEAD
+                local halfTail = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_TAIL
+                for i = 1, n do
+                    local ax, ay, az = samples[i].x, samples[i].y, samples[i].z - 0.05
+                    local bx, by, bz
+                    if i < n then
+                        bx, by, bz = samples[i + 1].x, samples[i + 1].y, samples[i + 1].z - 0.05
+                    else
+                        bx, by, bz = track.head.x, track.head.y, track.head.z - 0.05
                     end
+                    local t0 = (i - 1) / (n + 1 - 1)
+                    local t1 = i / (n + 1 - 1)
+                    AddTrailQuad(verts, ax, ay, az, bx, by, bz,
+                        halfTail + (halfHead - halfTail) * t0,
+                        halfTail + (halfHead - halfTail) * t1,
+                        TrailColor(base, t0), TrailColor(base, t1))
                 end
             end
-            record.geometry:Clear()
-            record.geometry:SetNumGeometries(1)
-            record.geometry:BeginGeometry(0, TRIANGLE_LIST)
-            for _, v in ipairs(verts) do
-                record.geometry:DefineVertex(v.p)
-                record.geometry:DefineNormal(Vector3(0, 0, -1))
-                record.geometry:DefineColor(v.c)
+            -- 采样不足时（单点无折线）不出几何，避免 0 顶点提交。
+            if #verts > 0 then
+                record.geometry:Clear()
+                record.geometry:SetNumGeometries(1)
+                record.geometry:BeginGeometry(0, TRIANGLE_LIST)
+                for _, v in ipairs(verts) do
+                    record.geometry:DefineVertex(v.p)
+                    record.geometry:DefineNormal(Vector3(0, 0, -1))
+                    record.geometry:DefineColor(v.c)
+                end
+                record.geometry:Commit()
+                record.root.enabled = true
+                anyActive = true
+            else
+                record.root.enabled = false
             end
-            record.geometry:Commit()
+        elseif trailActive_[ballType] then
+            record.root.enabled = false
         end
         trailActive_[ballType] = active
-        if active then anyActive = true end
     end
     return anyActive
 end
@@ -1493,6 +1503,10 @@ function Renderer3D.Init(scene, voxelWorld)
         material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
         material:SetCullMode(CULL_NONE)
         geometry:SetMaterial(0, material)
+        -- ⚠️ 新建的 CustomGeometry 在提交几何前顶点缓冲为空，若节点已启用，
+        -- 渲染器会报 "VertexBuffer is empty!"。创建后先禁用，等 SyncVehicleTrails
+        -- 提交了非空几何再启用。
+        node.enabled = false
         trailGeometries_[ballType] = {root = node, geometry = geometry}
         trailNodes_[#trailNodes_ + 1] = node
         trailMaterials_[#trailMaterials_ + 1] = material
