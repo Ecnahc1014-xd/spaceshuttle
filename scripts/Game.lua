@@ -505,6 +505,12 @@ local function CanOfferUpgrade(u)
     if ballOk and u.ballType and u.kind ~= "base" then
         ballOk = talentUnlockedBallCards[u.ballType] == true
     end
+    -- v0.13.20：局内「解锁××车」卡**必须天赋树先解锁该车**才进池（用户澄清）。
+    -- 即：天赋树解锁车 ≠ 开局能用该车，而是「局内才会出现这张解锁卡」；
+    -- 未在天赋树解锁的车，局内既不出它的解锁卡、也不出它的 base/专属卡。
+    if ballOk and u.unlockBallType then
+        ballOk = talentUnlockedBalls[u.unlockBallType] == true
+    end
     return ballOk
         and (not u.unlockBallType or unlockedBalls[u.unlockBallType] ~= true)
         and (not u.requiresCard or talentUnlockedCards[u.requiresCard] == true)
@@ -653,10 +659,8 @@ ResetGame = function(startStage)
     upgradePicks = {}
     upgradeStacks = {}
     unlockedBalls = { [STARTING_BALL_TYPE] = true }
-    -- v0.13.5：天赋解锁的车开局即可用（初始分裂车始终可用）。
-    for ballType in pairs(talentUnlockedBalls) do
-        if BALL_TYPES[ballType] then unlockedBalls[ballType] = true end
-    end
+    -- v0.13.20：天赋树的「解锁车」节点**不再**让车开局即可用（用户澄清）——
+    -- 它只决定「局内那张『解锁××车』卡是否进池」。开局自带的永远只有 STARTING_BALL_TYPE。
     ammoCapacity = BASE_AMMO_TOTAL
     activeWords = {}    -- P11：词条重置
     clearStreak = 0
