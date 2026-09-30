@@ -411,6 +411,9 @@ RefreshMeta = function()
     metaState.talents = PlayerData.GetTalents()
     metaState.totalStars = PlayerData.GetTotalStars()
     metaState.talentCount = PlayerData.TalentCount()
+    metaState.talentTotal = #TalentCatalog.GetNodes()
+    metaState.talentMaxStage = TalentCatalog.MAX_STAGE
+    metaState.talentStageCount = TalentCatalog.GetUnlockedStageCount(metaState.totalStars)
     -- 是否有「当前可负担且前置满足」的节点（菜单红点）。
     do
         local owned = metaState.talents

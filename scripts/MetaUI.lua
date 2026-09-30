@@ -58,6 +58,9 @@ local MetaUI = {}
 ---@field talents table<string, boolean> 已解锁的天赋节点
 ---@field totalStars integer 星级总和
 ---@field talentCount integer 已解锁节点数
+---@field talentTotal integer 天赋节点总数
+---@field talentMaxStage integer 天赋阶段总数
+---@field talentStageCount integer 当前星级已开放的阶段数
 ---@field talentAffordable boolean 是否存在可负担且前置满足的节点
 ---@field skins table<string, boolean>
 ---@field selectedSkin string
@@ -244,10 +247,11 @@ local function GetMenuBarLayout()
         fleet  = { x = 18, y = 390, w = 504, h = 92 },
         wallet = { x = 18, y = 496, w = 504, h = 56 },
         daily  = row(588, 92, 3),
-        grow   = row(716, 92, 5),
+        grow   = row(716, 92, 4),
     }
 end
 
+-- v0.13.7：大面板由「敌机图鉴」改为「天赋树」入口（标题 + 进度条），图鉴降为养成行小卡。
 ---@param ctx any
 ---@param w number
 ---@param meta MetaState
@@ -255,30 +259,26 @@ function MetaUI.DrawHomeFleet(ctx, w, meta)
     local C = Colors()
     local L = GetMenuBarLayout()
     local r = L.fleet
+    local owned = meta.talentCount or 0
+    local total = meta.talentTotal or 42
+    local stars = meta.totalStars or 0
+    local stageCount = meta.talentStageCount or 0
     D.panel(ctx, r.x, r.y, r.w, r.h, C.rail, C.cyanDim, 6)
-    D.text(ctx, r.x + 14, r.y + 8, "敌机图鉴", 15, C.cyan)
-    D.text(ctx, r.x + r.w - 14, r.y + 8,
-        string.format("收录 %d/%d ›", meta.codexUnlocked or 0, meta.codexTotal or 0), 15, C.dim,
+    D.rect(ctx, r.x, r.y, 3, r.h, C.cyan, 0)
+    D.text(ctx, r.x + 14, r.y + 8, "天赋树", 17, C.cyan)
+    D.text(ctx, r.x + r.w - 14, r.y + 10,
+        string.format("已解锁 %d/%d ›", owned, total), 15, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    local entries = MetaCatalog.GetCodex()
-    local n = math.max(1, math.min(8, #entries))
-    local slotW = (r.w - 24) / n
-    for i = 1, n do
-        local entry = entries[i]
-        local owned = meta.codex and meta.codex[entry.key] == true
-        local aircraft = meta.aircraft and meta.aircraft[entry.key]
-        if aircraft then
-            local gridW = aircraft.gridW or 1
-            local gridH = aircraft.gridH or 1
-            local scale = math.min(15, 40 / math.max(1, gridW), (r.h - 46) / math.max(1, gridH))
-            local left = r.x + 12 + (i - 1) * slotW + (slotW - gridW * scale) * 0.5
-            local top = r.y + 34 + ((r.h - 46) - gridH * scale) * 0.5
-            for _, cell in ipairs(aircraft.rows or {}) do
-                D.rect(ctx, left + (cell.col - 1) * scale, top + (cell.row - 1) * scale,
-                    scale - 0.5, scale - 0.5, owned and C.cyan or C.widget, 0)
-            end
-        end
-    end
+    -- 进度条（节点解锁度）
+    local barX, barY, barW, barH = r.x + 14, r.y + 38, r.w - 28, 12
+    D.progress(ctx, barX, barY, barW, total > 0 and (owned / total) or 0, C.cyan, barH)
+    -- 星级与阶段进度
+    D.text(ctx, r.x + 14, r.y + 58,
+        string.format("★ %d  ·  已开放 %d/%d 阶段", stars, stageCount, meta.talentMaxStage or 7),
+        14, C.dim)
+    D.text(ctx, r.x + r.w - 14, r.y + 58,
+        meta.talentAffordable and "有可解锁节点" or "继续通关解锁", 14,
+        meta.talentAffordable and C.warn or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 end
 
 ---@return integer
@@ -317,9 +317,6 @@ local function GetGrowDefs(meta)
           sub = "零件换新车", hot = false, tone = "free" },
         { action = "open_pass", icon = "premium_pass_crest", label = "战斗档案",
           sub = passSub, hot = meta.passClaimable, tone = "free" },
-        { action = "open_talent", icon = "levelup", label = "天赋树",
-          sub = string.format("已解锁 %d", meta.talentCount or 0),
-          hot = meta.talentAffordable, tone = "free" },
         { action = "open_codex", icon = "codex", label = "敌机图鉴",
           sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
           hot = meta.codexClaimable, tone = "free" },
@@ -395,7 +392,7 @@ end
 ---@return string|nil action
 function MetaUI.HitTestMenuBar(uiX, uiY, meta)
     local L = GetMenuBarLayout()
-    if Inside(L.fleet, uiX, uiY) then return "open_codex" end
+    if Inside(L.fleet, uiX, uiY) then return "open_talent" end
     if Inside(L.wallet, uiX, uiY) then return "open_recharge" end
     for i, def in ipairs(GetDailyDefs(meta)) do
         if Inside(L.daily[i], uiX, uiY) then return def.action end

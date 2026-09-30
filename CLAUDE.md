@@ -3,6 +3,10 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.7（主菜单大面板：敌机图鉴 → 天赋树）：
+  - 用户澄清「上面那个大的敌机图鉴」指的是菜单 y=390 的**大展示面板**（原 8 架飞机剪影），不是养成行小卡。改动：大面板改为**天赋树入口**（标题 + 节点解锁进度条 + 「★N · 已开放 X/7 阶段」+ 红点提示），点大面板 `open_talent`；「敌机图鉴」降回养成行小卡，养成行恢复 **4 卡**（车型商店/战斗档案/敌机图鉴/排行榜，`row(716,92,4)`）。`GetGrowDefs` 移除天赋树项、`HitTestMenuBar` 的 fleet 命中改 `open_talent`；`DrawHomeFleet` 重写为天赋树进度面板。新增 meta 字段 `talentTotal/talentMaxStage/talentStageCount`（`RefreshMeta` 由 `TalentCatalog.GetNodes()/MAX_STAGE/GetUnlockedStageCount` 填）。
+  - ⚠️ 上一版 v0.13.6 的「养成行内换位」是对用户意图的误解——用户说的是**大面板**。教训：菜单里同名/近名的入口有两处（大展示条 + 小卡）时，先确认指的是哪一个，别默认成小卡。
+  - 验证：LSP 0 Error；`probe_menu` 命中探针 PASS（大面板→open_talent、养成行 4 卡→shop/pass/codex/rank）；真渲染菜单冒烟零 overlay/Lua 错误、letterbox=(7,11,20)、19838 非黑像素；官方多人 build+预览上传。
 - 版本: 0.13.6（主菜单：天赋树与敌机图鉴换位）：
   - 「养成收藏」行内交换「天赋树」与「敌机图鉴」的显示顺序（现为 车型商店 / 战斗档案 / 天赋树 / 敌机图鉴 / 排行榜）。只改 `MetaUI.GetGrowDefs` 的 defs 数组顺序——绘制与 `HitTestMenuBar` 同源，交换即两处同步，无需改命中代码。验证：LSP 0 Error、官方多人 build+预览上传、真渲染菜单冒烟（letterbox=(7,11,20)、19837 非黑像素、零 overlay/Lua 错误）。
 - 版本: 0.13.5-floattext（跳字特效修复：真实得分 + 就近聚合 + 越线不飘分；版本号行由并发会话统一推进，本批只改 `Game.lua`/`Presentation.lua`/`Scene3DBackend.lua` 的相关 hunk）：
