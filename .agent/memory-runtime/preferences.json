@@ -125,7 +125,7 @@
       "require_single_level_talent_nodes": true,
       "require_circular_talent_cards": true,
       "require_icon_on_upgrade_cards": true,
-      "require_3d_vehicle_trails_ribbon": true
+      "require_vehicle_trails_overlay_channel": true
     }
   }
 }

@@ -101,8 +101,8 @@ local function GetLayout(w)
     }
     -- 内容高度覆盖错位后最高线路的完整卡片与留白。
     local maxLaneOffset = 0.5
-    local topPad = CARD_R + 40
-    local botPad = CARD_R + 24
+    local topPad = CARD_R + 40 + maxLaneOffset * ROW_STEP
+    local botPad = CARD_R + 24 + (selectedId_ and 0.5 * ROW_STEP or 0)
     local contentH = topPad + botPad
         + (TalentCatalog.MAX_STAGE - 1 + maxLaneOffset) * ROW_STEP
     return {
@@ -184,6 +184,7 @@ local LANE_COLORS = {
     giant = {255, 196, 72},
 }
 
+---@return table
 local function LaneColor(node)
     local C = Style()
     if node and node.tint == "gold" then return C.warn end
@@ -366,7 +367,7 @@ end
 ---@param w number
 ---@return table
 function TalentTree.GetDetailLayout(w)
-    local x, y = 30, 960 - 236
+    local x, y = 30, 960 - 178
     local pw, ph = w - 60, 160
     return {
         x = x, y = y, w = pw, h = ph,
@@ -465,7 +466,7 @@ function TalentTree.HitTest(uiX, uiY, w, meta)
             local detail = TalentTree.GetDetailLayout(w)
             local newLayout = GetLayout(w)
             local minCy = newLayout.content.y + CARD_R + 4
-            local maxCy = detail.y - CARD_R - 10
+            local maxCy = detail.y - CARD_R - 4
             local targetCy = math.max(minCy, math.min(maxCy, bestCy))
             local _, newCy = NodeCenter(newLayout, bestLaneIndex, bestStage)
             scrollY_ = scrollY_ + targetCy - newCy
@@ -486,6 +487,7 @@ end
 ---@return boolean consumed
 function TalentTree.ScrollBegin(uiX, uiY, w)
     local L = GetLayout(w)
+    ClampScroll(L)
     if not Inside(L.scrollbarHit, uiX, uiY) and not Inside(L.content, uiX, uiY) then
         return false
     end

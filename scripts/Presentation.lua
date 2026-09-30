@@ -182,6 +182,8 @@ local FEEDBACK_MAP = {
     giant_pierce_armed = {"pierceArmed"},
     giant_area_hit = {"giantBurst"},
     upgrade_picked = {"upgradeConfirm"},
+    -- v0.13.15：天赋暴击命中——金色暴击飘字（区别于普通 +分数）。
+    crit_hit = {"critSpark"},
     marble_reloaded = {"reloadPulse"},
     game_reset = {"fullReset"},
     base_revived = {"reviveConfirm"},
@@ -499,6 +501,11 @@ local FEEDBACK_HANDLERS = {
         reloadFlash = 0.3
     end,
     -- v0.10.24：选中升级后的中心确认提示（飘字在恢复 playing 后显示）。
+    -- v0.13.15：暴击命中反馈——金色"暴击"飘字 + 少量火花，与普通命中区分。
+    critSpark = function(event)
+        SpawnFloatText(event.x, event.y - 30, "暴击", {255, 214, 96}, 1.15)
+        SpawnParticles(event.x, event.y, {255, 214, 96}, math.random(2, 3), "spark")
+    end,
     upgradeConfirm = function(event)
         SpawnFloatText(270, 430, (event.name or "强化") .. "  已选择", {140, 235, 255}, 1.1)
         screenShake = math.max(screenShake, 0.05)

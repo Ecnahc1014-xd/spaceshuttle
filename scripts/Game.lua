@@ -218,6 +218,9 @@ local talentPartsPct = 0       -- 结算零件百分比加成（来自通用线�
 local talentBallStats = {}     -- 车线路数值增强：ballType -> {stat, value, mul}
 local talentUnlockedCards = {} -- 天赋解锁的通用卡 id 集合（xp / ammo）
 local talentUnlockedBalls = {} -- 天赋解锁的车（局内出场资格）
+-- v0.13.15：成长线天赋——暴击率（0..1）与基础攻击加成。
+local talentCritChance = 0
+local talentAtkBonus = 0
 ---@type fun(): table<string, boolean>|nil
 local talentProvider = nil     -- 编排层注入；ResetGame 时拉取最新解锁集合
 
@@ -498,6 +501,8 @@ function Game.SetTalents(owned)
     talentBallStats = {}
     talentUnlockedCards = {}
     talentUnlockedBalls = {}
+    talentCritChance = 0
+    talentAtkBonus = 0
     if type(owned) ~= "table" then return end
     local count = 0
     for id, v in pairs(owned) do
@@ -513,13 +518,19 @@ function Game.SetTalents(owned)
                 elseif node.kind == "partsPct" then
                     talentPartsPct = talentPartsPct + (node.value or 0)
                 elseif node.kind == "stat" then
-                    local acc = talentBallStats[node.ballType]
-                    if not acc then
-                        acc = { stat = node.stat, mul = node.mul == true, add = 0, factor = 1.0 }
-                        talentBallStats[node.ballType] = acc
+                    if node.stat == "critChance" then
+                        -- 成长线：暴击率累加；每 3 阶还额外给基础攻击。
+                        talentCritChance = talentCritChance + (node.value or 0)
+                        talentAtkBonus = talentAtkBonus + (node.atkBonus or 0)
+                    else
+                        local acc = talentBallStats[node.ballType]
+                        if not acc then
+                            acc = { stat = node.stat, mul = node.mul == true, add = 0, factor = 1.0 }
+                            talentBallStats[node.ballType] = acc
+                        end
+                        if node.mul then acc.factor = acc.factor * (node.value or 1.0)
+                        else acc.add = acc.add + (node.value or 0) end
                     end
-                    if node.mul then acc.factor = acc.factor * (node.value or 1.0)
-                    else acc.add = acc.add + (node.value or 0) end
                 end
             end
         end
@@ -542,7 +553,10 @@ end
 function Game.GetTalentBonuses()
     local n = 0
     for _ in pairs(talentOwned) do n = n + 1 end
-    return { hpBonus = talentMaxHpBonus, partsPct = talentPartsPct, nodeCount = n }
+    return {
+        hpBonus = talentMaxHpBonus, partsPct = talentPartsPct, nodeCount = n,
+        critChance = talentCritChance, atkBonus = talentAtkBonus,
+    }
 end
 
 -- v0.13.5：编排层注册一次天赋提供者；每次 ResetGame（含选关/下一关/重开）自动重新拉取，
@@ -1909,10 +1923,37 @@ local function BoostSpeedMarble(marble)
     end
 end
 
+-- v0.13.15：天赋「基础攻击 +N」直接并入伤害加成（对所有弹种生效）。
+local function TalentDamageBonus()
+    return talentAtkBonus
+end
+
+-- 暴击判定：按天赋暴击率掷一次；命中则伤害 ×TalentCatalog.CRIT_MULT。
+-- ⚠️ GetMarbleDamage 会在子步进里被多次调用，但每次调用都对应「一次命中结算」，
+-- 且同一帧同一砖块已由 frameHitBricks 去重，因此不会重复掷。
+---@param base number
+---@param marble table|nil 用于给表现层提供飘字坐标
+---@return number damage
+local function ApplyCrit(base, marble)
+    if talentCritChance <= 0 then return base end
+    if Random() >= talentCritChance then return base end
+    if marble then
+        Emit("crit_hit", { x = marble.x, y = marble.y, damage = base * TalentCatalog.CRIT_MULT })
+    end
+    return base * TalentCatalog.CRIT_MULT
+end
+
 local function GetMarbleDamage(marble, def)
-    if marble.ballType ~= "speed" then return def.damage + BALL_TUNING.damageBonus end
-    local bonus = math.floor(math.max(0, marble.speed - def.speed) / def.damageStep)
-    return math.min(def.maxDamage, def.damage + bonus + BALL_TUNING.damageBonus)
+    local base
+    if marble.ballType ~= "speed" then
+        base = def.damage + BALL_TUNING.damageBonus + TalentDamageBonus()
+    else
+        local bonus = math.floor(math.max(0, marble.speed - def.speed) / def.damageStep)
+        base = math.min(def.maxDamage,
+            def.damage + bonus + BALL_TUNING.damageBonus + TalentDamageBonus())
+    end
+    -- 暴击只影响本次结算，不改弹珠状态；表现层消费 crit_hit 出飘字。
+    return ApplyCrit(base, marble)
 end
 
 local function RedirectSpeedMarble(marble, originEnemy, originBrick)
@@ -2988,6 +3029,10 @@ function Game.GetSnapshot()
     s.maxBaseHp = GetMaxBaseHp()
     s.talentHpBonus = talentMaxHpBonus
     s.talentPartsPct = talentPartsPct
+    -- v0.13.15：成长线天赋读数（供 UI 显示暴击率/基础攻击）。
+    s.talentCritChance = talentCritChance
+    s.talentAtkBonus = talentAtkBonus
+    s.talentHpPerNode = TalentCatalog.MAX_HP_PER_NODE
     s.wave = wave
     s.stage = stage
     s.stageWave = stageWave

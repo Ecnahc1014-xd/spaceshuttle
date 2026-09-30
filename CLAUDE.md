@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.15（车辆尾迹迁移到已验证可见的 NanoVG 覆盖层）：
+  - **根因/决策**：两版 3D 尾迹真机都「不可见」（v0.13.3 软圆 billboard、v0.13.10/11 ribbon CustomGeometry）——本地离屏 3D 因 llvmpipe BloomHDR 编译失败恒黑，无法自证可见；本环境唯一已验证可见的是 NanoVG overlay 通道（冲击环/飘字用的 `ProjectGamePoint` 投影）。故尾迹彻底改走覆盖层，规则层零改动。
+  - **数据层 `Presentation.UpdateVehicleTrails`**：每帧读飞行车辆快照（`activeBall` 与 `marbles` 中非 onSling 者），**按路程**在**游戏坐标**采样点（间距 11px、寿命 0.34s、每车≤20 点、同屏≤10 车），相邻点连成渐宽渐亮四边形段（尾细头粗、头 alpha≈200）输出 `vehicleTrails`（`[{ballType,polys={x1..y4,a}}]`）。重开（elapsed 回卷）、非 playing、瞬移（>50px）均清空；发射瞬间按 id 去重防 activeBall/marble 双收导致双倍老化；静止弹弓车不拖尾。
+  - **绘制层 `Scene3DBackend.DrawVehicleTrails`**：在 world-fx 段（跟随震屏、playing 才画）用 `SLOT_COLORS[ballType]` 弹种色 + 头部向白热混合，`NVG_LIGHTER` 加色叠出「热焰拖尾」——四边形填充叠一道更亮的芯线描边强化方向感。
+  - **回滚**：`Renderer3D` 里 3D ribbon 全套常量/状态/函数（`SyncVehicleTrails`/`ClearTrailSamples`/`AddTrailQuad`/`TrailColor`）与 Init/Render/Shutdown/ClearRunVisuals 钩子整段删除（含并发会话 v0.13.11 的空缓冲防护）。⚠️ 用脚本切整段时误删了紧邻的 `local function SyncDebris(presentation)` 签名行（注释在签名之后），补回后 LoadChunk 恢复正常——**整段删除要以「函数签名行」为边界锚点，不能只锚注释**。
+  - **验证**：离线数据探针 PASS（直线 7 段、头宽 14.7、峰值 alpha 200；静止弹弓车/gameover 零拖尾）；真渲染发射→飞行冒烟零 Lua/overlay/VertexBuffer 错误；LSP 我改的三文件 0 Error；前向引用扫描 0；官方多人 build+预览上传 ✅。⚠️ 待 Preview：真机拖尾观感与长度/亮度手感（覆盖层光带是 2D 屏幕空间四边形，斜俯视下不随车辆透视缩放，属预期）。BUILD_VERSION/大厅 →0.13.15。
+  - ⚠️ **并发**：本批只提交 `Renderer3D/Presentation/Scene3DBackend`（`31e0da1`）。提交时并发会话正把 `Game.lua` 改到**语法错误中间态**（LSP 报 `ApplyBrickStatus` 附近 `unexpected token` + 若干 `undefined global`），非我文件、未代其修复；等待其自行补完（现 `Game.lua` 语法恢复正常）后才构建。构建一并带上了并发会话已入工作树的选关/天赋改动（其 versions 已到 0.13.14）。
 - 版本: 0.13.14（选关重做为「开心消消乐式蜿蜒路径地图」）：
   - **用户否决 v0.13.13 的样式**（原话「不行，我想要开心消消乐那种的」+ 参考图）：上一版是「直线微偏移 + 细描边圆钮」，被判定不像消消乐。参考图（`assets/image/下载 (3).webp`）的关键特征：**粗壮的蜿蜒路径**（大振幅蛇形，不是轻微抖动）、**节点像可点的糖果钮**（亮色厚环 + 亮芯 + 粗体描边数字）、**三颗星在节点下方外侧**、**两侧竖排圆形图标栏**。
   - **重做 `ui/StageSelect.lua`**：①`SWAY_AMP` 46→**96**、`SWAY_PERIOD` 4→**3**、`ROW_STEP` 96→**132**——大振幅 + 长周期才看出"蛇形路径"；②新增 `StrokePath`（Catmull-Rom → 三次贝塞尔，`nvgBezierTo` + `NVG_ROUND` 端点）把各关圆心串成**平滑曲线**，三层叠画（路肩 40px 深色 → 路面 30px → 高光 8px 青）做出"一条有厚度的路"；③节点改**大圆果冻钮**（半径 40，落影 + 亮色厚环 + 亮芯 + 顶部高光），数字 42px 粗体（三位数 30px）；④**三颗星移到圆钮下方外侧**（`sy = cy + r + 12`）——首版误画在圆内底缘被裁掉一半；⑤左侧道具栏改**圆形图标钮 + 角标库存数字**（`DrawRoundIcon`），右侧保留确定性像素装饰。
@@ -526,7 +533,7 @@
 - 相机推近契约：防线受创时 `camera_.orthoSize = 18.0 - baseBarrierFlash*1.6`，仍正交投影仅瞬时缩放，flash 归零自动复原，绝不变透视
 - 敌人行为分化契约：四类 aircraft 的摆动/下移差异只能由 `AircraftPixelData.behavior[aircraftKey]` 单一来源驱动（swayAmp/swayFreq/descentMul/agility/accent），`Game.CreateEnemy` 仅消费该表并叠加随机抖动，禁止把行为数值硬编码进 Game 其他分支或渲染层
 - 模态缓动契约：四模态（menu/gameover/levelup/paused）淡入由 `ModalIntro(game)`（EaseOutCubic，0.28s）经 `nvgGlobalAlpha` 控制，波次横幅 `DrawWaveBanner` 由 `presentation.waveBannerTimer` 驱动滑入淡出；仅表现层瞬时状态，不得写规则层
-- 预瞄轨迹与尾迹契约：v0.13.10 更新——3D 飞行车辆**有**尾迹，形态是沿运动折线的渐窄渐暗 **ribbon 光带**（DiffVCol CustomGeometry 批次，见 0.13.10 条目；软圆串珠形态已被用户否决）；仍不绘制预瞄线与 2D 球形弹珠拖尾；拖拽瞄准只负责发射输入，尾迹只读规则快照采样，不向渲染快照写入轨迹。
+- 预瞄轨迹与尾迹契约：v0.13.15 更新——3D 飞行车辆**有**尾迹，但走 **NanoVG overlay 通道**（`Presentation.vehicleTrails` 采样游戏坐标 + `Scene3DBackend.DrawVehicleTrails` 用 `ProjectGamePoint` 投影 + `NVG_LIGHTER` 加色，见 0.13.15 条目）；两版 3D 尾迹（billboard v0.13.3、CustomGeometry ribbon v0.13.10/11）真机均「不可见」已废弃——本环境离屏 3D 因 BloomHDR 编译失败恒黑，无法自证 3D 层可见性，禁止再往 3D 层加需要目视验收的特效，一律走已验证可见的 overlay 通道。仍不绘制预瞄线与 2D 球形弹珠拖尾；拖拽瞄准只负责发射输入，尾迹只读规则快照采样，不向渲染快照写入轨迹。
 - 敌方箱体契约：alive occupied cells 仍来自 AircraftPixelData 并保持单敌人 CustomGeometry；`VOXEL_GAP` 只缩小视觉箱体，中心 pitch 继续等于 `brickSize * WORLD_SCALE`；面使用官方木箱材质，缺失时才回退顶点色材质。
 - 撞飞箱体契约：命中方块通过 `ejected=true` 立即退出规则碰撞和编队主体，`brick_ejected` 事件带随机速度、角速度和生命周期；Presentation 维护飞散状态，Renderer3D 以独立箱体节点消费，未撞方块继续使用 AABB 碰撞。
 - 飞机布局契约：SpawnWave 对飞机完整二维 AABB（含间距）进行候选检查，失败时仅向更高层确定性错位，禁止接受重叠候选。
