@@ -62,6 +62,7 @@ local aimLineMaterial_ = nil
 -- （DiffVCol + 白底纹理 + 顶点色），并用 SetDynamic(true) 支持每帧重建
 -- ——历史 ribbon 版（v0.13.10）正是**漏了 SetDynamic(true)** 才完全画不出来。
 local trailGeometries_ = nil   -- {ballType = {node=..., geometry=...}}
+local trailMaterial_ = nil     -- 共享：DiffVCol + 白底 + CULL_NONE（双面）
 local trailSamples_ = {}
 local trailActive_ = {normal = false, ice = false, speed = false, giant = false}
 local lastRenderElapsed_ = nil
@@ -1326,7 +1327,9 @@ local function SyncVehicleTrails(game, dt)
                 geometry:BeginGeometry(0, TRIANGLE_LIST)
                 for _, v in ipairs(verts) do
                     geometry:DefineVertex(v[1])
-                    geometry:DefineNormal(Vector3(0, 0, -1))
+                    -- 法线朝上：方向光来自上方，水平法线会让 N·L≈0 → 表面全黑
+                    -- （配合常驻自发光双保险）。
+                    geometry:DefineNormal(Vector3(0, 1, 0))
                     geometry:DefineColor(v[2])
                     geometry:DefineTexCoord(Vector2(0, 0))
                 end
@@ -1488,13 +1491,25 @@ function Renderer3D.Init(scene, voxelWorld)
     -- 车辆尾迹：每弹种一个 CustomGeometry 三角带，材质走敌机箱体同一条已验证可见的
     -- 路径（DiffVCol + 白底纹理，颜色由顶点色给出）。创建后先禁用节点，
     -- 等有非空几何再启用（避免 "VertexBuffer is empty\!"，AB-136）。
+    -- ⚠️ 必须 CULL_NONE：本三角带的绕序使法线朝向 +Z，而相机在 -Z（看向 +Z），
+    -- 用默认背面剔除会把整条光带剔掉（v0.13.22 首版「什么都没有」的真因）。
+    -- 独立材质，避免污染与敌机棱线共享的 voxelMaterial_。
+    trailMaterial_ = Material:new()
+    trailMaterial_:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
+    trailMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
+    trailMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+    -- 深空场景很暗：细长几何纯漫反射几乎看不见（v0.11.1 基准线踩过同一个坑）。
+    -- 给一个**低强度中性自发光**做可见性保底；色相与「头亮尾暗」仍由顶点色承担
+    -- （自发光给太高会冲淡弹种配色，所以只取 0.15）。
+    trailMaterial_:SetShaderParameter("MatEmissiveColor", Variant(Color(0.15, 0.15, 0.15, 1)))
+    trailMaterial_:SetCullMode(CULL_NONE)
     trailGeometries_ = {}
     for _, ballType in ipairs(TRAIL_TYPES) do
         local node = scene:CreateChild("VehicleTrail_" .. ballType)
         node.enabled = false
         local geometry = node:CreateComponent("CustomGeometry")
         geometry.castShadows = false
-        geometry:SetMaterial(0, voxelMaterial_)
+        geometry:SetMaterial(0, trailMaterial_)
         trailGeometries_[ballType] = {node = node, geometry = geometry}
     end
     print("[Renderer3D] vehicle trails ready (3D ribbon geometry)")
@@ -1645,6 +1660,8 @@ function Renderer3D.Shutdown()
         end
     end
     trailGeometries_ = nil
+    if trailMaterial_ then trailMaterial_:Dispose() end
+    trailMaterial_ = nil
     trailSamples_ = {}
     vehicleRecords_ = {}
     enemyMeshes_ = {}

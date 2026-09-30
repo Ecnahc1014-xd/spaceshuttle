@@ -221,10 +221,11 @@
 - [AB-160] [跨项目][每帧重建的 CustomGeometry 必须 SetDynamic(true)，否则几何提交后不可改、整层特效静默消失] 本项目车辆尾迹的 ribbon 版连续两轮被判「不可见」，真因不是颜色/材质/位置，而是**每帧 `Clear()`+`BeginGeometry`+`Commit()` 重建却从未 `SetDynamic(true)`**：非动态几何的顶点缓冲在 Commit 后即冻结，后续重建全部无效，且**不报任何错**——LSP、build、日志、overlay 错误全绿。凡是「每帧/每次变化重建」的 `CustomGeometry`（尾迹、轨迹带、动态轮廓），必须显式 `geometry:SetDynamic(true)`；排查同类「3D 特效不显示」时，`SetDynamic` 是第一批要查的开关。（击碎，飞机大战/v0.13.22）
 
 - [AB-161] [跨项目][离屏 3D 层恒黑时，用「顶点数/状态数」自证几何已提交，别只靠截图与日志] 当验证环境的 3D 层因后处理编译失败恒黑时，截图与「零错误日志」都证明不了特效是否真的画出来。可用的替代取证：驱动到目标状态后**直接读对象状态**（本项目读 `CustomGeometry:GetNumVertices(0)` 得到 78 顶点，证明几何确实提交）。⚠️ 两条配套纪律：①读接口名要先查 `.emmylua`（`GetVertexCount` 不存在，实际是 `GetNumVertices(index)`，用错会静默拿到 nil/0 而误判）；②探针必须确认**真的进入了目标状态**（本项目菜单态 `PointerDown` 自 v0.13.4 起不再开局，必须 `Game.StartStageAt(1)`；否则 state 恒为 menu、目标对象恒为空，几轮「验证」全是无效的）。（击碎，飞机大战/v0.13.22）
+- [AB-162] [跨项目][难度梯度要测中段封顶，不只测首尾] 调波次敌人数时，按关内段位与关卡进度共同测算；至少断言第1/7/15关普通波数量和硬上限首次到达关卡。前期数量、精英护航、Boss召唤是独立压力源，不能只压普通波而让特殊波护航填回密度；同屏上限应是护栏，不应成为早期常态。（击碎，飞机大战/v0.13.23）
 
 ## 同步记录
 
-- 最近一次同步：2026-09-30 击碎，飞机大战 v0.13.22（新增 AB-160/AB-161：每帧重建 CustomGeometry 必须 SetDynamic(true)；离屏 3D 恒黑时用顶点数自证 + 探针须确认进入目标状态）
+- 最近一次同步：2026-09-30 击碎，飞机大战 v0.13.23（新增 AB-160/AB-161：每帧重建 CustomGeometry 必须 SetDynamic(true)；离屏 3D 恒黑时用顶点数自证 + 探针须确认进入目标状态）
 - 2026-09-30 击碎，飞机大战 v0.13.15b（新增 AB-142 贴 3D 物体的 overlay 特效必须带 world Z 投影；前次 v0.13.15 为 AB-141）
 
 - [AB-136] [跨项目][CustomGeometry 空顶点缓冲报错：新建后先禁用节点，清空/收尾不要 Commit 0 顶点] 引擎在节点启用时会绘制其 CustomGeometry，而**刚创建（或刚 Clear()）的几何体顶点缓冲是空的** → 报 `VertexBuffer is empty\!Material ,compute:(nil),vertexBufferSize:1,geomerty type:0`。三处高发：①新建 CustomGeometry 后还没提交几何、节点就已启用（本项目尾迹批次，日志时序可见 `ready` 后 ~76ms 报错）；②清理路径 `Clear()` 之后又 `BeginGeometry+Commit` 提交了 0 顶点；③每帧同步时"本该有内容"的分支因数据为空而提交了空几何。正确做法：**创建后立即 `node.enabled=false`，等提交了非空几何再 `enabled=true`；清空/收尾只 `Clear()`+禁用节点，绝不 Commit 空内容；同步时先判 `#verts>0` 再重建**。⚠️ 这类错误**只在真渲染时出现，LSP 与 build 都发现不了**——新增任何程序化几何（CustomGeometry/动态网格）都要在本地真渲染跑一遍并 `grep VertexBuffer`。（击碎，飞机大战/v0.13.11）

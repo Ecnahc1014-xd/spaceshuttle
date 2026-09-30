@@ -50,11 +50,11 @@ TalentCatalog.AUTO_OWNED = { "speed_1" }
 -- mul=true 表示乘法叠加，否则加法；small=小幅，big=专属卡效果增强。
 -- v0.13.16：用户要求「局内卡要显著强于局外的树」→ 天赋数值按「局内卡的 1/3~1/5」定，
 -- 保证一局内抽到的一张卡就明显强于树上同属性的一整条线。对照（局内基础卡/强化卡）：
---   分裂 2%/3%、冰冻 0.5/1.2 秒、极速 4%/8%、贯穿 0.5/1.0 格。
+--   分裂 2%/3%、冰冻 0.5/1.2 秒、加速度 4%/8%、贯穿 0.5/1.0 格。
 local BALL_STAT = {
     normal = { stat = "splitBonus", small = 0.005, big = 0.008, label = "分裂概率" },
     ice    = { stat = "iceBonus",   small = 0.12,  big = 0.30,  label = "冰冻时长" },
-    speed  = { stat = "speedMul",   small = 1.01,  big = 1.02,  mul = true, label = "极速" },
+    speed  = { stat = "speedMul",   small = 1.01,  big = 1.02,  mul = true, label = "加速度" },
     giant  = { stat = "giantArea",  small = 0.12,  big = 0.25,  label = "贯穿范围" },
 }
 

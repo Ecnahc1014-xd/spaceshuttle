@@ -53,8 +53,11 @@ local BALL_TYPES = {
     },
     speed = {
         radius = 18, speed = 660, damage = 1,
-        speedBoost = 1.06, maxSpeed = 900,
-        damageStep = 320, maxDamage = 2,
+        speedBoost = 1.06,
+        -- v0.13.22：**去掉速度上限**（原 maxSpeed=900 封顶）——用户要求速度无限增长。
+        -- 每次反弹/命中仍 ×speedBoost 加速，越打越快，不封顶。
+        damageStep = 320,
+        -- v0.13.22：**去掉伤害封顶**（原 maxDamage=2）——伤害按速度分档无限增长。
         redirectThrottle = 0.45,    -- 自动追击的节流（秒），削弱其持续黏着
         redirectMinSpeed = 120,     -- WO-05/P4：低于此速度不触发追击，消除低速抖动
         bounceElasticity = 1.0,    -- 加速弹更"滑"
@@ -245,9 +248,9 @@ local UPGRADE_POOL = {
       detail = "分裂小车概率 +3%。",
       weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+3% 概率", ballType = "normal",
       apply = function(stacks) BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.03 end },
-    { id = "speed", name = "疾速引擎", desc = "加速车最高速度 +8%",
-      detail = "加速车最高速度 +8%。",
-      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8% 极速", ballType = "speed",
+    { id = "speed", name = "疾速引擎", desc = "加速车加速度 +8%",
+      detail = "加速车加速更快。",
+      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8% 加速度", ballType = "speed",
       apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.08 end },
     { id = "ice", name = "深寒涂层", desc = "冰冻时长 +1.2 秒",
       detail = "冰冻时间 +1.2 秒。",
@@ -274,9 +277,9 @@ local UPGRADE_POOL = {
           BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 2
           BALL_TUNING.lineDamageBonus = BALL_TUNING.lineDamageBonus + 1
       end },
-    { id = "overclock", name = "超载核心", desc = "加速车极速 +15%，基地 -8",
-      detail = "加速车极速 +15%，基地 -8。",
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "极速+15% / 生命-8", ballType = "speed",
+    { id = "overclock", name = "超载核心", desc = "加速车加速度 +15%，基地 -8",
+      detail = "加速车加速更快，但 -8 生命。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "加速度+15% / 生命-8", ballType = "speed",
       apply = function(stacks)
           BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
           baseHp = math.max(1, baseHp - 8)
@@ -320,9 +323,9 @@ local UPGRADE_POOL = {
       weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 秒",
       ballType = "ice", kind = "base",
       apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 0.5 end },
-    { id = "base_speed", name = "引擎调校", desc = "加速车极速 +4%",
-      detail = "加速车最高速度 +4%。",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+4% 极速",
+    { id = "base_speed", name = "引擎调校", desc = "加速车加速度 +4%",
+      detail = "加速车加速更快。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+4% 加速度",
       ballType = "speed", kind = "base",
       apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.04 end },
     { id = "base_giant", name = "弹体增重", desc = "巨型车贯穿范围 +0.5 格",
@@ -1947,8 +1950,11 @@ local function BoostSpeedMarble(marble)
     local def = BALL_TYPES.speed
     if marble.ballType ~= "speed" then return end
 
-    local effMax = def.maxSpeed * BALL_TUNING.speedMul
-    marble.speed = math.min(effMax, marble.speed * def.speedBoost)
+    -- v0.13.22：不再有速度上限（原 effMax = maxSpeed * speedMul）。
+    -- 速度每次 ×speedBoost 无限增长；speedMul（天赋/卡）只影响初始速度档，
+    -- 作为「加速度加成」体现——即同样的反弹次数，速度涨得更快。
+    local gain = def.speedBoost + (BALL_TUNING.speedMul - 1.0) * 0.1
+    marble.speed = marble.speed * gain
     local velocityLength = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
     if velocityLength > 0.001 then
         marble.vx = marble.vx / velocityLength * marble.speed
@@ -1981,9 +1987,9 @@ local function GetMarbleDamage(marble, def)
     if marble.ballType ~= "speed" then
         base = def.damage + BALL_TUNING.damageBonus + TalentDamageBonus()
     else
+        -- v0.13.22：加速车伤害按速度分档**无限增长**（原 min(maxDamage, ...) 封顶已去）。
         local bonus = math.floor(math.max(0, marble.speed - def.speed) / def.damageStep)
-        base = math.min(def.maxDamage,
-            def.damage + bonus + BALL_TUNING.damageBonus + TalentDamageBonus())
+        base = def.damage + bonus + BALL_TUNING.damageBonus + TalentDamageBonus()
     end
     -- 暴击只影响本次结算，不改弹珠状态；表现层消费 crit_hit 出飘字。
     return ApplyCrit(base, marble)
