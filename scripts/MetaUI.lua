@@ -644,13 +644,16 @@ end
 local function GetShopLayout(w)
     local content, close = GetShellLayout(w)
     local rowH, rowStep = 72, 78
+    local rowY = content.y + 35
+    local giftTitleY = rowY + #MetaCatalog.GetSkins() * rowStep + 4
     return {
         content = content, close = close,
         titleY = content.y + 8,
-        rowY = content.y + 35,
+        rowY = rowY,
         rowH = rowH,
         rowStep = rowStep,
-        giftTitleY = content.y + 35 + #MetaCatalog.GetSkins() * rowStep + 4,
+        giftTitleY = giftTitleY,
+        giftRowY = giftTitleY + 30,
     }
 end
 
@@ -658,6 +661,12 @@ local function GetShopCarButton(layout, index)
     local r = {x = layout.content.x, y = layout.rowY + (index - 1) * layout.rowStep,
         w = layout.content.w, h = layout.rowH}
     return r, {x = r.x + r.w - 126, y = r.y + 12, w = 112, h = 48}
+end
+
+local function GetShopGiftButton(layout, index)
+    local r = {x = layout.content.x, y = layout.giftRowY + (index - 1) * 68,
+        w = layout.content.w, h = 60}
+    return r, {x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48}
 end
 
 local function DrawCarSilhouette(ctx, r, skin, color)
@@ -692,7 +701,9 @@ local function DrawShop(ctx, w, meta)
         D.panel(ctx, r.x + 9, r.y + 8, 76, 55, C.widget, C.cyanDim, 4)
         DrawCarSilhouette(ctx, r, skin, selected and C.cyan or C.text)
         D.text(ctx, r.x + 94, r.y + 8, skin.name, 18, C.text)
-        D.text(ctx, r.x + 94, r.y + 36, skin.desc, 13, C.dim)
+        D.text(ctx, r.x + 94, r.y + 36,
+            selected and "当前使用" or (owned and "已拥有" or ("售价 " .. skin.cost .. " 零件")),
+            15, selected and C.cyan or C.dim)
         if selected then
             Button(ctx, btn, "使用中", "", "disabled")
         elseif owned then
@@ -707,14 +718,12 @@ local function DrawShop(ctx, w, meta)
     D.text(ctx, content.x + 4, layout.giftTitleY, "免费补给", 18, C.cyan)
     local gifts = MetaCatalog.GetShopEntries()
     for i, gift in ipairs(gifts) do
-        local r = {x = content.x, y = layout.giftTitleY + 30 + (i - 1) * 68,
-            w = content.w, h = 60}
+        local r, btn = GetShopGiftButton(layout, i)
         local used = meta.giftUsed and meta.giftUsed[gift.key] or 0
         local limit = MetaCatalog.GetAdGiftDailyLimit(gift.key)
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, used < limit and C.ad or C.cyanDim, 6)
         D.text(ctx, r.x + 16, r.y + 8, gift.name, 18, used < limit and C.text or C.dim)
         D.text(ctx, r.x + 16, r.y + 32, gift.desc, 15, C.dim)
-        local btn = {x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48}
         if used < limit then
             Button(ctx, btn, "看广告", string.format("%d/%d", used, limit), "ad")
         else
@@ -742,10 +751,7 @@ local function HitTestShop(uiX, uiY, w, meta)
     end
     local gifts = MetaCatalog.GetShopEntries()
     for i, gift in ipairs(gifts) do
-        local r = {x = layout.content.x,
-            y = layout.giftTitleY + 30 + (i - 1) * 68,
-            w = layout.content.w, h = 60}
-        local btn = {x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48}
+        local _, btn = GetShopGiftButton(layout, i)
         local used = meta.giftUsed and meta.giftUsed[gift.key] or 0
         if used < MetaCatalog.GetAdGiftDailyLimit(gift.key)
             and Inside(btn, uiX, uiY) then return "ad_gift", i end
