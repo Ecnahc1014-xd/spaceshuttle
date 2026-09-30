@@ -3,6 +3,8 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.6（主菜单：天赋树与敌机图鉴换位）：
+  - 「养成收藏」行内交换「天赋树」与「敌机图鉴」的显示顺序（现为 车型商店 / 战斗档案 / 天赋树 / 敌机图鉴 / 排行榜）。只改 `MetaUI.GetGrowDefs` 的 defs 数组顺序——绘制与 `HitTestMenuBar` 同源，交换即两处同步，无需改命中代码。验证：LSP 0 Error、官方多人 build+预览上传、真渲染菜单冒烟（letterbox=(7,11,20)、19837 非黑像素、零 overlay/Lua 错误）。
 - 版本: 0.13.5-floattext（跳字特效修复：真实得分 + 就近聚合 + 越线不飘分；版本号行由并发会话统一推进，本批只改 `Game.lua`/`Presentation.lua`/`Scene3DBackend.lua` 的相关 hunk）：
   - **根因（用户点名「频繁的 +0」）**：`brick_hit` 的 `score` 在 `EmitBrickShatterFx`/`DamageBrick` 两处都硬编码 0——真实得分只在 `EjectBrick` 里累加进规则层 `score` 变量、从未外发；而 `Presentation.brickSpark` 对每次 `destroyed` 击碎无条件 `SpawnFloatText("+" .. event.score)`，于是每次击碎都飘 "+0"、真实得分从未显示。越线碎裂（惩罚）复用同一视觉事件，也错误地飘分。
   - **规则层**：`EmitBrickShatterFx(enemy, brick, x, y, scoreValue)` 新增第 5 参；`EjectBrick` 传 `data.score`（80~320/砖，随机型），`ShatterBreachedBrick` 不传（=0）——得分击碎与惩罚碎裂从此在事件数据上可分。
