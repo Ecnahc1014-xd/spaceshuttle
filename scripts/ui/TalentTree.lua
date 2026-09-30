@@ -54,7 +54,7 @@ local LABEL_W = 44         -- 左侧星级门槛栏宽（按横行标注，从�
 local SCROLLBAR_GUTTER = 28
 local SCROLLBAR_HIT_W = 24
 local ROW_STEP = 160       -- 相邻阶段的纵向间距
-local DETAIL_RESERVE = 166
+local DETAIL_RESERVE = 156
 local LANE_STAGE_OFFSETS = { general_b = 0.5, ice = 0.5, giant = 0.5 }
 
 -- ============================================================================
@@ -101,7 +101,7 @@ local function GetLayout(w)
     }
     -- 内容高度覆盖错位后最高线路的完整卡片与留白。
     local maxLaneOffset = 0.5
-    local topPad = CARD_R + 40 + maxLaneOffset * ROW_STEP
+    local topPad = CARD_R + 4
     local botPad = CARD_R + 24 + (selectedId_ and 0.5 * ROW_STEP or 0)
     local contentH = topPad + botPad
         + (TalentCatalog.MAX_STAGE - 1 + maxLaneOffset) * ROW_STEP

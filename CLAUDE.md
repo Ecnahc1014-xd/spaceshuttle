@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.16-talent（天赋：成长线改暴击/攻击 + 血量加成写进文案 + 暴击实装；版本号由并发会话推进，本批只改 Game/Presentation/TalentCatalog）：
+  - **用户三点要求**：①「天赋树的血量加成要写出来」②「经验和扩容都是通用卡」③「成长里面应该只有子弹『伤害暴击率+2%学了上限额外+5』」。二次澄清：**每阶暴击率 +2%**、**每三阶额外 +1 基础攻击**、**暴击 = 伤害 ×1.5**、**结算零件 +5% 保留作为填充**。
+  - **数据层 `TalentCatalog.lua`**：新增 `CRIT_MULT=1.5`/`CRIT_PER_STAGE=2`/`ATK_EVERY=3`/`ATK_GAIN=1`/`MASTERY_CRIT=5`；新增 `WithHp(text)` 把「生命上限 +N」统一拼到**每个节点 desc 尾部**（42 节点全覆盖）。**成长线 `general_a` 重做**：`kind="stat"`、`stat="critChance"`，每阶 +2%，第 3/6 阶附 `atkBonus=1`，第 7 阶（学满）= `+7%`（2% + 5% 额外）。**通用卡线 `general_b`**：1 阶=经验卡、3 阶=弹药扩容卡（经验卡从原 general_a 移来），其余阶=结算零件 +5%。节点结构新增 `atkBonus` 字段。
+  - **规则层 `Game.lua`**：新增 `talentCritChance`/`talentAtkBonus`；`SetTalents` 里 `stat=="critChance"` 走**累加分支**（不再当车线路 ballStat 处理）；新增 `TalentDamageBonus()` 把 `talentAtkBonus` 并入**所有弹种**伤害；新增 `ApplyCrit(base, marble)` 按暴击率掷一次、命中 ×1.5 并 `Emit("crit_hit")`。⚠️ 注释写明「`GetMarbleDamage` 在子步进里被多次调用，但每次对应一次命中结算、同帧同砖已由 `frameHitBricks` 去重，故不会重复掷」。快照新增 `talentCritChance`/`talentAtkBonus`/`talentHpPerNode`；`GetTalentBonuses()` 补 critChance/atkBonus。
+  - **表现层**：`FEEDBACK_MAP` 增 `crit_hit → critSpark`，金色「暴击」飘字 + 2~3 粒金色火花（与普通命中区分）。
+  - **UI**：天赋树浮窗本来就渲染 `node.desc`，血量加成因此**自动可见**（实测 `暴击率 +2% · 生命上限 +1`）——`TalentTree.lua` 当时正被并发会话改（滚动条/布局），本批**未碰它**。
+  - **验证**：官方多人 build+预览上传 ✅；规则探针 `probe_growth` PASS（42 节点全带血量文案、成长线合计 19% 暴击 + 2 攻击、经验卡@1/弹药卡@3、注入后 `hp=+7 crit=19% atk=+2`、1500 帧内 `brick_hit=254` 中 `crit_hit=34`）；`probe_growthdraw` PASS（浮窗文案 + 绘制无错）；战斗回归零 Lua/overlay 错误。
+  - ⚠️ **同一份记忆里两条 0.13.15**：本批与并发会话的尾迹迁移都落到了 0.13.15，本批在记忆里记作 `0.13.16-talent`（脚本提交 `a62b004`），版本号常量仍由并发会话统一推进。
 - 版本: 0.13.15（车辆尾迹迁移到已验证可见的 NanoVG 覆盖层）：
   - **根因/决策**：两版 3D 尾迹真机都「不可见」（v0.13.3 软圆 billboard、v0.13.10/11 ribbon CustomGeometry）——本地离屏 3D 因 llvmpipe BloomHDR 编译失败恒黑，无法自证可见；本环境唯一已验证可见的是 NanoVG overlay 通道（冲击环/飘字用的 `ProjectGamePoint` 投影）。故尾迹彻底改走覆盖层，规则层零改动。
   - **数据层 `Presentation.UpdateVehicleTrails`**：每帧读飞行车辆快照（`activeBall` 与 `marbles` 中非 onSling 者），**按路程**在**游戏坐标**采样点（间距 11px、寿命 0.34s、每车≤20 点、同屏≤10 车），相邻点连成渐宽渐亮四边形段（尾细头粗、头 alpha≈200）输出 `vehicleTrails`（`[{ballType,polys={x1..y4,a}}]`）。重开（elapsed 回卷）、非 playing、瞬移（>50px）均清空；发射瞬间按 id 去重防 activeBall/marble 双收导致双倍老化；静止弹弓车不拖尾。
