@@ -243,15 +243,17 @@ local function GetMenuBarLayout()
         end
         return r
     end
+    -- v0.13.8：整体下移 + 拉开行距，填掉底部大片空白（原内容止于 ~808，画布高 960）。
     return {
-        fleet  = { x = 18, y = 390, w = 504, h = 92 },
-        wallet = { x = 18, y = 496, w = 504, h = 56 },
-        daily  = row(588, 92, 3),
-        grow   = row(716, 92, 4),
+        fleet  = { x = 18, y = 400, w = 504, h = 106 },
+        wallet = { x = 18, y = 524, w = 504, h = 62 },
+        daily  = row(628, 102, 3),
+        grow   = row(770, 102, 4),
     }
 end
 
--- v0.13.7：大面板由「敌机图鉴」改为「天赋树」入口（标题 + 进度条），图鉴降为养成行小卡。
+-- v0.13.8：天赋树大面板改为**明确可点入**的入口——左侧大图标 + 标题/副标题 +
+-- 解锁进度条 + 右侧「进入 ›」胶囊按钮；有可解锁节点时整框青色高亮 + 红点，无则压暗。
 ---@param ctx any
 ---@param w number
 ---@param meta MetaState
@@ -263,22 +265,40 @@ function MetaUI.DrawHomeFleet(ctx, w, meta)
     local total = meta.talentTotal or 42
     local stars = meta.totalStars or 0
     local stageCount = meta.talentStageCount or 0
-    D.panel(ctx, r.x, r.y, r.w, r.h, C.rail, C.cyanDim, 6)
-    D.rect(ctx, r.x, r.y, 3, r.h, C.cyan, 0)
-    D.text(ctx, r.x + 14, r.y + 8, "天赋树", 17, C.cyan)
-    D.text(ctx, r.x + r.w - 14, r.y + 10,
-        string.format("已解锁 %d/%d ›", owned, total), 15, C.dim,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    -- 进度条（节点解锁度）
-    local barX, barY, barW, barH = r.x + 14, r.y + 38, r.w - 28, 12
-    D.progress(ctx, barX, barY, barW, total > 0 and (owned / total) or 0, C.cyan, barH)
-    -- 星级与阶段进度
-    D.text(ctx, r.x + 14, r.y + 58,
+    local hot = meta.talentAffordable and true or false
+    local border = hot and C.cyan or C.cyanDim
+
+    D.panel(ctx, r.x, r.y, r.w, r.h, C.rail, border, 8)
+    D.rect(ctx, r.x, r.y, 4, r.h, C.cyan, 0)
+    -- 大图标框（有可解锁节点时亮框）
+    local iconBox = { x = r.x + 14, y = r.y + 15, w = 68, h = 68 }
+    D.panel(ctx, iconBox.x, iconBox.y, iconBox.w, iconBox.h, C.panel, border, 8)
+    D.icon(ctx, "premium_energy_core", iconBox.x + 18, iconBox.y + 18, 32, 1)
+
+    local tx = iconBox.x + iconBox.w + 16
+    D.text(ctx, tx, r.y + 16, "天赋树", 21, C.text)
+    D.text(ctx, tx, r.y + 48, string.format("已解锁 %d/%d 节点", owned, total), 14, C.dim)
+
+    -- 解锁进度条
+    local barW = r.w - (tx - r.x) - 128
+    D.progress(ctx, tx, r.y + 72, barW, total > 0 and (owned / total) or 0, C.cyan, 10)
+
+    -- 右侧「进入」胶囊（明确的点击目标）
+    local cta = { x = r.x + r.w - 108, y = r.y + 30, w = 94, h = 46 }
+    D.panel(ctx, cta.x, cta.y, cta.w, cta.h, C.cyan, C.cyan, 8)
+    D.text(ctx, cta.x + cta.w * 0.5, cta.y + 12, "进入 ›", 19, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    -- 底部一行状态：星级 / 已开放阶段 / 可解锁提示
+    D.text(ctx, tx, r.y + 88,
         string.format("★ %d  ·  已开放 %d/%d 阶段", stars, stageCount, meta.talentMaxStage or 7),
-        14, C.dim)
-    D.text(ctx, r.x + r.w - 14, r.y + 58,
-        meta.talentAffordable and "有可解锁节点" or "继续通关解锁", 14,
-        meta.talentAffordable and C.warn or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        13, C.dim)
+    D.text(ctx, cta.x - 12, r.y + 88,
+        hot and "有可解锁节点" or "继续通关解锁", 13,
+        hot and C.warn or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    if hot then
+        D.rect(ctx, r.x + r.w - 14, r.y + 10, 7, 7, C.warn, 4)
+    end
 end
 
 ---@return integer
@@ -336,17 +356,17 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
 
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
-    D.icon(ctx, "parts", L.wallet.x + 12, L.wallet.y + 12, 32)
-    D.text(ctx, L.wallet.x + 52, L.wallet.y + 8, "零件", 13, C.dim)
-    D.text(ctx, L.wallet.x + 52, L.wallet.y + 26, string.format("%d", meta.parts or 0), 23, C.text)
-    D.rect(ctx, L.wallet.x + 184, L.wallet.y + 10, 1, L.wallet.h - 20,
+    D.icon(ctx, "parts", L.wallet.x + 12, L.wallet.y + 15, 32)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 11, "零件", 13, C.dim)
+    D.text(ctx, L.wallet.x + 52, L.wallet.y + 29, string.format("%d", meta.parts or 0), 23, C.text)
+    D.rect(ctx, L.wallet.x + 184, L.wallet.y + 12, 1, L.wallet.h - 24,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 110}, 0)
-    D.icon(ctx, "premium_energy_core", L.wallet.x + 194, L.wallet.y + 12, 32)
-    D.text(ctx, L.wallet.x + 232, L.wallet.y + 8, "钻石", 13, C.dim)
-    D.text(ctx, L.wallet.x + 232, L.wallet.y + 26,
+    D.icon(ctx, "premium_energy_core", L.wallet.x + 194, L.wallet.y + 15, 32)
+    D.text(ctx, L.wallet.x + 232, L.wallet.y + 11, "钻石", 13, C.dim)
+    D.text(ctx, L.wallet.x + 232, L.wallet.y + 29,
         meta.offline and "—" or string.format("%d", meta.gems or 0), 23, C.warn)
 
-    local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 9, w = 96, h = 38 }
+    local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 12, w = 96, h = 38 }
     D.panel(ctx, wb.x, wb.y, wb.w, wb.h, C.warn, C.warn, 6)
     D.rect(ctx, wb.x + 6, wb.y + 3, wb.w - 12, 1, {255, 255, 255, 100}, 0)
     D.icon(ctx, "premium_energy_core", wb.x + 8, wb.y + 5, 28)
@@ -367,14 +387,14 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
             D.panel(ctx, rr.x, rr.y, rr.w, rr.h, C.card, border, 6)
             D.rect(ctx, rr.x + 9, rr.y + 1, rr.w - 18, 1,
                 {border[1], border[2], border[3], def.hot and 100 or 40}, 0)
-            D.panel(ctx, rr.x + rr.w * 0.5 - 21, rr.y + 7, 42, 40, C.rail, border, 5)
-            local drewIcon = D.icon(ctx, def.icon, rr.x + rr.w * 0.5 - 16, rr.y + 11, 32,
+            D.panel(ctx, rr.x + rr.w * 0.5 - 23, rr.y + 8, 46, 44, C.rail, border, 5)
+            local drewIcon = D.icon(ctx, def.icon, rr.x + rr.w * 0.5 - 16, rr.y + 14, 32,
                 def.hot and 1 or 0.82)
-            D.text(ctx, rr.x + rr.w * 0.5, rr.y + (drewIcon and 51 or 18),
+            D.text(ctx, rr.x + rr.w * 0.5, rr.y + (drewIcon and 58 or 22),
                 def.label, 15, def.hot and C.text or C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
             local lines = D.wrap(ctx, def.sub, 12, rr.w - 10)
-            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 72, lines[1] or "", 12,
+            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 80, lines[1] or "", 12,
                 def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.dim),
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
             if def.hot then
@@ -384,7 +404,7 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     end
 
     if meta.toast and meta.toast ~= "" then
-        D.text(ctx, w * 0.5, 848, meta.toast, 16, C.warn,
+        D.text(ctx, w * 0.5, 892, meta.toast, 16, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 end
