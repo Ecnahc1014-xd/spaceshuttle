@@ -1,6 +1,6 @@
 {
   "_comment": "跨项目用户偏好，POST-3 同步时自动更新",
-  "_last_sync": "2026-09-30 v0.13.8",
+  "_last_sync": "2026-09-30",
   "_source_project": "击碎，飞机大战",
   "wake_word": null,
   "persona_type": null,
@@ -112,7 +112,6 @@
       "require_continuous_tightening_wave_cadence": true,
       "require_weakened_overpowered_speed_marble": true,
       "disable_aim_trajectory": true,
-      "require_3d_vehicle_flight_trails": true,
       "require_window_fade_bounce_transitions": true,
       "prefer_crate_textured_enemy_blocks": true,
       "require_ejected_blocks_to_stop_colliding_and_spin_away": true,
@@ -125,7 +124,8 @@
       "require_star_gated_talent_tree": true,
       "require_single_level_talent_nodes": true,
       "require_circular_talent_cards": true,
-      "require_icon_on_upgrade_cards": true
+      "require_icon_on_upgrade_cards": true,
+      "require_3d_vehicle_trails_ribbon": true
     }
   }
 }

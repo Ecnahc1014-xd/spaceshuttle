@@ -3,6 +3,10 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.10（飞行尾迹重做 ribbon 光带）：
+  - 用户否决 v0.13.3 尾迹「尾迹特难看廉价」——软圆串珠 + 不随朝向的等宽放大是廉价感根源。`Renderer3D` 尾迹改为沿运动折线的**渐窄渐暗光带 ribbon**：每弹种一个 `CustomGeometry` 批次（`DiffVCol` + 白底纹理 + CULL_NONE、法线 (0,0,-1)，敌机箱体同一条已验证显色路径），相邻采样点（末段接车辆当前位置）各出一个四边形；半宽头 0.22 → 尾 0.02 ×权威半径线性收束，顶点色按头程 `t^1.7` 压暗 + 头段向白热插值（引擎钳 Color 到 0..1，亮头只能靠白插值表达）；采样 0.035s/寿命 0.3s/每车 6 点/同弹种 8 车、jump/静止清轨、flightTime 回绕防 id 复用串轨、非 playing/重开/Shutdown 清空全沿用。规则层零改动。
+  - **中间方案被弃**：billboard 沿运动朝向拉长的速度线——`Billboard.rotation` 屏幕旋向无法本地验证（llvmpipe BloomHDR 编译失败使离屏 3D 全黑、独立探针拿不到任何像素），不押注未知约定，改走可静态推导的几何 ribbon。
+  - **验证**：LSP workspace 0 Error（修掉本批两处自身 doc 批注/窄化 Error）；前向引用 0；真渲染飞行段探针 30→160 帧（含暂停→恢复重建路径）零 Lua/overlay 错误、letterbox 存活；官方多人 build+预览上传 ✅。本批只提交 `Renderer3D.lua`（并发 v0.13.9 天赋树不冲突）；`BUILD_VERSION` 常量停在 0.13.8（v0.13.9 未推进），由并发会话统一处理。⚠️ 待 Preview：真机光带观感与密度。
 - 版本: 0.13.9（天赋树改圆形爬塔卡 + 局内升级卡图标化）：
   - **天赋树重做（用户给参考图 + 明确规格）**：`ui/TalentTree.lua` 整体重写为**纵向爬塔式**——6 条线路各占一列（2 通用 + 4 车），每条线路阶段 1 在**最下方**、阶段越高越往上，节点为**圆形卡**（圆底 + 彩色圆环 + 32px 图标 + 状态角标），相邻阶段之间画**连线**（已解锁亮青、未解锁暗）。内容高于可视区 → **拖拽上下滑动**（`ScrollBegin/ScrollMove/ScrollEnd`，编排层从鼠标/触摸转发，拖拽后抑制本次点击）。顶部固定表头（线路名 + 星级门槛 0★/3★/…），点圆形卡 → **底部方形浮窗**（天赋名 + 线路·阶段 + 详情 + 按钮四态：解锁 N / 已解锁 / 未开放 / 零件不足 还差 X）。
   - **线路配色**：通用线路=品牌青；四条车线路用各自弹种色（分裂青 / 冰冻浅蓝 / 加速蓝 / 巨型金），与底部弹药槽一致。
@@ -488,7 +492,7 @@
 - 相机推近契约：防线受创时 `camera_.orthoSize = 18.0 - baseBarrierFlash*1.6`，仍正交投影仅瞬时缩放，flash 归零自动复原，绝不变透视
 - 敌人行为分化契约：四类 aircraft 的摆动/下移差异只能由 `AircraftPixelData.behavior[aircraftKey]` 单一来源驱动（swayAmp/swayFreq/descentMul/agility/accent），`Game.CreateEnemy` 仅消费该表并叠加随机抖动，禁止把行为数值硬编码进 Game 其他分支或渲染层
 - 模态缓动契约：四模态（menu/gameover/levelup/paused）淡入由 `ModalIntro(game)`（EaseOutCubic，0.28s）经 `nvgGlobalAlpha` 控制，波次横幅 `DrawWaveBanner` 由 `presentation.waveBannerTimer` 驱动滑入淡出；仅表现层瞬时状态，不得写规则层
-- 预瞄轨迹与尾迹契约：v0.13.3 更新——3D 飞行车辆**有**尾迹（见 0.13.3 条目）；仍不绘制预瞄线与 2D 球形弹珠拖尾；拖拽瞄准只负责发射输入，尾迹只读规则快照采样，不向渲染快照写入轨迹。
+- 预瞄轨迹与尾迹契约：v0.13.10 更新——3D 飞行车辆**有**尾迹，形态是沿运动折线的渐窄渐暗 **ribbon 光带**（DiffVCol CustomGeometry 批次，见 0.13.10 条目；软圆串珠形态已被用户否决）；仍不绘制预瞄线与 2D 球形弹珠拖尾；拖拽瞄准只负责发射输入，尾迹只读规则快照采样，不向渲染快照写入轨迹。
 - 敌方箱体契约：alive occupied cells 仍来自 AircraftPixelData 并保持单敌人 CustomGeometry；`VOXEL_GAP` 只缩小视觉箱体，中心 pitch 继续等于 `brickSize * WORLD_SCALE`；面使用官方木箱材质，缺失时才回退顶点色材质。
 - 撞飞箱体契约：命中方块通过 `ejected=true` 立即退出规则碰撞和编队主体，`brick_ejected` 事件带随机速度、角速度和生命周期；Presentation 维护飞散状态，Renderer3D 以独立箱体节点消费，未撞方块继续使用 AABB 碰撞。
 - 飞机布局契约：SpawnWave 对飞机完整二维 AABB（含间距）进行候选检查，失败时仅向更高层确定性错位，禁止接受重叠候选。
