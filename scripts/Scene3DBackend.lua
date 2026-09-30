@@ -435,7 +435,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.13.8"
+local BUILD_VERSION = "0.13.14"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -683,6 +683,49 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
             nvgStroke(ctx)
         end
     end
+end
+
+-- v0.13.12：车辆飞行尾迹（NanoVG overlay 路径，冲击环/飘字同款投影，
+-- 这是本项目里**已验证可见**的绘制通道；3D billboard/CustomGeometry 两版
+-- 尾迹在真机上都不可见）。读取 Presentation.vehicleTrails 的游戏坐标光带段，
+-- 用 NVG_LIGHTER 加色叠出"热焰拖尾"：弹种色为底、头部向白提亮。
+local TRAIL_WHITE_MIX = 0.5
+local function DrawVehicleTrails(ctx, game, presentation)
+    local trails = presentation.vehicleTrails
+    if not trails or #trails == 0 then return end
+    nvgSave(ctx)
+    nvgGlobalCompositeOperation(ctx, NVG_LIGHTER)
+    for _, group in ipairs(trails) do
+        local base = SLOT_COLORS[group.ballType] or SLOT_COLORS.normal
+        for _, seg in ipairs(group.polys) do
+            local a = seg.a
+            if a > 4 then
+                local mix = TRAIL_WHITE_MIX * (a / 200)
+                local r = math.floor(base[1] + (255 - base[1]) * mix)
+                local g = math.floor(base[2] + (255 - base[2]) * mix)
+                local b = math.floor(base[3] + (255 - base[3]) * mix)
+                local x1, y1 = ProjectGamePoint(seg.x1, seg.y1)
+                local x2, y2 = ProjectGamePoint(seg.x2, seg.y2)
+                local x3, y3 = ProjectGamePoint(seg.x3, seg.y3)
+                local x4, y4 = ProjectGamePoint(seg.x4, seg.y4)
+                nvgBeginPath(ctx)
+                nvgMoveTo(ctx, x1, y1)
+                nvgLineTo(ctx, x2, y2)
+                nvgLineTo(ctx, x3, y3)
+                nvgLineTo(ctx, x4, y4)
+                nvgClosePath(ctx)
+                nvgFillColor(ctx, nvgRGBA(r, g, b, math.floor(a * 0.55)))
+                nvgFill(ctx)
+                -- 头部亮段描一道更亮的芯线，强化"被拉出的光"的方向感。
+                nvgStrokeColor(ctx, nvgRGBA(
+                    math.min(255, r + 60), math.min(255, g + 60), math.min(255, b + 60),
+                    math.floor(a * 0.9)))
+                nvgStrokeWidth(ctx, math.max(1.2, (a / 200) * 3.2))
+                nvgStroke(ctx)
+            end
+        end
+    end
+    nvgRestore(ctx)
 end
 
 -- v0.10.23：击毁扩散环（少量点缀），从 r0 扩到 r1 并淡出。
@@ -2478,6 +2521,7 @@ local function RenderOverlay(game, presentation, meta)
                     math.cos(game.elapsed * 73) * amplitude * 0.65)
             end
             DrawBaseImpactFeedback(vg_, game, presentation)
+            DrawVehicleTrails(vg_, game, presentation)
             DrawShockRings(vg_, game, presentation)
             DrawFloatTexts(vg_, game, presentation)
             DrawWaveBanner(vg_, game, presentation)

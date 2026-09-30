@@ -31,6 +31,126 @@ local adToastTimer = 0
 -- 云存档状态（**只描述云存档**，不描述联机模式；两者是不同服务，禁止混用文案）：
 -- idle / syncing / ok / unavailable
 local cloudStatus = "idle"
+
+-- v0.13.12：3D 尾迹两版均"看不见"（软圆串珠+ribbon 光带都在正交 HDR 管线里
+-- 无法自证可见），用户拍板改走**已验证可见**的 NanoVG overlay 路径（冲击环/
+-- 飘字同款 ProjectGamePoint 投影 + 加色发光描边）。本层只读飞行车辆快照采样，
+-- 输出设计坐标光带供 Scene3DBackend 绘制；规则层不感知。
+local TRAIL_LIFETIME = 0.34        -- 采样点寿命（秒）
+local TRAIL_SAMPLE_SPACING = 11.0  -- 设计像素间距：按路程采样，快慢车拖尾都连续
+local TRAIL_MAX_SAMPLES = 20       -- 每辆车采样点上限（寿命到点前截断）
+local TRAIL_MAX_VEHICLES = 10      -- 同屏拖尾车辆上限（含待发弹弓车）
+local trailSamples_ = {}           -- marbleId -> {ballType, flightTime, x, y, points={{x,y,age},...}}
+local vehicleTrails_ = {}          -- 快照输出：每帧重建，[{ballType, polys={{x1..y4,a},...}}, ...]
+local trailLastElapsed_ = nil      -- 上一帧 elapsed，检测重开回卷（函数不能挂字段，用模块 local）
+
+local function UpdateVehicleTrails(dt, gameSnapshot)
+    -- 重开/回卷检测：elapsed 变小视为新一局，全量清空
+    local elapsed = gameSnapshot.elapsed or 0
+    if trailLastElapsed_ and elapsed < trailLastElapsed_ - 0.001 then
+        trailSamples_ = {}
+    end
+    trailLastElapsed_ = elapsed
+
+    local playing = gameSnapshot.state == "playing"
+    local visible = {}
+    local result = {}
+    local polysByType = {}
+    local count = 0
+    if playing then
+        local function collect(marble)
+            if not marble or count >= TRAIL_MAX_VEHICLES then return end
+            local ballType = marble.ballType
+            if not ballType then return end
+            local id = marble.id
+            -- 发射瞬间 activeBall 与 marbles 里是同一对象，按 id 去重防双倍老化。
+            if visible[id] then return end
+            visible[id] = true
+            local track = trailSamples_[id]
+            if not track or track.ballType ~= ballType
+                or (marble.flightTime or 0) < (track.flightTime or 0) then
+                track = {ballType = ballType, flightTime = marble.flightTime or 0,
+                    x = marble.x, y = marble.y, points = {}}
+                trailSamples_[id] = track
+            end
+            track.flightTime = marble.flightTime or 0
+            local pts = track.points
+            for i = #pts, 1, -1 do
+                pts[i].age = pts[i].age + dt
+                if pts[i].age >= TRAIL_LIFETIME then table.remove(pts, i) end
+            end
+            -- 静止（暂停在弹弓位/慢速）不补采样也不画，避免原地点糊成一坨
+            local speed2 = (marble.vx or 0) ^ 2 + (marble.vy or 0) ^ 2
+            local still = marble.onSling and speed2 <= 1 and not gameSnapshot.aiming
+            if still then
+                pts = {}
+                track.points = pts
+                return
+            end
+            local dx, dy = marble.x - track.x, marble.y - track.y
+            if dx * dx + dy * dy > 2500 then -- >50px 瞬移（复活/传送），清轨防拉丝
+                track.points = {}
+                pts = track.points
+            end
+            local moved = math.sqrt(dx * dx + dy * dy)
+            if moved >= TRAIL_SAMPLE_SPACING then
+                pts[#pts + 1] = {x = track.x, y = track.y, age = 0}
+                if #pts > TRAIL_MAX_SAMPLES then table.remove(pts, 1) end
+                track.x, track.y = marble.x, marble.y
+            end
+            if #pts < 2 then return end
+            count = count + 1
+            local headX, headY = marble.x, marble.y
+            -- 颜色不在这里定：后端按 ballType 用 SLOT_COLORS 统一注入（样式单一来源）。
+            local group = polysByType[ballType]
+            if not group then
+                group = {}
+                polysByType[ballType] = group
+                result[#result + 1] = {ballType = ballType, polys = group}
+            end
+            local n = #pts
+            local radius = marble.radius or 20
+            local widthScale = radius / 20.0
+            for i = 1, n do
+                local ax, ay = pts[i].x, pts[i].y
+                local bx, by
+                if i < n then bx, by = pts[i + 1].x, pts[i + 1].y
+                else bx, by = headX, headY end
+                local sdx, sdy = bx - ax, by - ay
+                local slen = math.sqrt(sdx * sdx + sdy * sdy)
+                if slen > 0.5 then
+                    local nx, ny = -sdy / slen, sdx / slen
+                    -- 尾细头粗：半宽沿采样序列线性放大（t=0 尾 → t=1 头）
+                    local t0 = (i - 1) / n
+                    local t1 = i / n
+                    local wa = (2.2 + 12.5 * t0) * widthScale
+                    local wb = (2.2 + 12.5 * t1) * widthScale
+                    local lifeA = 1 - pts[i].age / TRAIL_LIFETIME
+                    local alpha = 200 * (t1 ^ 1.25) * math.min(1, lifeA + 0.35)
+                    group[#group + 1] = {
+                        x1 = ax + nx * wa, y1 = ay + ny * wa,
+                        x2 = bx + nx * wb, y2 = by + ny * wb,
+                        x3 = bx - nx * wb, y3 = by - ny * wb,
+                        x4 = ax - nx * wa, y4 = ay - ny * wa,
+                        a = alpha,
+                    }
+                end
+            end
+        end
+        collect(gameSnapshot.activeBall)
+        for _, marble in ipairs(gameSnapshot.marbles or {}) do
+            if not marble.onSling then collect(marble) end
+        end
+        for id in pairs(trailSamples_) do
+            if not visible[id] then trailSamples_[id] = nil end
+        end
+    else
+        trailSamples_ = {}
+    end
+    vehicleTrails_ = result
+    return result
+end
+
 local truckLaunchFlash = {
     normal = 0,
     ice = 0,
@@ -594,6 +714,9 @@ function Presentation.Init()
     adToast = nil
     adToastTimer = 0
     cloudStatus = "idle"
+    trailSamples_ = {}
+    vehicleTrails_ = {}
+    trailLastElapsed_ = nil
     nextDebrisId = 1
     -- WO-16/P9：对象池在重开时清空回收对象，避免旧局残留引用（id 已随 nextDebrisId 重置）。
     particlePool = {}
@@ -632,6 +755,7 @@ function Presentation.Update(dt, gameSnapshot, events)
     UpdateBaseImpacts(dt)
     UpdateShockRings(dt)
     UpdateTruckLaunchFlashes(dt)
+    UpdateVehicleTrails(dt, gameSnapshot)
 end
 
 function Presentation.GetSnapshot()
@@ -660,6 +784,7 @@ function Presentation.GetSnapshot()
         adToast = adToast,
         cloudStatus = cloudStatus,
         truckLaunchFlash = truckLaunchFlash,
+        vehicleTrails = vehicleTrails_,
         visualCatalog = VisualCatalog,
     }
 end

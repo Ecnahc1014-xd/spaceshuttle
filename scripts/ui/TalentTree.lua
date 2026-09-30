@@ -45,11 +45,16 @@ local dragging_ = false
 local dragLastY_ = 0
 local dragStartY_ = 0
 local dragMoved_ = false
+local scrollbarDragging_ = false
+local scrollbarPointerOffset_ = 0
 
 local CARD_R = 30          -- 圆形卡半径
 local LANE_GAP = 10        -- 线路列间距
 local LABEL_W = 44         -- 左侧星级门槛栏宽（按横行标注，从下到上）
-local ROW_STEP = 128       -- 相邻阶段的纵向间距（爬塔高度：留足呼吸感 + 可滑动纵深）
+local SCROLLBAR_GUTTER = 28
+local SCROLLBAR_HIT_W = 24
+local ROW_STEP = 160       -- 相邻阶段的纵向间距
+local LANE_STAGE_OFFSETS = { general_b = 0.5, ice = 0.5, giant = 0.5 }
 
 -- ============================================================================
 -- 布局（纯几何，绘制与命中共用）
@@ -74,25 +79,35 @@ local function GetLayout(w)
     local content = { x = x + 14, y = headerY + 30, w = sw - 28, h = sh - 72 - 30 }
     -- 浮窗展开时，内容可视区底部上收，避免被浮窗遮住（几何与命中同源）。
     if selectedId_ then
-        local detailH = 132 + 18 + 8
-        content.h = math.max(120, content.h - detailH)
+        content.h = math.max(160, content.h - 98)
     end
     local close = { x = x + sw - 46, y = y + 8, w = 36, h = 36 }
     local lanes = #TalentCatalog.LANES
-    local colW = math.floor((content.w - LABEL_W - LANE_GAP * (lanes - 1)) / lanes)
+    local laneAreaW = content.w - SCROLLBAR_GUTTER
+    local colW = math.floor((laneAreaW - LABEL_W - LANE_GAP * (lanes - 1)) / lanes)
     ---@type table<integer, number>
     local laneX = {}
     for i = 1, lanes do
         laneX[i] = content.x + LABEL_W + (i - 1) * (colW + LANE_GAP) + colW * 0.5
     end
-    -- 内容高度：最底阶段在内容区底部，向上每个阶段 ROW_STEP。
-    -- 必须显著大于可视区高度，否则滚不动（用户点名「支持上下滑动，不要塞这么死」）。
-    local topPad = CARD_R + 40   -- 顶部留出最高阶段上方空间
+    local scrollbarTrack = {
+        x = content.x + laneAreaW + 12, y = content.y + 4,
+        w = 4, h = content.h - 8,
+    }
+    local scrollbarHit = {
+        x = scrollbarTrack.x - (SCROLLBAR_HIT_W - scrollbarTrack.w) * 0.5,
+        y = scrollbarTrack.y, w = SCROLLBAR_HIT_W, h = scrollbarTrack.h,
+    }
+    -- 内容高度覆盖错位后最高线路的完整卡片与留白。
+    local maxLaneOffset = 0.5
+    local topPad = CARD_R + 40
     local botPad = CARD_R + 24
-    local contentH = topPad + botPad + (TalentCatalog.MAX_STAGE - 1) * ROW_STEP
+    local contentH = topPad + botPad
+        + (TalentCatalog.MAX_STAGE - 1 + maxLaneOffset) * ROW_STEP
     return {
         content = content, close = close, laneX = laneX, colW = colW, headerY = headerY,
         topPad = topPad, botPad = botPad, contentH = contentH,
+        scrollbarTrack = scrollbarTrack, scrollbarHit = scrollbarHit,
     }
 end
 
@@ -103,10 +118,11 @@ end
 ---@return number cx
 ---@return number cy
 local function NodeCenter(L, laneIndex, stage)
+    local lane = TalentCatalog.LANES[laneIndex]
+    local stageOffset = LANE_STAGE_OFFSETS[lane] or 0
     local cx = L.laneX[laneIndex]
-    -- stage 1 在底部，越高越靠上
     local cy = L.content.y + L.content.h - L.botPad
-        - (stage - 1) * ROW_STEP + scrollY_
+        - (stage - 1 + stageOffset) * ROW_STEP + scrollY_
     return cx, cy
 end
 
@@ -116,7 +132,41 @@ local function MaxScroll(L)
 end
 
 local function ClampScroll(L)
-    scrollY_ = math.max(-MaxScroll(L), math.min(0, scrollY_))
+    scrollY_ = math.max(0, math.min(MaxScroll(L), scrollY_))
+end
+
+---@param L TalentLayout
+---@return table|nil thumb
+local function GetScrollbarThumb(L)
+    local maxScroll = MaxScroll(L)
+    local track = L.scrollbarTrack
+    if maxScroll <= 0 or track.h <= 0 then return nil end
+    local thumbH = math.min(track.h, math.max(42, track.h * L.content.h / L.contentH))
+    local travel = track.h - thumbH
+    local progress = maxScroll > 0 and scrollY_ / maxScroll or 0
+    local y = track.y + (1 - progress) * travel
+    return { x = track.x - 4, y = y, w = 12, h = thumbH }
+end
+
+local function SetScrollFromThumb(L, pointerY, pointerOffset)
+    local thumb = GetScrollbarThumb(L)
+    if not thumb then return end
+    local travel = L.scrollbarTrack.h - thumb.h
+    if travel <= 0 then return end
+    local thumbY = math.max(L.scrollbarTrack.y,
+        math.min(L.scrollbarTrack.y + travel, pointerY - pointerOffset))
+    scrollY_ = (1 - (thumbY - L.scrollbarTrack.y) / travel) * MaxScroll(L)
+end
+
+local function DrawScrollbar(ctx, L)
+    local thumb = GetScrollbarThumb(L)
+    if not thumb then return end
+    local C = Style()
+    local track = L.scrollbarTrack
+    D.rect(ctx, track.x - 2, track.y, 8, track.h, C.rail, 4)
+    D.rect(ctx, thumb.x, thumb.y, thumb.w, thumb.h, C.cyanDim, 6)
+    D.rect(ctx, thumb.x + 4, thumb.y + math.max(4, thumb.h * 0.5 - 9),
+        4, 18, C.cyan, 2)
 end
 
 -- ============================================================================
@@ -292,14 +342,17 @@ function TalentTree.Draw(ctx, w, meta)
 
     nvgRestore(ctx)
 
-    -- ④ 顶部固定表头（裁剪区外，不随内容滚动）：仅线路名
+    -- ④ 右侧固定滚动条，滑块位置反映当前爬塔进度
+    DrawScrollbar(ctx, L)
+
+    -- ⑤ 顶部固定表头（裁剪区外，不随内容滚动）：仅线路名
     for li, lane in ipairs(lanes) do
         local laneCol = (LANE_COLORS[lane]) or C.cyan
         D.text(ctx, L.laneX[li], L.headerY, TalentCatalog.LANE_NAMES[lane] or lane, 13,
             laneCol, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- ⑤ 底部浮窗（选中节点时）
+    -- ⑥ 底部浮窗（选中节点时）
     TalentTree.DrawDetail(ctx, w, meta)
 end
 
