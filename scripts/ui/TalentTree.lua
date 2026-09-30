@@ -46,9 +46,10 @@ local dragLastY_ = 0
 local dragStartY_ = 0
 local dragMoved_ = false
 
-local CARD_R = 34          -- 圆形卡半径
-local LANE_GAP = 12        -- 线路列间距
-local ROW_STEP = 92        -- 相邻阶段的纵向间距（爬塔高度）
+local CARD_R = 30          -- 圆形卡半径
+local LANE_GAP = 10        -- 线路列间距
+local LABEL_W = 44         -- 左侧星级门槛栏宽（按横行标注，从下到上）
+local ROW_STEP = 128       -- 相邻阶段的纵向间距（爬塔高度：留足呼吸感 + 可滑动纵深）
 
 -- ============================================================================
 -- 布局（纯几何，绘制与命中共用）
@@ -68,9 +69,9 @@ local ROW_STEP = 92        -- 相邻阶段的纵向间距（爬塔高度）
 local function GetLayout(w)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
-    -- 顶部标题栏 48 + 表头两行（线路名/星级）；内容区在其下。
+    -- 顶部标题栏 48 + 表头一行（线路名）；内容区在其下。
     local headerY = y + 56
-    local content = { x = x + 14, y = headerY + 34, w = sw - 28, h = sh - 72 - 34 }
+    local content = { x = x + 14, y = headerY + 30, w = sw - 28, h = sh - 72 - 30 }
     -- 浮窗展开时，内容可视区底部上收，避免被浮窗遮住（几何与命中同源）。
     if selectedId_ then
         local detailH = 132 + 18 + 8
@@ -78,16 +79,16 @@ local function GetLayout(w)
     end
     local close = { x = x + sw - 46, y = y + 8, w = 36, h = 36 }
     local lanes = #TalentCatalog.LANES
-    local labelW = 0
-    local colW = math.floor((content.w - labelW - LANE_GAP * (lanes - 1)) / lanes)
+    local colW = math.floor((content.w - LABEL_W - LANE_GAP * (lanes - 1)) / lanes)
     ---@type table<integer, number>
     local laneX = {}
     for i = 1, lanes do
-        laneX[i] = content.x + labelW + (i - 1) * (colW + LANE_GAP) + colW * 0.5
+        laneX[i] = content.x + LABEL_W + (i - 1) * (colW + LANE_GAP) + colW * 0.5
     end
     -- 内容高度：最底阶段在内容区底部，向上每个阶段 ROW_STEP。
-    local topPad = CARD_R + 34   -- 顶部留出星级门槛标签
-    local botPad = CARD_R + 20
+    -- 必须显著大于可视区高度，否则滚不动（用户点名「支持上下滑动，不要塞这么死」）。
+    local topPad = CARD_R + 40   -- 顶部留出最高阶段上方空间
+    local botPad = CARD_R + 24
     local contentH = topPad + botPad + (TalentCatalog.MAX_STAGE - 1) * ROW_STEP
     return {
         content = content, close = close, laneX = laneX, colW = colW, headerY = headerY,
@@ -271,27 +272,34 @@ function TalentTree.Draw(ctx, w, meta)
                     D.text(ctx, cx, cy + CARD_R + 1, tostring(node.cost), 12, C.warn,
                         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
                 end
-                -- 阶段序号（卡片上方小字，弱化）
-                D.text(ctx, cx, cy - CARD_R - 15, tostring(si), 11, C.dim,
-                    NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+                -- 阶段序号不再画在卡片上（左侧栏已按横行标注星级门槛）
             end
+        end
+    end
+
+    -- ③ 左侧星级门槛栏：按「横行（阶段）」从下到上标注（第 1 行 0★、第 2 行 3★…）。
+    -- ⚠️ 门槛属于「阶段（横行）」而非「线路（纵列）」——早期版本误用 LANES 索引，
+    -- 显示成每条线路要求不同星级，语义错误。
+    for si = 1, TalentCatalog.MAX_STAGE do
+        local cy = L.content.y + L.content.h - L.botPad - (si - 1) * ROW_STEP + scrollY_
+        if cy + CARD_R >= L.content.y - 4 and cy - CARD_R <= L.content.y + L.content.h + 4 then
+            local need = TalentCatalog.STAGE_STARS[si] or 0
+            local open = stars >= need
+            D.text(ctx, L.content.x + LABEL_W - 10, cy - 8, (need == 0 and "0★" or (need .. "★")),
+                13, open and C.cyan or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
         end
     end
 
     nvgRestore(ctx)
 
-    -- ③ 顶部固定表头（裁剪区外，不随内容滚动）：线路名 + 星级门槛
+    -- ④ 顶部固定表头（裁剪区外，不随内容滚动）：仅线路名
     for li, lane in ipairs(lanes) do
-        local need = TalentCatalog.STAGE_STARS[li] or 0
-        local open = stars >= need
         local laneCol = (LANE_COLORS[lane]) or C.cyan
         D.text(ctx, L.laneX[li], L.headerY, TalentCatalog.LANE_NAMES[lane] or lane, 13,
-            open and laneCol or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        D.text(ctx, L.laneX[li], L.headerY + 16, (li == 1 and "0★" or (need .. "★")),
-            12, open and C.cyan or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            laneCol, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- ④ 底部浮窗（选中节点时）
+    -- ⑤ 底部浮窗（选中节点时）
     TalentTree.DrawDetail(ctx, w, meta)
 end
 
