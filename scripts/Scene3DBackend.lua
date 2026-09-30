@@ -54,10 +54,6 @@ local projectionOffsetX_ = 0
 local projectionOffsetY_ = 0
 local projectionScaleX_ = 1
 local projectionScaleY_ = 1
--- v0.13.16：world Z 到屏幕设计像素的线性系数（46° 斜俯视正交下 z 会进屏幕 Y）。
--- 车辆尾迹要投影到车身所在深度平面，按 z=0 玩法平面标定会与车分离（用户报「和车分离」）。
-local projectionDepthX_ = 0
-local projectionDepthY_ = 0
 local viewportLeft_ = 0
 local viewportTop_ = 0
 local viewportWidth_ = 0
@@ -445,7 +441,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.19"
+local BUILD_VERSION = "0.13.21"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -468,12 +464,6 @@ local function UpdateProjectionMetrics(logMetrics)
     projectionOffsetY_ = origin.y * DESIGN_H
     projectionScaleX_ = (xAxis.x - origin.x)
     projectionScaleY_ = (yAxis.y - origin.y)
-    -- z 单位增量投影：正交相机下与 x/y 无关，但两点必须同 x/y 只差 z，
-    -- 否则差分会混入 x/y 分量。用玩法平面原点 (0,0,0) 与 (0,0,1米) 对测。
-    local z0 = camera_:WorldToScreenPoint(Vector3(0, 0, 0))
-    local z1 = camera_:WorldToScreenPoint(Vector3(0, 0, 1))
-    projectionDepthX_ = (z1.x - z0.x) * DESIGN_W
-    projectionDepthY_ = (z1.y - z0.y) * DESIGN_H
     if math.abs(projectionScaleX_) < 0.0001 then projectionScaleX_ = 1 end
     if math.abs(projectionScaleY_) < 0.0001 then projectionScaleY_ = 1 end
     if logMetrics then
@@ -486,12 +476,6 @@ end
 local function ProjectGamePoint(x, y)
     return projectionOffsetX_ + x * projectionScaleX_,
         projectionOffsetY_ + y * projectionScaleY_
-end
-
--- 车辆尾迹专用：投影到车身世界深度平面（z 由 Renderer3D 提供，与车辆锚点同式）。
-local function ProjectTrailPoint(x, y, z)
-    return projectionOffsetX_ + x * projectionScaleX_ + z * projectionDepthX_,
-        projectionOffsetY_ + y * projectionScaleY_ + z * projectionDepthY_
 end
 
 local function UseTechFont(ctx)
@@ -809,51 +793,6 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
             nvgStroke(ctx)
         end
     end
-end
-
--- v0.13.12：车辆飞行尾迹（NanoVG overlay 路径，冲击环/飘字同款投影，
--- 这是本项目里**已验证可见**的绘制通道；3D billboard/CustomGeometry 两版
--- 尾迹在真机上都不可见）。读取 Presentation.vehicleTrails 的游戏坐标光带段，
--- 用 NVG_LIGHTER 加色叠出"热焰拖尾"：弹种色为底、头部向白提亮。
-local TRAIL_WHITE_MIX = 0.5
-local function DrawVehicleTrails(ctx, game, presentation)
-    local trails = presentation.vehicleTrails
-    if not trails or #trails == 0 then return end
-    nvgSave(ctx)
-    nvgGlobalCompositeOperation(ctx, NVG_LIGHTER)
-    for _, group in ipairs(trails) do
-        local base = SLOT_COLORS[group.ballType] or SLOT_COLORS.normal
-        local z = Renderer3D.VehicleDepthZ(group.radius)
-        local alphaMax = group.alphaMax or 165
-        for _, seg in ipairs(group.polys) do
-            local a = seg.a
-            if a > 4 then
-                local mix = TRAIL_WHITE_MIX * (a / alphaMax)
-                local r = math.floor(base[1] + (255 - base[1]) * mix)
-                local g = math.floor(base[2] + (255 - base[2]) * mix)
-                local b = math.floor(base[3] + (255 - base[3]) * mix)
-                local x1, y1 = ProjectTrailPoint(seg.x1, seg.y1, z)
-                local x2, y2 = ProjectTrailPoint(seg.x2, seg.y2, z)
-                local x3, y3 = ProjectTrailPoint(seg.x3, seg.y3, z)
-                local x4, y4 = ProjectTrailPoint(seg.x4, seg.y4, z)
-                nvgBeginPath(ctx)
-                nvgMoveTo(ctx, x1, y1)
-                nvgLineTo(ctx, x2, y2)
-                nvgLineTo(ctx, x3, y3)
-                nvgLineTo(ctx, x4, y4)
-                nvgClosePath(ctx)
-                nvgFillColor(ctx, nvgRGBA(r, g, b, math.floor(a * 0.55)))
-                nvgFill(ctx)
-                -- 头部亮段描一道更亮的芯线，强化"被拉出的光"的方向感。
-                nvgStrokeColor(ctx, nvgRGBA(
-                    math.min(255, r + 60), math.min(255, g + 60), math.min(255, b + 60),
-                    math.floor(a * 0.9)))
-                nvgStrokeWidth(ctx, math.max(1.0, (a / alphaMax) * 2.4))
-                nvgStroke(ctx)
-            end
-        end
-    end
-    nvgRestore(ctx)
 end
 
 -- v0.10.23：击毁扩散环（少量点缀），从 r0 扩到 r1 并淡出。
@@ -2661,7 +2600,6 @@ local function RenderOverlay(game, presentation, meta)
                 nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
                     math.cos(game.elapsed * 73) * amplitude * 0.65)
             end
-            DrawVehicleTrails(vg_, game, presentation)
             DrawBaseImpactFeedback(vg_, game, presentation)
             DrawShockRings(vg_, game, presentation)
             DrawFloatTexts(vg_, game, presentation)

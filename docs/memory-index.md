@@ -8,7 +8,7 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.13.18
+当前版本：0.13.21
 简述：**skill 固化 + dark-tech 氛围层实装 + 旧图标重出**（用户：「skill 没有我们有的规范补进 skill，比如生图工作流」「补充图标的部分，对照我们没用上的使劲用上优化画面」）。①**skill 补充**：dark-tech 新增 `references/pipeline.md`（界面素材生成与落地管线）、`atmosphere.md` 加「克制实装」档；0718 新增 `references/urhox-icon-integration.md`（图标落地与存量审计）。②**氛围层（克制档）**：`Scene3DBackend` 新增全屏共享 `AnomalyPulse` + `DrawDashLine/DrawCrossMark/DrawTickRing/DrawHalftone/DrawScanBand/DrawModalTechDecor`，落点=菜单 + 结算/胜利/暂停窗，HUD 与战斗读数不进装饰。③**死代码清理**：接上从未调用的 `DrawBossPhaseBar`（Boss 阶段条此前不显示）；5 个「已加载未绘制」图标键处理（gem→钻石、boost→增益；wheel/supply/pass 删除）。④**旧图标重出**：审计出早期 26 张 `ui_icon_*` 有 100–583 色（AI 原图直接缩放），按 0718 管线重出 21 张（全 6–8 色达标，沿用旧名覆盖），删 3 张失效。验证：多人 build+预览、LSP 0 Error、前向引用 0、真渲染菜单+战斗零 overlay 错误（探针抓到并修掉 `DrawScanBand` 参数顺序 bug）。并发会话 v0.13.17 为天赋树布局/交互修复（TalentTree+client_main）。此前：车辆尾迹走 NanoVG overlay。（用户报两版 3D 尾迹「不可见」——本环境离屏 3D 因 BloomHDR 编译失败恒黑无法自证；改走冲击环/飘字同款 `ProjectGamePoint` 投影）：`Presentation.UpdateVehicleTrails` 游戏坐标按路程采样→`Scene3DBackend.DrawVehicleTrails` 用 `NVG_LIGHTER` 加色叠「弹种色 + 头白热」渐宽光带（随震屏、playing 才画、重开/非 playing/瞬移清空、按 id 去重）。`Renderer3D` 整段删除 3D ribbon。数据探针 PASS、真渲染发射冒烟零错误、LSP 三文件 0 Error、多人 build+预览上传、BUILD_VERSION/大厅→0.13.15。此前：选关蜿蜒路径地图（大振幅贝塞尔曲线+果冻圆钮+星在下方）、无限爬塔、道具永久库存每局限用、天赋树门槛按横行。⚠️ 待 Preview：真机拖尾观感手感。
 最后巩固：2026-09-30
 
@@ -98,6 +98,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.13.21（尾迹回归 3D BillboardSet）：用户「还是没跟上，但是最开始的圆形的完全可以跟随啊」——根因是**通道**：最早的软圆 billboard 版画在 3D 场景、与车共用相机投影（永不脱节），v0.13.12 overlay 与 v0.13.19b 修补都用手工屏幕投影才反复错位。修法：Renderer3D 回归 3D BillboardSet（每弹种一批、颜色烘焙软圆+DiffAlpha），采样密集重叠（0.022s/0.22s/10点）+头尾强收束消除珠子感，z 再远 0.10m 使尾迹落在车体之后；删除 overlay 尾迹全套（Presentation.UpdateVehicleTrails/vehicleTrails + Scene3DBackend.DrawVehicleTrails/ProjectTrailPoint/深度标定，Backend 槽位 198→193）。验证：真渲染发射冒烟零错误、trail ready 日志；LSP 三文件 0 Error、前向引用 0、build+预览上传、BUILD_VERSION/大厅→0.13.21。教训→AB-158。
 - v0.13.20（天赋车解锁语义订正）：用户第三次澄清「解锁车辆天赋树！=局内开局解锁车辆，应该=只有解锁车辆才会有局内解锁此车的解锁天赋卡。无论天赋树如何，开局自带的都是加速车」。改动：①`Game.ResetGame` 删除「把 `talentUnlockedBalls` 并入 `unlockedBalls`」——开局恒为 `{speed=true}`；②`CanOfferUpgrade` 为 `unlock_*` 卡加门控「该车已在天赋树解锁」才进池。最终三层语义：天赋解锁车 → 局内出现**解锁卡**；选中解锁卡 → 该车**本局**入队；天赋解锁专属卡节点 → 专属卡进池；未在天赋解锁的车，局内既不出解锁卡也不出 base/专属卡。验证：`probe_talentball` PASS（开局恒 speed / 天赋解锁 ice → 出现 unlock_ice 但 ice 未预先解锁 / 未解锁车无解锁卡 / unlock_speed 永不出现）；build+预览上传。提交 dfbde86。
 - v0.13.19b（尾迹二次打回真修复）：用户再报「和车分离且图层比车还高」→ v0.13.15b 读错根因。量化：①回缩被 `min(radius*1.15, 采样间隙*0.5)` 钳到 ~2.75px（车半长 23px），头没挪出去；②头全宽 29px≈2 倍车宽且 overlay 压 3D。修法：头沿速度反向退 radius*1.30（不依赖间隙、慢速不反向），光带头宽 8.8px<车身、alpha 165、alphaMax 进 group 表（模块 local 槽位 199→198 主动守 AB-154）。验证：探针断言头宽 7.8<15 ALL PASS、发射冒烟零错误、build+预览上传。教训→AB-157（贴体特效位移锚定物体几何、尺寸<依附对象）。
 - v0.13.19（初始车改加速车 + 四车都能局内解锁）：用户澄清机制分工「天賦树解锁局内卡，局内卡解锁惧内车，另外基础的车改为加速车」——即**两层正交**：天赋树解锁「专属卡」（v0.13.16 的 `ballCard` 节点），局内卡解锁「车」（保留 `unlock_*`）。上一轮我把「封锁卡片还在局内生成」误读成要删局内解锁卡，用户指的是他以为车只该由天赋树解锁。改动：`STARTING_BALL_TYPE` `normal`→**`speed`**（连带 `PauseReload` 兜底 `or "normal"` → `or STARTING_BALL_TYPE`）、`AUTO_OWNED` `normal_1`→**`speed_1`**、新增 `unlock_normal`（解锁分裂车）使四车都有解锁卡（初始车自己的卡由 `unlockBallType` 自动退池）。验证：`probe_start` PASS（开局 speed 解锁/normal 锁定、AUTO_OWNED=speed_1、无天赋时 normal/ice/giant 解锁卡在池且 speed 卡退池、分裂车未解锁时 base_split/split 不进池）；build+预览上传；战斗真渲染冒烟零错误。提交 78cac51。

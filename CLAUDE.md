@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.21（尾迹回归 3D BillboardSet——「圆形版跟随正常」那条路；提交 2a558be）：
+  - **用户第三次打回并给了决定性线索**：「还是没跟上，但是最开始的圆形的完全可以跟随啊」——最早那版（v0.13.3 软圆 billboard）**画在 3D 场景里、与车共用同一相机投影**，所以天然贴车、永不脱节；后面两次（v0.13.12 overlay / v0.13.19b 修回缩与宽度）都是**手工屏幕投影**，才反复错位。**根因不是参数，是通道选错了**。
+  - **修法**：`Renderer3D` 尾迹回归 3D BillboardSet（每弹种一批、颜色烘焙进软圆 + DiffAlpha，与碰撞粒子同一条已验证可见路径）。为消除当年的"珠子感"：采样改**密集重叠**（0.022s 间隔、0.22s 寿命、每车 10 点）+ **头到尾强收束**，读起来是一道连续渐隐的光带而非离散点；z 相对车辆锚点再远 `TRAIL_BEHIND_Z=0.10`，保证尾迹在车体**之后**而不是压在上面（overlay 版"图层比车高"的教训）。沿用 flightTime 回绕防 id 复用串轨、瞬移/静止清轨、非 playing/重开/Shutdown 清空。
+  - **移除 overlay 尾迹**：`Presentation.UpdateVehicleTrails` 整段 + `vehicleTrails` 快照字段 + `Scene3DBackend` 的 `DrawVehicleTrails`/`ProjectTrailPoint`/深度平面标定全部删除（Scene3DBackend 模块 local 198→193，离 200 上限更远）。
+  - **验证**：真渲染启动→开局→发射零 LoadChunk/overlay stage/VertexBuffer 错误、日志确认 `vehicle trails ready (3D billboard, 80 slots/type)`；LSP 我改的三文件 0 Error；前向引用 0；官方多人 build+预览上传 ✅。BUILD_VERSION/大厅 →0.13.21。⚠️ 待 Preview：3D 尾迹在真机的跟随与观感。
+  - ⚠️ **教训（并入 AB-158）**：改造反复失败时，先问「**原来能用的那版做对了什么**」——本次三次打回后才从用户一句「最开始圆形的可以跟随」定位到「3D 场景 vs 手工屏幕投影」这个通道级差异。贴在 3D 物体上的特效，优先画在 3D 场景里共享相机投影，别自己算屏幕坐标。
 - 版本: 0.13.20（天赋车解锁语义订正；提交 dfbde86）：
   - **用户第三次澄清（原话「解锁车辆天赋树！=局内开局解锁车辆，应该=只有解锁车辆才会有局内解锁此车的解锁天赋卡。无论天赋树如何，开局自带的都是加速车」）**：天赋树的「解锁××车」节点**不是**"开局就能用这车"，而是**"局内那张『解锁××车』卡才会进池"**；开局自带**永远只有加速车**，与天赋树无关。
   - **改动**：①`ResetGame` 删掉「把 `talentUnlockedBalls` 的车并入 `unlockedBalls`」那段——开局 `unlockedBalls` 恒为 `{speed=true}`；②`CanOfferUpgrade` 新增门控——`unlock_*` 卡除「车尚未解锁」外，还要求 `talentUnlockedBalls[该车] == true`（天赋树解锁了才出现）。

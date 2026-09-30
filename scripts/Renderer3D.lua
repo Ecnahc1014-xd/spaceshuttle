@@ -56,12 +56,31 @@ local aimLineSet_ = nil
 local aimLineActive_ = false
 local aimLineNode_ = nil
 local aimLineMaterial_ = nil
+-- v0.13.21：尾迹回到 3D BillboardSet（与车共用同一相机投影 → 天然贴车跟随，
+-- 这是用户确认「圆形版跟随完全正常」的那条路径）。用**密集重叠 + 渐细**消除
+-- 当年的"珠子感"：采样 0.022s、寿命 0.22s、每车 10 点，尺寸自头向尾收束。
+local trailSets_ = nil
+local trailNodes_ = nil
+local trailMaterials_ = nil
+local trailSamples_ = {}
+local trailActive_ = {normal = false, ice = false, speed = false, giant = false}
 local lastRenderElapsed_ = nil
 local initialized_ = false
 
 -- v0.10.21：粒子分三类，各用一个 BillboardSet（每类独立槽位预算，共 3 draw call）。
 -- spark/shard/smoke 都是小而稀疏的点缀；软圆与三角纹理程序化生成。
 local PARTICLE_SLOTS = { spark = 64, shard = 40, smoke = 28 }
+
+-- 车辆尾迹（3D BillboardSet，每弹种一个批次）
+local TRAIL_TYPES = {"normal", "ice", "speed", "giant"}
+local TRAIL_VEHICLE_LIMIT = 8
+local TRAIL_POINTS_PER_VEHICLE = 10
+local TRAIL_SLOTS = TRAIL_VEHICLE_LIMIT * TRAIL_POINTS_PER_VEHICLE
+local TRAIL_LIFETIME = 0.22
+local TRAIL_SAMPLE_INTERVAL = 0.022
+local TRAIL_BEHIND_Z = 0.10   -- 相对车辆锚点再远 0.10m（相机在 -Z），尾迹落在车体之后
+local TRAIL_SIZE_HEAD = 0.62  -- 头点尺寸（× 权威半径 × WORLD_SCALE）
+local TRAIL_SIZE_TAIL = 0.05  -- 尾点尺寸（密集重叠 + 强收束 = 连续渐细，不是珠子）
 local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
 
 
@@ -1159,6 +1178,98 @@ local AIM_LINE_SEGMENTS = 14     -- 沿线排布的软圆点数
 local AIM_LINE_DOT_WORLD = 0.10  -- 起点端点尺寸（世界米），向终点渐小
 local AIM_LINE_COLOR = Color(0.30, 0.90, 1.0, 1)
 
+local function ClearTrailSamples()
+    trailSamples_ = {}
+    if not trailSets_ then return end
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        if trailActive_[ballType] then
+            local set = trailSets_[ballType]
+            for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
+            set:Commit()
+        end
+        trailActive_[ballType] = false
+    end
+end
+
+-- 只读快照采样飞行车辆轨迹（游戏坐标），转世界坐标后写入各弹种的 BillboardSet。
+-- z 取车辆锚点再远一点，保证尾迹画在车体之后、不盖车（overlay 版当年"图层比车高"的教训）。
+local function SyncVehicleTrails(game, dt)
+    if not trailSets_ then return end
+    if game.state ~= "playing" then
+        if next(trailSamples_) or trailActive_.normal or trailActive_.ice
+            or trailActive_.speed or trailActive_.giant then ClearTrailSamples() end
+        return
+    end
+    local used = {normal = 0, ice = 0, speed = 0, giant = 0}
+    local visible = {}
+    local function collect(marble)
+        if not marble then return end
+        local ballType = marble.ballType
+        if not ballType or not trailSets_[ballType] then return end
+        if used[ballType] >= TRAIL_SLOTS then return end
+        if visible[marble.id] then return end
+        visible[marble.id] = true
+        local pos = GetVehicleAnchorWorld(marble)
+        local track = trailSamples_[marble.id]
+        if not track or track.ballType ~= ballType
+            or (marble.flightTime or 0) < (track.flightTime or 0) then
+            track = {ballType = ballType, points = {}, clock = TRAIL_SAMPLE_INTERVAL,
+                x = pos.x, y = pos.y, z = pos.z}
+            trailSamples_[marble.id] = track
+        end
+        local points = track.points
+        for i = #points, 1, -1 do
+            points[i].age = points[i].age + dt
+            if points[i].age >= TRAIL_LIFETIME then table.remove(points, i) end
+        end
+        local dx, dy = pos.x - track.x, pos.y - track.y
+        if dx * dx + dy * dy > 4.0 then      -- >2m 瞬移（复活/传送）：清轨防拉丝
+            track.points = {}
+            points = track.points
+            track.clock = TRAIL_SAMPLE_INTERVAL
+        end
+        track.clock = track.clock + dt
+        if track.clock >= TRAIL_SAMPLE_INTERVAL and dx * dx + dy * dy > 0.0004 then
+            points[#points + 1] = {x = track.x, y = track.y, z = track.z,
+                age = 0, radius = marble.radius}
+            if #points > TRAIL_POINTS_PER_VEHICLE then table.remove(points, 1) end
+            track.clock = 0
+        end
+        track.x, track.y, track.z = pos.x, pos.y, pos.z
+        track.flightTime = marble.flightTime or 0
+        for i = 1, #points do
+            if used[ballType] >= TRAIL_SLOTS then break end
+            local point = points[i]
+            local lifeT = 1 - point.age / TRAIL_LIFETIME
+            used[ballType] = used[ballType] + 1
+            local bb = trailSets_[ballType]:GetBillboard(used[ballType] - 1)
+            bb.enabled = true
+            bb.position = Vector3(point.x, point.y, point.z + TRAIL_BEHIND_Z)
+            local worldSize = point.radius * WORLD_SCALE
+                * (TRAIL_SIZE_TAIL + (TRAIL_SIZE_HEAD - TRAIL_SIZE_TAIL) * (lifeT ^ 0.7))
+            bb.size = Vector2(worldSize, worldSize)
+            bb.color = Color(1, 1, 1, 1)
+            bb.rotation = 0
+        end
+    end
+    collect(game.activeBall)
+    for _, marble in ipairs(game.marbles or {}) do
+        if not marble.onSling then collect(marble) end
+    end
+    for id in pairs(trailSamples_) do
+        if not visible[id] then trailSamples_[id] = nil end
+    end
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        local count = used[ballType]
+        if count > 0 or trailActive_[ballType] then
+            local set = trailSets_[ballType]
+            for i = count, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
+            set:Commit()
+        end
+        trailActive_[ballType] = count > 0
+    end
+end
+
 local function SyncAimLine(game)
     if not aimLineSet_ then return end
     local line = game.aimLine
@@ -1303,6 +1414,30 @@ function Renderer3D.Init(scene, voxelWorld)
     end
     aimLineSet_:Commit()
 
+    -- 车辆尾迹：每弹种一个 BillboardSet（颜色烘焙进软圆纹理 + DiffAlpha，
+    -- 与碰撞粒子同一条已验证可见路径）。创建后先禁用，提交几何前不留空缓冲。
+    trailSets_, trailNodes_, trailMaterials_ = {}, {}, {}
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        local color = BALL_COLORS[ballType] or BALL_COLORS.normal
+        local node = scene:CreateChild("VehicleTrail_" .. ballType)
+        node.enabled = false
+        local set = node:CreateComponent("BillboardSet")
+        set:SetNumBillboards(TRAIL_SLOTS)
+        set.castShadows = false
+        set.relative = false
+        local material = Material:new()
+        material:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffAlpha.xml"))
+        material:SetTexture(TU_DIFFUSE, CreateSoftCircleTexture(color[1], color[2], color[3], 0.5, 0.0))
+        material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+        set:SetMaterial(material)
+        for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
+        set:Commit()
+        trailSets_[ballType] = set
+        trailNodes_[#trailNodes_ + 1] = node
+        trailMaterials_[#trailMaterials_ + 1] = material
+    end
+    print("[Renderer3D] vehicle trails ready (3D billboard, " .. TRAIL_SLOTS .. " slots/type)")
+
 
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
@@ -1332,6 +1467,7 @@ end
 
 local function ClearRunVisuals()
     ClearVoxelDebris()
+    ClearTrailSamples()
     for id, record in pairs(enemyMeshes_) do
         if record.volume and voxelWorld_ then
             voxelWorld_:RemoveVolume(record.volume)
@@ -1402,6 +1538,7 @@ function Renderer3D.Render(game, presentation, skin)
         SyncEjectedBoxes(presentation)
     end
     SyncVehicles(game, dt)
+    SyncVehicleTrails(game, dt)
     SyncDebris(presentation)
     SyncParticles(presentation)
     SyncAimLine(game)
@@ -1439,6 +1576,18 @@ function Renderer3D.Shutdown()
     aimLineSet_ = nil
     aimLineActive_ = false
     aimLineMaterial_ = nil
+    ClearTrailSamples()
+    if trailNodes_ then
+        for _, node in ipairs(trailNodes_) do RemoveNode(node) end
+    end
+    if trailSets_ then
+        for _, set in pairs(trailSets_) do DisposeComponent(set) end
+    end
+    if trailMaterials_ then
+        for _, material in ipairs(trailMaterials_) do material:Dispose() end
+    end
+    trailSets_, trailNodes_, trailMaterials_ = nil, nil, nil
+    trailSamples_ = {}
     vehicleRecords_ = {}
     enemyMeshes_ = {}
     debrisNodes_ = {}
