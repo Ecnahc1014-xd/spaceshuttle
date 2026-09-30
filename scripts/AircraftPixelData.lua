@@ -17,12 +17,33 @@ M.behavior = {
     bomber      = { swayAmp = 22, swayFreq = 0.28, descentMul = 0.76, agility = 0.4, accent = {150, 86, 60} },
     cruiser     = { swayAmp = 6,  swayFreq = 0.18, descentMul = 0.66, agility = 0.3, accent = {150, 165, 185} },
     interceptor = { swayAmp = 14, swayFreq = 1.10, descentMul = 1.28, agility = 1.5, accent = {150, 84, 60} },
+    -- 精英的平均纵向速度以同波普通机的统一基准速度为 1.0；横向采用不同连续避让波形。
+    elite_hook    = { swayAmp = 16, swayFreq = 0.7, descentMul = 0.96, agility = 1.5, dodge = {kind = "zigzag", amp = 17, freq = 2.0} },
+    elite_fork    = { swayAmp = 14, swayFreq = 0.9, descentMul = 0.92, agility = 1.3, dodge = {kind = "orbit", amp = 22, freq = 1.08} },
+    elite_razor   = { swayAmp = 12, swayFreq = 1.4, descentMul = 0.99, agility = 1.8, dodge = {kind = "zigzag", amp = 19, freq = 1.8} },
+    elite_spiral  = { swayAmp = 18, swayFreq = 1.1, descentMul = 0.90, agility = 1.6, dodge = {kind = "orbit", amp = 20, freq = 2.3} },
+    elite_anchor  = { swayAmp = 9, swayFreq = 0.45, descentMul = 0.80, agility = 0.8, dodge = {kind = "lurch", amp = 13, freq = 3.0} },
+    elite_wisp    = { swayAmp = 24, swayFreq = 0.62, descentMul = 0.98, agility = 1.8, dodge = {kind = "lurch", amp = 18, freq = 3.2} },
+    elite_shear   = { swayAmp = 22, swayFreq = 1.25, descentMul = 0.94, agility = 1.7, dodge = {kind = "orbit", amp = 22, freq = 1.6} },
+    elite_bracket = { swayAmp = 17, swayFreq = 0.85, descentMul = 0.93, agility = 1.1, dodge = {kind = "zigzag", amp = 15, freq = 2.5} },
+    elite_hammer  = { swayAmp = 7, swayFreq = 0.42, descentMul = 0.86, agility = 0.9, dodge = {kind = "lurch", amp = 20, freq = 2.1} },
+    elite_rivet   = { swayAmp = 15, swayFreq = 1.02, descentMul = 1.0, agility = 1.4, dodge = {kind = "orbit", amp = 17, freq = 2.8} },
+    boss_orrery   = { swayAmp = 10, swayFreq = 0.22, descentMul = 0.55, agility = 0.3 },
+    boss_maw      = { swayAmp = 12, swayFreq = 0.26, descentMul = 0.55, agility = 0.4 },
+    boss_citadel  = { swayAmp = 6, swayFreq = 0.18, descentMul = 0.5, agility = 0.2 },
+    boss_prism    = { swayAmp = 15, swayFreq = 0.24, descentMul = 0.58, agility = 0.5 },
+    boss_serpent  = { swayAmp = 17, swayFreq = 0.3, descentMul = 0.56, agility = 0.6 },
 }
 
 -- 密度档仅供美术/心理预期，规则层不消费（per-brick HP 不变）。
 M.densityTier = {
     scout = "sparse", dart = "light", striker = "medium", hive = "sparse",
     manta = "medium", bomber = "dense", cruiser = "heavy", interceptor = "dense",
+    elite_hook = "medium", elite_fork = "medium", elite_razor = "light", elite_spiral = "medium",
+    elite_anchor = "heavy", elite_wisp = "light", elite_shear = "light", elite_bracket = "medium",
+    elite_hammer = "heavy", elite_rivet = "heavy",
+    boss_orrery = "heavy", boss_maw = "heavy", boss_citadel = "heavy",
+    boss_prism = "medium", boss_serpent = "heavy",
 }
 
 -- ASCII 位图 → 砖块 entry 串。
@@ -210,5 +231,101 @@ M.interceptor = {
         "....MMM....",
     }),
 }
+
+-- 十种精英与五种首领各有独立 occupied-cell 剪影，跟旧机型共享逐格伤害与体素路径。
+M.elite_hook = {hp = 1, score = 190, speedMul = 1, gridW = 11, gridH = 9,
+    data = bitmapToData({
+        "..EE.......", "..dd.......", ".dMMd......", "dMMMCC.....",
+        ".dMMCCMM...", "..dMMMMMMd.", "...dMM...Md", "....dM..MM.", ".....MMMM..",
+    }) }
+M.elite_fork = {hp = 1, score = 195, speedMul = 1, gridW = 13, gridH = 10,
+    data = bitmapToData({
+        "E...........E", "MM.........MM", "MM.........MM", "dM.........Md",
+        "dMM.......MMd", ".MMd.....dMM.", "..MMC...CMM..", "...MMM.MMM...",
+        "....MCCCM....", ".....MMM.....",
+    }) }
+M.elite_razor = {hp = 1, score = 200, speedMul = 1, gridW = 9, gridH = 11,
+    data = bitmapToData({
+        "...E.....", "..dM.....", ".dMM.....", "dMMC.....", ".dMCC....",
+        "..MMMM...", "...dMMd..", "..dMMMMd.", ".dMM..MM.", "dMM....M.", "MM......M",
+    }) }
+M.elite_spiral = {hp = 1, score = 210, speedMul = 1, gridW = 11, gridH = 11,
+    data = bitmapToData({
+        "...EEE.....", "..dMMMd....", ".dMCCCMd...", ".MM...MMd..",
+        "dMM.....Md.", "MM..dM..MM.", "MM..dC...Md", "dMM.dMM..Md",
+        ".dMMMMMMMd.", "..ddMMMM...", "....MMM....",
+    }) }
+M.elite_anchor = {hp = 1, score = 215, speedMul = 1, gridW = 13, gridH = 10,
+    data = bitmapToData({
+        ".....EEE.....", ".....dMd.....", ".....MCM.....", "dddMMMMMMMddd",
+        "MMd..MMM..dMM", ".Md..MMM..dM.", "..d..MMM..d..", "..M..MMM..M..",
+        "...MMdMdMM...", "....M...MM...",
+    }) }
+M.elite_wisp = {hp = 1, score = 195, speedMul = 1, gridW = 11, gridH = 10,
+    data = bitmapToData({
+        "EE.........", "MMd........", ".MMC.......", "..MMCd.....", "...MMMd....",
+        "....MMCd...", ".....MMMd..", "......MMMd.", ".......MMMd", "........MMM",
+    }) }
+M.elite_shear = {hp = 1, score = 200, speedMul = 1, gridW = 13, gridH = 9,
+    data = bitmapToData({
+        "E...........E", "dM.........Md", ".dM.......Md.", "..dM.....Md..",
+        "...dMCCCMd...", "..MMdCCCdMM..", ".MM...M...MM.", "MM...MMM...MM",
+        "M.....M.....M",
+    }) }
+M.elite_bracket = {hp = 1, score = 205, speedMul = 1, gridW = 11, gridH = 10,
+    data = bitmapToData({
+        "...EEE.....", "..dMMMd....", ".dMCCCMd...", "dMM...MMd..", "MM......Md.",
+        "MM.........", "MM......Md.", "dMM...MMd..", ".dMMMMMd...", "..dMMMM....",
+    }) }
+M.elite_hammer = {hp = 1, score = 220, speedMul = 1, gridW = 9, gridH = 10,
+    data = bitmapToData({
+        "EE.....EE", "MM.....MM", "dMMMMMMMd", "MMCCCCCMM", "..MMMd...",
+        "...MMd...", "...MMd...", "...MMd...", "...MMd...", "....Md...",
+    }) }
+M.elite_rivet = {hp = 1, score = 230, speedMul = 1, gridW = 13, gridH = 11,
+    data = bitmapToData({
+        "...EE........", "..dMMMd......", ".dMCCCMd.....", "dMMMMMMMd....",
+        "MMM...MMM....", "MMM...MMMdd..", "dMMMMMMMdMMd.", ".dMMMMMMM.MM.",
+        "..MMdMM....M.", "...MM.....MM.", "....MMMMMMM..",
+    }) }
+
+M.boss_orrery = {hp = 1, score = 270, speedMul = 1, gridW = 19, gridH = 13,
+    summonKey = "hive", data = bitmapToData({
+        ".......EEEEE.......", ".....ddMMMMMdd.....", "...dMMM.....MMMd...",
+        "..dMM.........MMd..", ".dMM...CCCCC...MMd.", "dMM....C...C....MMd",
+        "MMM....C.C.C....MMM", "dMM....C...C....MMd", ".dMM...CCCCC...MMd.",
+        "..dMM.........MMd..", "...dMMM.....MMMd...", ".....ddMMMMMdd.....",
+        ".......MMMMM.......",
+    }) }
+M.boss_maw = {hp = 1, score = 290, speedMul = 1, gridW = 19, gridH = 13,
+    summonKey = "dart", data = bitmapToData({
+        "E.................E", "MMd.............dMM", "MMMd...........dMMM",
+        "dMMMd..EEEEE..dMMMd", ".dMMMd.MMMMM.dMMMd.", "..dMMMdMCCCMdMMMd..",
+        "...dMMMMCCCMMMMd...", "....dMMMMMMMMMd....", "...dMMMM...MMMMd...",
+        "..dMMMM.....MMMMd..", ".dMMMM.......MMMMd.", "MMMMM.........MMMMM",
+        "MMMM...........MMMM",
+    }) }
+M.boss_citadel = {hp = 1, score = 320, speedMul = 1, gridW = 19, gridH = 13,
+    summonKey = "scout", data = bitmapToData({
+        "EE..EE..EEE..EE..EE", "MM..MM..MMM..MM..MM", "MMMMMMMMMMMMMMMMMMM",
+        "dMMdMMdMMMMMdMMdMMd", "MM..MM.CCCCC.MM..MM", "MM..MM.CCCCC.MM..MM",
+        "MMMMMMMMMMMMMMMMMMM", "dMMMdMMMMMMMMMdMMMd", "MMMMdMMMMMMMMMdMMMM",
+        "MM...MMMMMMMMM...MM", "MM...MM.....MM...MM", "MM...MM.....MM...MM",
+        "MMMMMMM.....MMMMMMM",
+    }) }
+M.boss_prism = {hp = 1, score = 310, speedMul = 1, gridW = 17, gridH = 11,
+    summonKey = "bomber", data = bitmapToData({
+        "E...............E", "MMd...........dMM", ".MMd.........dMM.",
+        "..MMd...E...dMM..", "...MMd.CCC.dMM...", "....MMdCCCdMM....",
+        "...MMd.CCC.dMM...", "..MMd...M...dMM..", ".MMd.........dMM.",
+        "MMd...........dMM", "M...............M",
+    }) }
+M.boss_serpent = {hp = 1, score = 300, speedMul = 1, gridW = 17, gridH = 13,
+    summonKey = "striker", data = bitmapToData({
+        "EEE..............", "MMMdd............", "..MMMMd..........", "....MMMMd........",
+        ".....MMCCMd......", "....dMMMMMMMd....", "...dMMM..dMMMd...",
+        "..dMMd....dMMd...", ".dMMd......dMMd..", "dMMd........dMMd.",
+        "MMd..........dMMd", ".dMMd......dMMd..", "...dMMMMMMMMMd...",
+    }) }
 
 return M

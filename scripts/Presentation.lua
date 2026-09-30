@@ -7,7 +7,13 @@ local Presentation = {}
 
 local screenShake = 0
 local waveBannerTimer = 0
-local waveBannerBoss = false    -- v0.10.23：Boss 波横幅用红色警告样式
+local waveBannerBoss = false
+local waveBannerKind = "normal"
+local waveBannerStage = 1
+local waveBannerStageWave = 1
+local waveBannerKey = nil
+local stageBannerTimer = 0
+local stageBannerNumber = 1
 local hitStop = 0    -- P12：命中顿帧（hitstop），由大命中事件触发，期间主循环对玩法 dt 打折
 local particles = {}
 local floatTexts = {}
@@ -44,6 +50,9 @@ local floatPool = {}
 -- HandleEvent 遍历命中事件触发对应反馈，所有反馈只写 Presentation 瞬时状态，不触达规则层。
 local FEEDBACK_MAP = {
     wave_started = {"waveBanner"},
+    stage_cleared = {"stageClearBanner"},
+    stage_started = {"stageStartBanner"},
+    boss_summoned = {"summonNotice"},
     brick_hit = {"brickSpark"},
     brick_ejected = {"brickEjected"},
     enemy_cleared = {"clearBanner"},
@@ -159,6 +168,9 @@ local FEEDBACK_HANDLERS = {
         screenShake = 0
         waveBannerTimer = 0
         waveBannerBoss = false
+        waveBannerKind = "normal"
+        waveBannerKey = nil
+        stageBannerTimer = 0
         -- WO-16/P9：重置时把存活对象回收进对象池，保持池规模稳定。
         for _, p in ipairs(particles) do particlePool[#particlePool + 1] = p end
         for _, f in ipairs(floatTexts) do floatPool[#floatPool + 1] = f end
@@ -187,6 +199,21 @@ local FEEDBACK_HANDLERS = {
     waveBanner = function(event)
         waveBannerTimer = 1.8
         waveBannerBoss = event.isBoss == true
+        waveBannerKind = event.kind or "normal"
+        waveBannerStage = event.stage or 1
+        waveBannerStageWave = event.stageWave or event.wave or 1
+        waveBannerKey = event.aircraftKey
+    end,
+    stageClearBanner = function(event)
+        stageBannerTimer = 3.6
+        stageBannerNumber = event.stage or 1
+    end,
+    stageStartBanner = function(event)
+        stageBannerTimer = 2.2
+        stageBannerNumber = event.stage or 1
+    end,
+    summonNotice = function(event)
+        SpawnFloatText(270, 188, "首领召唤增援", {255, 181, 93}, 1.1)
     end,
     brickSpark = function(event)
         local color = VisualCatalog.GetBrickStyle(event.aircraftKey, event.col, event.row)
@@ -504,6 +531,9 @@ function Presentation.Init()
     screenShake = 0
     waveBannerTimer = 0
     waveBannerBoss = false
+    waveBannerKind = "normal"
+    waveBannerKey = nil
+    stageBannerTimer = 0
     particles = {}
     floatTexts = {}
     hitFlashes = {}
@@ -535,6 +565,7 @@ end
 function Presentation.Update(dt, gameSnapshot, events)
     if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
     if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
+    if stageBannerTimer > 0 then stageBannerTimer = math.max(0, stageBannerTimer - dt) end
     if hitStop > 0 then hitStop = math.max(0, hitStop - dt) end
     if reloadFlash > 0 then reloadFlash = math.max(0, reloadFlash - dt) end
     if upgradeHintPulse > 0 then upgradeHintPulse = math.max(0, upgradeHintPulse - dt) end
@@ -562,7 +593,13 @@ function Presentation.GetSnapshot()
         screenShake = screenShake,
         hitStop = hitStop,    -- P12：主循环读取，对玩法 dt 打折实现顿帧
         waveBannerTimer = waveBannerTimer,    -- A2：波次横幅入场计时（秒，1.8 起递减）
-        waveBannerBoss = waveBannerBoss,      -- v0.10.23：Boss 波红色警告横幅
+        waveBannerBoss = waveBannerBoss,
+        waveBannerKind = waveBannerKind,
+        waveBannerStage = waveBannerStage,
+        waveBannerStageWave = waveBannerStageWave,
+        waveBannerKey = waveBannerKey,
+        stageBannerTimer = stageBannerTimer,
+        stageBannerNumber = stageBannerNumber,
         particles = particles,
         floatTexts = floatTexts,
         hitFlashes = hitFlashes,

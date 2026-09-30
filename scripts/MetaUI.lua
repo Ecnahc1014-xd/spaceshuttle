@@ -184,7 +184,7 @@ local function Shell(ctx, w, h, title, subtitle)
         ["每日任务"] = "task",
         ["敌机图鉴"] = "codex",
         ["全服排行榜"] = "rank",
-        ["商城"] = "shop",
+        ["车型商店"] = "shop",
         ["幸运转盘"] = "premium_wheel_medal",
         ["战斗档案"] = "premium_pass_crest",
     }
@@ -253,9 +253,10 @@ function MetaUI.DrawHomeFleet(ctx, w, meta)
         string.format("收录 %d/%d ›", meta.codexUnlocked or 0, meta.codexTotal or 0), 15, C.dim,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     local entries = MetaCatalog.GetCodex()
-    local n = math.max(1, #entries)
+    local n = math.max(1, math.min(8, #entries))
     local slotW = (r.w - 24) / n
-    for i, entry in ipairs(entries) do
+    for i = 1, n do
+        local entry = entries[i]
         local owned = meta.codex and meta.codex[entry.key] == true
         local aircraft = meta.aircraft and meta.aircraft[entry.key]
         if aircraft then
@@ -304,8 +305,8 @@ local function GetGrowDefs(meta)
     local passSub = meta.passClaimable and "有奖励可领"
         or ("Lv." .. tostring(meta.passLevel or 1) .. (meta.premiumPass and " · 奖励×2" or ""))
     return {
-        { action = "open_shop", icon = "shop", label = "涂装商城",
-          sub = "零件换车漆", hot = false, tone = "free" },
+        { action = "open_shop", icon = "shop", label = "车型商店",
+          sub = "零件换新车", hot = false, tone = "free" },
         { action = "open_pass", icon = "premium_pass_crest", label = "战斗档案",
           sub = passSub, hot = meta.passClaimable, tone = "free" },
         { action = "open_codex", icon = "codex", label = "敌机图鉴",
@@ -520,11 +521,19 @@ local function DrawCodex(ctx, w, meta)
     local entries = MetaCatalog.GetCodex()
     local cw, ch, gap = 226, 146, 12
     local y0 = content.y + 16
+    local rowsPerPage = 4
+    local totalPages = math.max(1, math.ceil(#entries / (rowsPerPage * 2)))
+    local page = math.max(1, math.min(totalPages, meta.codexPage or 1))
+    D.text(ctx, content.x + content.w * 0.5, content.y + content.h - 22,
+        string.format("第 %d/%d 页 · 点击下方切换", page, totalPages), 14, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgSave(ctx)
-    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
-    for i, entry in ipairs(entries) do
-        local col = (i - 1) % 2
-        local row = math.floor((i - 1) / 2)
+    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h - 34)
+    for i = (page - 1) * rowsPerPage * 2 + 1, math.min(#entries, page * rowsPerPage * 2) do
+        local entry = entries[i]
+        local index = i - (page - 1) * rowsPerPage * 2
+        local col = (index - 1) % 2
+        local row = math.floor((index - 1) / 2)
         local x = content.x + col * (cw + gap)
         local y = y0 + row * (ch + gap)
         local owned = meta.codex and meta.codex[entry.key] == true
@@ -555,9 +564,14 @@ local function DrawCodex(ctx, w, meta)
 end
 
 ---@return string|nil action
-local function HitTestCodex(uiX, uiY, w)
-    local _, close = GetShellLayout(w)
+local function HitTestCodex(uiX, uiY, w, meta)
+    local content, close = GetShellLayout(w)
     if Inside(close, uiX, uiY) then return "close" end
+    if meta and uiX >= content.x and uiX <= content.x + content.w
+        and uiY >= content.y + content.h - 32 and uiY <= content.y + content.h then
+        local totalPages = math.max(1, math.ceil(MetaCatalog.GetCodexTotal() / 8))
+        if totalPages > 1 then return "codex_next_page" end
+    end
     return nil
 end
 
@@ -624,62 +638,83 @@ local function HitTestRank(uiX, uiY, w)
 end
 
 -- ============================================================================
--- 商城面板（零件车辆涂装 + 免费广告礼包；真实内购走钻石商店）
+-- 商城面板（零件兑换车型 + 免费广告礼包；真实内购走钻石商店）
 -- ============================================================================
 
----@param ctx any
----@param w number
----@param meta MetaState
----@return table content
----@return table close
+local function GetShopLayout(w)
+    local content, close = GetShellLayout(w)
+    local rowH, rowStep = 72, 78
+    return {
+        content = content, close = close,
+        titleY = content.y + 8,
+        rowY = content.y + 35,
+        rowH = rowH,
+        rowStep = rowStep,
+        giftTitleY = content.y + 35 + #MetaCatalog.GetSkins() * rowStep + 4,
+    }
+end
+
+local function GetShopCarButton(layout, index)
+    local r = {x = layout.content.x, y = layout.rowY + (index - 1) * layout.rowStep,
+        w = layout.content.w, h = layout.rowH}
+    return r, {x = r.x + r.w - 126, y = r.y + 12, w = 112, h = 48}
+end
+
+local function DrawCarSilhouette(ctx, r, skin, color)
+    local cell = 7
+    local x0 = r.x + 18
+    local y0 = r.y + 15
+    for row, pixels in ipairs(skin.silhouette) do
+        for col = 1, #pixels do
+            if pixels:sub(col, col) == "#" then
+                D.rect(ctx, x0 + (col - 1) * cell, y0 + (row - 1) * cell,
+                    cell - 1, cell - 1, color, 0)
+            end
+        end
+    end
+end
+
 local function DrawShop(ctx, w, meta)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "商城",
+    local content, close = Shell(ctx, w, 960, "车型商店",
         string.format("零件 %d", meta.parts or 0))
+    local layout = GetShopLayout(w)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
-    local y = content.y + 16
-    D.text(ctx, content.x + 4, y, "车辆涂装", 18, C.cyan)
-    y = y + 32
+    D.text(ctx, content.x + 4, layout.titleY, "选择车型 · 仅改变外形", 18, C.cyan)
 
     local skins = MetaCatalog.GetSkins()
-    local rowH = 70
     for i, skin in ipairs(skins) do
-        local r = { x = content.x, y = y + (i - 1) * (rowH + 8), w = content.w, h = rowH }
+        local r, btn = GetShopCarButton(layout, i)
         local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
         local selected = meta.selectedSkin == skin.key
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, selected and C.cyan or C.cyanDim, 6)
-        -- 色卡
-        D.rect(ctx, r.x + 14, r.y + 14, 30, 46, { skin.paint[1], skin.paint[2], skin.paint[3], 255 }, 4)
-        D.rect(ctx, r.x + 48, r.y + 14, 14, 46, { skin.panel[1], skin.panel[2], skin.panel[3], 255 }, 4)
-        D.text(ctx, r.x + 76, r.y + 14, skin.name, 18, C.text)
-        D.text(ctx, r.x + 76, r.y + 40,
-            owned and (selected and "当前使用" or "已拥有") or string.format("售价 %d 零件", skin.cost),
-            15, selected and C.cyan or C.dim)
-        local btn = { x = r.x + r.w - 148, y = r.y + 13, w = 132, h = 48 }
+        D.panel(ctx, r.x + 9, r.y + 8, 76, 55, C.widget, C.cyanDim, 4)
+        DrawCarSilhouette(ctx, r, skin, selected and C.cyan or C.text)
+        D.text(ctx, r.x + 94, r.y + 8, skin.name, 18, C.text)
+        D.text(ctx, r.x + 94, r.y + 36, skin.desc, 13, C.dim)
         if selected then
             Button(ctx, btn, "使用中", "", "disabled")
         elseif owned then
             Button(ctx, btn, "使用", "", "ghost")
         elseif (meta.parts or 0) >= skin.cost then
-            Button(ctx, btn, "购买", string.format("%d", skin.cost), "primary")
+            Button(ctx, btn, "购买", tostring(skin.cost), "primary")
         else
-            Button(ctx, btn, "零件不足", string.format("%d", skin.cost), "disabled")
+            Button(ctx, btn, "零件不足", tostring(skin.cost), "disabled")
         end
     end
-    y = y + #skins * (rowH + 8) + 12
 
-    D.text(ctx, content.x + 4, y, "免费补给", 18, C.cyan)
-    y = y + 30
+    D.text(ctx, content.x + 4, layout.giftTitleY, "免费补给", 18, C.cyan)
     local gifts = MetaCatalog.GetShopEntries()
     for i, gift in ipairs(gifts) do
-        local r = { x = content.x, y = y + (i - 1) * 68, w = content.w, h = 60 }
+        local r = {x = content.x, y = layout.giftTitleY + 30 + (i - 1) * 68,
+            w = content.w, h = 60}
         local used = meta.giftUsed and meta.giftUsed[gift.key] or 0
         local limit = MetaCatalog.GetAdGiftDailyLimit(gift.key)
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, used < limit and C.ad or C.cyanDim, 6)
         D.text(ctx, r.x + 16, r.y + 8, gift.name, 18, used < limit and C.text or C.dim)
         D.text(ctx, r.x + 16, r.y + 32, gift.desc, 15, C.dim)
-        local btn = { x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48 }
+        local btn = {x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48}
         if used < limit then
             Button(ctx, btn, "看广告", string.format("%d/%d", used, limit), "ad")
         else
@@ -693,23 +728,27 @@ end
 ---@return string|nil action
 ---@return integer|nil index
 local function HitTestShop(uiX, uiY, w, meta)
-    local L, close = GetShellLayout(w)
-    if Inside(close, uiX, uiY) then return "close", nil end
-    if not Inside(L, uiX, uiY) then return nil, nil end
-    local rowH = 70
-    local y = L.y + 48
+    local layout = GetShopLayout(w)
+    if Inside(layout.close, uiX, uiY) then return "close", nil end
+    if not Inside(layout.content, uiX, uiY) then return nil, nil end
     local skins = MetaCatalog.GetSkins()
-    for i = 1, #skins do
-        local r = { x = L.x, y = y + (i - 1) * (rowH + 8), w = L.w, h = rowH }
-        local btn = { x = r.x + r.w - 148, y = r.y + 13, w = 132, h = 48 }
-        if Inside(btn, uiX, uiY) then return "buy_skin", i end
+    for i, skin in ipairs(skins) do
+        local _, btn = GetShopCarButton(layout, i)
+        local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
+        if Inside(btn, uiX, uiY) and meta.selectedSkin ~= skin.key
+            and (owned or (meta.parts or 0) >= skin.cost) then
+            return "buy_skin", i
+        end
     end
-    y = y + #skins * (rowH + 8) + 42
     local gifts = MetaCatalog.GetShopEntries()
-    for i = 1, #gifts do
-        local r = { x = L.x, y = y + (i - 1) * 68, w = L.w, h = 60 }
-        local btn = { x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48 }
-        if Inside(btn, uiX, uiY) then return "ad_gift", i end
+    for i, gift in ipairs(gifts) do
+        local r = {x = layout.content.x,
+            y = layout.giftTitleY + 30 + (i - 1) * 68,
+            w = layout.content.w, h = 60}
+        local btn = {x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48}
+        local used = meta.giftUsed and meta.giftUsed[gift.key] or 0
+        if used < MetaCatalog.GetAdGiftDailyLimit(gift.key)
+            and Inside(btn, uiX, uiY) then return "ad_gift", i end
     end
     return nil, nil
 end
@@ -998,7 +1037,7 @@ function MetaUI.HitTestScreen(uiX, uiY, w, meta)
     if screen == "tasks" then
         return HitTestTasks(uiX, uiY, w, meta)
     elseif screen == "codex" then
-        return HitTestCodex(uiX, uiY, w)
+        return HitTestCodex(uiX, uiY, w, meta)
     elseif screen == "rank" then
         return HitTestRank(uiX, uiY, w)
     elseif screen == "shop" then

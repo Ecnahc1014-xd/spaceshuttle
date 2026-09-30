@@ -149,7 +149,7 @@ function RechargeShop.Draw(ctx, w, meta)
         D.rect(ctx, r.x, r.y, 3, r.h, C.warn, 0)
         D.text(ctx, r.x + 16, r.y + 8, "限时新手礼包", 19, C.warn)
         D.text(ctx, r.x + 16, r.y + 33,
-            string.format("高级零件×%d 稀有皮肤×1 钻石×%d",
+            string.format("高级零件×%d 越野车×1 钻石×%d",
                 Shared.FIRST_GIFT.parts, Shared.FIRST_GIFT.bonusGems), 14, C.dim)
         local secs = math.max(0, math.floor(meta.firstGiftSeconds or 0))
         D.text(ctx, r.x + r.w - 150, r.y + 8,

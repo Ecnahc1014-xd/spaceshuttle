@@ -609,12 +609,10 @@ local function HandleShopSkin(index)
         SetMetaToast("已切换为 " .. skin.name)
         return
     end
-    if not PlayerData.SpendParts(skin.cost) then
-        SetMetaToast("零件不足，还差 " .. tostring(skin.cost - PlayerData.GetParts()))
+    if not PlayerData.PurchaseSkin(skin.key, skin.cost) then
+        SetMetaToast("零件不足，还差 " .. tostring(math.max(0, skin.cost - PlayerData.GetParts())))
         return
     end
-    PlayerData.UnlockSkin(skin.key)
-    PlayerData.SelectSkin(skin.key)
     PersistMeta()
     SetMetaToast("已购买 " .. skin.name)
 end
@@ -752,7 +750,11 @@ local function HandleMetaAction(action, index)
     elseif action == "open_shop" then
         OpenMetaScreen("shop")
     elseif action == "open_codex" then
+        metaState.codexPage = 1
         OpenMetaScreen("codex")
+    elseif action == "codex_next_page" then
+        metaState.codexPage = (metaState.codexPage or 1) % math.max(1,
+            math.ceil(MetaCatalog.GetCodexTotal() / 8)) + 1
     elseif action == "open_tasks" then
         OpenMetaScreen("tasks")
     elseif action == "open_rank" then
@@ -1120,7 +1122,7 @@ function ClientMain.Start(opts)
                     metaState.rechargeToast = string.format("兑换零件到账 +%d", granted)
                     print("[Main] purchased parts recovered +" .. granted .. " total=" .. total)
                 end
-                -- 首充礼包发货：服务端标志为真且本地未补发时，发一次皮肤+高级零件。
+                -- 首充礼包发货：服务端标志为真且本地未补发时，发一次车型与零件。
                 if firstGift and not PlayerData.IsFirstGiftClaimed() then
                     PlayerData.AddParts(Shared.FIRST_GIFT.parts)
                     PlayerData.UnlockSkin(Shared.FIRST_GIFT.skin)

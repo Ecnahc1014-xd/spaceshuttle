@@ -2,7 +2,7 @@
 -- 只读消费 Game / Presentation 快照，将箱体敌人、精品几何车辆和碎片同步到 3D 场景。
 
 local Renderer3D = {}
-local MetaCatalog = require "MetaCatalog"
+local VehicleGeometry = require "VehicleGeometry"
 
 local selectedSkin_ = "default"
 
@@ -16,13 +16,6 @@ local VEHICLE_PLANAR_RADIUS = 1.84
 local VEHICLE_COLLISION_FILL = 0.98
 local VEHICLE_LOCAL_CENTER_Z = -0.40
 local VEHICLE_TURN_SPEED = 420.0
-local VEHICLE_SECTION_BODY = 0
-local VEHICLE_SECTION_SIDE = 1
-local VEHICLE_SECTION_TIRE = 2
-local VEHICLE_SECTION_METAL = 3
-local VEHICLE_SECTION_GLASS = 4
-local VEHICLE_SECTION_LIGHT = 5
-local VEHICLE_SECTION_COUNT = 6
 
 ---@type Scene
 local scene_ = nil
@@ -63,6 +56,12 @@ local aimLineSet_ = nil
 local aimLineActive_ = false
 local aimLineNode_ = nil
 local aimLineMaterial_ = nil
+local trailSets_ = nil
+local trailNodes_ = nil
+local trailMaterials_ = nil
+local trailTextures_ = nil
+local trailSamples_ = {}
+local trailActive_ = {normal = false, ice = false, speed = false, giant = false}
 local lastRenderElapsed_ = nil
 local initialized_ = false
 
@@ -70,6 +69,14 @@ local initialized_ = false
 -- spark/shard/smoke 都是小而稀疏的点缀；软圆与三角纹理程序化生成。
 local PARTICLE_SLOTS = { spark = 64, shard = 40, smoke = 28 }
 local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
+
+-- 飞行中的重卡才留下短尾迹；四种弹药各合批一次，避免每辆车创建节点。
+local TRAIL_TYPES = {"normal", "ice", "speed", "giant"}
+local TRAIL_VEHICLE_LIMIT = 8
+local TRAIL_POINTS_PER_VEHICLE = 6
+local TRAIL_SLOTS = TRAIL_VEHICLE_LIMIT * TRAIL_POINTS_PER_VEHICLE
+local TRAIL_LIFETIME = 0.30
+local TRAIL_SAMPLE_INTERVAL = 0.035
 
 local BALL_COLORS = {
     normal = {1.00, 0.72, 0.12},
@@ -397,7 +404,7 @@ end
 -- 否则客户端 LOCAL Volume 会从空色板取色，显示为无色方块。
 local VOXEL_COLOR_DOMAIN = VOXEL_PALETTE_LOCAL
 
--- v0.10.25：体素物理调色板。8 机型 × 4 槽位 × 正常/冻结，全部落在 bank 0 的 1-64。
+-- 体素调色板：原有 8 型 + 10 精英 + 5 首领，各四槽、正常/冰冻，总计 184 槽。
 -- 必须在任何 CreateVolume 之前设完；颜色来自 VisualCatalog，硬度低到弹珠伤害能挖掉。
 local function EnsureVoxelPalette(visualCatalog)
     if voxelPaletteReady_ or not voxelWorld_ or not visualCatalog then return end
@@ -437,7 +444,7 @@ local function EnsureVoxelPalette(visualCatalog)
         end
     end
     voxelPaletteReady_ = true
-    print("[Renderer3D] voxel palette ready (LOCAL, 8 aircraft x 4 slots x freeze)")
+    print("[Renderer3D] voxel palette ready (LOCAL, " .. #keys .. " aircraft x 4 slots x freeze)")
 end
 
 ---@return integer
@@ -812,93 +819,6 @@ local function SyncEnemyMeshes(game, presentation)
     end
 end
 
-local function FaceNormal(a, b, c)
-    local ux, uy, uz = b.x - a.x, b.y - a.y, b.z - a.z
-    local vx, vy, vz = c.x - a.x, c.y - a.y, c.z - a.z
-    local nx = uy * vz - uz * vy
-    local ny = uz * vx - ux * vz
-    local nz = ux * vy - uy * vx
-    local length = math.sqrt(nx * nx + ny * ny + nz * nz)
-    if length < 0.000001 then return Vector3(0, 0, -1) end
-    return Vector3(nx / length, ny / length, nz / length)
-end
-
-local function AddTriangle(buffer, a, b, c, expectedNormal)
-    local normal = FaceNormal(a, b, c)
-    if expectedNormal then
-        local dot = normal.x * expectedNormal.x + normal.y * expectedNormal.y
-            + normal.z * expectedNormal.z
-        if dot < 0 then
-            b, c = c, b
-            normal = FaceNormal(a, b, c)
-        end
-    end
-    buffer[#buffer + 1] = {position = a, normal = normal}
-    buffer[#buffer + 1] = {position = b, normal = normal}
-    buffer[#buffer + 1] = {position = c, normal = normal}
-end
-
-local function AddQuad(buffer, a, b, c, d, expectedNormal)
-    AddTriangle(buffer, a, b, c, expectedNormal)
-    AddTriangle(buffer, a, c, d, expectedNormal)
-end
-
-local function RoundedRing(cx, cy, z, length, width, bevel)
-    local hx, hy = length * 0.5, width * 0.5
-    bevel = math.min(bevel, hx * 0.8, hy * 0.8)
-    return {
-        Vector3(cx + hx - bevel, cy - hy, z),
-        Vector3(cx + hx, cy - hy + bevel, z),
-        Vector3(cx + hx, cy + hy - bevel, z),
-        Vector3(cx + hx - bevel, cy + hy, z),
-        Vector3(cx - hx + bevel, cy + hy, z),
-        Vector3(cx - hx, cy + hy - bevel, z),
-        Vector3(cx - hx, cy - hy + bevel, z),
-        Vector3(cx - hx + bevel, cy - hy, z),
-    }
-end
-
-local function AddFrustum(buffer, cx, cy, zNear, zFar,
-        nearLength, nearWidth, farLength, farWidth, bevel)
-    local nearRing = RoundedRing(cx, cy, zNear, nearLength, nearWidth, bevel)
-    local farRing = RoundedRing(cx, cy, zFar, farLength, farWidth, bevel)
-    local nearCenter = Vector3(cx, cy, zNear)
-    local farCenter = Vector3(cx, cy, zFar)
-    for i = 1, #nearRing do
-        local nextIndex = i % #nearRing + 1
-        AddTriangle(buffer, nearCenter, nearRing[nextIndex], nearRing[i], Vector3(0, 0, -1))
-        AddTriangle(buffer, farCenter, farRing[i], farRing[nextIndex], Vector3(0, 0, 1))
-        local midX = (nearRing[i].x + nearRing[nextIndex].x) * 0.5 - cx
-        local midY = (nearRing[i].y + nearRing[nextIndex].y) * 0.5 - cy
-        AddQuad(buffer, nearRing[i], nearRing[nextIndex], farRing[nextIndex], farRing[i],
-            Vector3(midX, midY, 0))
-    end
-end
-
-local function AddRoundedPrism(buffer, cx, cy, zNear, zFar, length, width, bevel)
-    AddFrustum(buffer, cx, cy, zNear, zFar, length, width, length, width, bevel)
-end
-
-local function AddCylinderY(buffer, cx, cy, cz, radius, width, segments)
-    local yMin, yMax = cy - width * 0.5, cy + width * 0.5
-    local minCenter = Vector3(cx, yMin, cz)
-    local maxCenter = Vector3(cx, yMax, cz)
-    for i = 0, segments - 1 do
-        local a0 = i * math.pi * 2 / segments
-        local a1 = (i + 1) * math.pi * 2 / segments
-        local x0, z0 = cx + math.cos(a0) * radius, cz + math.sin(a0) * radius
-        local x1, z1 = cx + math.cos(a1) * radius, cz + math.sin(a1) * radius
-        local p0 = Vector3(x0, yMin, z0)
-        local p1 = Vector3(x0, yMax, z0)
-        local p2 = Vector3(x1, yMax, z1)
-        local p3 = Vector3(x1, yMin, z1)
-        local expected = Vector3(math.cos((a0 + a1) * 0.5), 0, math.sin((a0 + a1) * 0.5))
-        AddQuad(buffer, p0, p1, p2, p3, expected)
-        AddTriangle(buffer, minCenter, p3, p0, Vector3(0, -1, 0))
-        AddTriangle(buffer, maxCenter, p1, p2, Vector3(0, 1, 0))
-    end
-end
-
 local function CreateGlassMaterial(rgb)
     local material = Material:new()
     material:SetTechnique(0,
@@ -911,20 +831,14 @@ local function CreateGlassMaterial(rgb)
 end
 
 local function GetVehicleMaterials(ballType)
-    local key = ballType .. ":" .. selectedSkin_
+    local key = ballType
     local cached = vehicleMaterialSets_[key]
     if cached then return cached end
     local palette = VEHICLE_PALETTES[ballType] or VEHICLE_PALETTES.normal
     local lightColor = BALL_COLORS[ballType] or BALL_COLORS.normal
-    local paint = MetaCatalog.GetSkinPaint(selectedSkin_)
-    local panel = MetaCatalog.GetSkinPanel(selectedSkin_)
-    local bodyColor = selectedSkin_ == "default" and palette.body or
-        {paint[1] / 255, paint[2] / 255, paint[3] / 255}
-    local sideColor = selectedSkin_ == "default" and palette.side or
-        {panel[1] / 255, panel[2] / 255, panel[3] / 255}
     cached = {
-        CreateMaterial(bodyColor, 0.72, 0.27),
-        CreateMaterial(sideColor, 0.56, 0.34),
+        CreateMaterial(palette.body, 0.72, 0.27),
+        CreateMaterial(palette.side, 0.56, 0.34),
         CreateMaterial(WHEEL_COLOR, 0.0, 0.88),
         CreateMaterial(HUB_COLOR, 0.96, 0.18),
         CreateGlassMaterial(palette.glass),
@@ -937,87 +851,7 @@ local function GetVehicleMaterials(ballType)
 end
 
 local function RebuildVehicleGeometry(geometry, ballType)
-    local sections = {}
-    for i = 1, VEHICLE_SECTION_COUNT do sections[i] = {} end
-    local body = sections[VEHICLE_SECTION_BODY + 1]
-    local side = sections[VEHICLE_SECTION_SIDE + 1]
-    local tire = sections[VEHICLE_SECTION_TIRE + 1]
-    local metal = sections[VEHICLE_SECTION_METAL + 1]
-    local glass = sections[VEHICLE_SECTION_GLASS + 1]
-    local light = sections[VEHICLE_SECTION_LIGHT + 1]
-
-    -- 局部 +X 是车头，XY 是行驶平面，负 Z 朝向镜头。
-    -- 采用大运式平头重卡比例：高平头驾驶室、长货厢、三轴六轮、外露保险杠。
-    AddRoundedPrism(body, 0, 0, -0.28, 0.18, 3.45, 1.28, 0.12)
-    AddRoundedPrism(body, -0.62, 0, -0.76, -0.25, 1.86, 1.20, 0.10)
-    AddFrustum(body, 0.98, 0, -1.02, -0.26, 1.08, 1.16, 1.18, 1.24, 0.09)
-    AddRoundedPrism(body, 1.54, 0, -0.72, -0.24, 0.18, 1.18, 0.045)
-
-    -- 浅色侧围独立成材质分区，让斜俯视下的车身侧面与主车漆清晰分层。
-    for _, sideY in ipairs({-0.625, 0.625}) do
-        AddRoundedPrism(side, -0.45, sideY, -0.61, -0.12, 2.15, 0.075, 0.022)
-        AddRoundedPrism(side, 1.02, sideY, -0.82, -0.30, 0.82, 0.075, 0.022)
-    end
-    AddRoundedPrism(side, -0.62, 0, -0.80, -0.755, 1.62, 0.96, 0.06)
-
-    -- 平头重卡的大面积前风挡和左右侧窗。
-    AddFrustum(glass, 1.00, 0, -1.055, -0.99, 0.70, 0.92, 0.82, 1.00, 0.07)
-    for _, sideY in ipairs({-0.635, 0.635}) do
-        AddRoundedPrism(glass, 1.02, sideY, -0.91, -0.56, 0.58, 0.045, 0.015)
-    end
-
-    -- 三轴六轮：前桥转向轮 + 后双桥，圆柱轮胎保持真实轮廓。
-    for _, wheelX in ipairs({1.03, -0.52, -1.18}) do
-        AddCylinderY(tire, wheelX, -0.73, -0.02, 0.30, 0.24, 14)
-        AddCylinderY(tire, wheelX, 0.73, -0.02, 0.30, 0.24, 14)
-        AddCylinderY(metal, wheelX, -0.865, -0.02, 0.16, 0.035, 14)
-        AddCylinderY(metal, wheelX, 0.865, -0.02, 0.16, 0.035, 14)
-    end
-
-    -- 重卡格栅、保险杠、货厢骨架、侧裙、后防撞梁与后视镜。
-    AddRoundedPrism(metal, 1.70, 0, -0.51, -0.15, 0.12, 1.14, 0.035)
-    for _, grilleY in ipairs({-0.34, -0.17, 0, 0.17, 0.34}) do
-        AddRoundedPrism(metal, 1.765, grilleY, -0.48, -0.25, 0.025, 0.10, 0.01)
-    end
-    AddRoundedPrism(metal, -1.74, 0, -0.18, 0.04, 0.12, 1.10, 0.035)
-    AddRoundedPrism(metal, -0.62, -0.66, -0.76, -0.24, 1.88, 0.045, 0.015)
-    AddRoundedPrism(metal, -0.62, 0.66, -0.76, -0.24, 1.88, 0.045, 0.015)
-    AddRoundedPrism(metal, -1.53, 0, -0.79, -0.75, 0.045, 1.10, 0.012)
-    AddRoundedPrism(metal, 0.06, -0.69, -0.17, -0.08, 2.72, 0.055, 0.018)
-    AddRoundedPrism(metal, 0.06, 0.69, -0.17, -0.08, 2.72, 0.055, 0.018)
-    for _, mirrorY in ipairs({-0.79, 0.79}) do
-        AddRoundedPrism(metal, 1.26, mirrorY, -0.91, -0.68, 0.19, 0.11, 0.025)
-    end
-
-    -- 类型色灯组：前照灯、顶部示廓灯、尾灯与侧标灯。
-    for _, y in ipairs({-0.39, 0.39}) do
-        AddRoundedPrism(light, 1.775, y, -0.68, -0.51, 0.035, 0.25, 0.012)
-        AddRoundedPrism(light, -1.785, y, -0.36, -0.23, 0.035, 0.20, 0.01)
-    end
-    for _, y in ipairs({-0.42, 0, 0.42}) do
-        AddRoundedPrism(light, 1.16, y, -1.085, -1.055, 0.10, 0.07, 0.015)
-    end
-    for _, x in ipairs({-1.25, -0.55, 0.18}) do
-        AddRoundedPrism(light, x, -0.685, -0.54, -0.43, 0.12, 0.025, 0.008)
-        AddRoundedPrism(light, x, 0.685, -0.54, -0.43, 0.12, 0.025, 0.008)
-    end
-
-    geometry:Clear()
-    geometry:SetNumGeometries(VEHICLE_SECTION_COUNT)
-    geometry:SetDynamic(false)
-    for sectionIndex = 0, VEHICLE_SECTION_COUNT - 1 do
-        geometry:BeginGeometry(sectionIndex, TRIANGLE_LIST)
-        for _, vertex in ipairs(sections[sectionIndex + 1]) do
-            geometry:DefineVertex(vertex.position)
-            geometry:DefineNormal(vertex.normal)
-        end
-    end
-    geometry:Commit()
-
-    local materials = GetVehicleMaterials(ballType)
-    for sectionIndex = 0, VEHICLE_SECTION_COUNT - 1 do
-        geometry:SetMaterial(sectionIndex, materials[sectionIndex + 1])
-    end
+    VehicleGeometry.Build(geometry, selectedSkin_, GetVehicleMaterials(ballType))
 end
 
 local function MoveAngleToward(current, target, maxStep)
@@ -1116,6 +950,90 @@ end
 GetVehicleAnchorWorld = function(marble)
     local scaleFactor = GetVehicleScale(marble)
     return GameToWorld(marble.x, marble.y, -VEHICLE_LOCAL_CENTER_Z * scaleFactor)
+end
+
+local function ClearTrailSamples()
+    trailSamples_ = {}
+    if not trailSets_ then return end
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        local set = trailSets_[ballType]
+        if trailActive_[ballType] then
+            for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
+            set:Commit()
+        end
+        trailActive_[ballType] = false
+    end
+end
+
+local function SyncVehicleTrails(game, dt)
+    if not trailSets_ then return end
+    if game.state ~= "playing" then
+        if next(trailSamples_) or trailActive_.normal or trailActive_.ice
+            or trailActive_.speed or trailActive_.giant then ClearTrailSamples() end
+        return
+    end
+
+    local visible = {}
+    local used = {normal = 0, ice = 0, speed = 0, giant = 0}
+    for _, marble in ipairs(game.marbles or {}) do
+        local ballType = marble.ballType
+        if not marble.onSling and trailSets_[ballType] and used[ballType] < TRAIL_SLOTS then
+            visible[marble.id] = true
+            local pos = GetVehicleAnchorWorld(marble)
+            local track = trailSamples_[marble.id]
+            if not track or track.ballType ~= ballType then
+                track = {ballType = ballType, points = {}, clock = TRAIL_SAMPLE_INTERVAL,
+                    x = pos.x, y = pos.y, z = pos.z}
+                trailSamples_[marble.id] = track
+            end
+            local points = track.points
+            for i = #points, 1, -1 do
+                points[i].age = points[i].age + dt
+                if points[i].age >= TRAIL_LIFETIME then table.remove(points, i) end
+            end
+            local dx, dy = pos.x - track.x, pos.y - track.y
+            local jump = dx * dx + dy * dy > 4.0
+            if jump then
+                track.points = {}
+                points = track.points
+                track.clock = TRAIL_SAMPLE_INTERVAL
+            end
+            track.clock = track.clock + dt
+            if not jump and track.clock >= TRAIL_SAMPLE_INTERVAL
+                and dx * dx + dy * dy > 0.0064 then
+                points[#points + 1] = {x = track.x, y = track.y, z = track.z,
+                    age = 0, radius = marble.radius}
+                if #points > TRAIL_POINTS_PER_VEHICLE then table.remove(points, 1) end
+                track.clock = 0
+            end
+            track.x, track.y, track.z = pos.x, pos.y, pos.z
+            for i = 1, #points do
+                if used[ballType] >= TRAIL_SLOTS then break end
+                local point = points[i]
+                local life = 1 - point.age / TRAIL_LIFETIME
+                used[ballType] = used[ballType] + 1
+                local bb = trailSets_[ballType]:GetBillboard(used[ballType] - 1)
+                bb.enabled = true
+                bb.position = Vector3(point.x, point.y, point.z - 0.05)
+                local size = point.radius * WORLD_SCALE * (0.50 * life + 0.08)
+                bb.size = Vector2(size, size)
+                bb.color = Color(1, 1, 1, 1)
+                bb.rotation = 0
+            end
+        end
+    end
+    for id in pairs(trailSamples_) do
+        if not visible[id] then trailSamples_[id] = nil end
+    end
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        local count = used[ballType]
+        if count > 0 or trailActive_[ballType] then
+            local set = trailSets_[ballType]
+            for i = count, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
+            set:Commit()
+        end
+        trailActive_[ballType] = count > 0
+    end
 end
 
 local function SyncDebris(presentation)
@@ -1422,6 +1340,8 @@ function Renderer3D.Init(scene, voxelWorld)
     consumedEjectIds_ = {}
     particleSetActive_ = {spark = false, shard = false, smoke = false}
     aimLineActive_ = false
+    trailSamples_ = {}
+    trailActive_ = {normal = false, ice = false, speed = false, giant = false}
     lastRenderElapsed_ = nil
     modelBox_ = cache:GetResource("Model", "Models/Box.mdl")
 
@@ -1482,6 +1402,31 @@ function Renderer3D.Init(scene, voxelWorld)
     end
     aimLineSet_:Commit()
 
+    -- 车辆尾迹沿用已验证的 DiffAlpha 彩色软圆管线：纹理按弹种烘焙，
+    -- 每种一组固定槽位，回收与重开不留下独立节点。
+    trailSets_, trailNodes_, trailMaterials_, trailTextures_ = {}, {}, {}, {}
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        local color = BALL_COLORS[ballType]
+        local texture = CreateSoftCircleTexture(color[1], color[2], color[3], 0.75, 0)
+        local node = scene:CreateChild("VehicleTrail_" .. ballType)
+        local set = node:CreateComponent("BillboardSet")
+        set:SetNumBillboards(TRAIL_SLOTS)
+        set.castShadows = false
+        set.relative = false
+        local material = Material:new()
+        material:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffAlpha.xml"))
+        material:SetTexture(TU_DIFFUSE, texture)
+        material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+        set:SetMaterial(material)
+        for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
+        set:Commit()
+        trailSets_[ballType] = set
+        trailNodes_[#trailNodes_ + 1] = node
+        trailMaterials_[#trailMaterials_ + 1] = material
+        trailTextures_[#trailTextures_ + 1] = texture
+    end
+    print("[Renderer3D] vehicle trails ready (4 types, 48 slots/type)")
+
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
     local initialized = voxelMaterial_ ~= nil and crateMaterial_ ~= nil
@@ -1503,6 +1448,7 @@ end
 
 local function ClearRunVisuals()
     ClearVoxelDebris()
+    ClearTrailSamples()
     for id, record in pairs(enemyMeshes_) do
         if record.volume and voxelWorld_ then
             voxelWorld_:RemoveVolume(record.volume)
@@ -1573,6 +1519,7 @@ function Renderer3D.Render(game, presentation, skin)
         SyncEjectedBoxes(presentation)
     end
     SyncVehicles(game, dt)
+    SyncVehicleTrails(game, dt)
     SyncDebris(presentation)
     SyncParticles(presentation)
     SyncAimLine(game)
@@ -1580,6 +1527,7 @@ end
 
 function Renderer3D.Shutdown()
     ClearVoxelDebris()
+    ClearTrailSamples()
     for _, record in pairs(vehicleRecords_) do RemoveNode(record.root) end
     for _, record in pairs(enemyMeshes_) do
         if record.volume and voxelWorld_ then
@@ -1610,6 +1558,20 @@ function Renderer3D.Shutdown()
     aimLineSet_ = nil
     aimLineActive_ = false
     aimLineMaterial_ = nil
+    if trailNodes_ then
+        for _, node in ipairs(trailNodes_) do RemoveNode(node) end
+    end
+    if trailSets_ then
+        for _, set in pairs(trailSets_) do DisposeComponent(set) end
+    end
+    if trailMaterials_ then
+        for _, material in ipairs(trailMaterials_) do material:Dispose() end
+    end
+    if trailTextures_ then
+        for _, texture in ipairs(trailTextures_) do texture:Dispose() end
+    end
+    trailSets_, trailNodes_, trailMaterials_, trailTextures_ = nil, nil, nil, nil
+    trailSamples_ = {}
     vehicleRecords_ = {}
     enemyMeshes_ = {}
     debrisNodes_ = {}

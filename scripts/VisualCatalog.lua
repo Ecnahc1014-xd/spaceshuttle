@@ -85,6 +85,21 @@ local AIRCRAFT_PALETTES = {
         hullMain = {176, 192, 208}, hullDark = { 88, 100, 116},
         canopy   = {170, 226, 255}, engine   = {120, 200, 255},
     },
+    elite_hook = {hullMain={174,202,116}, hullDark={62,82,48}, canopy={232,250,183}, engine={255,95,64}},
+    elite_fork = {hullMain={90,136,225}, hullDark={34,53,115}, canopy={205,230,255}, engine={255,90,190}},
+    elite_razor = {hullMain={229,226,203}, hullDark={110,111,98}, canopy={85,240,247}, engine={255,163,70}},
+    elite_spiral = {hullMain={169,109,224}, hullDark={69,40,110}, canopy={246,205,255}, engine={114,238,245}},
+    elite_anchor = {hullMain={203,131,88}, hullDark={98,53,43}, canopy={181,230,255}, engine={255,91,83}},
+    elite_wisp = {hullMain={102,183,190}, hullDark={40,89,110}, canopy={218,255,250}, engine={212,111,255}},
+    elite_shear = {hullMain={141,223,115}, hullDark={52,105,69}, canopy={235,255,197}, engine={252,119,123}},
+    elite_bracket = {hullMain={125,143,213}, hullDark={48,59,115}, canopy={215,232,255}, engine={241,190,101}},
+    elite_hammer = {hullMain={207,183,108}, hullDark={95,77,42}, canopy={255,239,188}, engine={117,204,255}},
+    elite_rivet = {hullMain={210,103,133}, hullDark={104,43,71}, canopy={255,202,215}, engine={255,202,87}},
+    boss_orrery = {hullMain={142,201,186}, hullDark={49,90,99}, canopy={224,255,234}, engine={255,207,116}},
+    boss_maw = {hullMain={220,86,91}, hullDark={94,32,50}, canopy={255,177,144}, engine={246,203,89}},
+    boss_citadel = {hullMain={180,178,146}, hullDark={76,81,76}, canopy={210,248,229}, engine={250,125,100}},
+    boss_prism = {hullMain={192,148,239}, hullDark={76,54,116}, canopy={244,224,255}, engine={122,235,248}},
+    boss_serpent = {hullMain={105,194,91}, hullDark={43,103,62}, canopy={235,244,140}, engine={255,150,83}},
 }
 
 -- 按像素原色归类部件槽位（阈值按 AircraftPixelData 实际像素标定）：
@@ -188,18 +203,17 @@ function VisualCatalog.GetAircraftPreview(aircraftKey)
     return preview
 end
 
--- v0.10.25：体素物理调色板槽位。手建体积占用 1-64（8 机型 × 4 槽 × 冻结/正常）。
--- 渲染层按 (aircraftKey, slot, frozen) 取全局索引，禁止在 Renderer3D 里再发明一套编号。
+-- 每种机型四种部件色，各有正常／冰冻两组。23 型共 184 槽，bank 0 的 1..255 内互不重叠。
 local AIRCRAFT_KEYS = {
-    "scout", "striker", "bomber", "interceptor",
-    "dart", "manta", "hive", "cruiser",
+    "scout", "striker", "bomber", "interceptor", "dart", "manta", "hive", "cruiser",
+    "elite_hook", "elite_fork", "elite_razor", "elite_spiral", "elite_anchor",
+    "elite_wisp", "elite_shear", "elite_bracket", "elite_hammer", "elite_rivet",
+    "boss_orrery", "boss_maw", "boss_citadel", "boss_prism", "boss_serpent",
 }
+local AIRCRAFT_INDEX = {}
+for index, key in ipairs(AIRCRAFT_KEYS) do AIRCRAFT_INDEX[key] = index end
 ---@type table<string, integer>
 local SLOT_INDEX = { hullMain = 0, hullDark = 1, canopy = 2, engine = 3 }
----@type integer
-local VOXEL_MAT_BASE = 1
----@type integer
-local VOXEL_MAT_FREEZE_BASE = 33
 
 function VisualCatalog.GetAircraftKeys()
     return AIRCRAFT_KEYS
@@ -214,19 +228,9 @@ end
 ---@param frozen boolean|nil
 ---@return integer
 function VisualCatalog.GetVoxelMatIndex(aircraftKey, slot, frozen)
-    ---@type integer
-    local keyIndex = 1
-    for i = 1, #AIRCRAFT_KEYS do
-        if AIRCRAFT_KEYS[i] == aircraftKey then
-            keyIndex = i
-            break
-        end
-    end
-    ---@type integer
+    local keyIndex = AIRCRAFT_INDEX[aircraftKey] or 1
     local slotIndex = SLOT_INDEX[slot] or 0
-    ---@type integer
-    local base = frozen and VOXEL_MAT_FREEZE_BASE or VOXEL_MAT_BASE
-    return base + (keyIndex - 1) * 4 + slotIndex
+    return 1 + (keyIndex - 1) * 8 + (frozen and 4 or 0) + slotIndex
 end
 
 return VisualCatalog

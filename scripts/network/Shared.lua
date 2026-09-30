@@ -53,7 +53,7 @@ Shared.FIRST_GIFT = {
     priceHint = 6,           -- 展示参考价（实际以平台商品价为准）
     windowSeconds = 24 * 3600,
     parts = 500,             -- 客户端补发的「高级零件」
-    skin = "arctic",         -- 客户端补发的稀有皮肤 key（MetaCatalog.GetSkins）
+    skin = "arctic",         -- 旧存档 key 保留：客户端补发的越野车（MetaCatalog.GetSkins）
     bonusGems = 100,         -- 服务端发货的钻石
 }
 

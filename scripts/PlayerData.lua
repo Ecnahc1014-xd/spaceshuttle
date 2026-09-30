@@ -1,5 +1,5 @@
 -- PlayerData.lua
--- 玩家元数据层（跨局）：软货币「零件」、每日签到、每日任务、敌机图鉴、皮肤与统计。
+-- 玩家元数据层（跨局）：软货币「零件」、每日签到、每日任务、敌机图鉴、车型与统计。
 -- 只做数据处理与本地存档读写；云同步与广告发奖由编排层（main.lua）驱动，
 -- 规则层（Game.lua）只通过局内 partsEarned 结算，不直接读写本模块。
 
@@ -21,8 +21,8 @@ local DATA_VERSION = 1
 ---@field dailyProgress table<string, integer> 任务 id -> 当前进度
 ---@field dailyClaimed table<string, boolean> 任务 id -> 是否已领取
 ---@field codex table<string, boolean> 已解锁敌机 key
----@field skins table<string, boolean> 已解锁皮肤 key
----@field selectedSkin string 当前使用的皮肤 key
+---@field skins table<string, boolean> 已解锁车型，沿用旧涂装存档 key
+---@field selectedSkin string 当前使用的车型 key
 ---@field shopBought table<string, boolean> 商城一次性商品
 ---@field passClaimed integer 战斗档案已领到的等级
 ---@field firstGiftClaimed boolean 首充新手礼包奖励是否已本地补发
@@ -469,7 +469,7 @@ function PlayerData.CodexCount()
 end
 
 -- ============================================================================
--- 皮肤与商城
+-- 车型与商城
 -- ============================================================================
 
 ---@param key string
@@ -497,6 +497,21 @@ function PlayerData.SelectSkin(key)
     if not state.skins[key] then return false end
     state.selectedSkin = key
     PlayerData.Save()
+    return true
+end
+
+---@param key string
+---@param cost integer
+---@return boolean
+function PlayerData.PurchaseSkin(key, cost)
+    local price = math.floor(cost)
+    if price <= 0 or state.skins[key] or state.parts < price then return false end
+    state.parts = state.parts - price
+    state.totalSpent = state.totalSpent + price
+    state.skins[key] = true
+    state.selectedSkin = key
+    PlayerData.Save()
+    print("[PlayerData] vehicle purchased " .. key)
     return true
 end
 

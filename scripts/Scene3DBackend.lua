@@ -70,6 +70,33 @@ local nvgFontZpix_ = -1
 -- 渲染时据此计算淡入/滑入进度，避免硬切（不破坏酸性风格，纯透明度/位移 easing）。
 local uiState_ = nil
 local uiStateEnter_ = 0
+local uiGameVisual_ = nil
+local uiGameLeaving_ = nil
+local uiGameLeaveAt_ = 0
+local metaScreen_ = nil
+local metaScreenEnter_ = 0
+local metaScreenLeaving_ = nil
+local metaScreenLeaveAt_ = 0
+local metaSupply_ = false
+local metaSupplyEnter_ = 0
+local metaSupplyLeaving_ = nil
+local metaSupplyLeaveAt_ = 0
+local metaVisual_ = nil
+local uiClock_ = 0
+local uiLastElapsed_ = nil
+local uiStateMotionEnter_ = 0
+
+local function CopyVisualState(source)
+    if not source then return nil end
+    local copy = {}
+    for k, v in pairs(source) do copy[k] = v end
+    return copy
+end
+
+---@type table|nil
+local lastGame_ = nil
+---@type table|nil
+local lastMeta_ = nil
 -- v0.12.8：像素字标轮播随机起点（在下方 LOGO 块初始化前由 UpdateUiState 写入）。
 local logoRollOffset_ = 0
 
@@ -407,7 +434,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.12.14"
+local BUILD_VERSION = "0.13.0"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -821,19 +848,97 @@ local function EaseOutCubic(t)
     return 1 - (1 - t) * (1 - t) * (1 - t)
 end
 
-local function UpdateUiState(game)
+-- 窗口按统一的视觉时钟入场/退场，退场保留上一帧只读快照而不拦截操作。
+local WINDOW_IN = 0.32
+local WINDOW_OUT = 0.18
+
+local function AdvanceUiClock(game)
+    local elapsed = game.elapsed or 0
+    if uiLastElapsed_ then
+        if elapsed < uiLastElapsed_ then
+            uiClock_ = 0
+            uiGameLeaving_, metaScreenLeaving_, metaSupplyLeaving_ = nil, nil, nil
+        else
+            uiClock_ = uiClock_ + math.min(0.05, elapsed - uiLastElapsed_)
+        end
+    end
+    uiLastElapsed_ = elapsed
+end
+
+local function WindowMotion(enterAt, leaving)
+    local duration = leaving and WINDOW_OUT or WINDOW_IN
+    local age = math.max(0, uiClock_ - enterAt)
+    if leaving then
+        local t = math.min(1, age / duration)
+        return 1 - EaseOutCubic(t), 1 - t * 0.035
+    end
+    local t = math.min(1, age / duration)
+    local scale
+    if t < 0.70 then
+        local u = t / 0.70
+        scale = 0.91 + 0.12 * EaseOutCubic(u)
+    else
+        local u = (t - 0.70) / 0.30
+        scale = 1.03 - 0.03 * (1 - (1 - u) * (1 - u))
+    end
+    return math.min(1, t * 3), scale
+end
+
+-- 视觉变换和命中逆变换同用一个函数，避免弹动时按钮与可见位置分离。
+local function WindowInput(x, y, startAt)
+    local _, scale = WindowMotion(startAt, false)
+    local cx, cy = DESIGN_W * 0.5, DESIGN_H * 0.5
+    return cx + (x - cx) / scale, cy + (y - cy) / scale
+end
+
+local function UpdateUiState(game, meta)
+    AdvanceUiClock(game)
     if game.state ~= uiState_ then
+        local old = uiState_
+        if old == "gameover" or old == "levelup" or old == "paused" then
+            uiGameLeaving_ = {state = old, visual = uiGameVisual_}
+            uiGameLeaveAt_ = uiClock_
+            uiGameVisual_ = nil
+        end
         uiState_ = game.state
         uiStateEnter_ = game.elapsed
+        uiStateMotionEnter_ = uiClock_
         if game.state == "menu" then
             -- v0.12.8：每次进主页重新摇字标轮播起点（仅状态切换时一次）。
             logoRollOffset_ = math.random(0, 3)
         end
     end
+    if game.state == "gameover" or game.state == "levelup" or game.state == "paused" then
+        uiGameVisual_ = {game = CopyVisualState(game), meta = CopyVisualState(meta)}
+        uiGameVisual_.game.upgradeChoices = CopyVisualState(game.upgradeChoices)
+    end
+    if metaScreen_ ~= (meta and meta.screen or nil) then
+        if metaScreen_ then
+            metaScreenLeaving_ = {screen = metaScreen_, meta = metaVisual_}
+            metaScreenLeaveAt_ = uiClock_
+        end
+        metaScreen_ = meta and meta.screen or nil
+        metaScreenEnter_ = uiClock_
+    end
+    if metaSupply_ ~= (meta and meta.supplyOpen == true or false) then
+        if metaSupply_ then
+            metaSupplyLeaving_ = metaVisual_
+            metaSupplyLeaveAt_ = uiClock_
+        end
+        metaSupply_ = meta and meta.supplyOpen == true or false
+        metaSupplyEnter_ = uiClock_
+    end
+    if meta then
+        metaVisual_ = CopyVisualState(meta)
+    end
+    if uiGameLeaving_ and uiClock_ - uiGameLeaveAt_ >= WINDOW_OUT then uiGameLeaving_ = nil end
+    if metaScreenLeaving_ and uiClock_ - metaScreenLeaveAt_ >= WINDOW_OUT then metaScreenLeaving_ = nil end
+    if metaSupplyLeaving_ and uiClock_ - metaSupplyLeaveAt_ >= WINDOW_OUT then metaSupplyLeaving_ = nil end
 end
 
--- 模态入场进度（0..1），0.28s 缓入。返回 alpha 与可选滑动偏移。
+-- 主菜单保持全屏淡入；窗口内容改由 DrawAnimatedWindow 统一处理。
 local function ModalIntro(game)
+    if game.state ~= "menu" then return 1 end
     local t = (game.elapsed - uiStateEnter_) / 0.28
     return EaseOutCubic(t)
 end
@@ -841,6 +946,11 @@ end
 local AIRCRAFT_LABELS = {
     scout = "侦察", dart = "飞镖", striker = "强袭", hive = "蜂群",
     manta = "鳐鱼", bomber = "飞碟", cruiser = "巡洋", interceptor = "截击",
+    elite_hook = "钩翼", elite_fork = "双叉", elite_razor = "斜刃", elite_spiral = "涡轮",
+    elite_anchor = "铁锚", elite_wisp = "流萤", elite_shear = "剪翼",
+    elite_bracket = "断环", elite_hammer = "重锤", elite_rivet = "铆钉",
+    boss_orrery = "星环", boss_maw = "噬口", boss_citadel = "堡垒",
+    boss_prism = "棱镜", boss_serpent = "蛇脊",
 }
 
 -- v0.10.31：底部 Dock 中央下一波小图。四弹药槽左右分组，中间 256px 留给预告。
@@ -852,14 +962,15 @@ local function DrawNextWavePreview(ctx, game)
     local panelW, panelH = 168, 76
     local px = DESIGN_W * 0.5 - panelW * 0.5
     local py = BOTTOM_DOCK_Y + 12
-    local border = plan.isBoss and C.error or C.cyanDim
-    DrawTechPanel(ctx, px, py, panelW, panelH, C.card, border)
-    DrawRect(ctx, px, py, 3, panelH, plan.isBoss and C.error or C.cyan, 0)
+    local kind = plan.kind or "normal"
+    local accent = kind == "boss" and C.error or (kind == "elite" and C.warn or C.cyan)
+    DrawTechPanel(ctx, px, py, panelW, panelH, C.card, accent)
+    DrawRect(ctx, px, py, 3, panelH, accent, 0)
 
     local cooldown = game.waveCooldown or 0
     local eta = string.format("%d", math.max(0, math.floor(cooldown + 0.999)))
-    DrawPixelText(ctx, px + 8, py + 4, plan.isBoss and "首领" or "下一波", 15,
-        plan.isBoss and C.error or C.dim)
+    DrawPixelText(ctx, px + 8, py + 4,
+        kind == "boss" and "首领" or (kind == "elite" and "精英" or "下一波"), 15, accent)
     DrawPixelText(ctx, px + panelW - 8, py + 4, eta .. "秒", 15, C.cyan,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
@@ -879,10 +990,10 @@ local function DrawNextWavePreview(ctx, game)
     end
 
     local label = AIRCRAFT_LABELS[plan.aircraftKey] or plan.aircraftKey
-    local countText = plan.isBoss and "首领" or (tostring(plan.count or 0) .. "架")
+    local countText = kind == "boss" and "首领" or (kind == "elite" and "精英" or (tostring(plan.count or 0) .. "架"))
     DrawPixelText(ctx, px + 8, py + panelH - 20, label, 15, C.text)
     DrawPixelText(ctx, px + panelW - 8, py + panelH - 20, countText, 15,
-        plan.isBoss and C.error or C.cyan, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        accent, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 end
 
 -- v0.12.11 修复（AB-100 前向引用）：DrawIcon 的 local function 定义在本文件后段
@@ -1339,9 +1450,10 @@ local function DrawHud(ctx, game, presentation)
     DrawPixelText(ctx, 14, 58, "最高 " .. tostring(game.highScore), 12, C.dim)
 
     local centerX = 264
-    DrawPixelText(ctx, centerX, 5, "作战波次", 13, C.cyanDim,
+    DrawPixelText(ctx, centerX, 5, string.format("第 %d 关 · 作战波次", game.stage or 1), 13, C.cyanDim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, centerX, 19, string.format("%d", game.wave), 29, C.text,
+    DrawPixelText(ctx, centerX, 19, string.format("%d / %d", game.stageWave or game.wave,
+        game.wavesPerStage or 10), 29, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     local combo = game.clearStreak or 0
     local comboColor = combo >= 2 and C.warn or C.dim
@@ -1503,12 +1615,13 @@ local function DrawGameOver(ctx, game, presentation)
     DrawPixelText(ctx, game.width * 0.5, 322, "敌机突破了底部防线", 18, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, game.width * 0.5, 348,
-        string.format("分数 %d    最高 %d    第 %d 波",
-            game.score, game.highScore, game.wave), 18, C.text,
+        string.format("分数 %d    最高 %d    第 %d 关 %d/%d 波",
+            game.score, game.highScore, game.stage or 1,
+            game.stageWave or game.wave, game.wavesPerStage or 10), 18, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     DrawBluePanel(ctx, 44, 370, game.width - 88, 92, C.rail, C.cyanDim, 6)
-    DrawPixelText(ctx, 60, 380, string.format("到达第 %d 波", game.wave), 17, C.text)
+    DrawPixelText(ctx, 60, 380, string.format("到达第 %d 关", game.stage or 1), 17, C.text)
     DrawPixelText(ctx, 60, 402, string.format("等级 %d", game.playerLevel), 17, C.text)
     DrawPixelText(ctx, 60, 424, string.format("击碎 %d 块", game.bricksBroken or 0), 17, C.dim)
     DrawPixelText(ctx, game.width - 60, 380, string.format("强化 %d 次", #(game.upgradePicks or {})), 17,
@@ -1919,8 +2032,24 @@ local function DrawPaused(ctx, game, meta, presentation)
 end
 
 local function DrawWaveBanner(ctx, game, presentation)
-    -- A2：波次横幅。waveBannerTimer 由 Presentation 维护（1.8 起递减），
-    -- 入场用 ease 从上方滑入，生命周期尾部淡出。v0.10.23：Boss 波红框警告。
+    local stageTime = presentation.stageBannerTimer or 0
+    if stageTime > 0 then
+        local number = presentation.stageBannerNumber or game.stage or 1
+        local isCleared = game.stageClearPending
+        local accent = isCleared and C.warn or C.cyan
+        local title = isCleared and string.format("第 %d 关完成", number)
+            or string.format("第 %d 关开始", number)
+        nvgSave(ctx)
+        nvgGlobalAlpha(ctx, math.min(1, stageTime / 0.4))
+        DrawBluePanel(ctx, game.width * 0.5 - 166, 250, 332, 92, C.card, accent, 6)
+        DrawPixelText(ctx, game.width * 0.5, 264, title, 27, accent,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, game.width * 0.5, 306,
+            isCleared and "清除首领 · 即将进入下一关" or "十波防线 · 三精英一首领", 16, C.text,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        nvgRestore(ctx)
+        return
+    end
     local t = presentation.waveBannerTimer or 0
     if t <= 0 then return end
     local life = 1.8
@@ -1931,17 +2060,22 @@ local function DrawWaveBanner(ctx, game, presentation)
     nvgSave(ctx)
     nvgGlobalAlpha(ctx, alpha)
     local cx = game.width * 0.5
-    if presentation.waveBannerBoss then
-        local pulse = 220 + math.floor(35 * math.abs(math.sin(game.elapsed * 8)))
-        local warn = {232, 76, 76}
-        DrawBluePanel(ctx, cx - 156, 138 + yOff, 312, 70, C.card, warn, 6)
-        DrawPixelText(ctx, cx, 144 + yOff, "首领来袭", 16, {pulse, 90, 90},
+    local kind = presentation.waveBannerKind or "normal"
+    local stageNumber = presentation.waveBannerStage or game.stage or 1
+    local waveNumber = presentation.waveBannerStageWave or game.stageWave or 1
+    local label = AIRCRAFT_LABELS[presentation.waveBannerKey] or ""
+    if kind == "boss" or kind == "elite" then
+        local accent = kind == "boss" and C.error or C.warn
+        DrawBluePanel(ctx, cx - 156, 138 + yOff, 312, 70, C.card, accent, 6)
+        DrawPixelText(ctx, cx, 144 + yOff, kind == "boss" and "首领来袭" or "精英来袭", 16, accent,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, cx, 168 + yOff, string.format("第 %d 波", game.wave), 22,
-            warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, cx, 168 + yOff,
+            string.format("第 %d 关 · %d/10 波 · %s", stageNumber, waveNumber, label), 20,
+            accent, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         DrawBluePanel(ctx, cx - 156, 142 + yOff, 312, 60, C.card, C.cyan, 6)
-        DrawPixelText(ctx, cx, 154 + yOff, string.format("第 %d 波来了", game.wave), 22,
+        DrawPixelText(ctx, cx, 154 + yOff,
+            string.format("第 %d 关 · 第 %d 波", stageNumber, waveNumber), 22,
             C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
@@ -2085,6 +2219,19 @@ local function RunOverlayStage(stage, callback)
     return ok
 end
 
+local function DrawAnimatedWindow(stage, startAt, leaving, drawer)
+    local alpha, scale = WindowMotion(startAt, leaving)
+    if alpha <= 0 then return end
+    RunOverlayStage(stage, function()
+        ApplyOverlayDesignTransform()
+        nvgGlobalAlpha(vg_, alpha)
+        nvgTranslate(vg_, DESIGN_W * 0.5, DESIGN_H * 0.5)
+        nvgScale(vg_, scale, scale)
+        nvgTranslate(vg_, -DESIGN_W * 0.5, -DESIGN_H * 0.5)
+        drawer()
+    end)
+end
+
 local function DrawMinimalHudFallback(game)
     ApplyOverlayDesignTransform()
     nvgBeginPath(vg_)
@@ -2100,7 +2247,8 @@ local function DrawMinimalHudFallback(game)
     nvgFillColor(vg_, nvgRGBA(C.text[1], C.text[2], C.text[3], 255))
     nvgText(vg_, 12, 16, "得分 " .. tostring(game.score or 0), nil)
     nvgTextAlign(vg_, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    nvgText(vg_, game.width * 0.5, 16, "第 " .. tostring(game.wave or 1) .. " 波", nil)
+    nvgText(vg_, game.width * 0.5, 16,
+        string.format("第 %d 关 · %d/10 波", game.stage or 1, game.stageWave or game.wave or 1), nil)
     nvgTextAlign(vg_, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     nvgText(vg_, game.width - 48, 16,
         "基地 " .. tostring(game.baseHp or 0) .. "/" .. tostring(game.maxBaseHp or 0), nil)
@@ -2145,7 +2293,10 @@ end
 
 local function RenderOverlay(game, presentation, meta)
     if not vg_ then return end
-    local beginOk, beginErr = pcall(nvgBeginFrame, vg_, logicalWidth_, logicalHeight_, dpr_)
+    local beginOk, beginErr = pcall(function()
+        ---@diagnostic disable-next-line: param-type-mismatch
+        nvgBeginFrame(vg_, logicalWidth_, logicalHeight_, dpr_)
+    end)
     if not beginOk then
         ReportOverlayStageError("begin-frame", beginErr)
         return
@@ -2200,19 +2351,44 @@ local function RenderOverlay(game, presentation, meta)
         RunOverlayStage("damage-vignette", function() DrawDamageVignette(vg_, game, presentation) end)
     elseif game.state == "menu" then
         RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
-    elseif game.state == "gameover" then
-        RunOverlayStage("gameover", function() DrawGameOver(vg_, game, presentation) end)
-    elseif game.state == "levelup" then
-        RunOverlayStage("levelup", function() DrawLevelUp(vg_, game, presentation) end)
-    elseif game.state == "paused" then
-        RunOverlayStage("paused", function() DrawPaused(vg_, game, meta, presentation) end)
     end
 
+    local currentWindow = game.state == "gameover" or game.state == "levelup" or game.state == "paused"
+    if uiGameLeaving_ and uiGameLeaving_.visual and not currentWindow then
+        local old = uiGameLeaving_
+        DrawAnimatedWindow("game-window-out", uiGameLeaveAt_, true, function()
+            local oldGame = old.visual.game
+            if old.state == "gameover" then DrawGameOver(vg_, oldGame, presentation)
+            elseif old.state == "levelup" then DrawLevelUp(vg_, oldGame, presentation)
+            elseif old.state == "paused" then DrawPaused(vg_, oldGame, old.visual.meta, presentation) end
+        end)
+    end
+    if currentWindow then
+        DrawAnimatedWindow("game-window-in", uiStateMotionEnter_, false, function()
+            if game.state == "gameover" then DrawGameOver(vg_, game, presentation)
+            elseif game.state == "levelup" then DrawLevelUp(vg_, game, presentation)
+            else DrawPaused(vg_, game, meta, presentation) end
+        end)
+    end
+
+    if metaScreenLeaving_ and metaScreenLeaving_.meta then
+        local old = metaScreenLeaving_
+        DrawAnimatedWindow("meta-screen-out", metaScreenLeaveAt_, true, function()
+            old.meta.screen = old.screen
+            MetaUI.DrawScreen(vg_, DESIGN_W, old.meta)
+        end)
+    end
     if meta and meta.screen then
-        RunOverlayStage("meta-screen", function() MetaUI.DrawScreen(vg_, DESIGN_W, meta) end)
+        DrawAnimatedWindow("meta-screen-in", metaScreenEnter_, false,
+            function() MetaUI.DrawScreen(vg_, DESIGN_W, meta) end)
+    end
+    if metaSupplyLeaving_ then
+        DrawAnimatedWindow("supply-out", metaSupplyLeaveAt_, true,
+            function() MetaUI.DrawSupplyPopup(vg_, DESIGN_W, metaSupplyLeaving_) end)
     end
     if meta and meta.supplyOpen then
-        RunOverlayStage("supply", function() MetaUI.DrawSupplyPopup(vg_, DESIGN_W, meta) end)
+        DrawAnimatedWindow("supply-in", metaSupplyEnter_, false,
+            function() MetaUI.DrawSupplyPopup(vg_, DESIGN_W, meta) end)
     end
     ApplyOverlayDesignTransform()
     RunOverlayStage("system-banner", function() DrawSystemBanner(vg_) end)
@@ -2231,11 +2407,7 @@ end
 -- ============================================================================
 
 ---@type table|nil
-local lastGame_ = nil
----@type table|nil
 local lastPresentation_ = nil
----@type table|nil
-local lastMeta_ = nil
 local overlayStageErrors_ = {}
 local overlayFirstFrameLogged_ = false
 local overlaySnapshotLogged_ = false
@@ -2422,6 +2594,11 @@ end
 
 function Backend.Shutdown()
     Renderer3D.Shutdown()
+    uiState_, uiGameVisual_, uiGameLeaving_ = nil, nil, nil
+    metaScreen_, metaScreenLeaving_, metaSupplyLeaving_ = nil, nil, nil
+    metaSupply_, metaVisual_ = false, nil
+    uiClock_, uiLastElapsed_ = 0, nil
+    lastGame_, lastPresentation_, lastMeta_ = nil, nil, nil
     if vg_ then
         nvgDelete(vg_)
         vg_ = nil
@@ -2470,11 +2647,11 @@ end
 -- 游戏快照在 Update 结束后已经稳定；在本帧 3D 绘制之前同步场景与体素。
 -- NanoVGRender 晚于 3D Viewport，不能在其中才 RebuildGeometry，否则必然看到旧网格。
 function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
+    UpdateUiState(gameSnapshot, metaState)
     -- 缓存本帧快照，供本文件内的 NanoVGRender 处理器直接使用（不依赖外部调用）。
     lastGame_ = gameSnapshot
     lastPresentation_ = presentationSnapshot
     lastMeta_ = metaState
-    UpdateUiState(gameSnapshot)
     UpdateSpaceEnvironment(gameSnapshot.elapsed)
     local shake = presentationSnapshot.screenShake or 0
     if cameraNode_ then
@@ -2557,16 +2734,19 @@ end
 ---@return integer|nil index
 function Backend.HitTestMetaScreen(uiX, uiY, metaState)
     if not metaState or not metaState.screen then return nil, nil end
-    return MetaUI.HitTestScreen(uiX, uiY, DESIGN_W, metaState)
+    local x, y = WindowInput(uiX, uiY, metaScreenEnter_)
+    return MetaUI.HitTestScreen(x, y, DESIGN_W, metaState)
 end
 
 ---@return string|nil action
 function Backend.HitTestSupplyPopup(uiX, uiY, metaState)
     if not metaState or not metaState.supplyOpen then return nil end
-    return MetaUI.HitTestSupplyPopup(uiX, uiY, DESIGN_W)
+    local x, y = WindowInput(uiX, uiY, metaSupplyEnter_)
+    return MetaUI.HitTestSupplyPopup(x, y, DESIGN_W)
 end
 
 function Backend.HitTestGameOverButton(uiX, uiY, game)
+    uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
     local revive, double, restart, menu = GetGameOverButtonLayout(game or {})
     local function inside(btn)
         return uiX >= btn.x and uiX <= btn.x + btn.w
@@ -2588,6 +2768,7 @@ end
 ---@return string|nil kind
 ---@return integer|nil index
 function Backend.HitTestUpgradePanel(uiX, uiY, game)
+    uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
     local layout = GetUpgradePanelLayout(game or {})
     local function inside(rect)
         return uiX >= rect.x and uiX <= rect.x + rect.w
@@ -2617,6 +2798,7 @@ end
 -- v0.11.0 商业化：暂停补给站命中判定（与 DrawPaused 同源）。
 ---@return string|nil kind "pause_heal" | "pause_rare" | "pause_orbital" | "pause_reload" | "pause_parts_boost" | "pause_resume" | "pause_menu"
 function Backend.HitTestPausePanel(uiX, uiY, game)
+    uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
     local layout = GetPausePanelLayout((game and game.width) or DESIGN_W)
     local function inside(r)
         return uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h

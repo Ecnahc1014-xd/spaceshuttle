@@ -1,6 +1,6 @@
 -- MetaCatalog.lua
 -- 元层静态目录（纯数据，无渲染、无存档副作用）：
--- 敌机图鉴文案、车辆皮肤、商城条目、转盘奖励。
+-- 敌机图鉴文案、车辆车型、商城条目、转盘奖励。
 -- 只被编排层（main.lua）与表现层（MetaUI.lua）读取。
 
 local MetaCatalog = {}
@@ -24,7 +24,22 @@ local CODEX = {
     { key = "manta",       name = "宽翼鳐鱼", note = "滑翔横摆，机翼最宽最难打空。",     reward = 200 },
     { key = "bomber",      name = "重型飞碟", note = "黄绿圆盘，缓慢但装甲深厚。",       reward = 220 },
     { key = "cruiser",     name = "重装巡洋舰", note = "钢灰盒体，血最厚推进最慢。",      reward = 260 },
-    { key = "interceptor", name = "截击机",   note = "紫色精英，每十波的 Boss 形态。",   reward = 320 },
+    { key = "interceptor", name = "截击机",   note = "菱形快速截击单位，现归入普通编队。", reward = 320 },
+    { key = "elite_hook", name = "钩翼", note = "不规则钩形突进，横摆突然折返。", reward = 340 },
+    { key = "elite_fork", name = "双叉", note = "两侧叉翼错相摆动，难以预判。", reward = 340 },
+    { key = "elite_razor", name = "斜刃", note = "单侧长刃沿折线路线穿梭。", reward = 350 },
+    { key = "elite_spiral", name = "涡轮", note = "偏心旋翼交错画出螺旋轨迹。", reward = 350 },
+    { key = "elite_anchor", name = "铁锚", note = "重装锚臂偶尔突然横移。", reward = 360 },
+    { key = "elite_wisp", name = "流萤", note = "细长光带以快慢交替游移。", reward = 360 },
+    { key = "elite_shear", name = "剪翼", note = "张开的剪刃在战场两侧往返。", reward = 370 },
+    { key = "elite_bracket", name = "断环", note = "破裂环身随相位左右摇摆。", reward = 370 },
+    { key = "elite_hammer", name = "重锤", note = "顶端宽、尾部窄的高压突进者。", reward = 380 },
+    { key = "elite_rivet", name = "铆钉", note = "非对称铆接装甲摆出假动作。", reward = 380 },
+    { key = "boss_orrery", name = "星环", note = "环形旗舰，定期召来蜂群小机。", reward = 600 },
+    { key = "boss_maw", name = "噬口", note = "双颚舰体，定期召来飞镖机。", reward = 620 },
+    { key = "boss_citadel", name = "堡垒", note = "厚重城墙型旗舰，召来侦察机。", reward = 650 },
+    { key = "boss_prism", name = "棱镜", note = "中空菱镜旗舰，召来飞碟。", reward = 640 },
+    { key = "boss_serpent", name = "蛇脊", note = "曲折脊骨旗舰，召来强袭机。", reward = 630 },
 }
 
 ---@return CodexEntry[]
@@ -47,28 +62,28 @@ function MetaCatalog.GetCodexEntry(key)
 end
 
 -- ============================================================================
--- 车辆皮肤（程序化换色，不依赖外部贴图）
--- ============================================================================
-
+-- 六款车型沿用旧涂装 key，既有购买记录及首充礼包的 arctic 权益继续生效。
 ---@class SkinDef
 ---@field key string
 ---@field name string
 ---@field cost integer 0 表示默认拥有
----@field paint table 主车漆 rgb
----@field panel table 浅色侧围 rgb
+---@field desc string
+---@field silhouette string[] 俯视缩略图的五行轮廓
 
 ---@type SkinDef[]
 local SKINS = {
-    { key = "default", name = "出厂涂装", cost = 0,
-      paint = {212, 176, 96},  panel = {236, 232, 220} },
-    { key = "arctic",  name = "极地白",   cost = 800,
-      paint = {214, 228, 238}, panel = {140, 176, 200} },
-    { key = "crimson", name = "烈焰红",   cost = 1500,
-      paint = {206, 72, 60},   panel = {244, 214, 190} },
-    { key = "jade",    name = "翠玉青",   cost = 2200,
-      paint = {54, 178, 156},  panel = {216, 240, 232} },
-    { key = "obsidian", name = "玄铁黑",  cost = 3200,
-      paint = {58, 62, 78},    panel = {150, 158, 176} },
+    { key = "default", name = "平头重卡", cost = 0, desc = "三轴长货厢 · 默认车型",
+      silhouette = {"..####..", ".######.", "########", ".######.", "..####.."} },
+    { key = "arctic", name = "越野车", cost = 800, desc = "高车顶 · 双排宽轮",
+      silhouette = {"..####..", ".######.", ".######.", ".######.", "..####.."} },
+    { key = "crimson", name = "跑车", cost = 1500, desc = "低趴楔形 · 双轴尾翼",
+      silhouette = {"...##...", "..####..", ".######.", ".######.", "..####.."} },
+    { key = "jade", name = "厢式车", cost = 2200, desc = "方正高厢 · 双轴车身",
+      silhouette = {"..####..", ".######.", ".######.", ".######.", ".######."} },
+    { key = "obsidian", name = "装甲车", cost = 3200, desc = "厚重外甲 · 三轴底盘",
+      silhouette = {"..####..", ".######.", "########", "########", "..####.."} },
+    { key = "rally", name = "沙地越野车", cost = 4000, desc = "开放式防滚架 · 外露宽轮",
+      silhouette = {"...##...", ".######.", "..####..", ".######.", "...##..."} },
 }
 
 ---@return SkinDef[]
@@ -85,22 +100,8 @@ function MetaCatalog.GetSkin(key)
     return nil
 end
 
----@param key string
----@return table 三通道 rgb（缺失时回退出厂涂装）
-function MetaCatalog.GetSkinPaint(key)
-    local skin = MetaCatalog.GetSkin(key) or SKINS[1]
-    return skin.paint
-end
-
----@param key string
----@return table
-function MetaCatalog.GetSkinPanel(key)
-    local skin = MetaCatalog.GetSkin(key) or SKINS[1]
-    return skin.panel
-end
-
 -- ============================================================================
--- 商城：车辆涂装使用软货币零件；广告礼包为主动观看激励视频后领取。
+-- 商城：车辆车型使用软货币零件；广告礼包为主动观看激励视频后领取。
 
 -- ============================================================================
 
