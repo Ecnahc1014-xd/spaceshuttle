@@ -101,7 +101,7 @@ local function GetLayout(w)
     }
     -- 内容高度覆盖错位后最高线路的完整卡片与留白。
     local maxLaneOffset = 0.5
-    local topPad = CARD_R + 4
+    local topPad = CARD_R + 16
     local botPad = CARD_R + 24 + (selectedId_ and 160 or 0)
     local contentH = topPad + botPad
         + (TalentCatalog.MAX_STAGE - 1 + maxLaneOffset) * ROW_STEP
@@ -186,10 +186,10 @@ local LANE_COLORS = {
 
 ---@return table
 local function LaneColor(node)
-    local C = Style()
-    if node and node.tint == "gold" then return C.warn end
     local lane = node and node.lane
-    return (lane and LANE_COLORS[lane]) or C.cyan
+    local color = lane and LANE_COLORS[lane] or nil
+    if color then return color end
+    return Style().cyan
 end
 
 ---@param ctx any
@@ -288,20 +288,20 @@ function TalentTree.Draw(ctx, w, meta)
                 local isOwned = owned[node.id] == true
                 local prereqMet = TalentCatalog.IsPrereqMet(node, owned, stars)
                 local canBuy = (not isOwned) and prereqMet and parts >= node.cost
-                local laneColor = LANE_COLORS[lane] or C.cyan
-                local col = C.cyan
+                local col = LaneColor(node)
                 local fill, width
                 if isOwned then
                     fill, width = C.widget, 3
                 elseif canBuy then
                     fill, width = C.card, 2.4
-                    col = C.warn
                 elseif prereqMet then
                     fill, width = C.card, 2
                     col = LaneColor(node)
                 else
                     fill, width = C.rail, 1.6
-                    col = C.cyanDim
+                    col = LaneColor(node)
+                    local laneCol = col
+                    col = { laneCol[1] * 0.42, laneCol[2] * 0.42, laneCol[3] * 0.42, 255 }
                 end
                 RingCard(ctx, cx, cy, CARD_R, col, fill, width)
                 local iconAlpha = isOwned and 1.0 or (prereqMet and 0.75 or 0.3)

@@ -3,6 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.16-talent 补充（专属卡门控真凶 + 局内卡显著强于天赋树；提交 0171cf7）：
+  - **用户报「封锁卡片包括专属卡还在局内生成」**：探针先验（全新玩家 400 次抽卡只出分裂车系、`unlockedBalls` 正确）→ 排除车解锁门控；真凶是**天赋树的「专属卡」节点（`kind="ballCard"`, stage 2）规则层从未消费**——`Game.SetTalents` 只处理 `cardUnlock`/`ballUnlock`/`partsPct`/`stat`，`ballCard` 被静默忽略，于是专属卡只要车解锁就能抽，那个节点纯装饰。**修复**：新增 `talentUnlockedBallCards[ballType]`，`SetTalents` 收集 `ballCard` 节点，`CanOfferUpgrade` 增加「带 `ballType` 且 `kind ~= "base"` 的卡必须是专属卡且该车型已解锁 ballCard 节点」。
+  - **「局内卡要显著强于局外的树」**：实测原值**天赋大节点全面 ≥ 局内卡**（分裂天赋 5% vs 局内 3%、冰冻 0.5s vs 1.2s、极速 5% vs 8%、贯穿 0.6 格 vs 1.0 格）——与用户预期相反。按「局内 ≈ 天赋的 3～5 倍」下调天赋：分裂 `0.02/0.05 → 0.005/0.008`、冰冻 `0.20/0.50 → 0.12/0.30`、极速 `1.02/1.05 → 1.01/1.02`、贯穿 `0.25/0.60 → 0.12/0.25`。同时修百分比文案精度（数值下调后 `%d` 会把 0.5%/0.8% 都显示成「+1%」，改为能整除用整数、否则一位小数）。
+  - **验证**：官方多人 build+预览上传 ✅；探针 `probe_gate` PASS——①无天赋→无专属卡 ②**车解锁但未解锁 ballCard 节点→专属卡仍被拦**（本次核心回归）③解锁 ballCard 节点后专属卡出现 ④天赋节点值 ≤ 局内卡 1/3；`probe_vals` 确认文案区分小/大节点（`分裂概率 +0.5%` / `+0.8%`）。
+  - ⚠️ **教训**：目录里定义了 `kind` 不等于规则层消费了它——本项目 `ballCard` 静默失效了 11 个版本（v0.13.5→v0.13.16）。新增 `kind` 时必须在 `SetTalents` 的 if-else 链里加分支，并写探针断言「该 kind 的效果真的生效」。
 - 版本: 0.13.16-talent（天赋：成长线改暴击/攻击 + 暴击实装 + 血量加成**全局说明一次**；版本号由并发会话推进）：
   - **用户追加澄清**：「加血量上限一点的效果是所有卡的」→ 血量加成是**所有卡通用**的规则，因此**不在每个节点里逐条重复**，改在天赋树**顶部统一说明一次**（`TalentCatalog.HP_RULE_TEXT = "每解锁 1 个天赋：生命上限 +1"`，`TalentTree` 标题栏下方渲染）。规则层效果不变（仍是「每个已解锁节点 +1 上限，不分卡的种类」，探针实测 5 个混合类型节点 → `hpBonus=+5`）。
   - ⚠️ 上一版（同日更早）曾把「生命上限 +N」拼进 42 个节点 desc——本批已撤销该重复，`WithHp()` 退化为直通函数，避免调用点散落改动。
@@ -21,6 +26,7 @@
   - **回滚**：`Renderer3D` 里 3D ribbon 全套常量/状态/函数（`SyncVehicleTrails`/`ClearTrailSamples`/`AddTrailQuad`/`TrailColor`）与 Init/Render/Shutdown/ClearRunVisuals 钩子整段删除（含并发会话 v0.13.11 的空缓冲防护）。⚠️ 用脚本切整段时误删了紧邻的 `local function SyncDebris(presentation)` 签名行（注释在签名之后），补回后 LoadChunk 恢复正常——**整段删除要以「函数签名行」为边界锚点，不能只锚注释**。
   - **验证**：离线数据探针 PASS（直线 7 段、头宽 14.7、峰值 alpha 200；静止弹弓车/gameover 零拖尾）；真渲染发射→飞行冒烟零 Lua/overlay/VertexBuffer 错误；LSP 我改的三文件 0 Error；前向引用扫描 0；官方多人 build+预览上传 ✅。⚠️ 待 Preview：真机拖尾观感与长度/亮度手感（覆盖层光带是 2D 屏幕空间四边形，斜俯视下不随车辆透视缩放，属预期）。BUILD_VERSION/大厅 →0.13.15。
   - ⚠️ **并发**：本批只提交 `Renderer3D/Presentation/Scene3DBackend`（`31e0da1`）。提交时并发会话正把 `Game.lua` 改到**语法错误中间态**（LSP 报 `ApplyBrickStatus` 附近 `unexpected token` + 若干 `undefined global`），非我文件、未代其修复；等待其自行补完（现 `Game.lua` 语法恢复正常）后才构建。构建一并带上了并发会话已入工作树的选关/天赋改动（其 versions 已到 0.13.14）。
+  - **v0.13.15b 真机反馈修复（用户：「和车分离且图层比车还高了」）**：①**分离根因 = z 投影**——overlay 光带按玩法平面 z=0 标定投影（`UpdateProjectionMetrics` 三点全在 z=0），而车辆根节点在锚点深度 z≈-0.086~-0.13m，46° 斜俯视正交下 z 会进屏幕 Y → 光带整体悬在车上方约 5px。修法：投影标定加 `projectionDepthX/Y_`（同 x/y 只差 z 的 **W2S 两点对测**，别拿 z 探针混 WorldFromGame 原点否则混入 x 分量）；`Renderer3D.VehicleDepthZ(radius)` 导出与 `GetVehicleAnchorWorld` 同式的深度；`ProjectTrailPoint(x,y,z)` 供尾迹按车深投影；group 携带 radius。②**盖过车根因** = overlay 天然在 3D 上 + 头段全宽 ~29px > 车头 ~15px。修法：光带头部沿来向**回缩 radius×1.15**（≈车尾）并钳 ≤ 间隙一半防慢速反向；world-fx 内尾迹移到冲击环/飘字**之前**绘制。验证：数据探针 ALL PASS（回缩后仍 7 段/头宽 14.7）、前向引用 0、LSP 我文件 0 Error、多人 build+预览上传 ✅。⚠️ 待 Preview：贴车观感与遮挡层级。
 - 版本: 0.13.14（选关重做为「开心消消乐式蜿蜒路径地图」）：
   - **用户否决 v0.13.13 的样式**（原话「不行，我想要开心消消乐那种的」+ 参考图）：上一版是「直线微偏移 + 细描边圆钮」，被判定不像消消乐。参考图（`assets/image/下载 (3).webp`）的关键特征：**粗壮的蜿蜒路径**（大振幅蛇形，不是轻微抖动）、**节点像可点的糖果钮**（亮色厚环 + 亮芯 + 粗体描边数字）、**三颗星在节点下方外侧**、**两侧竖排圆形图标栏**。
   - **重做 `ui/StageSelect.lua`**：①`SWAY_AMP` 46→**96**、`SWAY_PERIOD` 4→**3**、`ROW_STEP` 96→**132**——大振幅 + 长周期才看出"蛇形路径"；②新增 `StrokePath`（Catmull-Rom → 三次贝塞尔，`nvgBezierTo` + `NVG_ROUND` 端点）把各关圆心串成**平滑曲线**，三层叠画（路肩 40px 深色 → 路面 30px → 高光 8px 青）做出"一条有厚度的路"；③节点改**大圆果冻钮**（半径 40，落影 + 亮色厚环 + 亮芯 + 顶部高光），数字 42px 粗体（三位数 30px）；④**三颗星移到圆钮下方外侧**（`sy = cy + r + 12`）——首版误画在圆内底缘被裁掉一半；⑤左侧道具栏改**圆形图标钮 + 角标库存数字**（`DrawRoundIcon`），右侧保留确定性像素装饰。

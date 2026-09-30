@@ -48,11 +48,14 @@ TalentCatalog.AUTO_OWNED = { "normal_1" }
 
 -- 车线路的"小幅数值增强"参数：stat 对应 Game 的 BALL_TUNING 字段。
 -- mul=true 表示乘法叠加，否则加法；small=小幅，big=专属卡效果增强。
+-- v0.13.16：用户要求「局内卡要显著强于局外的树」→ 天赋数值按「局内卡的 1/3~1/5」定，
+-- 保证一局内抽到的一张卡就明显强于树上同属性的一整条线。对照（局内基础卡/强化卡）：
+--   分裂 2%/3%、冰冻 0.5/1.2 秒、极速 4%/8%、贯穿 0.5/1.0 格。
 local BALL_STAT = {
-    normal = { stat = "splitBonus", small = 0.02, big = 0.05, label = "分裂概率" },
-    ice    = { stat = "iceBonus",   small = 0.20, big = 0.50, label = "冰冻时长" },
-    speed  = { stat = "speedMul",   small = 1.02, big = 1.05, mul = true, label = "极速" },
-    giant  = { stat = "giantArea",  small = 0.25, big = 0.60, label = "贯穿范围" },
+    normal = { stat = "splitBonus", small = 0.005, big = 0.008, label = "分裂概率" },
+    ice    = { stat = "iceBonus",   small = 0.12,  big = 0.30,  label = "冰冻时长" },
+    speed  = { stat = "speedMul",   small = 1.01,  big = 1.02,  mul = true, label = "极速" },
+    giant  = { stat = "giantArea",  small = 0.12,  big = 0.25,  label = "贯穿范围" },
 }
 
 ---@class TalentNode
@@ -208,13 +211,19 @@ for _, lane in ipairs({ "normal", "ice", "speed", "giant" }) do
             node.mul = st.mul
             node.value = isBig and st.big or st.small
             -- 描述：乘法类按百分比显示，分裂概率按百分比，其余按两位小数。
+            -- v0.13.16：天赋数值下调后（如分裂 +0.5%），整数百分比会四舍五入成 +1%
+            -- 让小幅/强化节点显示一样——改按实际精度输出（能整除用整数，否则一位小数）。
             local desc
             if st.mul then
-                desc = string.format("%s +%d%%", st.label,
-                    math.floor((node.value - 1) * 100 + 0.5))
+                local pct = (node.value - 1) * 100
+                desc = string.format("%s +%s%%", st.label,
+                    (math.abs(pct - math.floor(pct + 0.5)) < 1e-6)
+                        and tostring(math.floor(pct + 0.5)) or string.format("%.1f", pct))
             elseif st.stat == "splitBonus" then
-                desc = string.format("%s +%d%%", st.label,
-                    math.floor(node.value * 100 + 0.5))
+                local pct = node.value * 100
+                desc = string.format("%s +%s%%", st.label,
+                    (math.abs(pct - math.floor(pct + 0.5)) < 1e-6)
+                        and tostring(math.floor(pct + 0.5)) or string.format("%.1f", pct))
             else
                 desc = string.format("%s +%.2f", st.label, node.value)
             end

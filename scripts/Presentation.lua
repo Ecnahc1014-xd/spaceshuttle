@@ -100,16 +100,27 @@ local function UpdateVehicleTrails(dt, gameSnapshot)
             end
             if #pts < 2 then return end
             count = count + 1
+            local radius = marble.radius or 20
+            -- 光带头部回缩到车尾之后：尾迹从车背后"拖"出来，不覆盖车体
+            -- （车屏幕半长约 22.6*(radius/20) 设计像素，取 radius*1.15 近似）。
             local headX, headY = marble.x, marble.y
+            local lastP = pts[#pts]
+            local hx0, hy0 = headX - lastP.x, headY - lastP.y
+            local hl = math.sqrt(hx0 * hx0 + hy0 * hy0)
+            if hl > 0.5 then
+                -- 钳制：回缩不得超过头段间隙一半，否则慢速时头点越过尾点、光带反向。
+                local pullback = math.min(radius * 1.15, hl * 0.5)
+                headX = headX - hx0 / hl * pullback
+                headY = headY - hy0 / hl * pullback
+            end
             -- 颜色不在这里定：后端按 ballType 用 SLOT_COLORS 统一注入（样式单一来源）。
             local group = polysByType[ballType]
             if not group then
-                group = {}
+                group = {ballType = ballType, radius = radius, polys = {}}
                 polysByType[ballType] = group
-                result[#result + 1] = {ballType = ballType, polys = group}
+                result[#result + 1] = group
             end
             local n = #pts
-            local radius = marble.radius or 20
             local widthScale = radius / 20.0
             for i = 1, n do
                 local ax, ay = pts[i].x, pts[i].y
@@ -127,7 +138,8 @@ local function UpdateVehicleTrails(dt, gameSnapshot)
                     local wb = (2.2 + 12.5 * t1) * widthScale
                     local lifeA = 1 - pts[i].age / TRAIL_LIFETIME
                     local alpha = 200 * (t1 ^ 1.25) * math.min(1, lifeA + 0.35)
-                    group[#group + 1] = {
+                    local poly = group.polys
+                    poly[#poly + 1] = {
                         x1 = ax + nx * wa, y1 = ay + ny * wa,
                         x2 = bx + nx * wb, y2 = by + ny * wb,
                         x3 = bx - nx * wb, y3 = by - ny * wb,

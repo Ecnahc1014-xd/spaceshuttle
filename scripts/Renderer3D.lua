@@ -1313,6 +1313,13 @@ function Renderer3D.Init(scene, voxelWorld)
     return initialized_
 end
 
+-- v0.13.16：车辆根节点的 world Z（车身视觉平面深度）。NanoVG overlay 画尾迹时
+-- 必须投影到这个深度平面——46° 斜俯视正交相机下 z 会进屏幕 Y，按 z=0 玩法平面
+-- 标定就会让光带与车体分离（用户报「和车分离」）。
+function Renderer3D.VehicleDepthZ(radius)
+    return -VEHICLE_LOCAL_CENTER_Z * GetVehicleScale({radius = radius or 20})
+end
+
 function Renderer3D.GetVehicleAnchor(x, y, marble)
     local record = vehicleRecords_[marble.id]
     if record and record.root then

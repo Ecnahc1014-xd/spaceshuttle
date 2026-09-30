@@ -205,6 +205,7 @@ local partsBoostTime = 0
 ---@field ballType string|nil 仅对应车型可用的强化
 ---@field unlockBallType string|nil 未解锁时才进入卡池的车型解锁卡
 ---@field requiresCard string|nil 需天赋树解锁的通用卡 id（xp/ammo）；未解锁不进卡池
+---@field kind string|nil "base"=车解锁即可抽的基础卡；其余带 ballType 的为「专属卡」，需 ballCard 节点
 ---@field apply fun(stacks: integer)
 
 local UnlockBallType -- 解锁卡先于补弹函数声明，应用时再调用规则层函数
@@ -218,6 +219,10 @@ local talentPartsPct = 0       -- 结算零件百分比加成（来自通用线�
 local talentBallStats = {}     -- 车线路数值增强：ballType -> {stat, value, mul}
 local talentUnlockedCards = {} -- 天赋解锁的通用卡 id 集合（xp / ammo）
 local talentUnlockedBalls = {} -- 天赋解锁的车（局内出场资格）
+-- v0.13.16：天赋解锁的「专属卡」资格（ballCard 节点，按车型）。
+-- ⚠️ 之前这个节点只存在于目录里、规则层从未消费 → 专属卡只要车解锁就能抽，
+-- 天赋树的「解锁专属卡」节点是装饰。现在专属卡必须**先解锁该节点**才进池。
+local talentUnlockedBallCards = {}
 -- v0.13.15：成长线天赋——暴击率（0..1）与基础攻击加成。
 local talentCritChance = 0
 local talentAtkBonus = 0
@@ -485,7 +490,13 @@ local function LoadBalls()
 end
 
 local function CanOfferUpgrade(u)
-    return (not u.ballType or unlockedBalls[u.ballType] == true)
+    -- v0.13.16：带 ballType 且非 base 的卡是「专属卡」——必须天赋树解锁了
+    -- 该车型的「专属卡」节点才进池（base 卡只需车解锁）。
+    local ballOk = (not u.ballType) or unlockedBalls[u.ballType] == true
+    if ballOk and u.ballType and u.kind ~= "base" then
+        ballOk = talentUnlockedBallCards[u.ballType] == true
+    end
+    return ballOk
         and (not u.unlockBallType or unlockedBalls[u.unlockBallType] ~= true)
         and (not u.requiresCard or talentUnlockedCards[u.requiresCard] == true)
         and (upgradeStacks[u.id] or 0) < u.maxStacks
@@ -501,6 +512,7 @@ function Game.SetTalents(owned)
     talentBallStats = {}
     talentUnlockedCards = {}
     talentUnlockedBalls = {}
+    talentUnlockedBallCards = {}
     talentCritChance = 0
     talentAtkBonus = 0
     if type(owned) ~= "table" then return end
@@ -515,6 +527,9 @@ function Game.SetTalents(owned)
                     talentUnlockedCards[node.cardId] = true
                 elseif node.kind == "ballUnlock" then
                     talentUnlockedBalls[node.ballType] = true
+                elseif node.kind == "ballCard" then
+                    -- 专属卡资格（按车型）：未解锁该节点则专属卡不进池。
+                    talentUnlockedBallCards[node.ballType] = true
                 elseif node.kind == "partsPct" then
                     talentPartsPct = talentPartsPct + (node.value or 0)
                 elseif node.kind == "stat" then
