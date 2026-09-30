@@ -1369,6 +1369,10 @@ function ClientMain.DebugOpenScreen(name)
     metaState.screen = name
     RefreshMeta()
     RefreshSnapshots()
+    -- 与 OpenMetaScreen 保持一致：打开选关即定位到最新关（无限爬塔）。
+    if name == "stage_select" then
+        StageSelect.FocusLatest(designWidth_, metaState.maxStage or 1)
+    end
 end
 
 ---@param eventType string

@@ -3,6 +3,15 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.13（选关改无限爬塔 + 道具永久库存）：
+  - **选关重做（用户给参考图 + 规格）**：`ui/StageSelect.lua` 从「15 关网格」改为**纵向无限爬塔**——中间一列**圆形关卡按钮**，圆心用 zpix 位图字体画关卡数字（≥3 位数自动缩小到 22px）；**第 1 关在最下方、越往上关数越高**；每层横向偏移是 `StageSelect.StageSway` 的**确定性正弦**（`sin((stage-1)/4*2π)*46`，固定写死在代码里，非随机），形成错落爬塔感；相邻关之间画竖直短虚线。打开面板（`OpenMetaScreen`/`DebugOpenScreen`）默认 **`FocusLatest` 定位到最新已解锁关**。可上下拖拽滚动（沿用天赋树那套 `ScrollBegin/Move/End` + 编排层 `stageSelectScrollArmed` 转发，拖动过则吞掉本次点击）。
+  - **两侧空余空间**：①**左侧栏 = 花零件买局内道具**（`ui/ItemShop.lua`：炸弹 120 / 冰冻 100 / 护盾 100 零件，库存封顶 3）；②**右侧栏 = 随机低透明度像素插图**（3 种程序化小图，按滚动位置确定性挑选、alpha 26~40 纯装饰）。
+  - **道具「每局每样限用一次」**：规则层 `Game.itemUsedThisRun` 在 `CanUseItem` 里拦截，`UseItem` 置位；快照 `items[].usedThisRun` 供渲染层用**精灵变暗 + 角标数字**表达，**界面上不写任何文字说明**（用户明确要求）。库存为 0 时图标压暗到 0.28。
+  - **关卡无限**：`StageCatalog.STAGE_COUNT` 改为 `STAGE_SOFT_CAP`（仅作难度封顶参考，不再是硬上限）；`Game.NextStage` 去掉上限判定、`stageHasNext` 恒真；难度公式全部可外推（速度/召唤次数/间隔早已 `math.min` 封顶，方块血量继续每 3 关 +1，精英/Boss 按取模循环）。选关列表只列到「最高已解锁关」，随进度增长。
+  - **库存持久化**：`PlayerData.itemStock`（`AsIntMap` 解码 + 云合并取更大值）；`Game.SetItemStockProvider(PlayerData.GetItemStock)` 注册一次，**`ResetGame` 开局自动拉取**（覆盖选关/下一关/再战/重开全部入口，沿用天赋树的 provider 模式）。
+  - **验证**：官方多人 build + 预览上传 ✅；规则探针 `probe_tower` PASS（1~1000 关难度公式全合法、道具首次可用/二次被拦、usedThisRun 置位、provider 重开自动重注入、可开第 40/200 关）；真渲染 `probe_towerdraw` PASS（面板绘制无错、道具行命中 `buy_item,1`、滚动 begin/move/end 正常）+ `probe_towerfull` 通过 `DebugOpenScreen("stage_select")` 真实打开并截图，面板区 4040 色、塔身带 936 色、金色星条 1328px、左侧栏 1967 色；战斗回归零 Lua/overlay 错误。全库前向引用扫描 **0 问题**。
+  - ⚠️ **provider 声明必须在 `ResetGame` 之前**：`itemStockProvider` 若声明在文件后段，`ResetGame`（582 行）开局就调用它会读到全局 nil（AB-100 同族）——已前移到第 133 行，与 `ResetItems` 前向声明同处。
+  - ⚠️ **探针验证要贴调用契约**：`Game.StartStageAt` 只在 `menu` 态有效，连续开两关之间必须 `GoToMenu()`（本次探针连踩两次）；`GetSpecialKey` 对**普通波返回 nil 是正常的**，只有精英/Boss 波有关键字。
 - 版本: 0.13.12（天赋树：星级门槛改按横行 + 拉开间距支持滑动）：
   - **用户澄清两处（原话「支持上下滑动页面，不要塞这么死。另外他妈的一共有六条，星星们限制的阶段指的是每个横行从下到上」）**：①**星级门槛属于「阶段（横行）」不是「线路（纵列）」**——早期版本用 `TalentCatalog.STAGE_STARS[li]`（`li` 是线路索引）显示成「成长 0★ / 通用卡 3★ / 分裂车 9★…」，读起来像每条线路星级要求不同，语义完全错。现改为**左侧独立门槛栏**，按横行从下到上标（最底行 0★ → 3★ → 9★ → 18★ → 27★ → 36★ → 45★），门槛与线路解耦；顶部表头只留 6 条线路名。②**内容必须显著高于可视区才能滑动**：原 `ROW_STEP=92` 且 `topPad/botPad` 偏小 → 内容总高恰好等于可视区高 → `MaxScroll=0`、滚不动、「塞这么死」。现 `ROW_STEP` 92→**128**、卡半径 34→**30**、`topPad= CARD_R+40`/`botPad=CARD_R+24`、表头由两行收成一行 → 内容总高 **892** vs 可视区 **678**，可滚动约 **214px**（约 1.7 个阶段）。
   - **卡片**：去掉卡面上重复的阶段序号（改由左侧栏统一标注）；新增左侧 44px 门槛栏（`LABEL_W`），线路列相应收窄。
@@ -185,6 +194,14 @@
   - 体素主体逐格对齐规则快照，不再靠短命飞散箱事件标记整机签名；变化时每机同帧单次重建，并验证占用、输出 `[Renderer3D][voxel-repair]` 修理日志。
   - 验证：Lua LSP 0 Error、官方 build 成功；Linux 运行时无体素模块且离屏报告/截图未落盘，Preview 命中后目视验收待做。
 - 上次交付: v0.13.3 车辆飞行尾迹（3D BillboardSet 四弹种合批）+ 全窗口渐显渐隐弹动过渡（命中逆变换、遮罩不缩放、退场残影作废）
+
+## 本批次新增避雷（v0.13.13 无限爬塔选关 + 道具库存）
+- 🔴 **provider 型注入的 local 声明必须在「首次调用点」之前（v0.13.13 又踩一次）**：`itemStockProvider` 被 `ResetGame` 调用，若声明写在道具段（1700 行附近）而 `ResetGame` 在 582 行，则开局读到全局 nil → 库存永不注入。这与 AB-100（前向引用）、v0.13.5 天赋 `talentMaxHpBonus` 是同一族：**凡是「开局/初始化就会读」的模块级 local，声明一律前移到文件头部的前向声明区**（本项目集中在 `local ResetItems` 附近）。交付前跑前向引用扫描（注意：扫描器只认 `local function X` / `local X = function`，且要跳过 ≤4 字符的短名，否则 `y(`/`s(` 这类参数会淹没结果）。
+- ⚠️ **「每局限用一次」这类隐性规则只走状态 + 视觉，不写字（v0.13.13 用户点名）**：用户明确要求「这种事别写出来，通过精灵图明暗和角标数字」表达。做法：规则层给 `usedThisRun` 布尔，渲染层用**图标压暗 + 角标数字**区分「没有 / 有 / 本局已用」，禁止加「每局限用一次」这类说明文字。同理，库存为 0 时压暗到 ~0.28 而不是画灰字。
+- ⚠️ **无限内容面板必须给「确定性的伪随机」而不是真随机（v0.13.13）**：塔身横向偏移用 `sin((stage-1)/4*2π)*AMP`（同一关永远同一偏移），右侧装饰插图按滚动位置取模挑选。用 `math.random` 会让每帧位置抖动、重开对不上，玩家一眼看出是 bug。
+- ⚠️ **放开「有限数量」常量时要把所有消费点一起改（v0.13.13）**：`STAGE_COUNT` 15 → `STAGE_SOFT_CAP` 后，`Game.NextStage` 的上限判定、`stageHasNext`、`client_main` 的星级统计循环、`StageSelect` 的铺格循环全部要跟着改；漏一处就是「列表显示到 15 但能打到 200」或反过来。做法：grep 常量名拿全部命中点，逐个判断是「硬上限」还是「仅展示」。
+- ⚠️ **探针要贴调用契约，别把状态机约束当 bug（v0.13.13）**：`Game.StartStageAt` 只在 `menu` 态有效，探针连开两关必须中间 `GoToMenu()`；`StageCatalog.GetSpecialKey` 对普通波**返回 nil 是正确的**。探针红了先分清「契约变更 / 探针写错 / 真 bug」，别为过探针改正确设计。
+- ⚠️ **离屏探针打开面板走 `ClientMain.DebugOpenScreen(name)`（v0.13.13）**：这是既有的窄接口（只置 `metaState.screen` + `RefreshMeta/RefreshSnapshots`），比伪造鼠标事件可靠；本次已让它与 `OpenMetaScreen` 行为一致（开选关时也 `FocusLatest`）。
 
 ## 本批次新增避雷（v0.13.8 主页间距 + 天赋树入口）
 - ⚠️ **菜单行间距改动要连带重排「行内元素」，别只挪 rect（v0.13.8）**：`GetMenuBarLayout` 的 y/h 一变，wallet 的图标/标签/数值/分隔线/充值胶囊、daily/grow 卡的图标框与 label/sub 的**绝对偏移**全部要按新高度重算（都是 `r.y + N` 硬编码）。同时 grep 底部锚点：菜单 toast 曾固定 y=848，行下移后会与养成行底边重叠——锚定「内容底边」而不是「离屏底边」。改动后必跑 `probe_menu`（几何命中）+ 真渲染截图（视觉），二者缺一不可。
