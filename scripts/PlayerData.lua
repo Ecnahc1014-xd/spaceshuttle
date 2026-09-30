@@ -31,6 +31,7 @@ local DATA_VERSION = 1
 ---@field firstGiftClaimed boolean 首充新手礼包奖励是否已本地补发
 ---@field createdAt integer 首次运行时间戳（首充限时窗基准）
 ---@field purchasedPartsClaimed integer 已补领的钻石兑换零件累计额
+---@field itemStock table<string, integer> 局内道具永久库存（选关界面花零件购买）
 ---@field stats table<string, integer> 通用计数器（复活次数、广告观看等）
 
 ---@return PlayerDataState
@@ -58,6 +59,7 @@ local function NewState()
         firstGiftClaimed = false,
         createdAt = 0,
         purchasedPartsClaimed = 0,
+        itemStock = {},
         stats = {},
     }
 end
@@ -165,6 +167,7 @@ function PlayerData.Load()
     state.firstGiftClaimed = d.firstGiftClaimed == true
     state.createdAt = math.max(0, AsInt(d.createdAt))
     state.purchasedPartsClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
+    state.itemStock    = AsIntMap(d.itemStock)
     state.stats        = AsIntMap(d.stats)
     local skins = AsBoolMap(d.skins)
     skins.default = true
@@ -212,6 +215,7 @@ function PlayerData.ImportFromCloud(text)
     local cloudCodex = AsBoolMap(d.codex)
     local cloudSkins = AsBoolMap(d.skins)
     local cloudStats = AsIntMap(d.stats)
+    local cloudItems = AsIntMap(d.itemStock)
     local cloudHigh  = math.max(0, AsInt(d.highScore))
 
     local cloudClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
@@ -264,6 +268,11 @@ function PlayerData.ImportFromCloud(text)
         local cur = state.stats[k] or 0
         if v > cur then state.stats[k] = v end
     end
+    -- 道具库存跨设备取更大值（任一台买过即保留）。
+    for k, v in pairs(cloudItems) do
+        local cur = state.itemStock[k] or 0
+        if v > cur then state.itemStock[k] = v end
+    end
     local cloudSignTotal = math.max(0, AsInt(d.signInTotal))
     state.signInTotal = math.max(state.signInTotal, cloudSignTotal)
     print("[PlayerData] cloud merged parts=" .. state.parts)
@@ -313,6 +322,33 @@ function PlayerData.SpendParts(amount)
     state.totalSpent = state.totalSpent + n
     PlayerData.Save()
     return true
+end
+
+-- ============================================================================
+-- 局内道具永久库存（v0.13.13）
+-- 选关界面花零件购买；进局时由编排层注入 Game.SetItemStock。
+-- ⚠️ 每种道具每局最多使用一次——该限制在规则层（Game.itemUsedThisRun），
+--    库存只表示「有没有」，UI 用精灵明暗 + 角标表达，不写文字说明。
+-- ============================================================================
+
+---@return table<string, integer>
+function PlayerData.GetItemStock()
+    return state.itemStock
+end
+
+---@param key string
+---@return integer
+function PlayerData.GetItemCount(key)
+    return state.itemStock[key] or 0
+end
+
+---@param key string
+---@param amount integer
+function PlayerData.AddItem(key, amount)
+    local n = math.floor(amount or 0)
+    if n <= 0 then return end
+    state.itemStock[key] = (state.itemStock[key] or 0) + n
+    PlayerData.Save()
 end
 
 -- ============================================================================

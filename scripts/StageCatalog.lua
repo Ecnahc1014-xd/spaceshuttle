@@ -3,8 +3,10 @@ local StageCatalog = {}
 
 StageCatalog.WAVES_PER_STAGE = 10
 StageCatalog.MAX_FLEET = 12
--- 关卡总数：第 15 关后没有「下一关」；选关界面按此数量铺格。
-StageCatalog.STAGE_COUNT = 15
+-- v0.13.13：关卡无限——选关列表只列到「最高已解锁关」，可一直往上爬。
+-- 难度公式全部可外推：速度/召唤次数/间隔已用 math.min 封顶，方块血量继续每 3 关 +1，
+-- 精英与 Boss 机型按取模循环复用。此常量仅保留为「难度封顶参考关数」，不再是硬上限。
+StageCatalog.STAGE_SOFT_CAP = 15
 
 local ELITE_KEYS = {
     "elite_hook", "elite_fork", "elite_razor", "elite_spiral", "elite_anchor",

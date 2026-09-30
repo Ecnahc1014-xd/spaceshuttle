@@ -127,6 +127,10 @@ local highScore = 0
 local baseHp = BASE_HP
 local baseShield = 0               -- 局内护盾吸收值（道具槽「护盾」提供）
 local ResetItems                   -- 前向声明：ResetGame 里要调用；后定义会退化成全局查找
+-- v0.13.13：局外道具库存拉取函数（编排层注册）。⚠️ 必须在 ResetGame 之前声明——
+-- ResetGame 开局就调用它，后置声明会退化成全局 nil（AB-100 同族）。
+---@type fun(): table<string, integer>|nil
+local itemStockProvider = nil
 local wave = 1
 local stage = 1
 local stageWave = 1
@@ -578,6 +582,11 @@ ResetGame = function(startStage)
     runCounted = false
     runAircraft = {}
     baseShield = 0
+    -- v0.13.13：开局自动拉取局外道具库存（覆盖选关/下一关/再战/重开全部入口）。
+    if itemStockProvider then
+        local ok, stock = pcall(itemStockProvider)
+        if ok and type(stock) == "table" then Game.SetItemStock(stock) end
+    end
     ResetItems()
     upgradeRerollFreeUsed = false
     heldUpgradeId = nil
@@ -1677,12 +1686,48 @@ for i = 1, #ITEM_DEFS do ITEM_BY_KEY[ITEM_DEFS[i].key] = ITEM_DEFS[i] end
 local itemCharges = { bomb = 0, freeze = 0, shield = 0 }  -- 槽位存量
 ---@type table<string, boolean>
 local itemGranted = {}                                     -- 本局是否已用广告领过
+-- v0.13.13：局外买来的永久库存（选关界面花零件购买），进局时注入。
+-- 规则：**每种道具每局最多使用一次**（用户要求，不在 UI 里写明，靠精灵明暗+角标表达）。
+---@type table<string, integer>
+local itemStock = { bomb = 0, freeze = 0, shield = 0 }
+---@type table<string, boolean>
+local itemUsedThisRun = {}                                 -- 本局该道具是否已用过
 local FREEZE_SECONDS = 4.0                                 -- 冰冻持续
 local SHIELD_POINTS = 30                                   -- 护盾吸收量
 
 ResetItems = function()
     itemCharges = { bomb = 0, freeze = 0, shield = 0 }
     itemGranted = {}
+    itemUsedThisRun = {}
+    -- 把永久库存注入本局槽位（每样 1 个；本局限用一次由 itemUsedThisRun 兜底）。
+    for i = 1, #ITEM_DEFS do
+        local key = ITEM_DEFS[i].key
+        if (itemStock[key] or 0) > 0 then
+            itemCharges[key] = 1
+        end
+    end
+end
+
+-- 局外库存由编排层在开局前注入（PlayerData → Game）。
+---@param stock table<string, integer>
+function Game.SetItemStock(stock)
+    itemStock = { bomb = 0, freeze = 0, shield = 0 }
+    for i = 1, #ITEM_DEFS do
+        local key = ITEM_DEFS[i].key
+        itemStock[key] = math.max(0, math.floor((stock and stock[key]) or 0))
+    end
+end
+
+-- v0.13.13：库存 provider——ResetGame 每次开局自动拉取，
+-- 覆盖「选关 / 下一关 / 再战 / 重开」全部入口，避免逐个入口手动注入漏掉。
+---@param fn fun(): table<string, integer>
+function Game.SetItemStockProvider(fn)
+    itemStockProvider = fn
+end
+
+---@return table<string, integer>
+function Game.GetItemStock()
+    return itemStock
 end
 
 ---@param key string
@@ -1715,6 +1760,8 @@ end
 ---@return boolean
 function Game.CanUseItem(key)
     if gameState ~= "playing" then return false end
+    -- v0.13.13：每种道具每局最多使用一次（无论库存多少）。
+    if itemUsedThisRun[key] then return false end
     return (itemCharges[key] or 0) > 0
 end
 
@@ -1724,6 +1771,7 @@ end
 function Game.UseItem(key)
     if not Game.CanUseItem(key) then return false end
     itemCharges[key] = itemCharges[key] - 1
+    itemUsedThisRun[key] = true
 
     if key == "bomb" then
         local popped = 0
@@ -2725,7 +2773,7 @@ end
 function Game.NextStage()
     if gameState ~= "stagewin" or not stageResult then return false end
     local nextStage = stageResult.stage + 1
-    if nextStage > StageCatalog.STAGE_COUNT then return false end
+    -- v0.13.13：关卡无限，「下一关」永远可用。
     StartGameAt(nextStage)
     return true
 end
@@ -2939,9 +2987,9 @@ function Game.GetSnapshot()
     s.stageWave = stageWave
     s.wavesPerStage = StageCatalog.WAVES_PER_STAGE
     s.stageResult = stageResult
-    s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil
-        and stageResult.stage < StageCatalog.STAGE_COUNT) or false
-    s.stageTotal = StageCatalog.STAGE_COUNT
+    -- v0.13.13：关卡无限——永远有下一关；stageTotal 只是「难度封顶参考关数」。
+    s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil) or false
+    s.stageTotal = StageCatalog.STAGE_SOFT_CAP
     s.elapsed = elapsed
     s.playerLevel = playerLevel
     s.xp = xp
@@ -3006,7 +3054,8 @@ function Game.GetSnapshot()
     s.canPauseReload = Game.CanPauseReload()
     s.canPausePartsBoost = Game.CanPausePartsBoost()
     s.partsBoostTime = partsBoostTime
-    -- 局内道具槽（渲染层只读）：每格 {key,name,color,charges,canGrant}
+    -- 局内道具槽（渲染层只读）：每格 {key,name,color,charges,canGrant,usedThisRun}
+    -- usedThisRun 供渲染层用「精灵变暗 + 角标」表达「本局已用过」，不写文字。
     local items = {}
     for i = 1, #ITEM_DEFS do
         local def = ITEM_DEFS[i]
@@ -3014,6 +3063,7 @@ function Game.GetSnapshot()
             key = def.key, name = def.name, color = def.color,
             charges = itemCharges[def.key] or 0,
             canGrant = Game.CanGrantItem(def.key),
+            usedThisRun = itemUsedThisRun[def.key] == true,
         }
     end
     s.items = items

@@ -78,9 +78,9 @@ local TRAIL_VEHICLE_LIMIT = 8
 local TRAIL_POINTS_PER_VEHICLE = 6
 local TRAIL_LIFETIME = 0.30
 local TRAIL_SAMPLE_INTERVAL = 0.035
-local TRAIL_HALF_WIDTH_HEAD = 0.22  -- 头段半宽（× 权威碰撞半径 × WORLD_SCALE），窄于车身
-local TRAIL_HALF_WIDTH_TAIL = 0.02  -- 尾段半宽（渐收成束）
-local TRAIL_HEAD_GLOW = 1.65        -- 头段亮度倍数（尾段压暗到 0 形成长度感淡出）
+local TRAIL_HALF_WIDTH_HEAD = 0.30  -- 头段半宽（× 权威碰撞半径 × WORLD_SCALE），窄于车身
+local TRAIL_HALF_WIDTH_TAIL = 0.03  -- 尾段半宽（渐收成束）
+local TRAIL_HEAD_GLOW = 0.85        -- 头段向白热插值上限（钳 0..1 下唯一可信的变亮手段）
 
 local BALL_COLORS = {
     normal = {1.00, 0.72, 0.12},

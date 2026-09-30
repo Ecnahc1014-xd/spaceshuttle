@@ -21,6 +21,7 @@ local NetClient = require "network.Client"
 local MetaUI = require "MetaUI"
 local RechargeShop = require "ui.RechargeShop"
 local StageSelect = require "ui.StageSelect"
+local ItemShop = require "ui.ItemShop"
 local TalentTree = require "ui.TalentTree"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
@@ -44,6 +45,8 @@ local stageWinArmed = nil
 local metaPointerConsumed = false
 -- v0.13.8：天赋树拖拽滚动是否已起手（Move/Up 转发给 TalentTree.Scroll*）。
 local talentScrollArmed = false
+-- v0.13.13：选关界面（无限爬塔）拖拽滚动是否已起手。
+local stageSelectScrollArmed = false
 -- 设计宽度缓存（天赋树命中/滚动用；Init 时由 GetDesignSize 填）。
 local designWidth_ = 540
 local CLOUD_HIGH_SCORE_KEY = "high_score"
@@ -403,13 +406,18 @@ RefreshMeta = function()
     metaState.codexTotal = MetaCatalog.GetCodexTotal()
 
     -- 选关界面数据（v0.13.4）：逐关星级 + 已解锁范围。
+    -- v0.13.13：关卡无限——只统计到「最高已解锁关」，列表随进度增长。
+    local maxStage = PlayerData.GetMaxStage()
     local stageStars = {}
-    for stage = 1, StageCatalog.STAGE_COUNT do
+    for stage = 1, maxStage do
         stageStars[stage] = PlayerData.GetStageStars(stage)
     end
     metaState.stageStars = stageStars
-    metaState.maxStage = PlayerData.GetMaxStage()
-    metaState.stageTotal = StageCatalog.STAGE_COUNT
+    metaState.maxStage = maxStage
+    metaState.stageTotal = StageCatalog.STAGE_SOFT_CAP
+    -- 选关界面「局内道具」购买条：库存 / 单价 / 本局每样限用一次。
+    metaState.itemStock = PlayerData.GetItemStock()
+    metaState.itemPrices = ItemShop.PRICES
 
     -- 天赋树界面数据（v0.13.5）：已解锁节点 + 星级汇总。
     metaState.talents = PlayerData.GetTalents()
@@ -599,6 +607,10 @@ local function OpenMetaScreen(name)
     metaState.screen = name
     if name == "rank" then FetchRankList() end
     RefreshMeta()
+    -- v0.13.13：选关界面是无限爬塔——打开时默认定位在「最新（最高已解锁）关」。
+    if name == "stage_select" then
+        StageSelect.FocusLatest(designWidth_, metaState.maxStage or 1)
+    end
 end
 
 local function HandleSignIn()
@@ -834,6 +846,28 @@ local function HandleMetaAction(action, index)
             RefreshSnapshots()
             print("[Main] start stage from select: " .. tostring(index))
         end
+    elseif action == "buy_item" and index then
+        -- v0.13.13：花零件买局内道具（永久库存）。库存上限/零件不足都只给 toast。
+        local def = StageSelect.ITEM_ORDER[index]
+        if def then
+            local affordable, atCap = ItemShop.CanBuy(def.key)
+            if atCap then
+                SetMetaToast("该道具已达库存上限")
+            elseif not affordable then
+                SetMetaToast(string.format("零件不足，还差 %d",
+                    math.max(0, ItemShop.GetPrice(def.key) - PlayerData.GetParts())))
+            else
+                local stockBefore = PlayerData.GetItemCount(def.key)
+                if ItemShop.Buy(def.key) then
+                    Game.SetItemStock(PlayerData.GetItemStock())
+                    SavePlayerDataToCloud()
+                    SetMetaToast(string.format("已购买「%s」×1", def.name))
+                    print("[Main] item bought: " .. def.key
+                        .. " stock " .. stockBefore .. " -> " .. PlayerData.GetItemCount(def.key))
+                end
+            end
+            RefreshMeta()
+        end
     elseif action == "open_shop" then
         OpenMetaScreen("shop")
     elseif action == "open_codex" then
@@ -937,6 +971,11 @@ local function HandleMetaPointerDown(uiX, uiY)
         -- 真拖拽过就吞掉抬手（只滚动不选卡），没拖拽过才当作点击。
         if metaState.screen == "talent" and TalentTree.ScrollBegin(uiX, uiY, designWidth_) then
             talentScrollArmed = true
+            return true
+        end
+        -- v0.13.13：选关界面同样是可滚动爬塔——按下先记录起点，抬手时按「是否拖动过」分流。
+        if metaState.screen == "stage_select" and StageSelect.ScrollBegin(uiX, uiY, designWidth_) then
+            stageSelectScrollArmed = true
             return true
         end
         local action, index = RenderBackend.HitTestMetaScreen(uiX, uiY, metaState)
@@ -1227,6 +1266,9 @@ function ClientMain.Start(opts)
     -- v0.13.4：选关界面同样复用游戏令牌（插件式注册，不反向依赖渲染后端）。
     StageSelect.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("stage_select", StageSelect.Draw, StageSelect.HitTest)
+    -- v0.13.13：局内道具库存 provider——Game.ResetGame 每次开局自动拉取，
+    -- 覆盖选关/下一关/再战/重开全部入口（无需逐个入口注入）。
+    Game.SetItemStockProvider(PlayerData.GetItemStock)
     -- v0.13.5：天赋树界面同源注册。
     TalentTree.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("talent", TalentTree.Draw, TalentTree.HitTest)
@@ -1492,6 +1534,32 @@ function HandleMouseUp(eventType, eventData)
         HandleMetaPointerDown(uiX, uiY)
         return
     end
+    if stageSelectScrollArmed then
+        local moved = StageSelect.ScrollEnd()
+        stageSelectScrollArmed = false
+        if moved then
+            metaPointerConsumed = false
+            return
+        end
+        -- 未拖拽：走点击路径（选关/买道具/关闭）
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleMetaPointerDown(uiX, uiY)
+        return
+    end
+    if stageSelectScrollArmed then
+        local moved = StageSelect.ScrollEnd()
+        stageSelectScrollArmed = false
+        if moved then
+            metaPointerConsumed = false
+            return
+        end
+        -- 未拖拽：走点击路径（选关/买道具/关闭）
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        HandleMetaPointerDown(uiX, uiY)
+        return
+    end
     if Game.IsGameOver() then
         local screenX, screenY = GetScreenCoordinates(eventData)
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
@@ -1522,6 +1590,12 @@ function HandleMouseMove(eventType, eventData)
         local screenX, screenY = GetScreenCoordinates(eventData)
         local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         TalentTree.ScrollMove(uiY, designWidth_)
+        return
+    end
+    if stageSelectScrollArmed then
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        StageSelect.ScrollMove(uiY, designWidth_)
         return
     end
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
@@ -1585,6 +1659,12 @@ function HandleTouchMove(eventType, eventData)
         local screenX, screenY = GetScreenCoordinates(eventData)
         local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         TalentTree.ScrollMove(uiY, designWidth_)
+        return
+    end
+    if stageSelectScrollArmed then
+        local screenX, screenY = GetScreenCoordinates(eventData)
+        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        StageSelect.ScrollMove(uiY, designWidth_)
         return
     end
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
