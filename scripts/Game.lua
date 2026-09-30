@@ -28,9 +28,6 @@ local PARTS_PER_BRICK = 1          -- 击碎一个方块
 local PARTS_PER_CLEAR = 10         -- 清掉整支编队
 local PARTS_PER_WAVE = 25          -- 每推进一波
 local BASE_XP_TO_NEXT = 26         -- 第一次升级所需经验（单架侦察机约 50 格，约两架升一级）
-local WAVE_INTERVAL = 18.0          -- 持续刷新波次的基础间隔（秒，v0.10.27 再放慢）
-local WAVE_INTERVAL_MIN = 9.0      -- 后期最快刷新间隔
-local MAX_CONCURRENT = 8           -- 同屏飞船数量上限，避免无限叠加
 local STAGE_BREAK_SECONDS = 4.0
 
 -- 数值平衡表（WO-01/P1）：局内不可变数值集中管理，便于调参与离线模拟。
@@ -41,19 +38,8 @@ local BALANCE = {
     xpPerBrick = XP_PER_BRICK,
     xpPerClear = XP_PER_CLEAR,
     baseXpToNext = BASE_XP_TO_NEXT,
-    xpToNextGrowth = 1.26,          -- WO-02/P1：每级经验阈值指数乘子（v0.10.10 随基础阈值上调重调）
-    waveInterval = WAVE_INTERVAL,
-    waveIntervalMin = WAVE_INTERVAL_MIN,
-    waveTightenStep = 0.15,         -- 波次间隔随波次收紧步长（v0.10.27 随基础间隔上调一并放缓）
-    maxConcurrent = MAX_CONCURRENT,
-    clearStreakBonusCap = 5,        -- WO-03/P1：连击经验加成封顶（原写死 5）
-    -- 以下为批次2（P6 WO-12）预留字段，当前 UpdateWaveLogic 尚未使用
-    phaseLength = 6,
-    phaseTightenBonus = 0.35,
-    breatherEvery = 12,
-    breatherRelax = 2.0,
-    safeGap = 2.0,
-    -- 蓄力发射（WO-08/P7）：拖拽距离映射到初速比例，由规则层暴露供输入层消费。
+    xpToNextGrowth = 1.26,          -- WO-02/P1：每级经验阈值指数乘子
+    clearStreakBonusCap = 5,
     maxPull = MAX_PULL,
     powerMin = 0.35,   -- 最小蓄力初速比例（轻拖也有基础射程）
     powerMax = 1.0,    -- 满蓄力初速比例

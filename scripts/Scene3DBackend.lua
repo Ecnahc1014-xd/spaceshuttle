@@ -1594,7 +1594,6 @@ local function DrawGameOver(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
-    nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
     local winX, winY = 24, 200
@@ -1861,7 +1860,6 @@ end
 local function DrawLevelUp(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
     local choices = game.upgradeChoices or {}
@@ -1951,7 +1949,6 @@ local function DrawPaused(ctx, game, meta, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
-    nvgGlobalAlpha(ctx, ModalIntro(game))
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
     local layout = GetPausePanelLayout(game.width)
     DrawWindowShell(ctx, layout.win.x, layout.win.y, layout.win.w, layout.win.h, 46)

@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.12.14
-简述：修「UI Inspector requested but failed to load」——平台无广告 SDK 时引擎用 `urhox-libs/FakeAd` 模拟激励视频，它只 require UI 的 **Core** 并在未初始化时调 `UI.Init`；而 `UI.Inspector` 只由聚合模块 `urhox-libs/UI` 赋值，游戏 Runtime 从不加载聚合模块 → 首播广告时 `UI.Inspector` 为 nil，preview 环境自动请求 F9 检查器落空 → 上报 ERROR。新增 `scripts/ui/UIInspectorCompat.lua`（先装聚合模块，失败才兜底空实现），`AdService.Show` 调用一次。本地探针模拟 preview+FakeAd 路径：修复前 1 次、修复后 0 次；官方多人 build+预览上传，游戏启动/战斗渲染回归正常。
+当前版本：0.13.0
+简述：关卡制：每关十波（第 3/6/8 波精英、第 10 波 Boss），逐关数量/时长/召唤压力上升，每三关普通格 HP +1；原创 10 种精英与 5 种 Boss 独特剪影和配色，精英纵向速度 ≤普通机基准 1.1 倍，Boss 定期召唤。关卡结算保留局内成长；图鉴分页，预告/波次横幅/HUD 展示关内进度，23 机型体素色板 184 槽不重叠。官方多人构建通过，隔离规则 5 关/50 波与 Boss 越线探针通过；Linux 无体素模块，真机视觉待 Preview。
 最后巩固：2026-09-30
 
 ## 项目概况
@@ -94,6 +94,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.13.0（十波关卡+十精英五首领）：`StageCatalog.lua` 将持续无限波改为每关十波，第 3/6/8 波各一精英、第 10 波专属 Boss；十精英在前三关轮换后第 4 关覆盖最后一型、5 Boss 按关循环。普通波逐关增加至每波最多 7 架，同屏预算 12；每过三关普通飞机方块 HP +1，精英 +1/Boss +2，`DamageBrick` 修复成真正扣到 HP≤0 才脱格（旧实现任何命中都脱格，增长无效）。精英横向不规则连续避让，纵向每帧钳至同波普通基准 `normalVy*1.1`；五款 Boss 分别召唤 hive/dart/scout/bomber/striker，频率与总次数受限。Boss 击败即 `stage_cleared`，残兵撤场后 4 秒进下一关，保留单局血量/Xp/弹药/零件；Boss 完全越线只按行扣血，血还在则补发同一第十波，部分越线后打光仍通关与图鉴收录。规则预抽 `PlanWave` 与 Dock 预告一致，HUD/横幅/结算显示关与关内进度；图鉴 23 型分页，体素材质 bank 0 使用 184 个 LOCAL 槽位。验证：LSP 0 Error、官方多人 build+上传，独立五关/50 波/十精英五 Boss/五次召唤/184 不重复槽探针 PASS；Boss 完全越线/部分越线 PASS，900 帧弹药回归 PASS；离屏渲染战斗无 Lua/overlay stage 失败，Linux 无体素模块且 BloomHDR shader 编译失败，手机 Preview 未验。并发六车型/窗口动画/载具尾迹等独立修改只合并保留，不写进本版本提交。
 - 后期 3D/规则负载治理（e010e1c、9c441a2）：同屏机群由每十波递增改为最多 12，刷波按剩余容量生成；弹珠每个子步先粗筛整机／单格 AABB，再走原最近命中精判和扫掠，异常长达 60 秒的飞行球回收（纯水平轨道不再永久占场）。体素碎块由渲染层显式按 1.2 秒寿命和出生顺序回收、最多 24 个，不再扫描整个 World 或依赖过期计数；初始化失败主动回收孤儿 volume；冻结签名仅实际换色时变化，空粒子／瞄准线跳过重复提交；新局清理旧局同 ID 视觉节点。官方多人构建成功，850 帧 Linux 离屏战斗无 Lua 错误；该运行时无体素模块且 LSP daemon unavailable，真机体素碎块与后期帧时仍待测。
 - v0.12.14（修 UI Inspector 报错）：平台错误上报「UI Inspector requested but failed to load」。根因：平台无广告 SDK 时（编辑器/预览）引擎用 `urhox-libs/FakeAd` 模拟激励视频，FakeAd **只 require** `urhox-libs/UI/Core/UI` 并在 UI 未初始化时调 `UI.Init`；`UI.Inspector` 字段只由聚合模块 `urhox-libs/UI/init.lua` 赋值，游戏 Runtime 从不加载聚合模块 → `UI.Inspector` 为 nil；preview 环境（`GetTapMakerEnvString()=="preview"`）下 `UI.Init` 自动请求 F9 检查器落空 → 打 ERROR 上报。本地复现：把 `GetTapMakerEnvString` 改成返回 "preview"、只 require Core 再 `UI.Init` → 稳定 1 次 ERROR，补装聚合模块后 0 次。修复：新增 `scripts/ui/UIInspectorCompat.lua`（`Ensure()` 先装聚合模块拿真检查器，失败才兜底空实现），`AdService.Show` 发广告前幂等调用（不进启动路径）；顺带消除 `UI.Shutdown` 里 `UI.Inspector.Shutdown()` 的空指针风险。BUILD_VERSION/大厅版本→0.12.14。验证：探针模拟 preview+FakeAd 路径修复前 1 次→修复后 0 次且 Inspector 为真模块；游戏启动与战斗态离屏渲染回归正常；官方多人 build+预览上传 ✅。
 - v0.12.13（初始弹药 5→3 辆）：用户「车辆基础数量-2」，确认后指初始装载车辆数而非车辆种类。`Game.lua` 新增 `BASE_AMMO_SPARE=2`，`LoadBalls` 由「装 #BALL_ORDER 辆」改为「装备弹 N 辆 → 取 1 辆待发 → 再补 1 辆」，开局总装载 5 辆 → 3 辆（1 待发 + 2 备弹）；车辆种类仍 4 种，底部四槽/解锁卡/卡池门控不变；BUILD_VERSION 与大厅标题 →0.12.13。本地规则探针（900 帧、35 次发射、含升级解锁）核对开局 `ready=1 spare=2 total=3`、播放期总量恒等于「3 + 已解锁新车数」（解锁插入新车是预期追加，不是泄漏）、重开复位为 3；本地真渲染战斗态零 overlay stage 失败与 Lua 错误。⚠️ 3 辆是否偏紧的手感待 Preview。POST-3 判定：随行记忆无需变更（纯数值调参，无跨项目偏好）。

@@ -3,6 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.0（关卡制与独立精英/首领）：
+  - **十波一关**：`StageCatalog` 定义关内第 3、6、8 波精英、第 10 波首领；普通波由 3 架随关卡逐步增加到 7 架，同屏总数限制 12。每三关普通方块血量 +1（第 1～3 关 1、第 4～6 关 2），精英/Boss 额外护甲；修复 `DamageBrick` 原来无视 HP 直接掉块的问题。Boss 击败即结算本关，清退残兵、4 秒休整进入下一关，当前局 XP、血量、强化、弹药及零件保留；首领逃脱只按越线行扣血，仍有血就重新派出同一关第 10 波。保留 `wave` 累计值给每日任务，快照另带 `stage/stageWave/wavesPerStage` 给 HUD、预告与结算。
+  - **15 个原创机型**：`AircraftPixelData` 增 10 个精英 + 5 个 Boss 各自独立 ASCII 剪影、行为数据；精英连续多频/折返横移，每帧纵向推进限于同波普通基准的 **1.1 倍**（冻结只减速）；五款 Boss 分别召唤指定普通机，召唤有次数/间隔和 12 架预算；图鉴分页收录。`VisualCatalog` 共 23 型 × 4 色槽 × 冻结/常态 = 184 索引，不重叠且位于 LOCAL bank 0 的 1..255；预告图与真实刷怪同一预抽计划。战斗仍是客户端本地规则，服务端 IAP/钻石职责不动。
+  - **验证**：LSP workspace 0 Error；官方多人 build+预览上传成功。隔离规则探针 5 关/50 波/10 精英独特外观/5 Boss 独特外观/5 次召唤/184 槽无重叠、首领全逃/部分越线后击杀、900 帧弹药回归通过；本地离屏真渲染战斗无 Lua 或 overlay stage 失败，但 Linux 无体素模块且 BloomHDR 在 llvmpipe 上报 shader 编译错误，真机体素与关卡 UI 效果仍需 Preview 验收。并发会话有独立六车型/窗口动画/尾迹改动，本提交仅包含关卡相关片段，保留其未暂存修改。
+  - ⚠️ **关卡切换不调用 ResetGame**（会清所有成长）；只重置 stageWave/bossDefeated，wave 保持累计；精英纵速上限在运动步按 `normalVy*1.1` 钳制，不能只在行为表设置倍率。部分越线后 Boss 剩余砖被打光可通关/收录，全部逃脱不得通关；首领击败后残兵退场不计免费奖励。
 - 版本: 0.12.14（修「UI Inspector requested but failed to load」）：
   - **根因（本地已复现）**：平台没有广告 SDK 时（编辑器/预览）引擎用 `urhox-libs/FakeAd` 模拟激励视频；FakeAd **只 require UI 的 Core**（`urhox-libs/UI/Core/UI`），并在 UI 未初始化时调用 `UI.Init`。而 `UI.Inspector` 字段**只由聚合模块 `urhox-libs/UI/init.lua` 赋值**——本作游戏 Runtime 从不加载聚合模块（游戏 UI 全是 raw NanoVG），于是首播广告时 `UI.Inspector == nil`；preview 环境（`GetTapMakerEnvString()=="preview"`）会让 `UI.Init` 自动请求 F9 检查器，请求落空即 `log:Write(LOG_ERROR, "UI Inspector requested but failed to load")`，被平台错误上报收集（帧号 1847 ≈ 玩家点了结算/暂停里的广告）。复现：本地运行时把 `GetTapMakerEnvString` 改成返回 "preview"，只 require Core 再 `UI.Init` → 稳定复现 1 次该 ERROR；补装聚合模块后 0 次。
   - **修复**：新增 `scripts/ui/UIInspectorCompat.lua`（`Ensure()`：先 `pcall(require,"urhox-libs/UI")` 装载聚合模块拿真正的检查器，失败才兜底 `{Init/Shutdown 空实现}`），`AdService.Show` 发广告前调用一次（幂等、按需加载，不进启动路径）。F9 检查器在预览里仍可用，且 `UI.Shutdown()` 里未加保护的 `UI.Inspector.Shutdown()` 也不会再空指针。BUILD_VERSION 与大厅版本→0.12.14。

@@ -34,7 +34,7 @@ function StageCatalog.GetSpecialKey(stage, stageWave)
     return nil
 end
 
--- 六波普通编队逐关加一架，上限受移动端同屏预算保护；精英波另有护航机。
+-- 关卡越往后普通编队越密，至七架封顶；精英波另有护航机。
 function StageCatalog.GetNormalCount(stage, stageWave)
     return math.min(7, 3 + math.floor((stageWave - 1) / 3) + stage - 1)
 end

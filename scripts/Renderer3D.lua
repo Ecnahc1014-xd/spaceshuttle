@@ -975,15 +975,19 @@ local function SyncVehicleTrails(game, dt)
 
     local visible = {}
     local used = {normal = 0, ice = 0, speed = 0, giant = 0}
+    local tracked = {normal = 0, ice = 0, speed = 0, giant = 0}
     for _, marble in ipairs(game.marbles or {}) do
         local ballType = marble.ballType
-        if not marble.onSling and trailSets_[ballType] and used[ballType] < TRAIL_SLOTS then
+        if not marble.onSling and trailSets_[ballType]
+            and tracked[ballType] < TRAIL_VEHICLE_LIMIT then
+            tracked[ballType] = tracked[ballType] + 1
             visible[marble.id] = true
             local pos = GetVehicleAnchorWorld(marble)
             local track = trailSamples_[marble.id]
-            if not track or track.ballType ~= ballType then
+            if not track or track.ballType ~= ballType
+                or (marble.flightTime or 0) < (track.flightTime or 0) then
                 track = {ballType = ballType, points = {}, clock = TRAIL_SAMPLE_INTERVAL,
-                    x = pos.x, y = pos.y, z = pos.z}
+                    x = pos.x, y = pos.y, z = pos.z, flightTime = marble.flightTime or 0}
                 trailSamples_[marble.id] = track
             end
             local points = track.points
@@ -998,15 +1002,20 @@ local function SyncVehicleTrails(game, dt)
                 points = track.points
                 track.clock = TRAIL_SAMPLE_INTERVAL
             end
+            local stationary = dx * dx + dy * dy <= 0.0064
+            if stationary then
+                track.points = {}
+                points = track.points
+            end
             track.clock = track.clock + dt
-            if not jump and track.clock >= TRAIL_SAMPLE_INTERVAL
-                and dx * dx + dy * dy > 0.0064 then
+            if not jump and not stationary and track.clock >= TRAIL_SAMPLE_INTERVAL then
                 points[#points + 1] = {x = track.x, y = track.y, z = track.z,
                     age = 0, radius = marble.radius}
                 if #points > TRAIL_POINTS_PER_VEHICLE then table.remove(points, 1) end
                 track.clock = 0
             end
             track.x, track.y, track.z = pos.x, pos.y, pos.z
+            track.flightTime = marble.flightTime or 0
             for i = 1, #points do
                 if used[ballType] >= TRAIL_SLOTS then break end
                 local point = points[i]
