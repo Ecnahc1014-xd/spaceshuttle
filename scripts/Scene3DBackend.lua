@@ -434,7 +434,7 @@ local C = {
     error   = {232, 76, 76, 255},
 }
 
-local BUILD_VERSION = "0.13.0"
+local BUILD_VERSION = "0.13.1"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -903,6 +903,10 @@ local function UpdateUiState(game, meta)
         uiState_ = game.state
         uiStateEnter_ = game.elapsed
         uiStateMotionEnter_ = uiClock_
+        if game.state == "gameover" or game.state == "levelup" or game.state == "paused" then
+            -- 重新开局立刻收掉旧窗口退场残影，避免旧快照叠在新窗口下面。
+            uiGameLeaving_ = nil
+        end
         if game.state == "menu" then
             -- v0.12.8：每次进主页重新摇字标轮播起点（仅状态切换时一次）。
             logoRollOffset_ = math.random(0, 3)
@@ -919,6 +923,9 @@ local function UpdateUiState(game, meta)
         end
         metaScreen_ = meta and meta.screen or nil
         metaScreenEnter_ = uiClock_
+        -- 任何开关切换都取消另一窗残影，防止快速关闭重开时旧快照叠在新面板下面。
+        metaScreenLeaving_ = nil
+        metaSupplyLeaving_ = nil
     end
     if metaSupply_ ~= (meta and meta.supplyOpen == true or false) then
         if metaSupply_ then
@@ -927,6 +934,8 @@ local function UpdateUiState(game, meta)
         end
         metaSupply_ = meta and meta.supplyOpen == true or false
         metaSupplyEnter_ = uiClock_
+        metaScreenLeaving_ = nil
+        metaSupplyLeaving_ = nil
     end
     if meta then
         metaVisual_ = CopyVisualState(meta)
@@ -1594,7 +1603,6 @@ local function DrawGameOver(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
-    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
     local winX, winY = 24, 200
     local winW, winH = game.width - 48, 520
@@ -1860,7 +1868,6 @@ end
 local function DrawLevelUp(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
     local choices = game.upgradeChoices or {}
     local layout = GetUpgradePanelLayout(game)
@@ -2216,12 +2223,19 @@ local function RunOverlayStage(stage, callback)
     return ok
 end
 
-local function DrawAnimatedWindow(stage, startAt, leaving, drawer)
+-- 窗口开合统一走弹动缩放 + 渐显渐隐。backdropMode：
+--   "game" = 战斗模态：遮罩由本函数绘制且不随缩放（缩放会把遮罩边缘内缩、漏出 3D 世界）；
+--   其他   = 元层面板：Shell/SupplyPopup 内部自带全屏遮罩，其下永远是实心菜单背景，
+--            弹动时缝隙只露菜单不会露世界，无需外层重复铺。
+local function DrawAnimatedWindow(stage, startAt, leaving, drawer, backdropMode)
     local alpha, scale = WindowMotion(startAt, leaving)
     if alpha <= 0 then return end
     RunOverlayStage(stage, function()
         ApplyOverlayDesignTransform()
         nvgGlobalAlpha(vg_, alpha)
+        if backdropMode == "game" then
+            DrawModalBackdrop(vg_, 0, MENU_CONTENT_TOP, DESIGN_W, DESIGN_H - MENU_CONTENT_TOP)
+        end
         nvgTranslate(vg_, DESIGN_W * 0.5, DESIGN_H * 0.5)
         nvgScale(vg_, scale, scale)
         nvgTranslate(vg_, -DESIGN_W * 0.5, -DESIGN_H * 0.5)
@@ -2358,14 +2372,14 @@ local function RenderOverlay(game, presentation, meta)
             if old.state == "gameover" then DrawGameOver(vg_, oldGame, presentation)
             elseif old.state == "levelup" then DrawLevelUp(vg_, oldGame, presentation)
             elseif old.state == "paused" then DrawPaused(vg_, oldGame, old.visual.meta, presentation) end
-        end)
+        end, "game")
     end
     if currentWindow then
         DrawAnimatedWindow("game-window-in", uiStateMotionEnter_, false, function()
             if game.state == "gameover" then DrawGameOver(vg_, game, presentation)
             elseif game.state == "levelup" then DrawLevelUp(vg_, game, presentation)
             else DrawPaused(vg_, game, meta, presentation) end
-        end)
+        end, "game")
     end
 
     if metaScreenLeaving_ and metaScreenLeaving_.meta then

@@ -1,6 +1,6 @@
 {
   "_comment": "跨项目用户偏好，POST-3 同步时自动更新",
-  "_last_sync": "2026-09-29",
+  "_last_sync": "2026-09-30",
   "_source_project": "击碎，飞机大战",
   "wake_word": null,
   "persona_type": null,
@@ -8,7 +8,7 @@
   "code_preferences": {
     "gamedev_architecture": "渲染与权威玩法逻辑分离",
     "voxel_rendering": "敌方体素优先 VoxelPhysicsWorld（探测失败回退 CustomGeometry）；规则层保持 AABB，禁止用 ApplyDamage 撕编队",
-    "vehicle_rendering": "车辆使用单 CustomGeometry 多 PBR section 的大运式平头重卡几何，并用独立浅色侧围区分侧面；视觉外轮廓不得超出权威碰撞判定",
+    "vehicle_rendering": "默认车保留大运式平头重卡；车型商店允许不同车种（越野车、跑车、厢式车、装甲车、沙地越野车）。保持单 CustomGeometry 与六材质分区，选择只改外形，四弹药配色及权威碰撞不变。",
     "vehicle_motion": "载具转向区分目标角与显示角，沿最短角路径平滑过渡；操作点、权威位置、3D 模型投影中心和预测轨迹首点必须一致，动态相机位移后刷新共享投影标定",
     "enemy_aircraft": "敌方使用 8bit 街机剪影 occupied-cell 网格；同一网格驱动规则碰撞、2D/3D 表现和碎片颜色，逐块破坏后必须显示真实缺口；同波同机成阵（line/vee/grid/swarm），禁止随机散点混种；砖块 HP 只保留为隐藏规则状态",
     "fixed_aspect_canvas": "raw NanoVG、3D Viewport 与输入共享同一 DPR-aware CONTAIN scale/offset；倾斜相机还需统一玩法平面投影逆变换，非目标比例只做 letterbox",
@@ -23,7 +23,7 @@
   },
   "explicit_preferences": [
     "HUD 与弹药 Dock 是战斗的关键信息层；出现只有 3D 战场而没有 HUD/Dock 的画面时，先排查 overlay/Render 回调，再做视觉换皮",
-    "载具车型必须采用大运式平头重卡轮廓",
+    "默认重卡保留大运式平头轮廓，商城另加入越野车、跑车、厢式车、装甲车和沙地越野车等外形独立车型，不再只售同车换色",
     "车辆侧边颜色要比主车漆更浅并明确区分",
     "弹药槽和碰撞反馈必须是完整表现，不能只做文字占位",
     "载具转向必须具有平滑过渡动画，视觉模型不得超出碰撞判定范围",

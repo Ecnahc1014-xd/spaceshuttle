@@ -73,9 +73,11 @@ local BALL_TYPES = {
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
 local STARTING_BALL_TYPE = "normal"
--- 开局装载的备弹车辆数（另有 1 辆在弹弓待发）。v0.12.13：开局总装载 5 辆 → 3 辆。
+-- 开局装载的车辆总数（1 辆待发 + ammoCapacity-1 辆备弹）。
+-- v0.12.15：开局 3 辆 → 1 辆（只有待发，没有备弹）；「弹药扩容」通用升级每级 +1（最多三级）。
 -- 补弹按「回收一辆补一辆」维持这个总量（主球回收时 EnqueueNextBall）。
-local BASE_AMMO_SPARE = 2
+local BASE_AMMO_TOTAL = 1
+local ammoCapacity = BASE_AMMO_TOTAL
 local unlockedBalls = { [STARTING_BALL_TYPE] = true }
 
 -- P11 词条系统（规则层）：弹珠可携带的"词条"修饰，影响伤害/弹道/反馈行为。
@@ -201,6 +203,7 @@ local partsBoostTime = 0
 ---@field apply fun(stacks: integer)
 
 local UnlockBallType -- 解锁卡先于补弹函数声明，应用时再调用规则层函数
+local IncreaseAmmo   -- 「弹药扩容」同上：卡池先定义，apply 时再调用规则层函数
 
 ---@type UpgradeDef[]
 local UPGRADE_POOL = {
@@ -266,6 +269,11 @@ local UPGRADE_POOL = {
       weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "巨型车入队",
       kind = "unlock", unlockBallType = "giant",
       apply = function(stacks) UnlockBallType("giant") end },
+    -- 通用弹药卡：任何车型都能用，把本局弹药总量 +1（最多三级）。
+    { id = "ammo", name = "弹药扩容", desc = "本局弹药数量 +1",
+      detail = "本局弹药数量 +1。",
+      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 弹药",
+      apply = function(stacks) IncreaseAmmo() end },
     -- P11 词条系统：全车型通用效果，新生成弹珠自动携带。
     { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带贯穿效果",
       detail = "弹珠穿透第一块继续飞。",
@@ -409,6 +417,14 @@ UnlockBallType = function(ballType)
     print("[Game] ball unlocked: " .. ballType .. ", queued=" .. #ballQueue)
 end
 
+-- 「弹药扩容」：本局弹药总量 +1，并立刻补一辆进备弹队列；
+-- 之后主球回收仍按「回收一辆补一辆」维持新总量。
+IncreaseAmmo = function()
+    ammoCapacity = ammoCapacity + 1
+    EnqueueNextBall()
+    print("[Game] ammo capacity -> " .. ammoCapacity)
+end
+
 -- P11：把 activeWords 规则表展开为有序词条 id 列表，供 CreateMarble 注入。
 local function CollectActiveWords()
     local list = {}
@@ -421,10 +437,9 @@ end
 local function LoadBalls()
     ballQueue = {}
     ballCycleIndex = 0
-    -- 先装 BASE_AMMO_SPARE 辆备弹，取一辆待发，再补回一辆 → 待发 1 + 备弹 BASE_AMMO_SPARE。
-    for _ = 1, BASE_AMMO_SPARE do EnqueueNextBall() end
-    activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
-    EnqueueNextBall()
+    -- 先放 1 辆待发，再排入 ammoCapacity-1 辆备弹（「弹药扩容」升级会提高总量）。
+    activeBall = CreateMarble(NextBallType(), CollectActiveWords())
+    for _ = 1, ammoCapacity - 1 do EnqueueNextBall() end
 end
 
 local function CanOfferUpgrade(u)
@@ -487,6 +502,7 @@ ResetGame = function()
     upgradePicks = {}
     upgradeStacks = {}
     unlockedBalls = { [STARTING_BALL_TYPE] = true }
+    ammoCapacity = BASE_AMMO_TOTAL
     activeWords = {}    -- P11：词条重置
     clearStreak = 0
     bricksBroken = 0
@@ -2792,6 +2808,8 @@ function Game.GetSnapshot()
     s.ballQueue = ballQueue
     s.ballOrder = BALL_ORDER
     s.unlockedBalls = unlockedBalls
+    -- v0.12.15：本局弹药总量（1 辆待发 + 备弹），供「弹药扩容」展示与校验。
+    s.ammoCapacity = ammoCapacity
     s.width = DW
     s.height = DH
     s.dangerY = DANGER_Y

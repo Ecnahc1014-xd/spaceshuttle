@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.2-ammo（开局弹药减为 1 辆 + 通用「弹药扩容」卡；版本号行由并发会话统一推进，本批次只改 `Game.lua`）：
+  - **开局弹药 3 → 1**：`Game.lua` 新增 `BASE_AMMO_TOTAL = 1` 与 `ammoCapacity`（本局弹药总量）。`LoadBalls` 改为「先放 1 辆待发，再排入 `ammoCapacity-1` 辆备弹」——开局只有待发车、**没有备弹**；发射后要等球回收才补弹。
+  - **通用天赋「弹药扩容」**：`id="ammo"`、common、weight 1、**maxStacks = 3**，apply → `IncreaseAmmo()`（`ammoCapacity + 1` 并**立刻**补一辆进队列；之后主球回收仍按「回收一辆补一辆」维持新总量）。它是通用卡（无 `ballType`/`unlockBallType`），任何车型、任何解锁状态都能抽到。
+  - 快照新增 `s.ammoCapacity`；重开（ResetGame）复位为 `BASE_AMMO_TOTAL`。
+  - **验证**：本地规则探针——开局 `ready=1 spare=0 total=1 capacity=1`；卡池出现该卡且 `maxStacks=3`；选中后 `capacity=2 spare=1 total=2`（立刻生效）；600 帧真实玩法长跑（含升级、解锁、重开）池子总量恒等于「`ammoCapacity` + 已解锁新车数」。官方多人 build + 预览上传 ✅。
+  - ⚠️ **校验弹药池总量时必须计入「解锁追加」**（v0.12.13 记过同一条，本次探针又踩一次）：解锁新车会往队列插一辆，期望值是 `ammoCapacity + (已解锁车型数 - 1)`；写死等于 `ammoCapacity` 会在解锁那一帧误报成泄漏。
+  - ⚠️ 并发会话当时正在改 `Scene3DBackend`/`Renderer3D`（窗口动画等，未提交），本批次**只提交 `Game.lua`**，不覆盖也不代提交他们的在途改动。
 - 版本: 0.13.0（关卡制与独立精英/首领）：
   - **十波一关**：`StageCatalog` 定义关内第 3、6、8 波精英、第 10 波首领；普通波由 3 架随关卡逐步增加到 7 架，同屏总数限制 12。每三关普通方块血量 +1（第 1～3 关 1、第 4～6 关 2），精英/Boss 额外护甲；修复 `DamageBrick` 原来无视 HP 直接掉块的问题。Boss 击败即结算本关，清退残兵、4 秒休整进入下一关，当前局 XP、血量、强化、弹药及零件保留；首领逃脱只按越线行扣血，仍有血就重新派出同一关第 10 波。保留 `wave` 累计值给每日任务，快照另带 `stage/stageWave/wavesPerStage` 给 HUD、预告与结算。
   - **15 个原创机型**：`AircraftPixelData` 增 10 个精英 + 5 个 Boss 各自独立 ASCII 剪影、行为数据；精英连续多频/折返横移，每帧纵向推进限于同波普通基准的 **1.1 倍**（冻结只减速）；五款 Boss 分别召唤指定普通机，召唤有次数/间隔和 12 架预算；图鉴分页收录。`VisualCatalog` 共 23 型 × 4 色槽 × 冻结/常态 = 184 索引，不重叠且位于 LOCAL bank 0 的 1..255；预告图与真实刷怪同一预抽计划。战斗仍是客户端本地规则，服务端 IAP/钻石职责不动。

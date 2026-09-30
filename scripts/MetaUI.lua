@@ -701,7 +701,7 @@ local function DrawShop(ctx, w, meta)
         D.panel(ctx, r.x + 9, r.y + 8, 76, 55, C.widget, C.cyanDim, 4)
         DrawCarSilhouette(ctx, r, skin, selected and C.cyan or C.text)
         D.text(ctx, r.x + 94, r.y + 8, skin.name, 18, C.text)
-        D.text(ctx, r.x + 94, r.y + 36,
+        D.text(ctx, r.x + 94, r.y + 34,
             selected and "当前使用" or (owned and "已拥有" or ("售价 " .. skin.cost .. " 零件")),
             15, selected and C.cyan or C.dim)
         if selected then
