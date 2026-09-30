@@ -54,7 +54,7 @@ local LABEL_W = 44         -- 左侧星级门槛栏宽（按横行标注，从�
 local SCROLLBAR_GUTTER = 28
 local SCROLLBAR_HIT_W = 24
 local ROW_STEP = 160       -- 相邻阶段的纵向间距
-local DETAIL_RESERVE = 156
+local DETAIL_RESERVE = 98
 local LANE_STAGE_OFFSETS = { general_b = 0.5, ice = 0.5, giant = 0.5 }
 
 -- ============================================================================
@@ -102,7 +102,7 @@ local function GetLayout(w)
     -- 内容高度覆盖错位后最高线路的完整卡片与留白。
     local maxLaneOffset = 0.5
     local topPad = CARD_R + 4
-    local botPad = CARD_R + 24 + (selectedId_ and 0.5 * ROW_STEP or 0)
+    local botPad = CARD_R + 24 + (selectedId_ and 160 or 0)
     local contentH = topPad + botPad
         + (TalentCatalog.MAX_STAGE - 1 + maxLaneOffset) * ROW_STEP
     return {
@@ -248,6 +248,9 @@ function TalentTree.Draw(ctx, w, meta)
     D.text(ctx, L.content.x + L.content.w - 44, 122,
         string.format("零件 %d    ★ %d", parts, stars), 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    -- v0.13.16：血量加成是**所有卡通用**的规则 → 全局说明一次，不在每个节点里重复。
+    D.text(ctx, 34, 146, TalentCatalog.HP_RULE_TEXT or "", 13, C.cyanDim,
+        NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
     -- 关闭按钮
     D.panel(ctx, L.close.x, L.close.y, L.close.w, L.close.h, C.card, C.cyanDim, 6)
     D.text(ctx, L.close.x + L.close.w * 0.5, L.close.y + 7, "X", 20, C.dim,
@@ -466,7 +469,9 @@ function TalentTree.HitTest(uiX, uiY, w, meta)
             local detail = TalentTree.GetDetailLayout(w)
             local newLayout = GetLayout(w)
             local minCy = newLayout.content.y + CARD_R + 4
-            local maxCy = detail.y - CARD_R - 4
+            local maxCy = math.min(
+                newLayout.content.y + newLayout.content.h - CARD_R - 4,
+                detail.y - CARD_R - 4)
             local targetCy = math.max(minCy, math.min(maxCy, bestCy))
             local _, newCy = NodeCenter(newLayout, bestLaneIndex, bestStage)
             scrollY_ = scrollY_ + targetCy - newCy

@@ -8,7 +8,8 @@
 --   · 每阶段 6 个节点 = 2 通用（general_a 成长 / general_b 通用卡）+ 4 车（normal/ice/speed/giant）。
 --   · 每节点点一次即满（单级）。
 --   · 解锁需满足：①本阶段星级门槛已达标；②同一线路上一阶段节点已解锁（线路链式）。
---   · 每个节点解锁都额外给「极低血量加成」（MAX_HP_PER_NODE）——**必须写进节点文案**。
+--   · 每个节点解锁都额外给「极低血量加成」（MAX_HP_PER_NODE）——这是**所有卡通用**的规则，
+--     在天赋树顶部**统一说明一次**（HP_RULE_TEXT），不逐条写进节点文案。
 --   · 车线路：1 阶=允许该车局内出现，2 阶=解锁该车专属卡，3/4/6/7 阶=小幅基础数值，
 --     5 的倍数阶段=专属卡效果增强（数值更大）。
 --   · **成长线（general_a）**：每阶「暴击率 +2%」，每 3 阶额外「基础攻击 +1」，
@@ -120,10 +121,16 @@ TalentCatalog.ICON_BY_BALL = {
     speed = "ammo_speed", giant = "ammo_giant",
 }
 
--- 每个节点都自带「生命上限 +N」——统一附加到文案尾部，让玩家看得见。
+-- v0.13.16：血量加成是**所有卡通用**的规则，因此**不在每个节点里重复**，
+-- 改由天赋树顶部统一说明一次（见 TalentCatalog.HP_RULE_TEXT / TalentTree 表头）。
+-- 这里保留直通函数，避免调用点散落改动。
 local function WithHp(text)
-    return string.format("%s · 生命上限 +%d", text, TalentCatalog.MAX_HP_PER_NODE)
+    return text
 end
+
+-- 天赋树顶部展示的全局规则文案（所有卡一视同仁）。
+TalentCatalog.HP_RULE_TEXT = string.format("每解锁 1 个天赋：生命上限 +%d",
+    TalentCatalog.MAX_HP_PER_NODE)
 
 -- 通用卡线（general_b）：1 阶=经验卡、3 阶=弹药扩容卡，其余阶=结算零件 +5%。
 -- ⚠️ 用户明确：经验卡与弹药扩容卡都属于「通用卡」，成长线只放暴击/攻击。

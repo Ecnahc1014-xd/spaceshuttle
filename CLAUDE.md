@@ -3,7 +3,10 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.13.16-talent（天赋：成长线改暴击/攻击 + 血量加成写进文案 + 暴击实装；版本号由并发会话推进，本批只改 Game/Presentation/TalentCatalog）：
+- 版本: 0.13.16-talent（天赋：成长线改暴击/攻击 + 暴击实装 + 血量加成**全局说明一次**；版本号由并发会话推进）：
+  - **用户追加澄清**：「加血量上限一点的效果是所有卡的」→ 血量加成是**所有卡通用**的规则，因此**不在每个节点里逐条重复**，改在天赋树**顶部统一说明一次**（`TalentCatalog.HP_RULE_TEXT = "每解锁 1 个天赋：生命上限 +1"`，`TalentTree` 标题栏下方渲染）。规则层效果不变（仍是「每个已解锁节点 +1 上限，不分卡的种类」，探针实测 5 个混合类型节点 → `hpBonus=+5`）。
+  - ⚠️ 上一版（同日更早）曾把「生命上限 +N」拼进 42 个节点 desc——本批已撤销该重复，`WithHp()` 退化为直通函数，避免调用点散落改动。
+
   - **用户三点要求**：①「天赋树的血量加成要写出来」②「经验和扩容都是通用卡」③「成长里面应该只有子弹『伤害暴击率+2%学了上限额外+5』」。二次澄清：**每阶暴击率 +2%**、**每三阶额外 +1 基础攻击**、**暴击 = 伤害 ×1.5**、**结算零件 +5% 保留作为填充**。
   - **数据层 `TalentCatalog.lua`**：新增 `CRIT_MULT=1.5`/`CRIT_PER_STAGE=2`/`ATK_EVERY=3`/`ATK_GAIN=1`/`MASTERY_CRIT=5`；新增 `WithHp(text)` 把「生命上限 +N」统一拼到**每个节点 desc 尾部**（42 节点全覆盖）。**成长线 `general_a` 重做**：`kind="stat"`、`stat="critChance"`，每阶 +2%，第 3/6 阶附 `atkBonus=1`，第 7 阶（学满）= `+7%`（2% + 5% 额外）。**通用卡线 `general_b`**：1 阶=经验卡、3 阶=弹药扩容卡（经验卡从原 general_a 移来），其余阶=结算零件 +5%。节点结构新增 `atkBonus` 字段。
   - **规则层 `Game.lua`**：新增 `talentCritChance`/`talentAtkBonus`；`SetTalents` 里 `stat=="critChance"` 走**累加分支**（不再当车线路 ballStat 处理）；新增 `TalentDamageBonus()` 把 `talentAtkBonus` 并入**所有弹种**伤害；新增 `ApplyCrit(base, marble)` 按暴击率掷一次、命中 ×1.5 并 `Emit("crit_hit")`。⚠️ 注释写明「`GetMarbleDamage` 在子步进里被多次调用，但每次对应一次命中结算、同帧同砖已由 `frameHitBricks` 去重，故不会重复掷」。快照新增 `talentCritChance`/`talentAtkBonus`/`talentHpPerNode`；`GetTalentBonuses()` 补 critChance/atkBonus。
