@@ -330,18 +330,22 @@ local UPGRADE_POOL = {
       weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 格",
       ballType = "giant", kind = "base",
       apply = function(stacks) BALL_TUNING.giantArea = BALL_TUNING.giantArea + 0.5 end },
-    -- P11 词条系统：全车型通用效果，新生成弹珠自动携带。
+    -- 通用卡（无车型）：全部需天赋树解锁对应节点才进局内卡池。
+    -- v0.13.21：词条卡归入通用卡——此前它们无任何门控、开局常驻（用户点名）。
     { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带贯穿效果",
       detail = "弹珠穿透第一块继续飞。",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "贯穿", kind = "word",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "贯穿",
+      kind = "word", requiresCard = "word_pierce",
       apply = function(stacks) activeWords.pierce = true end },
     { id = "word_chain", name = "连锁弹", desc = "弹珠附带连锁溅射",
       detail = "命中后溅射到最近另一块。",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "连锁", kind = "word",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "连锁",
+      kind = "word", requiresCard = "word_chain",
       apply = function(stacks) activeWords.chain = true end },
     { id = "word_momentum", name = "动量加速", desc = "弹珠越快伤害越高",
       detail = "弹珠越快，伤害越高。",
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "动量", kind = "word",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "动量",
+      kind = "word", requiresCard = "word_momentum",
       apply = function(stacks) activeWords.momentum = true end },
 }
 

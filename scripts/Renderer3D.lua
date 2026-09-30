@@ -74,13 +74,14 @@ local PARTICLE_SLOTS = { spark = 64, shard = 40, smoke = 28 }
 -- 车辆尾迹（3D BillboardSet，每弹种一个批次）
 local TRAIL_TYPES = {"normal", "ice", "speed", "giant"}
 local TRAIL_VEHICLE_LIMIT = 8
-local TRAIL_POINTS_PER_VEHICLE = 10
+local TRAIL_SLOTS_PER_VEHICLE = 14
+local TRAIL_POINTS_PER_VEHICLE = TRAIL_SLOTS_PER_VEHICLE
 local TRAIL_SLOTS = TRAIL_VEHICLE_LIMIT * TRAIL_POINTS_PER_VEHICLE
-local TRAIL_LIFETIME = 0.22
-local TRAIL_SAMPLE_INTERVAL = 0.022
+local TRAIL_LIFETIME = 0.30
+local TRAIL_SAMPLE_INTERVAL = 0.020
 local TRAIL_BEHIND_Z = 0.10   -- 相对车辆锚点再远 0.10m（相机在 -Z），尾迹落在车体之后
 local TRAIL_SIZE_HEAD = 0.62  -- 头点尺寸（× 权威半径 × WORLD_SCALE）
-local TRAIL_SIZE_TAIL = 0.05  -- 尾点尺寸（密集重叠 + 强收束 = 连续渐细，不是珠子）
+local TRAIL_SIZE_TAIL = 0.06  -- 尾点尺寸（密集重叠 + 强收束 = 连续渐细光带，不是珠子）
 local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
 
 
@@ -1186,6 +1187,7 @@ local function ClearTrailSamples()
             local set = trailSets_[ballType]
             for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
             set:Commit()
+            if trailNodes_ then trailNodes_[ballType].enabled = false end
         end
         trailActive_[ballType] = false
     end
@@ -1245,8 +1247,10 @@ local function SyncVehicleTrails(game, dt)
             local bb = trailSets_[ballType]:GetBillboard(used[ballType] - 1)
             bb.enabled = true
             bb.position = Vector3(point.x, point.y, point.z + TRAIL_BEHIND_Z)
+            -- 头粗尾细：lifeT 1→0（新→旧），用 1.4 次幂让尾部收得更快，
+            -- 配合密集重叠形成"光带"而非"珠子链"。
             local worldSize = point.radius * WORLD_SCALE
-                * (TRAIL_SIZE_TAIL + (TRAIL_SIZE_HEAD - TRAIL_SIZE_TAIL) * (lifeT ^ 0.7))
+                * (TRAIL_SIZE_TAIL + (TRAIL_SIZE_HEAD - TRAIL_SIZE_TAIL) * (lifeT ^ 1.4))
             bb.size = Vector2(worldSize, worldSize)
             bb.color = Color(1, 1, 1, 1)
             bb.rotation = 0
@@ -1265,6 +1269,9 @@ local function SyncVehicleTrails(game, dt)
             local set = trailSets_[ballType]
             for i = count, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
             set:Commit()
+            -- ⚠️ 创建时按 AB-136 先禁用了节点（防「空顶点缓冲」报错），
+            -- 有数据时必须重新启用，否则尾迹永远不显示（v0.13.21 踩过）。
+            if trailNodes_ then trailNodes_[ballType].enabled = true end
         end
         trailActive_[ballType] = count > 0
     end
@@ -1433,7 +1440,7 @@ function Renderer3D.Init(scene, voxelWorld)
         for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
         set:Commit()
         trailSets_[ballType] = set
-        trailNodes_[#trailNodes_ + 1] = node
+        trailNodes_[ballType] = node
         trailMaterials_[#trailMaterials_ + 1] = material
     end
     print("[Renderer3D] vehicle trails ready (3D billboard, " .. TRAIL_SLOTS .. " slots/type)")
@@ -1578,7 +1585,7 @@ function Renderer3D.Shutdown()
     aimLineMaterial_ = nil
     ClearTrailSamples()
     if trailNodes_ then
-        for _, node in ipairs(trailNodes_) do RemoveNode(node) end
+        for _, node in pairs(trailNodes_) do RemoveNode(node) end
     end
     if trailSets_ then
         for _, set in pairs(trailSets_) do DisposeComponent(set) end

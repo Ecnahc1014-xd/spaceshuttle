@@ -109,6 +109,9 @@ end
 ---@type table<string, string>
 TalentCatalog.ICON_BY_CARD = {
     xp = "talent_xp", ammo = "talent_ammo",
+    -- v0.13.21：词条卡（通用卡）也用各自的图标，与局内卡一致。
+    word_pierce = "talent_word", word_chain = "talent_word",
+    word_momentum = "talent_word",
 }
 ---@type table<string, string>
 TalentCatalog.ICON_BY_KIND = {
@@ -135,10 +138,18 @@ end
 TalentCatalog.HP_RULE_TEXT = string.format("每解锁 1 个天赋：生命上限 +%d",
     TalentCatalog.MAX_HP_PER_NODE)
 
--- 通用卡线（general_b）：1 阶=经验卡、3 阶=弹药扩容卡，其余阶=结算零件 +5%。
--- ⚠️ 用户明确：经验卡与弹药扩容卡都属于「通用卡」，成长线只放暴击/攻击。
-local GENERAL_CARD = { general_b = { [1] = "xp", [3] = "ammo" } }
-local GENERAL_CARD_NAME = { xp = "经验数据卡", ammo = "弹药扩容卡" }
+-- 通用卡线（general_b）：全部是**无车型的通用卡**，须在天赋树解锁对应节点才进局内卡池。
+-- v0.13.21：词条卡（贯穿/连锁/动量）也归入通用卡——此前它们无任何门控、开局常驻（用户点名）。
+--   1 阶=经验数据卡、2 阶=贯穿弹芯、3 阶=弹药扩容卡、4 阶=连锁弹、5 阶=动量加速；
+--   其余阶=结算零件 +5%（填充）。
+local GENERAL_CARD = {
+    general_b = { [1] = "xp", [2] = "word_pierce", [3] = "ammo",
+                  [4] = "word_chain", [5] = "word_momentum" },
+}
+local GENERAL_CARD_NAME = {
+    xp = "经验数据卡", ammo = "弹药扩容卡",
+    word_pierce = "贯穿弹芯", word_chain = "连锁弹", word_momentum = "动量加速",
+}
 for stage = 1, TalentCatalog.MAX_STAGE do
     local cardId = GENERAL_CARD.general_b[stage]
     local node = {

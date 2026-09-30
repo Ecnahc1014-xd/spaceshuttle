@@ -15,6 +15,11 @@ local ELITE_KEYS = {
 local BOSS_KEYS = { "boss_orrery", "boss_maw", "boss_citadel", "boss_prism", "boss_serpent" }
 local ELITE_SLOTS = { [3] = 1, [6] = 2, [8] = 3 }
 
+local function GetStageProgress(stage)
+    stage = math.max(1, math.floor(stage))
+    return math.min(stage - 1, StageCatalog.STAGE_SOFT_CAP - 1)
+end
+
 function StageCatalog.GetStage(wave)
     return math.floor((wave - 1) / StageCatalog.WAVES_PER_STAGE) + 1
 end
@@ -38,15 +43,18 @@ function StageCatalog.GetSpecialKey(stage, stageWave)
     return nil
 end
 
--- v0.13.4：用户要求「一波 = 原先两波以上」——每波编队量取旧基线 2 倍，
--- 波内随进度阶梯递增（6→8→10），逐关 +1；硬顶 12 = MAX_FLEET（同屏预算不放宽）。
+-- 普通波人数缓慢爬升：首关 3/4/5，后续每两关 +1；末段才接近 12 架硬上限。
+-- stageWave 分三段，关内每段 +1；跨关每两关 +1；第 15 关末段到 12。
 function StageCatalog.GetNormalCount(stage, stageWave)
-    return math.min(StageCatalog.MAX_FLEET,
-        6 + 2 * math.floor((stageWave - 1) / 3) + (stage - 1))
+    local stageProgress = GetStageProgress(stage)
+    local stageRamp = math.floor(stageProgress / 2)
+    local waveRamp = math.floor((stageWave - 1) / 3)
+    return math.min(StageCatalog.MAX_FLEET, 3 + stageRamp + waveRamp)
 end
 
+-- 精英护航更缓慢成长：首关无护航，之后每两关增加一架，最多 3 架。
 function StageCatalog.GetEscortCount(stage)
-    return math.min(3, stage)
+    return math.min(3, math.floor(GetStageProgress(stage) / 2))
 end
 
 -- 每过三关，普通敌人每块 +1 血；精英 / Boss 另有固定护甲。
@@ -67,11 +75,13 @@ function StageCatalog.GetInterval(stage, stageWave)
 end
 
 function StageCatalog.GetBossSummonLimit(stage)
-    return math.min(7, stage + 2)
+    -- Boss 召唤随关卡缓慢成长：前几关 2 架，后期封顶 5 架。
+    return math.min(5, 2 + math.floor(GetStageProgress(stage) / 3))
 end
 
 function StageCatalog.GetBossSummonInterval(stage)
-    return math.max(6.5, 10 - math.min(stage - 1, 7) * 0.45)
+    -- 召唤间隔缓慢收紧：10 秒起步，关 15 最快 6.5 秒。
+    return math.max(6.5, 10 - GetStageProgress(stage) * 0.25)
 end
 
 return StageCatalog
