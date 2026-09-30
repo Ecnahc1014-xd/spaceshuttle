@@ -54,8 +54,11 @@ local BALL_TYPES = {
     speed = {
         radius = 18, speed = 660, damage = 1,
         speedBoost = 1.06,
-        -- v0.13.22：**去掉速度上限**（原 maxSpeed=900 封顶）——用户要求速度无限增长。
-        -- 每次反弹/命中仍 ×speedBoost 加速，越打越快，不封顶。
+        -- v0.13.22：**去掉速度上限**（原 maxSpeed=900 封顶）——速度无限增长，不封顶。
+        -- v0.13.23：加**软性递减**——速度越高，每次加速的倍率越接近 1.0（但仍 >1，永远在涨），
+        -- 避免后期滚雪球失控；`speedBoostFloor` 是衰减下限（再快也至少按这个倍率涨）。
+        speedBoostFloor = 1.012,
+        speedSoftCap = 1400,       -- 达到此速度时加速倍率降到下限
         damageStep = 320,
         -- v0.13.22：**去掉伤害封顶**（原 maxDamage=2）——伤害按速度分档无限增长。
         redirectThrottle = 0.45,    -- 自动追击的节流（秒），削弱其持续黏着
@@ -144,6 +147,9 @@ local bossDefeated = false
 local stageResult = nil   -- stagewin 态展示与存档用（星级/评级）
 local elapsed = 0
 local waveCooldown = 0
+local INTRO_SECONDS = 3.0
+-- v0.13.24：进关准备期（秒）。>0 时玩法冻结：不推进弹珠/敌机/波次，只放行表现层动画。
+local introTimer = 0
 -- 本局是否成功发射过弹珠。用于「新手下拉手势提示」：玩家还没做过任何操作时循环播放。
 local hasLaunched = false
 ---@type NextWavePlan|nil
@@ -653,6 +659,7 @@ ResetGame = function(startStage)
     grabStartX = SLING_X
     grabStartY = SLING_Y
     waveCooldown = 3.2    -- 开局短暂喘息；后续按关卡节奏刷新
+    introTimer = 0
     nextWavePlan = nil
     nextEnemyId = 1
     nextMarbleId = 1
@@ -700,8 +707,9 @@ local function StartGameAt(stageNum)
     previousHighScore = highScore
     ResetGame(stageNum)
     gameState = "playing"
-    SpawnWave()
-    waveCooldown = StageCatalog.GetInterval(stage, stageWave)
+    -- v0.13.24：进入「进关准备期」——不立刻刷怪，先放一段准备动画，
+    -- 期间玩法冻结（弹珠/敌机/波次都不推进），给玩家「关卡开始」的过渡感。
+    introTimer = INTRO_SECONDS
     EnsureNextWavePlan()
     -- 第 2 关起（含选关跳关/胜利后下一关）入场播报关号；第 1 关沿用波次横幅。
     if stage > 1 then Emit("stage_started", {stage = stage}) end
@@ -1951,9 +1959,17 @@ local function BoostSpeedMarble(marble)
     if marble.ballType ~= "speed" then return end
 
     -- v0.13.22：不再有速度上限（原 effMax = maxSpeed * speedMul）。
-    -- 速度每次 ×speedBoost 无限增长；speedMul（天赋/卡）只影响初始速度档，
-    -- 作为「加速度加成」体现——即同样的反弹次数，速度涨得更快。
-    local gain = def.speedBoost + (BALL_TUNING.speedMul - 1.0) * 0.1
+    -- v0.13.23：加速倍率随当前速度**软性递减**——从**初始速度**起算，到 speedSoftCap 时降到下限，
+    -- 之后恒定按下限稳步增长（仍严格 >1，速度永远在涨、无硬上限）。
+    -- 例：初速 660 时 ×1.06（不吃衰减）；1400 及以上恒 ×1.012。
+    local boost = def.speedBoost
+    local softCap = def.speedSoftCap
+    if softCap and softCap > def.speed then
+        local t = math.min(1, math.max(0, (marble.speed - def.speed) / (softCap - def.speed)))
+        boost = def.speedBoost + (def.speedBoostFloor - def.speedBoost) * t
+    end
+    -- speedMul（天赋/卡）作为「加速度加成」叠加在倍率上。
+    local gain = boost + (BALL_TUNING.speedMul - 1.0) * 0.1
     marble.speed = marble.speed * gain
     local velocityLength = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
     if velocityLength > 0.001 then
@@ -2752,6 +2768,14 @@ function Game.Update(dt)
         return
     end
 
+    -- v0.13.24：进关准备期内冻结玩法（只推进计时器），动画放行给表现层。
+    if introTimer > 0 then
+        introTimer = math.max(0, introTimer - dt)
+        if introTimer > 0 then return end
+        SpawnWave()
+        waveCooldown = StageCatalog.GetInterval(stage, stageWave)
+    end
+
     UpdateAiming()
     partsBoostTime = math.max(0, partsBoostTime - dt)
     UpdateMarbles(dt)
@@ -3123,6 +3147,9 @@ function Game.GetSnapshot()
     -- v0.10.31：下一波预告只读计划，渲染层画小图，不反向写规则。
     s.nextWave = (gameState == "playing") and nextWavePlan or nil
     s.waveCooldown = waveCooldown
+    -- v0.13.24：进关准备期剩余秒数（渲染层画过渡/准备界面；>0 = 未开战）
+    s.introTimer = introTimer
+    s.introTotal = INTRO_SECONDS
     s.canRevive = (gameState == "gameover") and not reviveUsed
     s.reviveUsed = reviveUsed
     -- v0.11.0 商业化：局内零件与升级面板变现状态（渲染层只读）。

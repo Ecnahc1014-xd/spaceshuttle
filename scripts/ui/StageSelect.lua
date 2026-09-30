@@ -14,6 +14,7 @@
 local StageCatalog = require "StageCatalog"
 local ItemShop = require "ui.ItemShop"
 local PlayerData = require "PlayerData"
+local DigitFont = require "ui.DigitFont"
 
 local StageSelect = {}
 
@@ -281,11 +282,16 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
         { 255, 255, 255, unlocked and 40 or 14 })
 
     if unlocked then
-        -- 粗体像素数字（zpix）；三位数自动缩小
+        -- v0.13.24：关卡数字改用 AI 像素贴图（DigitFont），按状态叠色；
+        -- 缺图时回退到 zpix 字体（保持旧观感，绝不因缺图空白）。
         local label = tostring(stage)
         local size = (#label >= 3) and 30 or 42
-        D.text(ctx, cx, cy - size * 0.60, label, size,
-            current and C.cyan or C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        local digitColor = current and C.cyan or C.text
+        local drawn = DigitFont.DrawNumber(ctx, stage, cx, cy - size * 0.62, size, digitColor)
+        if not drawn then
+            D.text(ctx, cx, cy - size * 0.60, label, size, digitColor,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
         -- 三颗星画在**圆钮下方外侧**（参考图里星在节点下方，不在圆内）
         local gap = 16
         local sy = cy + r + 12
@@ -300,8 +306,11 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
         D.rect(ctx, cx - 9, cy - 20, 18, 13, { 150, 170, 190, 255 }, 6)
         D.rect(ctx, cx - 5.5, cy - 16.5, 11, 9, body, 4)
         D.rect(ctx, cx - 12, cy - 8, 24, 18, { 96, 112, 132, 255 }, 3)
-        D.text(ctx, cx, cy + r - 20, tostring(stage), 15, C.dim,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        -- 未解锁：数字同样用贴图，叠色压暗（用户要求「通过精灵图明暗表达」）。
+        if not DigitFont.DrawNumber(ctx, stage, cx, cy + r - 22, 16, C.dim) then
+            D.text(ctx, cx, cy + r - 20, tostring(stage), 15, C.dim,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
     end
 end
 
