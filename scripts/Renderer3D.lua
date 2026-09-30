@@ -1464,29 +1464,19 @@ function Renderer3D.Init(scene, voxelWorld)
     end
     aimLineSet_:Commit()
 
-    -- 车辆尾迹：每弹种一个 BillboardSet（颜色烘焙进软圆纹理 + DiffAlpha，
-    -- 与碰撞粒子同一条已验证可见路径）。创建后先禁用，提交几何前不留空缓冲。
-    trailSets_, trailNodes_, trailMaterials_ = {}, {}, {}
+    -- 车辆尾迹：每弹种一个 CustomGeometry 三角带，材质走敌机箱体同一条已验证可见的
+    -- 路径（DiffVCol + 白底纹理，颜色由顶点色给出）。创建后先禁用节点，
+    -- 等有非空几何再启用（避免 "VertexBuffer is empty\!"，AB-136）。
+    trailGeometries_ = {}
     for _, ballType in ipairs(TRAIL_TYPES) do
-        local color = BALL_COLORS[ballType] or BALL_COLORS.normal
         local node = scene:CreateChild("VehicleTrail_" .. ballType)
         node.enabled = false
-        local set = node:CreateComponent("BillboardSet")
-        set:SetNumBillboards(TRAIL_SLOTS)
-        set.castShadows = false
-        set.relative = false
-        local material = Material:new()
-        material:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffAlpha.xml"))
-        material:SetTexture(TU_DIFFUSE, CreateSoftCircleTexture(color[1], color[2], color[3], 0.5, 0.0))
-        material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
-        set:SetMaterial(material)
-        for i = 0, TRAIL_SLOTS - 1 do set:GetBillboard(i).enabled = false end
-        set:Commit()
-        trailSets_[ballType] = set
-        trailNodes_[ballType] = node
-        trailMaterials_[#trailMaterials_ + 1] = material
+        local geometry = node:CreateComponent("CustomGeometry")
+        geometry.castShadows = false
+        geometry:SetMaterial(0, voxelMaterial_)
+        trailGeometries_[ballType] = {node = node, geometry = geometry}
     end
-    print("[Renderer3D] vehicle trails ready (3D billboard, " .. TRAIL_SLOTS .. " slots/type)")
+    print("[Renderer3D] vehicle trails ready (3D ribbon geometry)")
 
 
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
@@ -1627,16 +1617,13 @@ function Renderer3D.Shutdown()
     aimLineActive_ = false
     aimLineMaterial_ = nil
     ClearTrailSamples()
-    if trailNodes_ then
-        for _, node in pairs(trailNodes_) do RemoveNode(node) end
+    if trailGeometries_ then
+        for _, record in pairs(trailGeometries_) do
+            DisposeComponent(record.geometry)
+            RemoveNode(record.node)
+        end
     end
-    if trailSets_ then
-        for _, set in pairs(trailSets_) do DisposeComponent(set) end
-    end
-    if trailMaterials_ then
-        for _, material in ipairs(trailMaterials_) do material:Dispose() end
-    end
-    trailSets_, trailNodes_, trailMaterials_ = nil, nil, nil
+    trailGeometries_ = nil
     trailSamples_ = {}
     vehicleRecords_ = {}
     enemyMeshes_ = {}

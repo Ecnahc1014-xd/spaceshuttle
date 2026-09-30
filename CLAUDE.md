@@ -614,6 +614,12 @@
 
 ## 避雷清单
 
+## 本批次新增避雷（v0.13.21 核验：XHR{} 复发上报 = 陈旧预览包，非代码问题）
+- ⚠️ **`Error processing XMLHttpRequest response: {}` 复发上报先核验四证，别重复改代码（v0.13.21 实测）**：v0.13.18 已删 official-res 源修过此错，但再次收到 78 次上报。核验结论=**陈旧预览构建的残留**，当前代码与配置均干净，**无需改代码**。四证：①`.project/settings.json` sources 无 official-res（当前只有 engine/engine-res）；②`.build/asset_adopt.json` = `{"official_uuids":[],"asset_paths":[]}` 空；③`dist/latest.json` 指向的构建 manifest `sources=['engine-res']`、无 `pinned`；④报错头部构建哈希 `52ee01a8/0c6c1c48` **不在任何本地产物里**（本地最新是另一套 client/server 哈希）→ 上报来自更早的预览构建。结论：玩家/审核当时加载的是旧包。
+- ⚠️ **`dist/` 是 root 所有、Maker 不可写（v0.13.21 实测）**：`rm dist/...` 会**静默失败**（无报错、文件仍在），别以为清掉了。清理前先 `touch dist/.wtest` 判可写性；`dist/1.0.0` 这类陈旧版本目录删不掉，但只要 `dist/latest.json` 不指向它就无影响。**可写并能真正清掉的是 `.build/manifest_cache/official-res-*.json`**（14MB 陈旧缓存，会残留官方素材 uuid 引用）——已删。
+- ⚠️ **运行时单条 `RuntimeRetargeterCache: Cannot load mapping table: uuid://<x>` 是引擎自带噪音，别当根因（v0.13.21 实测）**：本项目 **116 个历史探针日志全都有这一条**（最早版本起就有），且本地真渲染 **0 次** `XMLHttpRequest` 复现。它只存在于陈旧 official-res 缓存里、当前包不含该 uuid。看到它别往"官方素材订阅"上引。
+- ⚠️ **本地真渲染对平台网络错误无法复现（v0.13.21）**：`URHO3D_PREFIX_PATH=... UrhoXRuntime -tool_mode` 探针可复现 2D/3D/Lua/overlay 类问题，但平台 XHR/DWP 下载失败属平台环境特有，本地 0 次即不能证伪。这类"平台错误上报"的判据是**构建产物取证**（sources/pinned/adopt/manifest + 报错哈希比对），不是本地跑一遍。
+
 ## 本批次新增避雷（v0.13.17 skill 固化 + 氛围层 + 图标重出）
 - 🔴 **自绘绘制函数的参数顺序要靠「真渲染探针」验，LSP/build 都查不到（v0.13.17 实锤）**：新写的 `DrawScanBand` 调 `DrawRect(ctx,x,y,w,h, color, radius)` 时把 `0`（radius）和颜色表写反 → 运行时 `attempt to index a number value (local 'color')`，菜单整段 stage 被 pcall 吞掉。LSP 的 undefined-field 只看**字段名**、不看**实参顺序**，构建也只查语法——**这类错只有跑一次真渲染（探针日志里搜 `overlay stage failed`）才抓得到**。写新绘制辅助后，务必真渲染冒烟一次再交付。
 - ⚠️ **氛围层要「克制档」落地，别照抄全量（v0.13.17）**：skill 的 atmosphere.md 默认全量（强调色切换 + 文本异变 + 乱码），但游戏 HUD/战斗界面全量会干扰读数。做法：机制照旧（全屏共享一个标量、基线不为 0、非等距阈值），但**只实现低位阈值症状**（底噪/扫描带/半调/残影），且**装饰不进入任何玩家要读的东西**（HUD 读数、按钮文字、正文、命中区）。判据：「这层会不会出现在玩家要读的东西上？会 → 关掉」。
