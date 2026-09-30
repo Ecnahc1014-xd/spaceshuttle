@@ -226,6 +226,10 @@ function PlayerData.ImportFromCloud(text)
     state.highScore  = math.max(state.highScore, cloudHigh)
     for k in pairs(cloudCodex) do state.codex[k] = true end
     for k in pairs(cloudSkins) do state.skins[k] = true end
+    local cloudSelected = AsStr(d.selectedSkin)
+    if state.selectedSkin == "default" and state.skins[cloudSelected] then
+        state.selectedSkin = cloudSelected
+    end
     for k, v in pairs(cloudStats) do
         local cur = state.stats[k] or 0
         if v > cur then state.stats[k] = v end

@@ -2283,10 +2283,12 @@ UpdateEnemies = function(dt)
             end
         end
 
+        local bossBreachedThisFrame = false
         for row, list in pairs(rows) do
             -- 该行方块全部碎裂（独立飞散箱体），视觉反馈取该行中心。
             local sumX = 0
             enemy.breached = true
+            if enemy.isBoss then bossBreachedThisFrame = true end
             for _, brick in ipairs(list) do
                 ShatterBreachedBrick(enemy, brick)
                 sumX = sumX + enemy.x + (brick.col - 0.5) * enemy.brickSize
@@ -2295,7 +2297,7 @@ UpdateEnemies = function(dt)
             local rowY = enemy.y + (row - 0.5) * enemy.brickSize
             breachedRows[#breachedRows + 1] = {x = rowCenterX, y = DANGER_Y, rowY = rowY}
         end
-        if enemy.isBoss and enemy.breached and IsEnemyCleared(enemy) then
+        if bossBreachedThisFrame and IsEnemyCleared(enemy) then
             enemy.escaped = true
         end
     end
@@ -2341,7 +2343,7 @@ UpdateEnemies = function(dt)
                 bossDefeated = true
                 Emit("boss_defeated", {enemyId = enemy.id, stage = stage, aircraftKey = enemy.aircraftKey})
             end
-            if not enemy.breached then
+            if not enemy.breached or (enemy.isBoss and bossDefeated) then
                 score = score + 50
                 partsEarned = partsEarned + PARTS_PER_CLEAR * (partsBoostTime > 0 and 2 or 1)
                 runAircraft[enemy.aircraftKey] = true
@@ -2402,14 +2404,19 @@ UpdateWaveLogic = function(dt)
             SpawnWave(StageCatalog.MAX_FLEET - #veggies)
             return
         end
-        -- 仅打败首领、且清理残存护航/召唤机才算通关。
-        if bossDefeated and #veggies == 0 then
+        -- 首领击败即结束本关；残余护航与召唤机在关卡休整时退出战场，不必漫长等待其落地。
+        if bossDefeated then
             stageClearPending = true
             stageBreak = STAGE_BREAK_SECONDS
             waveCooldown = stageBreak
             nextWavePlan = nil
             aiming = false
             if activeBall then activeBall.x, activeBall.y = SLING_X, SLING_Y end
+            for i = #veggies, 1, -1 do
+                local enemy = veggies[i]
+                Emit("enemy_withdrawn", {enemyId = enemy.id, aircraftKey = enemy.aircraftKey})
+                table.remove(veggies, i)
+            end
             Emit("stage_cleared", {stage = stage, wave = wave})
             print("[Game] stage " .. stage .. " cleared")
         end
@@ -2586,7 +2593,7 @@ function Game.ReviveFromAd()
     local spawnY = -102
     local bossAlive = false
     for _, enemy in ipairs(veggies) do
-        if enemy.isBoss and not enemy.dead and IsEnemyCleared(enemy) == false then
+        if enemy.isBoss and not enemy.dead and not IsEnemyCleared(enemy) then
             bossAlive = true
         end
         if not enemy.dead then

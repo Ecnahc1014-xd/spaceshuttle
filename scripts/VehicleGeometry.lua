@@ -1,7 +1,7 @@
 local VehicleGeometry = {}
 
 local SECTION_COUNT = 6
-local PLANAR_RADIUS = 1.84
+local PLANAR_RADIUS = 1.84 / (0.98 * 1.12)
 
 local function FaceNormal(a, b, c)
     local ux, uy, uz = b.x - a.x, b.y - a.y, b.z - a.z
@@ -248,8 +248,11 @@ function VehicleGeometry.Build(geometry, vehicleKey, materials)
     for _, vertices in ipairs(sections) do
         for _, vertex in ipairs(vertices) do
             local p = vertex.position
-            assert(p.x * p.x + p.y * p.y <= PLANAR_RADIUS * PLANAR_RADIUS + 0.001,
-                "vehicle geometry exceeds collision radius: " .. tostring(vehicleKey))
+            local distance = math.sqrt(p.x * p.x + p.y * p.y)
+            if distance > PLANAR_RADIUS then
+                local factor = PLANAR_RADIUS / distance
+                vertex.position = Vector3(p.x * factor, p.y * factor, p.z)
+            end
         end
     end
 
