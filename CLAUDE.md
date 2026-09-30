@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.22（尾迹 = 真 3D 几何光带 + 锚定车尾；提交 d7d06d8）：
+  - **用户两点纠正**：①「我要求的是复刻后一种的你错误做成 2d 的」——billboard 是 **2D 面向相机的四边形精灵**，做不出带朝向的渐细光带；要的是**真 3D 几何 ribbon**。②「要跟随车尾而不是体积中心哦」。
+  - **改动**：`Renderer3D` 尾迹改为 **CustomGeometry 三角带**（每弹种一个批次），材质走敌机箱体同一条**已验证可见**的路径（`DiffVCol` + 白底纹理 + 顶点色）；16 点采样 / 0.016s 间隔 / 0.42s 寿命 / 半宽头 0.30→尾 0.012（×权威半径）/ 顶点色头亮尾暗 / z 再退 0.16m。**头部采样点从车辆锚点沿 -朝向 退 `1.75 × GetVehicleScale`**（车局部 +X 为车头、半长约 1.8 局部单位）→ 光带从**车尾**拖出；飞行朝向=速度朝向、瞄准朝向=发射向量，与 Renderer3D 同约定。
+  - 🔴 **历史 ribbon「不可见」的真根因（本次实锤）**：v0.13.10 的 ribbon **每帧重建几何却从未 `SetDynamic(true)`** —— 非动态几何的顶点缓冲提交后不可再改，于是每帧重建全部失效、整条尾迹画不出来。**每帧重建的 `CustomGeometry` 必须 `SetDynamic(true)`**（`engine-docs/recipes/procedural-geometry.md` 有明文）。
+  - **验证（可自证，绕开 3D 层恒黑）**：因本地离屏 3D 受 BloomHDR 故障恒黑，改用**顶点数取证**——探针驱动飞行后读 `geometry:GetNumVertices(0)`，实测 **78 顶点（13 段）真实提交**、全程零 Lua 错误；LSP 0 Error；前向引用 0；官方多人 build+预览上传 ✅。BUILD_VERSION/大厅 →0.13.22。
+  - ⚠️ **探针开局方式已变（v0.13.4 起）**：菜单态 `Game.PointerDown(1,1)+PointerUp` **不再开局**（改为先开选关界面），必须调 **`Game.StartStageAt(1)`**。此前多轮"验证"因探针仍用旧开局方式而**全程 state=menu、marbles=0**，属无效验证——**探针报告要先确认它真的进入了目标状态**。
+  - ⚠️ **调试打印别给函数挂字段**：`SyncVehicleTrails._logged = true` 触发 `attempt to index a function value`（Lua 函数不能挂字段），且该错误**把整个 Render 打断**、反而掩盖了真实症状。诊断状态一律用模块级 local。
 - 版本: 0.13.21b（词条卡归入通用卡并加天赋门控 + 卡池分类审计；提交 2216994）：
   - **用户点名（原话「加速车分裂的专属词条还是天赋树没解锁就在局内被允许出现了」「合着这几个还有寒冰车的词条都不是天赋树规定的专属天赋卡范畴？给我优化管理！」）**：探针复现——无任何天赋时 `word_pierce/word_chain/word_momentum` 三张词条卡**都在池里**。根因：词条卡既无 `ballType`（不是车型卡）也无 `requiresCard`（不是通用卡），**两套门控都没覆盖它**，成了"三不管"常驻卡。
   - **修复（用户裁定归类）**：词条卡归**「通用卡（无车型）」**，与 xp/ammo 同一套 `requiresCard` 门控。①`Game.lua` 三张词条卡各加 `requiresCard = "word_pierce"/"word_chain"/"word_momentum"`；②`TalentCatalog` 通用卡线 `general_b` 扩为 **1阶=xp、2阶=贯穿、3阶=ammo、4阶=连锁、5阶=动量**（6/7 阶仍为结算零件 +5% 填充）；③`ICON_BY_CARD` 补三张词条卡 → `talent_word`。

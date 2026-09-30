@@ -4,8 +4,8 @@ local StageCatalog = {}
 StageCatalog.WAVES_PER_STAGE = 10
 StageCatalog.MAX_FLEET = 12
 -- v0.13.13：关卡无限——选关列表只列到「最高已解锁关」，可一直往上爬。
--- 难度公式全部可外推：速度/召唤次数/间隔已用 math.min 封顶，方块血量继续每 3 关 +1，
--- 精英与 Boss 机型按取模循环复用。此常量仅保留为「难度封顶参考关数」，不再是硬上限。
+-- 数量、速度、召唤与间隔的成长都有软封顶；方块血量继续每 3 关 +1，
+-- 精英与 Boss 机型按取模循环复用。该值仅作难度封顶参考，不是关卡硬上限。
 StageCatalog.STAGE_SOFT_CAP = 15
 
 local ELITE_KEYS = {
@@ -43,18 +43,18 @@ function StageCatalog.GetSpecialKey(stage, stageWave)
     return nil
 end
 
--- 普通波人数缓慢爬升：首关 3/4/5，后续每两关 +1；末段才接近 12 架硬上限。
--- stageWave 分三段，关内每段 +1；跨关每两关 +1；第 15 关末段到 12。
+-- 普通波人数按关内段位与关卡分段共同爬升。
+-- 首关 2/3/4；第 7 关 5/6/7；第 15 关 10/11/12；第 15 关末段触及同屏上限。
 function StageCatalog.GetNormalCount(stage, stageWave)
     local stageProgress = GetStageProgress(stage)
-    local stageRamp = math.floor(stageProgress / 2)
+    local stageRamp = math.floor(stageProgress * 4 / 7)
     local waveRamp = math.floor((stageWave - 1) / 3)
-    return math.min(StageCatalog.MAX_FLEET, 3 + stageRamp + waveRamp)
+    return math.min(StageCatalog.MAX_FLEET, 2 + stageRamp + waveRamp)
 end
 
--- 精英护航更缓慢成长：首关无护航，之后每两关增加一架，最多 3 架。
+-- 精英护航低密度成长：前两关无护航，第 3 关 1 架，此后每三关加一架，最多 3 架。
 function StageCatalog.GetEscortCount(stage)
-    return math.min(3, math.floor(GetStageProgress(stage) / 2))
+    return math.min(3, math.floor((GetStageProgress(stage) + 1) / 3))
 end
 
 -- 每过三关，普通敌人每块 +1 血；精英 / Boss 另有固定护甲。
@@ -75,13 +75,13 @@ function StageCatalog.GetInterval(stage, stageWave)
 end
 
 function StageCatalog.GetBossSummonLimit(stage)
-    -- Boss 召唤随关卡缓慢成长：前几关 2 架，后期封顶 5 架。
-    return math.min(5, 2 + math.floor(GetStageProgress(stage) / 3))
+    -- Boss 召唤从 1 架起步，每 4 关增加 1 架，后期封顶 4 架。
+    return math.min(4, 1 + math.floor(GetStageProgress(stage) / 4))
 end
 
 function StageCatalog.GetBossSummonInterval(stage)
-    -- 召唤间隔缓慢收紧：10 秒起步，关 15 最快 6.5 秒。
-    return math.max(6.5, 10 - GetStageProgress(stage) * 0.25)
+    -- 召唤间隔缓慢收紧：12 秒起步，关 15 起封顶 8.5 秒。
+    return math.max(8, 12 - GetStageProgress(stage) * 0.25)
 end
 
 return StageCatalog

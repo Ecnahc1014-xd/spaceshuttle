@@ -78,6 +78,9 @@ local TRAIL_POINTS_PER_VEHICLE = 16   -- 折线采样点（光带细分）
 local TRAIL_LIFETIME = 0.42           -- 尾迹存活（越长越像"拉出来的一道"）
 local TRAIL_SAMPLE_INTERVAL = 0.016   -- 采样更密 → 折线更顺滑
 local TRAIL_BEHIND_Z = 0.16           -- 相对车辆锚点再远 0.16m，光带落在车体之后
+-- v0.13.22：光带从**车尾**拖出（用户要求「跟随车尾而不是体积中心」）。
+-- 车辆局部 +X 为车头、半长约 1.8 局部单位；沿 -朝向 后退 = 车尾。
+local TRAIL_TAIL_LOCAL = 1.75
 local TRAIL_HALF_WIDTH_HEAD = 0.30    -- 头段半宽（× 权威半径 × WORLD_SCALE）
 local TRAIL_HALF_WIDTH_TAIL = 0.012   -- 尾段半宽（渐收成一条细线）
 local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
@@ -1213,6 +1216,24 @@ local function SyncVehicleTrails(game, dt)
         if tracked[ballType] >= TRAIL_VEHICLE_LIMIT then return end
         visible[marble.id] = true
         local pos = GetVehicleAnchorWorld(marble)
+        -- 把采样点从车体中心挪到车尾：沿车辆当前朝向的反方向退半车长。
+        -- 飞行中朝向 = 速度朝向；待发瞄准时 = 发射向量（与 Renderer3D 同步）。
+        do
+            local heading = nil
+            local vx, vy = marble.vx or 0, marble.vy or 0
+            if vx * vx + vy * vy > 0.0001 then
+                heading = math.atan(-vy, vx)
+            elseif marble.onSling and game.aiming then
+                local lx, ly = game.slingX - marble.x, marble.y - game.slingY
+                if lx * lx + ly * ly > 0.0001 then heading = math.atan(ly, lx) end
+            end
+            if heading then
+                local scale = GetVehicleScale(marble)
+                local back = TRAIL_TAIL_LOCAL * scale
+                pos = Vector3(pos.x - math.cos(heading) * back,
+                    pos.y - math.sin(heading) * back, pos.z)
+            end
+        end
         local track = trailSamples_[marble.id]
         if not track or track.ballType ~= ballType
             or (marble.flightTime or 0) < (track.flightTime or 0) then
