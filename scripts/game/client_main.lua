@@ -1280,7 +1280,7 @@ function ClientMain.Start(opts)
     MetaUI.RegisterScreen("talent", TalentTree.Draw, TalentTree.HitTest)
 
     PlayerData.Load()
-    -- 开局自动拥有初始分裂车的「允许局内出场」节点（幂等；必须在 Load 之后）。
+    -- 开局自动拥有初始车的「允许局内出场」节点（幂等；必须在 Load 之后）。
     PlayerData.EnsureAutoOwnedTalents(TalentCatalog.AUTO_OWNED)
     -- v0.13.5：天赋提供者——每次开局（选关/下一关/重开）Game 自动拉取最新解锁集合。
     Game.SetTalentProvider(function() return PlayerData.GetTalents() end)

@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.28（**分裂车天赋节点开局也自动解锁**；承接 v0.13.27）：
+  - **用户要求**「分裂车天赋树玩家一开始也解锁」→ 把分裂车的 1 阶节点 `normal_1`（「解锁分裂车 / 允许分裂车在局内出场」）并入开局自动拥有。
+  - **改动（`TalentCatalog.lua` 一处）**：`AUTO_OWNED` `{ "speed_1" }` → **`{ "speed_1", "normal_1" }`**；`client_main.lua` 注释里的「初始分裂车」订正为「初始车」（该处调用与逻辑零改动，`EnsureAutoOwnedTalents` 本就遍历整个 `AUTO_OWNED`）。BUILD_VERSION/大厅 →0.13.28。
+  - **语义（三层门控，未变）**：`normal_1` 自动解锁 = **局内出现「解锁分裂车」卡**（分裂车本局可进弹药队列）；**专属卡/基础卡（`split`/`base_split`）仍需 `normal_2`（ballCard 节点）**，自动解锁不顺带放开。开局自带车仍只有加速车（`STARTING_BALL_TYPE` 未动）。
+  - **验证**：官方多人 build+预览上传 ✅；LSP 0 Error（21 文件 808 诊断）；探针 `probe_splitauto` PASS（①`AUTO_OWNED` 含 speed_1+normal_1 ②只有 speed_1 → `unlock_normal` 不进池 ③speed_1+normal_1 → `unlock_normal` 进池 ④`split`/`base_split` 仍被 `normal_2` 拦住）；探针 `probe_splitdraw` PASS（`EnsureAutoOwnedTalents` 后 `normal_1=true`，天赋树绘制该节点为「已解锁」、draw ok）。
+  - ⚠️ **探针必须跳过 v0.13.24 的 3 秒进关过渡**（本次踩到）：开局有 `INTRO_SECONDS=3` 冻结期，`HandleAction("start")` 后立刻取快照 **`veggies[1]` 为 nil**（还没刷波）→ 必须先 `for _=1,200 do Game.Update(1/30) end` 推进过过渡再取敌机。
 - 版本: 0.13.27（**修恶性回归：逐架生成的敌机全叠在正中**；承接 v0.13.26）：
   - **用户报「飞机全都生成在正中」**——这是 v0.13.26 我改逐架生成时引入的**恶性回归**：`SpawnNextNormalEnemy` 每架都写死 `x = DW*0.5 - shipW*0.5`，而横向铺开的 `ComputeFormationSlots` 同批被我当死代码删了 → **整波叠在同一条竖线上**。
   - **修法（`Game.lua`）**：`SpawnNextNormalEnemy` 加**确定性横向分道**——5 条车道，`lane = pendingSpawn.lane % 5; x = margin + (maxX-margin)*(lane/4)`（非随机，宽度按机型 `shipW` 自适应）；`pendingSpawn` 表加 `lane` 字段；每波开波时 `lane = (wave-1) % 5`（**起始车道随波次错开**，否则关1 每波仅 1 架会「总从最左出」）；`ResetGame` 归零。车道数/margin 用**函数内局部量**，不新增顶层 local（AB-166）。
@@ -688,6 +694,11 @@
 - ⚠️ **`batch_generate_images` 会给草案也生成 `.meta`，且清理时容易漏**（v0.13.24）：生成后 `mv *.png` 出 assets 时，同名 `*.png.meta` **不会跟着走**（或跟走了但草稿目录里留下），assets 里会残留 `digit_x_<时间戳>.png.meta` 这类孤儿。清理时用 `rm assets/image/<batch>_*_2026*.png.meta` 一并扫掉，再确认 `ls assets/image/<batch>_*` 为空。
 
 ## 避雷清单
+
+## 本批次新增避雷（v0.13.28 分裂车天赋自动解锁）
+- ⚠️ **「开局自动拥有的天赋节点」是一张白名单，加车就加一行（v0.13.28）**：`TalentCatalog.AUTO_OWNED` 控制「哪些节点开局就是已解锁」。v0.13.19 初始车由分裂车改加速车时它被设成 `{ "speed_1" }`，于是**分裂车的「允许局内出场」节点变成要花零件买**。用户要求「分裂车天赋树玩家一开始也解锁」→ 加 `"normal_1"` 即可（`EnsureAutoOwnedTalents` 本就遍历整表，调用点零改动）。**加新初始车/新自动节点时，只需改这一处**，别去改 `client_main` 的调用或 `Game` 的门控。
+- ⚠️ **自动解锁的是「1 阶」不是整条线（v0.13.28）**：`normal_1` 只放开「局内出现解锁卡」；**专属卡/基础卡（`split`/`base_split`）仍需 `normal_2`（ballCard 节点）**。加自动节点时先确认该节点的 `kind`——`ballUnlock`（出场资格）可以自动给，`ballCard`（专属卡资格）自动给会一次性放开整条车线，通常不该给。探针要断言「自动解锁**没有**顺带放开下一阶」。
+- ⚠️ **玩法探针必须先推进过 `INTRO_SECONDS` 再取敌机（v0.13.28 踩到）**：v0.13.24 起开局有 3 秒进关过渡（`Game.Update` 冻结玩法），`HandleAction("start")` 之后立刻 `GetSnapshot().veggies[1]` 是 **nil** → 探针报 `attempt to index a nil value (local 'boss')`。修法：`for _ = 1, 200 do Game.Update(1/30) end` 先过过渡。**凡「开局→造 Boss→刷升级面板」这类探针都要加这一步**（v0.13.24 之前的探针模板已过时）。
 
 ## 本批次新增避雷（v0.13.27 修逐架生成全居中回归）
 - 🔴 **AB-170：把「一次性编队」改成「逐架生成」时，横向铺开逻辑不能连函数一起删（v0.13.27 恶性回归）**：v0.13.26 我把一次性编队 `ComputeFormationSlots` 当死代码整段删除、换成 `SpawnNextNormalEnemy` 逐架生成，结果**所有敌机叠在正中一条竖线**——因为 `ComputeFormationSlots` 除了「阵型」还负责**横向 x 分布**，而新函数只实现了纵向错峰，每架都写死 `x = DW*0.5 - shipW*0.5`。**规则**：删除/替换生成路径前，先列出旧函数真正负责的**每一个维度**（x 分布、y 错峰、阵型/编队形状），逐条确认新路径有等价实现；别只按函数名以为它只是「阵型」。**逐架生成也要有横向分道**：确定性轮换车道（非随机），且**起始车道随波次错开**（否则每波只有 1 架时会「总从最左出」）。（击碎，飞机大战/v0.13.27）

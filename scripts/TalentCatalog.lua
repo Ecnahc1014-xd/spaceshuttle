@@ -44,7 +44,8 @@ TalentCatalog.LANE_NAMES = {
 }
 
 -- 开局自动拥有的节点：初始车（**加速车**，v0.13.19 由分裂车改）的"允许局内出场"。
-TalentCatalog.AUTO_OWNED = { "speed_1" }
+-- v0.13.28：分裂车同样开局自动解锁（用户要求），两张"允许局内出场"节点都不必花零件。
+TalentCatalog.AUTO_OWNED = { "speed_1", "normal_1" }
 
 -- 车线路的"小幅数值增强"参数：stat 对应 Game 的 BALL_TUNING 字段。
 -- mul=true 表示乘法叠加，否则加法；small=小幅，big=专属卡效果增强。
