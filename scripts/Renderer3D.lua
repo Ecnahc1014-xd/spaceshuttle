@@ -1209,6 +1209,18 @@ local function SyncVehicleTrails(game, dt)
     local tracked = {normal = 0, ice = 0, speed = 0, giant = 0}
     local visible = {}
     local perType = {normal = {}, ice = {}, speed = {}, giant = {}}
+    -- 观感：整条尾迹再向下偏「半个格子」。格子尺寸随关卡 14/15/16 变化，
+    -- 优先取快照权威值（波间隙无敌机时也稳定），缺省回退基准 16 的半格。
+    ---@type number
+    local halfBrick = 8
+    do
+        local bs = game.brickSize
+        if not bs then
+            local ref = game.veggies and game.veggies[1]
+            bs = ref and ref.brickSize
+        end
+        if bs then halfBrick = bs * 0.5 end
+    end
     local function collect(marble)
         if not marble then return end
         local ballType = marble.ballType
@@ -1235,6 +1247,8 @@ local function SyncVehicleTrails(game, dt)
                     pos.y - math.sin(heading) * back, pos.z)
             end
         end
+        -- 观感：整条尾迹再向下偏半个格子（游戏 Y 向下为正 → 世界 Y 减）。
+        pos = Vector3(pos.x, pos.y - halfBrick * WORLD_SCALE, pos.z)
         local track = trailSamples_[marble.id]
         if not track or track.ballType ~= ballType
             or (marble.flightTime or 0) < (track.flightTime or 0) then

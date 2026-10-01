@@ -3117,6 +3117,8 @@ function Game.GetSnapshot()
     s.clearStreak = clearStreak
     s.bricksBroken = bricksBroken
     s.concurrentCount = #veggies    -- WO-12/P6：当前同屏编队数（HUD 指标）
+    -- 当前关卡格子尺寸（14/15/16）：权威值，供表现层按「格」偏移，波间隙无敌机时也可用。
+    s.brickSize = GetBrickSize(wave)
     s.brickDmg = math.max(1, math.ceil(BRICK_BASE_DAMAGE) + BALL_TUNING.lineDamageBonus)
     -- v0.13.28：局内通用卡的派生读数（只读标量，供 UI 与校验；不新建 table 以免每帧 GC）。
     s.brickXpFlat = BALL_TUNING.brickXpFlat
