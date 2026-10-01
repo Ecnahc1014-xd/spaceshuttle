@@ -149,7 +149,7 @@ local elapsed = 0
 local waveCooldown = 0
 -- v0.13.26：同波错峰生成状态（剩余架数/下次计时/本波机型与砖块参数）。
 -- ⚠️ 收进一张表：Game.lua 顶层 local 已逼近 Lua 200 上限（AB-154 同族），禁止再加散装顶层 local。
-local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil }
+local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil, lane = 0 }
 local INTRO_SECONDS = 3.0
 -- v0.13.24：进关准备期（秒）。>0 时玩法冻结：不推进弹珠/敌机/波次，只放行表现层动画。
 local introTimer = 0
@@ -671,6 +671,7 @@ ResetGame = function(startStage)
     pendingSpawn.remaining = 0
     pendingSpawn.timer = 0
     pendingSpawn.kind = nil
+    pendingSpawn.lane = 0
     nextEnemyId = 1
     nextMarbleId = 1
     -- 幸存者成长状态复位
@@ -1003,7 +1004,14 @@ SpawnNextNormalEnemy = function()
     end
     local brickSize = pendingSpawn.brickSize
     local shipW, shipH = GetAircraftSize(key, brickSize)
-    local x = DW * 0.5 - shipW * 0.5
+    -- v0.13.27：横向分道——逐架轮换不同 x（确定性，非随机），避免整波都叠在正中一条竖线上。
+    -- 车道数用函数内局部量，不新增顶层 local（Game.lua 已逼近 Lua 200 上限）。
+    local laneCount = 5
+    local margin = 20
+    local maxX = math.max(margin, DW - margin - shipW)
+    local lane = pendingSpawn.lane % laneCount
+    pendingSpawn.lane = lane + 1
+    local x = margin + (maxX - margin) * (lane / (laneCount - 1))
     local y = -102 - shipH - 24
     -- 与在场敌机（含本波前几架）至少隔 1 格：仍在屏外时再往前放，不下落瞬移。
     local guard = 0
@@ -1097,6 +1105,8 @@ SpawnWave = function(availableSlots)
     pendingSpawn.speed = baseSpeed
     pendingSpawn.remaining = count
     pendingSpawn.timer = 0
+    -- 起始车道随波次错开，避免每波第一架总从最左出来。
+    pendingSpawn.lane = (wave - 1) % 5
     SpawnNextNormalEnemy()
 end
 
