@@ -45,19 +45,20 @@ function StageCatalog.GetSpecialKey(stage, stageWave)
 end
 
 -- 普通波按普通波序号推进：每两关增加一档、每两次普通波增加一架。
--- 第1关 2/2/3/3/4/4；第7关 5/5/6/6/7/7；第15关 10/10/11/11/12/12。
--- 12架同屏上限首次在第15关普通波后段触及。
+-- v0.13.26：起点从 2 架降到 1 架（用户要求「比 2 更低」）；不再追求触到 12 架上限。
+-- 第1关 1/1/2/2/3/3；第7关 4/4/5/5/6/6；第15关 8/8/9/9/10/10。
+-- 同波内改为一架接一架飞出（见 GetSpawnInterval），数量是该波计划总架数。
 function StageCatalog.GetNormalCount(stage, stageWave)
     local stageProgress = GetStageProgress(stage)
     local stageRamp = math.floor(stageProgress * 4 / 7)
     local waveOrdinal = NORMAL_WAVE_ORDINAL[stageWave] or 1
     local waveRamp = math.floor((waveOrdinal - 1) / 2)
-    return math.min(StageCatalog.MAX_FLEET, 2 + stageRamp + waveRamp)
+    return math.min(StageCatalog.MAX_FLEET, 1 + stageRamp + waveRamp)
 end
 
--- 精英护航低密度成长：前两关无护航，第 3 关 1 架，此后每三关加一架，最多 3 架。
+-- 精英护航低密度成长：前 3 关无护航，第 4 关起每三关加一架，最多 3 架。
 function StageCatalog.GetEscortCount(stage)
-    return math.min(3, math.floor((GetStageProgress(stage) + 1) / 3))
+    return math.min(3, math.floor(GetStageProgress(stage) / 3))
 end
 
 -- 每过三关，普通敌人每块 +1 血；精英 / Boss 另有固定护甲。
@@ -72,9 +73,17 @@ function StageCatalog.GetBaseSpeed(stage, stageWave)
     return 28 + (stageWave - 1) * 4 + math.min(stage - 1, 12) * 1.5
 end
 
--- 波间隔逐关稍增长：同为十波，关卡时长也会因怪更多、Boss 召唤而增长。
+-- v0.13.26：波间隔改为**逐关收紧**（旧版随关卡变长 15.5→25.1s，方向反了）。
+-- 关1 首波后 22s（比旧的 15.5s「延长一点」），每关 -0.9s；关内每波再 -0.3s（下限 7s）。
 function StageCatalog.GetInterval(stage, stageWave)
-    return math.max(12, 15.5 + math.min(stage - 1, 8) * 1.2 - (stageWave - 1) * 0.28)
+    return math.max(7, 22 - GetStageProgress(stage) * 0.9 - (stageWave - 1) * 0.3)
+end
+
+-- v0.13.26：同波内敌机不再同帧齐出，改为一架接一架飞入。
+-- 关1 间隔最长（2.8s），每关 -0.14s，第 13 关起封顶 1.12s。
+-- 下限由调用方（Game）按「下落速度 × 1 格 + 余量」动态抬高，保证任意两架初始至少隔 1 格。
+function StageCatalog.GetSpawnInterval(stage)
+    return math.max(1.1, 2.8 - GetStageProgress(stage) * 0.14)
 end
 
 function StageCatalog.GetBossSummonLimit(stage)

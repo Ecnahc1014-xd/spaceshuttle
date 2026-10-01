@@ -1078,13 +1078,14 @@ local AIRCRAFT_LABELS = {
 
 -- v0.10.31：底部 Dock 中央下一波小图。四弹药槽左右分组，中间 256px 留给预告。
 -- 只读 game.nextWave（规则层预抽），像素格来自 VisualCatalog，禁止再抽随机。
+-- v0.13.26：新增「远方飞入」说明——敌机在屏幕上沿之外生成，下落一段才进画面。
 local function DrawNextWavePreview(ctx, game)
     local plan = game.nextWave
     if not plan then return end
     local preview = VisualCatalog.GetAircraftPreview(plan.aircraftKey)
-    local panelW, panelH = 168, 76
+    local panelW, panelH = 168, 86
     local px = DESIGN_W * 0.5 - panelW * 0.5
-    local py = BOTTOM_DOCK_Y + 12
+    local py = BOTTOM_DOCK_Y + 4
     local kind = plan.kind or "normal"
     local accent = kind == "boss" and C.error or (kind == "elite" and C.warn or C.cyan)
     DrawTechPanel(ctx, px, py, panelW, panelH, C.card, accent)
@@ -1098,11 +1099,11 @@ local function DrawNextWavePreview(ctx, game)
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     if preview and preview.cells then
-        local cell = math.max(2, math.floor(math.min(52 / preview.gridW, 36 / preview.gridH)))
+        local cell = math.max(2, math.floor(math.min(52 / preview.gridW, 26 / preview.gridH)))
         local artW = preview.gridW * cell
         local artH = preview.gridH * cell
         local ax = px + math.floor((panelW - artW) * 0.5)
-        local ay = py + 22 + math.floor((34 - artH) * 0.5)
+        local ay = py + 22 + math.floor((26 - artH) * 0.5)
         for i = 1, #preview.cells do
             local c = preview.cells[i]
             nvgBeginPath(ctx)
@@ -1112,10 +1113,13 @@ local function DrawNextWavePreview(ctx, game)
         end
     end
 
+    -- v0.13.26：说明敌人在屏幕上沿之外生成，需要下落一段才进入画面。
+    DrawPixelText(ctx, px + 8, py + 52, "自远方飞入", 12, C.dim)
+
     local label = AIRCRAFT_LABELS[plan.aircraftKey] or plan.aircraftKey
     local countText = kind == "boss" and "首领" or (kind == "elite" and "精英" or (tostring(plan.count or 0) .. "架"))
-    DrawPixelText(ctx, px + 8, py + panelH - 20, label, 15, C.text)
-    DrawPixelText(ctx, px + panelW - 8, py + panelH - 20, countText, 15,
+    DrawPixelText(ctx, px + 8, py + 68, label, 15, C.text)
+    DrawPixelText(ctx, px + panelW - 8, py + 68, countText, 15,
         accent, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 end
 

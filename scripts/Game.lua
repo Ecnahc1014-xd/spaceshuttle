@@ -147,6 +147,9 @@ local bossDefeated = false
 local stageResult = nil   -- stagewin 态展示与存档用（星级/评级）
 local elapsed = 0
 local waveCooldown = 0
+-- v0.13.26：同波错峰生成状态（剩余架数/下次计时/本波机型与砖块参数）。
+-- ⚠️ 收进一张表：Game.lua 顶层 local 已逼近 Lua 200 上限（AB-154 同族），禁止再加散装顶层 local。
+local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil }
 local INTRO_SECONDS = 3.0
 -- v0.13.24：进关准备期（秒）。>0 时玩法冻结：不推进弹珠/敌机/波次，只放行表现层动画。
 local introTimer = 0
@@ -395,6 +398,9 @@ local GainXp
 local RollUpgradeChoices
 local PlanWave
 local EnsureNextWavePlan
+-- v0.13.26：同波错峰生成 / 精英护航延迟释放（AB-100 前向引用：声明先于使用点）。
+local ReleaseEscortVolley
+local SpawnNextNormalEnemy
 
 local function Emit(eventType, data)
     data = data or {}
@@ -661,6 +667,10 @@ ResetGame = function(startStage)
     waveCooldown = 3.2    -- 开局短暂喘息；后续按关卡节奏刷新
     introTimer = 0
     nextWavePlan = nil
+    -- v0.13.26：复位同波错峰生成状态。
+    pendingSpawn.remaining = 0
+    pendingSpawn.timer = 0
+    pendingSpawn.kind = nil
     nextEnemyId = 1
     nextMarbleId = 1
     -- 幸存者成长状态复位
@@ -741,16 +751,17 @@ local function RectsOverlap(x, y, w, h, ox, oy, ow, oh, gap)
 end
 
 -- 候选矩形是否与本批次 placed 或场上存活飞机（ignore 可排除自身）重叠。
-local function FleetPositionOccupied(x, y, w, h, placed, ignore)
+-- gap 省略时用 ENEMY_SPACING（既有行为）；同波错峰生成传 brickSize 以强制「至少隔 1 格」。
+local function FleetPositionOccupied(x, y, w, h, placed, ignore, gap)
     for _, item in ipairs(placed) do
-        if RectsOverlap(x, y, w, h, item.x, item.y, item.w, item.h) then
+        if RectsOverlap(x, y, w, h, item.x, item.y, item.w, item.h, gap) then
             return true
         end
     end
     for _, other in ipairs(veggies) do
         if other ~= ignore and not other.dead then
             local ow, oh = other.gridW * other.brickSize, other.gridH * other.brickSize
-            if RectsOverlap(x, y, w, h, other.x, other.y, ow, oh) then
+            if RectsOverlap(x, y, w, h, other.x, other.y, ow, oh, gap) then
                 return true
             end
         end
@@ -925,129 +936,9 @@ EnsureNextWavePlan = function()
     return nextWavePlan
 end
 
----@param kind string
----@param count integer
----@param shipW number
----@param shipH number
----@return {x:number, y:number}[]
----@return string
-local function ComputeFormationSlots(kind, count, shipW, shipH)
-    local margin = 20
-    local gap = ENEMY_SPACING
-    local visibleTopY = -102
-    local entryY = visibleTopY - shipH - 24
-    local maxW = DW - margin * 2
-    ---@type {x:number, y:number}[]
-    local slots = {}
-
-    local function FitRow(n)
-        local g = gap
-        local total = n * shipW + (n - 1) * g
-        if total > maxW then
-            g = math.max(4, math.floor((maxW - n * shipW) / math.max(1, n - 1)))
-            total = n * shipW + (n - 1) * g
-        end
-        if total > maxW then return nil, g end
-        return (DW - total) * 0.5, g
-    end
-
-    if kind == "line" then
-        local startX, g = FitRow(count)
-        if startX ~= nil then
-            for i = 1, count do
-                slots[i] = { x = startX + (i - 1) * (shipW + g), y = entryY }
-            end
-            return slots, "line"
-        end
-        kind = "vee"
-    end
-
-    if kind == "vee" or kind == "wedge" then
-        local startX, g = FitRow(count)
-        if startX ~= nil then
-            local mid = (count + 1) * 0.5
-            local maxRank = (count - 1) * 0.5
-            local rowStep = shipH * 0.38 + 8
-            for i = 1, count do
-                local rank = math.abs(i - mid)
-                local y = (kind == "vee")
-                    and (entryY - rank * rowStep)
-                    or (entryY - (maxRank - rank) * rowStep)
-                slots[i] = { x = startX + (i - 1) * (shipW + g), y = y }
-            end
-            return slots, kind
-        end
-        kind = "grid"
-    end
-
-    if kind == "grid" or kind == "swarm" then
-        local cols = count
-        if count == 3 or count == 4 then cols = 2
-        elseif count >= 5 then cols = 3 end
-        while cols > 1 and cols * shipW + (cols - 1) * gap > maxW do
-            cols = cols - 1
-        end
-        local g = (kind == "swarm") and 4 or gap
-        local startX, fittedG = FitRow(cols)
-        if startX ~= nil then
-            g = fittedG
-        else
-            startX = margin
-            g = 4
-        end
-        local rowGap = shipH + ((kind == "swarm") and 4 or gap)
-        local stagger = (kind == "swarm") and (shipW * 0.22) or 0
-        local fullW = cols * shipW + (cols - 1) * g
-        for i = 1, count do
-            local row = math.floor((i - 1) / cols)
-            local col = (i - 1) % cols
-            local remain = count - row * cols
-            local rowCount = math.min(cols, remain)
-            local rowW = rowCount * shipW + (rowCount - 1) * g
-            local rowStart = startX + (fullW - rowW) * 0.5
-            local x = rowStart + col * (shipW + g)
-            if row % 2 == 1 then x = x + stagger end
-            if x < margin then x = margin end
-            if x + shipW > DW - margin then x = DW - margin - shipW end
-            slots[i] = { x = x, y = entryY - row * rowGap }
-        end
-        return slots, kind
-    end
-
-    -- 编队至多 7 架：宽机改纵列错开入场，保证同一批次不互相压住。
-    local cx = DW * 0.5 - shipW * 0.5
-    for i = 1, count do
-        local side = (i % 2 == 0) and 1 or -1
-        local x = cx + side * math.min(28, shipW * 0.18)
-        if x < margin then x = margin end
-        if x + shipW > DW - margin then x = DW - margin - shipW end
-        slots[i] = { x = x, y = entryY - (i - 1) * (shipH + gap) }
-    end
-    return slots, "stream"
-end
-
-local function LiftSlotsOffExisting(slots, shipW, shipH)
-    local lift = 0
-    local step = shipH + ENEMY_SPACING
-    for _ = 1, 80 do
-        local blocked = false
-        for i = 1, #slots do
-            if FleetPositionOccupied(slots[i].x, slots[i].y - lift, shipW, shipH, {}) then
-                blocked = true
-                break
-            end
-        end
-        if not blocked then break end
-        lift = lift + step
-    end
-    if lift > 0 then
-        for i = 1, #slots do
-            slots[i].y = slots[i].y - lift
-        end
-    end
-end
-
 -- 精英/首领单机从屏外进入：即使数量增加，特殊目标也始终占一个机群名额。
+-- v0.13.26：特殊机用 brickSize 作间距查找空位，保证「至少隔 1 格」；
+-- 且一旦本波有敌机在场，改用「从更远处生成」而非上抬——避免「Boss 已到场又瞬移到头顶」。
 local function SpawnSpecialEnemy(plan)
     local key = plan.aircraftKey
     if not AircraftData[key] then
@@ -1058,8 +949,9 @@ local function SpawnSpecialEnemy(plan)
     local shipW, shipH = GetAircraftSize(key, brickSize)
     local x = DW * 0.5 - shipW * 0.5
     local y = -102 - shipH - 24
-    while FleetPositionOccupied(x, y, shipW, shipH, {}) do
-        y = y - shipH - ENEMY_SPACING
+    if FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) then
+        -- 有人占位 → 从更远方（屏幕上沿之上 1 格）生成，下落自然进入，不做瞬移上抬。
+        y = -102 - shipH - brickSize * 1.5
     end
     local baseSpeed = StageCatalog.GetBaseSpeed(stage, stageWave)
     local enemy = CreateEnemy(key, x, y, brickSize,
@@ -1079,22 +971,81 @@ local function SpawnSpecialEnemy(plan)
     return enemy
 end
 
-local function SpawnEliteEscorts(plan, availableSlots)
-    local count = math.min(plan.escortCount or 0, math.max(0, availableSlots - 1))
+-- v0.13.26：本波敌机逐架放出的时间间隔。下限按「一架在间隔内下落 ≥ 1 格 + 余量」动态抬高，
+-- 保证任意两架初始位置至少隔一个格子（用户要求）；上限由 StageCatalog 的逐关收紧曲线给出。
+-- ⚠️ 下落速度按**最慢机型**保守取值（基准 × 0.42 × 最慢 descentMul）：间隔太短时最慢那架
+-- 来不及拉开，就会与后一架挤在同一个格子带内。用基准速度估算会在高关卡漏掉这个下界。
+local SLOWEST_DESCENT_MUL = 0.66
+local function CurrentSpawnInterval()
+    local base = StageCatalog.GetSpawnInterval(stage)
+    local descent = StageCatalog.GetBaseSpeed(stage, stageWave) * 0.42 * SLOWEST_DESCENT_MUL
+    local minInterval = (pendingSpawn.brickSize + 6) / math.max(1, descent)
+    return math.max(base, minInterval)
+end
+
+-- v0.13.26：从屏幕上沿之外放出本波一架敌机。屏幕是俯视 3D，敌机在屏幕外生成后
+-- 下落一段才进画面——所以「刚生成时看不见」是预期，不是没刷出来。
+SpawnNextNormalEnemy = function()
+    if pendingSpawn.remaining <= 0 then return end
+    -- 满场：本架推迟，等有空位再放（不能强行落位，否则两架会叠在一起）。
+    if #veggies >= StageCatalog.MAX_FLEET then
+        pendingSpawn.timer = 0.5
+        return
+    end
+    local key = pendingSpawn.key
+    if not AircraftData[key] then
+        pendingSpawn.remaining = 0
+        pendingSpawn.kind = nil
+        return
+    end
+    local brickSize = pendingSpawn.brickSize
+    local shipW, shipH = GetAircraftSize(key, brickSize)
+    local x = DW * 0.5 - shipW * 0.5
+    local y = -102 - shipH - 24
+    -- 与在场敌机（含本波前几架）至少隔 1 格：仍在屏外时再往前放，不下落瞬移。
+    local guard = 0
+    while FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) and guard < 200 do
+        y = y - brickSize
+        guard = guard + 1
+    end
+    if FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) then
+        -- 屏外空间也找不到空位（极端拥挤）：推迟本架，绝不叠放。
+        pendingSpawn.timer = 1.0
+        return
+    end
+    local enemy = CreateEnemy(key, x, y, brickSize, pendingSpawn.hp, pendingSpawn.speed, {
+        swayAmp = 6, swayFreq = 0.22, phase = 0,
+    })
+    if enemy then
+        enemy.formation = "stream"
+        veggies[#veggies + 1] = enemy
+        pendingSpawn.remaining = pendingSpawn.remaining - 1
+    end
+    if pendingSpawn.remaining > 0 then
+        pendingSpawn.timer = CurrentSpawnInterval()
+    else
+        if pendingSpawn.kind == "normal" then
+            Emit("wave_started", {wave = wave, stage = stage, stageWave = stageWave,
+                kind = "normal", formation = "stream", aircraftKey = key})
+            print("[Game] stage " .. stage .. " wave " .. stageWave .. " stream released: " .. key)
+        end
+        pendingSpawn.kind = nil
+    end
+end
+
+-- v0.13.26：精英护航也改为一架接一架飞入（与普通波共用同一套错峰机制）。
+ReleaseEscortVolley = function(plan)
+    local count = math.min(plan.escortCount or 0, math.max(0, StageCatalog.MAX_FLEET - #veggies - 1))
     if count <= 0 then return end
     local key = plan.escortKey
     if not AircraftData[key] then return end
-    local brickSize = GetBrickSize(wave)
-    local shipW, shipH = GetAircraftSize(key, brickSize)
-    local slots = ComputeFormationSlots("grid", count, shipW, shipH)
-    LiftSlotsOffExisting(slots, shipW, shipH)
-    local baseSpeed = StageCatalog.GetBaseSpeed(stage, stageWave)
-    for _, slot in ipairs(slots) do
-        local enemy = CreateEnemy(key, slot.x, slot.y, brickSize,
-            StageCatalog.GetBrickHp(stage, "normal"), baseSpeed,
-            {swayAmp = 7, swayFreq = 0.32, phase = 0})
-        if enemy then veggies[#veggies + 1] = enemy end
-    end
+    pendingSpawn.key = key
+    pendingSpawn.kind = "escort"
+    pendingSpawn.brickSize = GetBrickSize(wave)
+    pendingSpawn.hp = StageCatalog.GetBrickHp(stage, "normal")
+    pendingSpawn.speed = StageCatalog.GetBaseSpeed(stage, stageWave)
+    pendingSpawn.remaining = count
+    pendingSpawn.timer = 0
 end
 
 SpawnWave = function(availableSlots)
@@ -1103,62 +1054,47 @@ SpawnWave = function(availableSlots)
     if not plan or plan.wave ~= wave then plan = PlanWave(wave) end
     nextWavePlan = nil
 
-    if plan.kind == "elite" or plan.kind == "boss" then
+    if plan.kind == "elite" then
         local enemy = SpawnSpecialEnemy(plan)
         if enemy then
-            if enemy.isElite then SpawnEliteEscorts(plan, availableSlots or 1) end
+            ReleaseEscortVolley(plan)
             Emit("wave_started", {wave = wave, stage = stage, stageWave = stageWave,
-                kind = plan.kind, aircraftKey = plan.aircraftKey, isBoss = enemy.isBoss})
-            print("[Game] stage " .. stage .. " wave " .. stageWave .. " " .. plan.kind
-                .. " spawned: " .. plan.aircraftKey)
+                kind = "elite", aircraftKey = plan.aircraftKey, isBoss = false})
+            print("[Game] stage " .. stage .. " wave " .. stageWave .. " elite spawned: "
+                .. plan.aircraftKey)
         end
         return
     end
 
+    if plan.kind == "boss" then
+        -- v0.13.26：Boss 不再冻结本波；从屏幕外较远处飞入（SpawnSpecialEnemy 处理避让），
+        -- 不把已在场的敌机顶到天上，也不做瞬移。
+        local enemy = SpawnSpecialEnemy(plan)
+        if enemy then
+            Emit("wave_started", {wave = wave, stage = stage, stageWave = stageWave,
+                kind = "boss", aircraftKey = plan.aircraftKey, isBoss = true})
+            print("[Game] stage " .. stage .. " wave " .. stageWave .. " boss spawned: "
+                .. plan.aircraftKey)
+        end
+        return
+    end
+
+    -- 普通波：登记本波参数，由 SpawnNextNormalEnemy 按错峰间隔逐架放出（第一架立即入场）。
     local count, baseSpeed, brickHp = GetWaveParams(wave)
     count = math.min(count, availableSlots or count)
-    local brickSize = GetBrickSize(wave)
     local aircraftKey = plan.aircraftKey
     if not AircraftData[aircraftKey] then
         print("[Game] WARNING: empty aircraft pool")
         return
     end
-    local aircraftWidth, aircraftHeight = GetAircraftSize(aircraftKey, brickSize)
-    local formationKind = (availableSlots and count < plan.count)
-        and PickFormation(wave, count, aircraftKey)
-        or (plan.formation or PickFormation(wave, count, aircraftKey))
-    local slots, usedKind = ComputeFormationSlots(formationKind, count, aircraftWidth, aircraftHeight)
-    LiftSlotsOffExisting(slots, aircraftWidth, aircraftHeight)
-
-    local lockSway = 10
-    local lockFreq = 0.34
-    if usedKind == "swarm" then
-        lockSway = 16
-        lockFreq = 0.55
-    elseif usedKind == "stream" then
-        lockSway = 6
-        lockFreq = 0.22
-    end
-
-    local spawned = 0
-    for i = 1, #slots do
-        local slot = slots[i]
-        local enemy = CreateEnemy(aircraftKey, slot.x, slot.y, brickSize, brickHp, baseSpeed, {
-            swayAmp = lockSway,
-            swayFreq = lockFreq,
-            phase = 0,
-        })
-        if enemy then
-            enemy.formation = usedKind
-            veggies[#veggies + 1] = enemy
-            spawned = spawned + 1
-        end
-    end
-
-    Emit("wave_started", {wave = wave, stage = stage, stageWave = stageWave,
-        kind = "normal", formation = usedKind, aircraftKey = aircraftKey})
-    print("[Game] stage " .. stage .. " wave " .. stageWave .. " spawned " .. spawned
-        .. " " .. aircraftKey .. " in " .. usedKind)
+    pendingSpawn.key = aircraftKey
+    pendingSpawn.kind = "normal"
+    pendingSpawn.brickSize = GetBrickSize(wave)
+    pendingSpawn.hp = brickHp
+    pendingSpawn.speed = baseSpeed
+    pendingSpawn.remaining = count
+    pendingSpawn.timer = 0
+    SpawnNextNormalEnemy()
 end
 
 -- 碰撞区域设计：圆形弹珠对单个方形砖块。
@@ -2782,6 +2718,14 @@ function Game.Update(dt)
     if gameState ~= "playing" then return end
     UpdateEnemies(dt)
     if gameState ~= "playing" then return end
+    -- v0.13.26：同波错峰生成——本波还没放完时按间隔逐架放出（精英护航同机制）。
+    if pendingSpawn.remaining > 0 then
+        pendingSpawn.timer = pendingSpawn.timer - dt
+        if pendingSpawn.timer <= 0 then
+            SpawnNextNormalEnemy()
+            if gameState ~= "playing" then return end
+        end
+    end
     UpdateReload()
     UpdateWaveLogic(dt)
 end
