@@ -3,6 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.28（**常驻通用卡重做：改作用对象，让关1 就有用**；承接 v0.13.28 分裂车自动解锁）：
+  - **用户原话**「通用卡（常驻）大类的用处均过低了」→ 澄清后为「这些数值在第一关等低难度没有明显帮助」，并选定**「改作用对象」**方向。
+  - **根因（量化）**：关1~3 砖块 hp=1（`GetBrickHp` 关1=1、每 3 关 +1），越线伤害 = `max(1, ceil(行数*0.5) + lineDamageBonus)`——四张常驻卡的旧数值**作用在关1 不存在的变量上**：`damage +1` 对 1 血砖块纯溢出；`repair 回血 25` 玩家几乎不掉血、无处可用；`armor -1` 被单行越线的 `max(1,…)` 下限完全钳掉；`glass_cannon +2 伤害` 同样溢出而惩罚永久累积。
+  - **重做（`Game.lua`，只改规则层，机制换挂点）**：①`damage` 穿甲弹头 = 伤害 +1 **且每击碎一块额外 +1 经验**（`brickXpFlat`，与砖块血量无关，关1 立刻加速升级）；②`repair` 前线维修 = **生命上限 +12 且立即回 12**（`maxHpBonus` 并入 `GetMaxBaseHp`，永久收益，不再空过一轮）；③`armor` 装甲强化 = **受创 -20%/级（百分比，`armorReduce`）+ 零件产出 +8%/级（`partsMul`）**（百分比对单行也生效、零件与难度无关，上限 2→3）；④`glass_cannon` 玻璃巨炮 = 伤害 +2→**+3** 且追加**发射初速 +10%/级（`launchSpeedMul`）**。
+  - **新增 5 个 `BALL_TUNING` 字段**：`armorReduce`/`partsMul`/`launchSpeedMul`/`brickXpFlat`/`maxHpBonus`。`partsMul` 在四处产出点统一乘（击碎/清机/过波/关卡结算）；`launchSpeedMul` 在 `LaunchMarble` 乘进初速；`brickXpFlat` 在 `EjectBrick` 并入 `GainXp`；`armorReduce` 在越线结算做四舍五入减伤再 `max(1,…)`。
+  - **浮点防线（必读）**：`partsMul` 让 `partsEarned` 变**浮点**，而渲染层用 `%d` 格式化 `runParts`（本项目「HUD 整数格式契约」踩过浮点崩帧）→ `GetRunParts`/`SettleParts`/快照 `partsEarned` 三处出口一律 `math.floor`；探针断言 `math.type(runParts)=="integer"`。
+  - **⚠️ 前向引用（AB-100 同族，LSP 抓到）**：`repair` 卡的 `apply` 闭包要读 `GetMaxBaseHp`，而该函数定义在卡池之后 → 必须把 `local function GetMaxBaseHp` 改为**前向声明 `local GetMaxBaseHp` + 后置赋值**，否则闭包解析成全局 nil。
+  - **⚠️ 复位顺序**：`BALL_TUNING.maxHpBonus` 必须在 `ResetGame` 的 `baseHp = GetMaxBaseHp()` **之前**清零，否则上一局的维修上限会带进新局。
+  - **验证**：官方多人 build+预览上传 ✅；LSP 0 Error；探针 `probe_common` **7/7 PASS**（关1 砖块 hp=1 基线；四张卡各实测 `brickXpFlat=1`/`partsMul=1.08`/`maxHp 100→112`/`launchSpeedMul=1.10`；零件在 `partsMul` 下仍为整数 `runParts=256`；装甲减伤实测 **32 行越线 16→13**）；回归 `probe_growth` PASS（暴击/经验路径，顺手把其 v0.13.16-talent 前的陈旧血量断言更新为新契约）；真渲染 `probe_render` 零 Lua/overlay 错误、截图非空。BUILD_VERSION/大厅 **0.13.28**（版本号由并发会话推进，本批未动）。
+  - ⚠️ **教训（AB-172）**：数值卡「有没有用」不能只看数值大小，要问**它作用的那条变量在低难度是否存在**——1 血砖块上的「伤害 +N」、不掉血时的「回血/减伤」数学上恒为 0 收益。增强这类卡要么改底层数值（提高砖块血量/去掉伤害下限），要么**改作用对象**（挂到经验/上限/零件/弹速等与难度无关的量上）；只调大数字会白做一轮。
 - 版本: 0.13.28（**分裂车天赋节点开局也自动解锁**；承接 v0.13.27）：
   - **用户要求**「分裂车天赋树玩家一开始也解锁」→ 把分裂车的 1 阶节点 `normal_1`（「解锁分裂车 / 允许分裂车在局内出场」）并入开局自动拥有。
   - **改动（`TalentCatalog.lua` 一处）**：`AUTO_OWNED` `{ "speed_1" }` → **`{ "speed_1", "normal_1" }`**；`client_main.lua` 注释里的「初始分裂车」订正为「初始车」（该处调用与逻辑零改动，`EnsureAutoOwnedTalents` 本就遍历整个 `AUTO_OWNED`）。BUILD_VERSION/大厅 →0.13.28。
@@ -694,6 +704,13 @@
 - ⚠️ **`batch_generate_images` 会给草案也生成 `.meta`，且清理时容易漏**（v0.13.24）：生成后 `mv *.png` 出 assets 时，同名 `*.png.meta` **不会跟着走**（或跟走了但草稿目录里留下），assets 里会残留 `digit_x_<时间戳>.png.meta` 这类孤儿。清理时用 `rm assets/image/<batch>_*_2026*.png.meta` 一并扫掉，再确认 `ls assets/image/<batch>_*` 为空。
 
 ## 避雷清单
+
+## 本批次新增避雷（v0.13.28 常驻通用卡重做：改作用对象）
+- 🔴 **AB-172：数值卡「有没有用」要问「它作用的变量在低难度是否存在」（v0.13.28 用户点名）**：用户原话「通用卡（常驻）大类的用处均过低了」，澄清为「这些数值在第一关等低难度没有明显帮助」。量化后四张卡**全部作用在关1 不存在的变量上**：关1~3 砖块 hp=1 →「伤害 +N」纯溢出；玩家几乎不掉血 →「回血 / 减伤」无从发挥；单行越线伤害被 `max(1, ceil(行数*0.5)+bonus)` 钳成 1 → 固定 -1 减伤连 1 都减不掉。**结论：只调大数字会白做一轮**，必须 ①改底层数值（提高砖块血量/去掉伤害下限）或 ②**改作用对象**（挂到经验/生命上限/零件产出/发射初速等与难度无关的量上）。本批按用户选定走 ②。（击碎，飞机大战/v0.13.28）
+- ⚠️ **「加百分比/加产出」类改动要顺手查浮点渗漏（v0.13.28 实测）**：`partsMul`（×1.08）让 `partsEarned` 变成**浮点**，而渲染层用 `string.format("… ×%d", runParts)` 格式化（本项目「HUD 整数格式契约」踩过浮点崩帧）。**做法**：所有对外出口（`GetRunParts`/`SettleParts`/快照字段）一律 `math.floor`，并在探针里断言 `math.type(v) == "integer"`。凡在规则层引入「倍率/百分比」的改动都要走这一步。
+- ⚠️ **卡池闭包引用的函数必须前向声明（v0.13.28，AB-100 同族）**：`repair` 卡的 `apply` 闭包读 `GetMaxBaseHp`，而该函数定义在 `UPGRADE_POOL` 之后 → 闭包解析成**全局 nil**（LSP 报 `undefined-global`，运行时会崩）。修法同 AB-100：`local GetMaxBaseHp` 前向声明 + 后置赋值。**新增卡池卡且 `apply` 读任何规则函数/变量时，先确认其声明在卡池之前**。
+- ⚠️ **`BALL_TUNING` 新增字段的复位必须早于依赖它的初始化（v0.13.28）**：`repair` 的永久上限写在 `BALL_TUNING.maxHpBonus`，而 `ResetGame` 里 `baseHp = GetMaxBaseHp()` 用的是它 → 清零必须放在该行**之前**，否则上一局的维修上限带进新局。凡是「开局初始化会读的 `BALL_TUNING` 字段」，复位一律前移到 `ResetGame` 开头。
+- ⚠️ **改玩法数值后要跑一次真渲染冒烟（v0.13.28）**：`probe_common`（纯规则）能证明数值对，但证明不了 `%d`/绘制路径不崩——必须再跑 `probe_render`（菜单→选关→战斗→发射）确认零 Lua/overlay 错误。规则探针 + 真渲染冒烟是两条独立的验收线。
 
 ## 本批次新增避雷（v0.13.28 分裂车天赋自动解锁）
 - ⚠️ **「开局自动拥有的天赋节点」是一张白名单，加车就加一行（v0.13.28）**：`TalentCatalog.AUTO_OWNED` 控制「哪些节点开局就是已解锁」。v0.13.19 初始车由分裂车改加速车时它被设成 `{ "speed_1" }`，于是**分裂车的「允许局内出场」节点变成要花零件买**。用户要求「分裂车天赋树玩家一开始也解锁」→ 加 `"normal_1"` 即可（`EnsureAutoOwnedTalents` 本就遍历整表，调用点零改动）。**加新初始车/新自动节点时，只需改这一处**，别去改 `client_main` 的调用或 `Game` 的门控。

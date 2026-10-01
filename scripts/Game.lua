@@ -124,8 +124,16 @@ local BALL_TUNING = {
     splitBonus = 0,
     speedMul = 1.0,
     iceBonus = 0,
-    -- 越线整体伤害净加成：在“越线行数 × ceil(0.5)”合计后一次性附加（装甲 -1 / 玻璃大炮 +1）。
+    -- 越线整体伤害净加成：在“越线行数 × ceil(0.5)”合计后一次性附加（玻璃大炮 +1）。
     lineDamageBonus = 0,
+    -- v0.13.28 通用卡重做：装甲强化的百分比减伤（0..0.45，结算时四舍五入并保证最低 1）。
+    armorReduce = 0,
+    -- v0.13.28 通用卡重做：装甲强化的零件产出倍率（1 + 0.08/级）。
+    partsMul = 1.0,
+    -- v0.13.28 通用卡重做：玻璃巨炮的发射初速倍率（1 + 0.10/级）。
+    launchSpeedMul = 1.0,
+    -- v0.13.28 通用卡重做：穿甲弹头每击碎一块的额外经验（+1/级）。
+    brickXpFlat = 0,
     xpMul = 1.0,
 }
 
@@ -224,6 +232,9 @@ local partsBoostTime = 0
 
 local UnlockBallType -- 解锁卡先于补弹函数声明，应用时再调用规则层函数
 local IncreaseAmmo   -- 「弹药扩容」同上：卡池先定义，apply 时再调用规则层函数
+-- v0.13.28：repair 卡的 apply 闭包会读生命上限；该函数定义在卡池之后，
+-- 必须前向声明，否则闭包解析成全局 nil（AB-100 同族）。
+local GetMaxBaseHp
 
 -- v0.13.5 天赋树派生状态：必须在 UPGRADE_POOL 之前声明——repair 卡的 apply 闭包会读血量加成。
 ---@type table<string, boolean>
@@ -245,10 +256,16 @@ local talentProvider = nil     -- 编排层注入；ResetGame 时拉取最新解
 
 ---@type UpgradeDef[]
 local UPGRADE_POOL = {
-    { id = "damage", name = "穿甲弹头", desc = "所有弹珠伤害 +1",
-      detail = "弹珠伤害 +1，打装甲更快。",
-      weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1 伤害",
-      apply = function(stacks) BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1 end },
+    -- v0.13.28 通用卡重做（用户点名「常驻通用卡在关1 毫无帮助」）：
+    -- 旧 damage「伤害 +1」在关1~3（砖块 1 血）是纯溢出、repair/armor 在几乎不掉血的前期空转。
+    -- 四张卡改为挂在**低难度也真实存在的变量**上：经验 / 生命上限 / 零件产出 / 发射初速。
+    { id = "damage", name = "穿甲弹头", desc = "所有弹珠伤害 +1，击碎额外 +1 经验",
+      detail = "弹珠伤害 +1，每击碎一块多 +1 经验。",
+      weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1 伤害 / +1 经验",
+      apply = function(stacks)
+          BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1
+          BALL_TUNING.brickXpFlat = BALL_TUNING.brickXpFlat + 1
+      end },
     { id = "giant", name = "重型化", desc = "巨型车贯穿范围 +1 格",
       detail = "巨型车爆炸范围 +1 格。",
       weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 格", ballType = "giant",
@@ -265,25 +282,36 @@ local UPGRADE_POOL = {
       detail = "冰冻时间 +1.2 秒。",
       weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+1.2 秒", ballType = "ice",
       apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
-    { id = "repair", name = "前线维修", desc = "立即恢复 25 点基地生命",
-      detail = "立刻回 25 点基地生命。",
-      weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+25 生命",
-      apply = function(stacks) baseHp = math.min(BASE_HP + talentMaxHpBonus, baseHp + 25) end },
-    { id = "armor", name = "装甲强化", desc = "防线受创伤害 -1（最低 1）",
-      detail = "每次被撞少掉 1 点血。",
-      weight = 1, rarity = "common", maxStacks = 2, tradeoff = false, value = "-1 受创",
-      apply = function(stacks) BALL_TUNING.lineDamageBonus = BALL_TUNING.lineDamageBonus - 1 end },
+    -- v0.13.28：改为「生命上限 +12 且立即回 12」——低难度不掉血时也有**永久**收益（不再是空过一轮）。
+    { id = "repair", name = "前线维修", desc = "生命上限 +12，并立即回复 12",
+      detail = "生命上限永久 +12，立刻回 12 点。",
+      weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+12 上限 / +12 生命",
+      apply = function(stacks)
+          BALL_TUNING.maxHpBonus = BALL_TUNING.maxHpBonus + 12
+          baseHp = math.min(GetMaxBaseHp(), baseHp + 12)
+      end },
+    -- v0.13.28：改为「百分比减伤 + 零件产出 +8%/级」——关1 单行越线伤害被钳成 1，旧 -1 减伤完全无效；
+    -- 百分比减伤在单行也会生效，且零件加成与难度无关、第一关就看得见。
+    { id = "armor", name = "装甲强化", desc = "防线受创 -20%，零件产出 +8%",
+      detail = "每次受创少 20%，零件 +8%。",
+      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "-20% 受创 / +8% 零件",
+      apply = function(stacks)
+          BALL_TUNING.armorReduce = BALL_TUNING.armorReduce + 0.20
+          BALL_TUNING.partsMul = BALL_TUNING.partsMul + 0.08
+      end },
     { id = "xp", name = "数据回收", desc = "经验获取 +20%",
       detail = "经验 +20%，升级更快。",
       weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+20% 经验",
       requiresCard = "xp",
       apply = function(stacks) BALL_TUNING.xpMul = BALL_TUNING.xpMul + 0.2 end },
     -- WO-09/P5 抉择型：同时改正负规则变量，高风险高回报（仍只改 BALL_TUNING/baseHp）。
-    { id = "glass_cannon", name = "玻璃巨炮", desc = "伤害 +2 但越线伤害 +1",
-      detail = "伤害 +2，但被撞多掉 1 点。",
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "伤害+2 / 受创+1",
+    -- v0.13.28：伤害 +2→+3，并追加「发射初速 +10%/级」——低难度砖块 1 血时，伤害溢出但**弹速**立刻有感。
+    { id = "glass_cannon", name = "玻璃巨炮", desc = "伤害 +3、弹速 +10%，但越线伤害 +1",
+      detail = "伤害 +3、弹速 +10%，但被撞多掉 1 点。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "伤害+3 / 弹速+10% / 受创+1",
       apply = function(stacks)
-          BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 2
+          BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 3
+          BALL_TUNING.launchSpeedMul = BALL_TUNING.launchSpeedMul * 1.10
           BALL_TUNING.lineDamageBonus = BALL_TUNING.lineDamageBonus + 1
       end },
     { id = "overclock", name = "超载核心", desc = "加速车加速度 +15%，基地 -8",
@@ -592,9 +620,9 @@ function Game.SetTalents(owned)
         count, talentMaxHpBonus, talentPartsPct, cardCount, ballCount))
 end
 
--- 本局基地生命上限 = 基础 + 天赋血量加成。
-local function GetMaxBaseHp()
-    return BASE_HP + talentMaxHpBonus
+-- 本局基地生命上限 = 基础 + 天赋血量加成 + 局内「前线维修」的永久上限加成。
+GetMaxBaseHp = function()
+    return BASE_HP + talentMaxHpBonus + BALL_TUNING.maxHpBonus
 end
 
 -- 供界面读取：当前注入天赋派生出的加成摘要（只读）。
@@ -622,6 +650,13 @@ ResetGame = function(startStage)
     -- v0.13.5：每次开局重新拉取天赋解锁集合，派生加成在本局生效。
     if talentProvider then Game.SetTalents(talentProvider()) end
     score = 0
+    -- v0.13.28：局内通用卡字段必须在 baseHp 之前复位——「前线维修」的永久上限加成
+    -- 写在 BALL_TUNING.maxHpBonus 里，若晚于 GetMaxBaseHp 复位，会把上一局的上限带进新局。
+    BALL_TUNING.armorReduce = 0
+    BALL_TUNING.partsMul = 1.0
+    BALL_TUNING.launchSpeedMul = 1.0
+    BALL_TUNING.brickXpFlat = 0
+    BALL_TUNING.maxHpBonus = 0
     baseHp = GetMaxBaseHp()
     stage = startStage
     stageWave = 1
@@ -1223,8 +1258,10 @@ EjectBrick = function(enemy, brick)
     brick.ejected = true
     score = score + data.score
     bricksBroken = bricksBroken + 1
-    partsEarned = partsEarned + PARTS_PER_BRICK * (partsBoostTime > 0 and 2 or 1)
-    GainXp(XP_PER_BRICK)
+    -- v0.13.28：「装甲强化」的零件产出倍率在产出点统一结算（击碎/清机/过波/结算同源）。
+    partsEarned = partsEarned + PARTS_PER_BRICK * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
+    -- v0.13.28：「穿甲弹头」每级额外 +1 经验，低难度也能立刻加速升级。
+    GainXp(XP_PER_BRICK + BALL_TUNING.brickXpFlat)
     EmitBrickShatterFx(enemy, brick, x, y, data.score)
     return true
 end
@@ -1425,7 +1462,8 @@ RollUpgradeChoices = function(opts)
             local stacks = upgradeStacks[u.id] or 0
             if CanOfferUpgrade(u) and not chosenThisRoll[u.id] then
                 local w = u.weight
-                if u.id == "repair" and stacks >= 4 then w = w * 0.4 end
+                -- v0.13.28：「前线维修」现在给永久生命上限，不再随叠层贬值，只在很高层数轻微降权。
+                if u.id == "repair" and stacks >= 8 then w = w * 0.6 end
                 if u.id == "xp" and stacks >= 4 then w = w * 0.5 end
                 avail[#avail + 1] = {u = u, w = w}
             end
@@ -2042,7 +2080,8 @@ local function LaunchMarble(dx, dy, power)
     -- WO-08/P7：power 为归一化蓄力 (0..1)，映射到 [powerMin, powerMax] 初速比例。
     local powerRatio = math.max(0, math.min(1, power or 0))
     local speedScale = BALANCE.powerMin + (BALANCE.powerMax - BALANCE.powerMin) * powerRatio
-    local speed = def.speed * speedScale
+    -- v0.13.28：「玻璃巨炮」的发射初速倍率——低难度砖块 1 血时伤害是溢出，但更快的弹道立刻有感。
+    local speed = def.speed * speedScale * BALL_TUNING.launchSpeedMul
     activeBall.vx = -dx / length * speed
     activeBall.vy = -dy / length * speed
     activeBall.speed = speed
@@ -2534,7 +2573,13 @@ UpdateEnemies = function(dt)
     -- 每行基础伤害 0.5 向上取整（=每行 1）；加成只在整体合计后附加一次，最终不低于 1。
     if #breachedRows > 0 and gameState ~= "gameover" then
         local baseDamage = math.ceil(#breachedRows * BRICK_BASE_DAMAGE)
-        local totalDamage = math.max(1, baseDamage + BALL_TUNING.lineDamageBonus)
+        -- v0.13.28：「装甲强化」由固定 -1 改为**百分比减伤**——旧 -1 在单行越线（伤害被钳成 1）时完全无效；
+        -- 百分比对单行也生效（1 行 × 20% 四舍五入为 0，故再用 max(1,…) 保住下限 1，不多减）。
+        local mitigated = baseDamage + BALL_TUNING.lineDamageBonus
+        if BALL_TUNING.armorReduce > 0 then
+            mitigated = math.floor(mitigated * (1 - BALL_TUNING.armorReduce) + 0.5)
+        end
+        local totalDamage = math.max(1, mitigated)
         -- 护盾优先吸收，吸完还有剩才扣血。
         if baseShield > 0 then
             local absorbed = math.min(baseShield, totalDamage)
@@ -2574,7 +2619,7 @@ UpdateEnemies = function(dt)
             end
             if not enemy.breached or (enemy.isBoss and bossDefeated) then
                 score = score + 50
-                partsEarned = partsEarned + PARTS_PER_CLEAR * (partsBoostTime > 0 and 2 or 1)
+                partsEarned = partsEarned + PARTS_PER_CLEAR * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
                 runAircraft[enemy.aircraftKey] = true
                 clearStreak = clearStreak + 1
                 -- 连续清空的连击经验加成，鼓励连续压制。
@@ -2637,7 +2682,7 @@ UpdateWaveLogic = function(dt)
         if bossDefeated then
             stageResult = ComputeStageResult()
             score = score + stageResult.bonusScore
-            partsEarned = partsEarned + stageResult.bonusParts * (partsBoostTime > 0 and 2 or 1)
+            partsEarned = partsEarned + stageResult.bonusParts * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
             if score > highScore then highScore = score end
             nextWavePlan = nil
             aiming = false
@@ -2674,7 +2719,7 @@ UpdateWaveLogic = function(dt)
 
     stageWave = stageWave + 1
     wave = wave + 1
-    partsEarned = partsEarned + PARTS_PER_WAVE * (partsBoostTime > 0 and 2 or 1)
+    partsEarned = partsEarned + PARTS_PER_WAVE * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
     SpawnWave(availableSlots)
     waveCooldown = StageCatalog.GetInterval(stage, stageWave)
     EnsureNextWavePlan()
@@ -2905,7 +2950,8 @@ end
 ---@return integer 当前阶段待结算或已结算的零件
 function Game.GetRunParts()
     if partsSettled then return lastSettledParts end
-    return math.max(0, partsEarned - settledParts)
+    -- v0.13.28：partsEarned 可能因「装甲强化」的 partsMul 而是浮点；展示/入库一律取整。
+    return math.floor(math.max(0, partsEarned - settledParts))
 end
 
 -- 跨局统计只认增量；复活后再次死亡不重复计「完成一局」与旧砖块。
@@ -2924,7 +2970,8 @@ end
 function Game.SettleParts(multiplier)
     if partsSettled then return 0 end
     partsSettled = true
-    local delta = math.max(0, partsEarned - settledParts)
+    -- v0.13.28：先取整到整数再算百分比加成，避免 partsMul 的浮点渗进入库值。
+    local delta = math.floor(math.max(0, partsEarned - settledParts))
     settledParts = partsEarned
     -- v0.13.5：天赋树通用线路的结算零件百分比加成（在广告倍数前叠加）。
     local pctBonus = math.floor(delta * talentPartsPct / 100 + 0.5)
@@ -3071,6 +3118,11 @@ function Game.GetSnapshot()
     s.bricksBroken = bricksBroken
     s.concurrentCount = #veggies    -- WO-12/P6：当前同屏编队数（HUD 指标）
     s.brickDmg = math.max(1, math.ceil(BRICK_BASE_DAMAGE) + BALL_TUNING.lineDamageBonus)
+    -- v0.13.28：局内通用卡的派生读数（只读标量，供 UI 与校验；不新建 table 以免每帧 GC）。
+    s.brickXpFlat = BALL_TUNING.brickXpFlat
+    s.partsMul = BALL_TUNING.partsMul
+    s.armorReduce = BALL_TUNING.armorReduce
+    s.launchSpeedMul = BALL_TUNING.launchSpeedMul
     -- P11：已激活词条（只读列表，供 HUD 展示，不反向写规则）。
     local words = {}
     for _, id in ipairs(WORD_IDS) do
@@ -3110,7 +3162,7 @@ function Game.GetSnapshot()
     s.canRevive = (gameState == "gameover") and not reviveUsed
     s.reviveUsed = reviveUsed
     -- v0.11.0 商业化：局内零件与升级面板变现状态（渲染层只读）。
-    s.partsEarned = partsEarned
+    s.partsEarned = math.floor(partsEarned)
     local aircraftList = {}
     for key in pairs(runAircraft) do aircraftList[#aircraftList + 1] = key end
     s.runAircraft = aircraftList
