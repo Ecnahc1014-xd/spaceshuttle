@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.26（出怪梯度重做：数量起点 1 架 + 同波逐架飞出 + 波间隔改逐关收紧 + 预告写明远方生成）：
+  - **用户三点要求**（承接「第一关这么多，第七关就满了」的否决）：①普通波起点「比 2 更低」→ **1 架**，且「允许不到 12」；②「出怪间隔维度」= **同波内一架接一架飞出**，关1 间隔最长、之后逐关收紧，**任意两架初始至少隔 1 格**；③「出怪下方提示的怪不会立刻抵达屏幕，请写明在远方生成」。
+  - **`StageCatalog.lua`**：`GetNormalCount` 起点 `2→1`（关1 1/1/2/2/3/3、关7 4/4/5/5/6/6、关15 9/9/10/10/11/11，**不触 12**）；`GetInterval` **方向反转**（旧版随关卡变长 15.5→25.1s 是反的 → 关1 22s 最长、每关 -0.9s、关内每波 -0.3s、下限 7s）；新增 `GetSpawnInterval`（关1 2.8s → 关13 起 1.12s）；`GetEscortCount` 改为前 3 关 0、关4 起每 3 关 +1 封顶 3。
+  - **`Game.lua`（同波错峰生成）**：新增 `pendingSpawn` 状态表 + `SpawnNextNormalEnemy`（逐架放出、与在场敌机隔 1 格、满场/无空位则推迟绝不叠放）+ `ReleaseEscortVolley`（护航同机制）。普通波 `SpawnWave` 只登记参数并放第一架；`Game.Update` 在 `UpdateEnemies` 后按 `pendingSpawn.timer` 逐架放出。**删掉** `SpawnEliteEscorts`/`ComputeFormationSlots`/`LiftSlotsOffExisting`（一次性编队已废弃，死代码清理）。`FleetPositionOccupied` 加可选 `gap` 参数（同波传 `brickSize` 强制 1 格）。Boss 生成改「有人在位就从更远方生成」而非 `while` 上抬（消除「Boss 到场又瞬移头顶」）。
+  - **`Scene3DBackend.lua`**：`DrawNextWavePreview` 面板 76→86 高、图形区压缩，新增「**自远方飞入**」一行说明（敌机在屏幕上沿之外生成、下落一段才进画面）。
+  - **验证**：官方多人 build+预览上传 ✅；LSP 0 Error（21 文件 810 诊断）；真渲染探针零 Lua/overlay 错误；规则探针 `probe_grad`/`probe_gap` 实测**生成时刻最小间距**：关1 120.85、关12 14.60（均 ≥ 一格 14）；数量/波间隔/出怪间隔断言全 true。BUILD_VERSION/大厅 →0.13.26。
+  - ⚠️ **运行时抓到 LSP/build 都查不到的编译期上限**：给 `Game.lua` 加 7 个顶层 local 后 **超 Lua 200 上限** → `LoadChunk failed: too many local variables`（整模块加载失败=黑屏）。改为收进 `pendingSpawn` 一张表。见 AB-166（大文件顶层 local 硬上限）。
+  - ⚠️ **间隔下限必须按最慢机型估算**：`CurrentSpawnInterval` 的下界用**基准速度 × 0.42 × 最慢 descentMul(0.66)**，用基准速度会在高关卡漏掉下界、最慢那架来不及拉开就与后一架同格。
 - 版本: 0.13.25（尾迹不可见的**真根因**：`CustomGeometry:Clear()` 会清空材质槽；提交 1362c85）：
   - **用户报「特效不可见」**。几何早已验证提交（54 顶点）、节点也已启用，于是把探针扩到**读几何的材质**，一击命中：
     `speed: enabled=true numVert=54 **mat=false**` —— **几何有顶点但没有材质** → 渲染器无从绘制。
@@ -675,6 +683,14 @@
 - ⚠️ **`batch_generate_images` 会给草案也生成 `.meta`，且清理时容易漏**（v0.13.24）：生成后 `mv *.png` 出 assets 时，同名 `*.png.meta` **不会跟着走**（或跟走了但草稿目录里留下），assets 里会残留 `digit_x_<时间戳>.png.meta` 这类孤儿。清理时用 `rm assets/image/<batch>_*_2026*.png.meta` 一并扫掉，再确认 `ls assets/image/<batch>_*` 为空。
 
 ## 避雷清单
+
+## 本批次新增避雷（v0.13.26 出怪梯度重做 + 同波错峰生成）
+- 🔴 **AB-169：给主块加顶层 local 前必须数「Lua 200 上限」（v0.13.26 又踩一次，AB-154 同族）**：给 `Game.lua` 加了 7 个模块级 local（错峰生成状态）后，运行时直接 `Load Buffer failed for Game.lua: [string "Game"]:2581: too many local variables (limit is 200)` → **整模块加载失败、游戏全黑**。⚠️ **LSP 与官方 build 都只查语法、不查这条编译期上限，只有真运行时暴露**。修法：把同族变量**收进一张表**（`local pendingSpawn = { remaining=0, timer=0, ... }`），只占 1 个槽。**纪律**：给 `Game.lua`/`Scene3DBackend.lua` 这类巨型文件加顶层 local 前先数槽位（脚本统计法见 v0.13.18 避雷），逼近上限就收表；**新增状态优先设计成一张表，而不是一组散装 local**。
+- ⚠️ **同波错峰生成必须处理「满场/无空位」而不是强行落位（v0.13.26 探针实测）**：关12 探针在敌机堆到 12 架时，找空位的循环用尽后仍 `CreateEnemy` → **两架生成在同一位置（实测间距 -124，重叠）**。修法：`#veggies >= MAX_FLEET` 直接推迟；循环后仍占用也推迟（`pendingSpawn.timer = 0.5~1.0`）。**逐架生成的下限判定要按最慢机型**：间隔下界用 `基准速度 × 0.42 × 最慢 descentMul`，用基准速度会漏下界。
+- ⚠️ **「出怪间隔」两个维度别混（v0.13.26）**：①**波与波之间**的冷却（`GetInterval`，旧版随关卡变长=越往后越简单，方向反了，已改为逐关收紧）；②**同波内逐架飞出**的间隔（`GetSpawnInterval`，关1 最长逐关收紧）。用户说的「出怪间隔维度」是后者，但两者都要符合「越往后越紧张」。⚠️ **一次性编队 `ComputeFormationSlots`/`LiftSlotsOffExisting` 已废弃删除**——改逐架生成后它们无调用点，属死代码。
+- ⚠️ **敌机「生成但看不见」是预期，要在 UI 写明（v0.13.26 用户要求）**：敌机在屏幕上沿之外（`y = -102 - 机高 - 24`）生成、下落一段才进画面，玩家会以为没刷出来。预告面板加「自远方飞入」一行说明即可，**不要去改生成位置让它一生成就可见**（那会破坏「从屏外平滑进入」的既有契约）。
+
+- 🔴 **AB-169：逐架/错峰生成必须处理「满场/找不到空位」，不能强行落位（v0.13.26 探针实测重叠）**：把「一波一次性编队」改成「逐架飞出」后，探针在关12 敌机堆到 12 架时发现**两架生成在同一位置（实测间距 -124，重叠）**——找空位的循环用尽后代码仍照常 `CreateEnemy`。规则：生成前先判 `#veggies >= MAX_FLEET` 直接推迟；找空位循环结束**再判一次**，仍占用就推迟（本项目 `pendingSpawn.timer = 0.5~1.0`），**任何情况下都不允许为了「本波计划数」而叠放**。配套：错峰间隔的**下界要按最慢的那一架**估（本项目 `基准速度 × 0.42 × 最慢 descentMul(0.66)`）——用基准速度算会在高关卡漏掉下界，慢机来不及拉开就与后一架同格。（击碎，飞机大战/v0.13.26）
 
 ## 本批次新增避雷（v0.13.21 核验：XHR{} 复发上报 = 陈旧预览包，非代码问题）
 - ⚠️ **`Error processing XMLHttpRequest response: {}` 复发上报先核验四证，别重复改代码（v0.13.21 实测）**：v0.13.18 已删 official-res 源修过此错，但再次收到 78 次上报。核验结论=**陈旧预览构建的残留**，当前代码与配置均干净，**无需改代码**。四证：①`.project/settings.json` sources 无 official-res（当前只有 engine/engine-res）；②`.build/asset_adopt.json` = `{"official_uuids":[],"asset_paths":[]}` 空；③`dist/latest.json` 指向的构建 manifest `sources=['engine-res']`、无 `pinned`；④报错头部构建哈希 `52ee01a8/0c6c1c48` **不在任何本地产物里**（本地最新是另一套 client/server 哈希）→ 上报来自更早的预览构建。结论：玩家/审核当时加载的是旧包。

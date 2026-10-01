@@ -8,9 +8,9 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.13.25
-简述：普通波按真实普通波序号缓慢增长：关1 2/2/3/3/4/4、关7 5/5/6/6/7/7、关15 10/10/11/11/12/12；12架同屏上限到关15后段才触及。特殊波也各自缓慢成长；HP、速度、间隔不变。具体公式与验证见最近变更。正式名「击碎，飞机大战」。
-最后巩固：2026-09-30
+当前版本：0.13.26
+简述：出怪梯度重做——普通波起点降到 1 架（关1 1/1/2/2/3/3、关15 9/9/10/10/11/11，不触 12），同波内**一架接一架飞出**（关1 间隔 2.8s 最长、逐关收紧，任意两架初始≥1 格），波与波间隔**改为逐关收紧**（旧版方向反了），下一波预告面板写明「自远方飞入」。正式名「击碎，飞机大战」。
+最后巩固：2026-10-01
 
 ## 项目概况
 - 技术栈：UrhoX Lua 5.4，启用多人匹配但战斗客户端本地运行（服务端仅 IAP/钻石），raw NanoVG 模式 A（540×960 设计分辨率 + letterbox）。
@@ -98,6 +98,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.13.26（出怪梯度重做：数量起点 1 架 + 同波逐架飞出 + 波间隔逐关收紧 + 预告写明远方生成）：用户三点要求——①普通波起点「比 2 更低」且「允许不到 12」；②「出怪间隔维度」= 同波内**一架接一架飞出**，关1 间隔最长、逐关收紧，任意两架初始≥1 格；③「出怪下方提示的怪不会立刻抵达屏幕，请写明在远方生成」。改动：`GetNormalCount` 起点 2→1（关1 1/1/2/2/3/3、关7 4/4/5/5/6/6、关15 9/9/10/10/11/11，不触 12）；`GetInterval` **方向反转**（旧版随关卡变长 15.5→25.1s 是反的 → 关1 22s 最长、每关 -0.9s、下限 7s）；新增 `GetSpawnInterval`（2.8s→1.12s）；护航改前 3 关 0。`Game.lua` 加 `pendingSpawn` 状态表 + `SpawnNextNormalEnemy`/`ReleaseEscortVolley`（逐架放出、隔 1 格、满场/无空位则推迟绝不叠放），**删除** `SpawnEliteEscorts`/`ComputeFormationSlots`/`LiftSlotsOffExisting` 死代码；`FleetPositionOccupied` 加 `gap` 参数；Boss 改「有人在位就从更远方生成」。`DrawNextWavePreview` 加「自远方飞入」一行。验证：多人 build+预览、LSP 0 Error、真渲染探针零错误、`probe_gap` 实测生成时刻最小间距关1 120.85/关12 14.60（均≥一格）。⚠️ 运行时抓到 AB-169：加 7 个顶层 local 超 Lua 200 上限 → LoadChunk failed（LSP/build 都查不到）；间隔下限须按最慢机型（×0.66）估算。
 - v0.13.25（尾迹不可见**真根因**：`CustomGeometry:Clear()` 清空材质槽）：用户「特效不可见」。几何已验证提交（54 顶点）、节点已启用 → 探针扩到读材质，一击命中 `enabled=true numVert=54 mat=false`（有顶点无材质）。根因：`Clear()` 连材质槽一起清空，尾迹只在 Init 绑过一次、重建后从不重设；**敌机可见正因为每次 Clear 后都重设 SetMaterial**。修复：Commit 后重绑材质。⚠️ 此前 SetDynamic/CULL_NONE/法线/自发光各层都对，材质在 Clear 时就丢了 → 单层验证看不到。验证：复测 mat=true、零 Lua 错误、LSP 0、前向引用 0、build+预览上传。教训→AB-168。\n
 - v0.13.24（关卡号数字贴图 + 进关过渡/准备动画）：用户两点要求——「让 ai 生成各个数字的贴图用于选关界面的数字显示替代」「进入关卡的过渡和准备动画你也没做」。①**数字贴图**：nanobanana 生成 0–9 → bbox 裁切 → **按高度归一**（同高 26，防高低不齐）→ alpha 二值化 → 量化「白+轮廓」两色 → 24×32 母版 → `ui_digit_{0..9}.png`；新增 `scripts/ui/DigitFont.lua`（懒加载 + `nvgImagePatternTinted` 染色 + 逐字宽度表 + 缺图回退字体），StageSelect 节点数字改走贴图。②**进关过渡**：`Game` 加 `INTRO_SECONDS=3`/`introTimer`，`StartGameAt` 不立刻刷怪、`Update` 在 intro 期冻结玩法并 return，归零才 SpawnWave；新增 `scripts/ui/StageIntro.lua`（暗化遮罩 + 中央面板 + 大号关卡号贴图 + 倒计时条 + 跳秒 + 扫描带），Scene3DBackend 在 HUD/Dock 之后按 `introTimer>0` 调它；删原 `stage_started` 横幅。两处取舍：**不新增 gameState**（用标志位冻结，免动所有 state 分支）、**不加模块级 local**（Scene3DBackend 已 193/200，新功能各成模块）。验证：多人 build+预览、LSP 四文件 0 Error、前向引用 0、真渲染探针（intro 界面 + 选关数字贴图）零 overlay 错误。⚠️ 待 Preview：3s 时长手感、数字贴图真机清晰度。
 - v0.13.23b（加速车软性递减）：用户要求「小幅衰减」（承接 v0.13.22 去掉速度上限）。实现：`BALL_TYPES.speed` 加 `speedBoostFloor = 1.012`（下限，恒 >1 → 永远在涨）与 `speedSoftCap = 1400`；`BoostSpeedMarble` 按**从初速起算**的线性插值算倍率 `t = clamp((speed-660)/(1400-660))`、`boost = 1.06 + (1.012-1.06)*t`。⚠️ 必须从初速起算——首版用 `speed/softCap` 让初速 660 就吃一半衰减、前期变钝，已修。曲线：660→×1.06 / 1000→×1.038 / 1200→×1.025 / ≥1400→恒 ×1.012。验证：`probe_soft` 实测最高 **1762**（>softCap 1400，证明无硬上限）对比无衰减版 1912 明显压住；build+预览上传。⚠️ 软性递减 ≠ 硬上限：下限必须严格 >1，否则等于偷偷加上限。提交 162799c。

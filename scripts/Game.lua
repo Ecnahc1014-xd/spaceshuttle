@@ -949,9 +949,12 @@ local function SpawnSpecialEnemy(plan)
     local shipW, shipH = GetAircraftSize(key, brickSize)
     local x = DW * 0.5 - shipW * 0.5
     local y = -102 - shipH - 24
-    if FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) then
-        -- 有人占位 → 从更远方（屏幕上沿之上 1 格）生成，下落自然进入，不做瞬移上抬。
-        y = -102 - shipH - brickSize * 1.5
+    -- 与在场敌机至少隔 1 格（brickSize）：有人占位就往更远处挪，保证「任意两架初始≥1格」。
+    -- 特殊机是新生成的（尚未可见），往屏外更远处放不会造成「瞬移」。
+    local guard = 0
+    while FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) and guard < 200 do
+        y = y - brickSize
+        guard = guard + 1
     end
     local baseSpeed = StageCatalog.GetBaseSpeed(stage, stageWave)
     local enemy = CreateEnemy(key, x, y, brickSize,
