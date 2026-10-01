@@ -8,7 +8,7 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.13.24
+当前版本：0.13.25
 简述：普通波按真实普通波序号缓慢增长：关1 2/2/3/3/4/4、关7 5/5/6/6/7/7、关15 10/10/11/11/12/12；12架同屏上限到关15后段才触及。特殊波也各自缓慢成长；HP、速度、间隔不变。具体公式与验证见最近变更。正式名「击碎，飞机大战」。
 最后巩固：2026-09-30
 
@@ -98,7 +98,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
-
+- v0.13.25（尾迹不可见**真根因**：`CustomGeometry:Clear()` 清空材质槽）：用户「特效不可见」。几何已验证提交（54 顶点）、节点已启用 → 探针扩到读材质，一击命中 `enabled=true numVert=54 mat=false`（有顶点无材质）。根因：`Clear()` 连材质槽一起清空，尾迹只在 Init 绑过一次、重建后从不重设；**敌机可见正因为每次 Clear 后都重设 SetMaterial**。修复：Commit 后重绑材质。⚠️ 此前 SetDynamic/CULL_NONE/法线/自发光各层都对，材质在 Clear 时就丢了 → 单层验证看不到。验证：复测 mat=true、零 Lua 错误、LSP 0、前向引用 0、build+预览上传。教训→AB-168。\n
 - v0.13.24（关卡号数字贴图 + 进关过渡/准备动画）：用户两点要求——「让 ai 生成各个数字的贴图用于选关界面的数字显示替代」「进入关卡的过渡和准备动画你也没做」。①**数字贴图**：nanobanana 生成 0–9 → bbox 裁切 → **按高度归一**（同高 26，防高低不齐）→ alpha 二值化 → 量化「白+轮廓」两色 → 24×32 母版 → `ui_digit_{0..9}.png`；新增 `scripts/ui/DigitFont.lua`（懒加载 + `nvgImagePatternTinted` 染色 + 逐字宽度表 + 缺图回退字体），StageSelect 节点数字改走贴图。②**进关过渡**：`Game` 加 `INTRO_SECONDS=3`/`introTimer`，`StartGameAt` 不立刻刷怪、`Update` 在 intro 期冻结玩法并 return，归零才 SpawnWave；新增 `scripts/ui/StageIntro.lua`（暗化遮罩 + 中央面板 + 大号关卡号贴图 + 倒计时条 + 跳秒 + 扫描带），Scene3DBackend 在 HUD/Dock 之后按 `introTimer>0` 调它；删原 `stage_started` 横幅。两处取舍：**不新增 gameState**（用标志位冻结，免动所有 state 分支）、**不加模块级 local**（Scene3DBackend 已 193/200，新功能各成模块）。验证：多人 build+预览、LSP 四文件 0 Error、前向引用 0、真渲染探针（intro 界面 + 选关数字贴图）零 overlay 错误。⚠️ 待 Preview：3s 时长手感、数字贴图真机清晰度。
 - v0.13.23b（加速车软性递减）：用户要求「小幅衰减」（承接 v0.13.22 去掉速度上限）。实现：`BALL_TYPES.speed` 加 `speedBoostFloor = 1.012`（下限，恒 >1 → 永远在涨）与 `speedSoftCap = 1400`；`BoostSpeedMarble` 按**从初速起算**的线性插值算倍率 `t = clamp((speed-660)/(1400-660))`、`boost = 1.06 + (1.012-1.06)*t`。⚠️ 必须从初速起算——首版用 `speed/softCap` 让初速 660 就吃一半衰减、前期变钝，已修。曲线：660→×1.06 / 1000→×1.038 / 1200→×1.025 / ≥1400→恒 ×1.012。验证：`probe_soft` 实测最高 **1762**（>softCap 1400，证明无硬上限）对比无衰减版 1912 明显压住；build+预览上传。⚠️ 软性递减 ≠ 硬上限：下限必须严格 >1，否则等于偷偷加上限。提交 162799c。
 - v0.13.23（尾迹不可见真因：背面剔除 + 无光照）：用户「现在什么拖尾也没有啊」。几何已验证提交（90 顶点、AABB 在视锥内）→ 光栅化问题：①三角带法线朝 +Z 而相机在 -Z → 整条被背面剔除（voxelMaterial_ 无 SetCullMode）→ 改用独立材质 + CULL_NONE；②法线水平 `(0,0,-1)` 而光来自上方 → N·L≈0 全黑 → 法线朝上 + 常驻自发光 0.15（深空场景保底，不冲淡配色与头亮尾暗）。验证：72–90 顶点提交、零 Lua 错误、LSP 0、前向引用 0、build+预览上传。⚠️ 本环境离屏 3D 恒黑，可见性待 Preview。教训→AB-162。\n- v0.13.22b（加速车去上限 + 速度卡改「加速度」）：用户「加速车没有速度上限，相关改为加速度词条加成」，澄清为「原先的加上限词条改为加加速度」+「速度分档，无限增长」。①删 `BALL_TYPES.speed.maxSpeed=900`——每次反弹/命中 ×speedBoost(1.06) 无限加速；②删 `maxDamage=2`——伤害按 damageStep(320) 分档**无限增长**；③`speedMul` 语义由「最高速度倍率」改为「**加速度加成**」（`BoostSpeedMarble` 用 `gain = speedBoost + (speedMul-1)*0.1`，不再参与上限计算）；④三张速度卡与天赋 `BALL_STAT.speed.label` 文案「极速/最高速度」→「**加速度**」。验证：`probe_nocap` 实测速度 **1241**>原 900；`probe_dmg` 实测伤害档 **4**>原 2；build+预览上传。⚠️ 待真机确认越打越快的手感与后期是否失控。提交 0a38041。

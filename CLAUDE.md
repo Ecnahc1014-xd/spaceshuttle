@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.25（尾迹不可见的**真根因**：`CustomGeometry:Clear()` 会清空材质槽；提交 1362c85）：
+  - **用户报「特效不可见」**。几何早已验证提交（54 顶点）、节点也已启用，于是把探针扩到**读几何的材质**，一击命中：
+    `speed: enabled=true numVert=54 **mat=false**` —— **几何有顶点但没有材质** → 渲染器无从绘制。
+  - **根因**：`CustomGeometry:Clear()` **会连材质槽一起清空**，而尾迹只在 Init 绑过一次材质、之后每次重建都没重设 → 重建后的光带永远无材质。**敌机网格可见正是因为 `RebuildEnemyMesh` 每次 `Clear()` 后都重设 `SetMaterial`**（两处一对比即真相）。
+  - **修复**：`Commit()` 之后重新 `geometry:SetMaterial(0, trailMaterial_)`。
+  - **这也解释了此前几轮"修了仍不可见"**：v0.13.22 的 `SetDynamic(true)`、v0.13.23 的 CULL_NONE + 法线/自发光、以及更早的 billboard 版，**各自那层都是对的**，但材质在 `Clear()` 时就已丢失——单层验证永远看不到这一层。
+  - **验证**：同一探针复测 → `speed: enabled=true numVert=54 **mat=true**`，零 Lua 错误；LSP 0 Error；前向引用 0；官方多人 build+预览上传 ✅。BUILD_VERSION/大厅 →0.13.25。
+  - ⚠️ **教训（AB-168）**：`CustomGeometry` 每次 `Clear()` 后必须**重设材质**（材质不随几何保留）；诊断"几何有但看不见"时，**读 `GetMaterial(0)`** 是最快的一刀，比继续查剔除/光照/通道都直接。
 - 版本: 0.13.24（关卡号数字贴图 + 进关过渡/准备动画）：
   - **数字贴图**：nanobanana 生成 0–9 → bbox 裁切 → 按高度归一（GLYPH_H=26）→ alpha 二值化 → 白+轮廓两色量化 → 24×32 母版；新增 `scripts/ui/DigitFont.lua` 懒加载、乘法染色、逐字宽度表与缺图字体回退，StageSelect 数字改贴图。
   - **进关准备**：`Game` 新增 `INTRO_SECONDS=3`/`introTimer`，开局先冻结玩法倒计时，归零才 SpawnWave；`StageIntro.lua` 绘制遮罩、关卡号、倒计时条与扫描带，取代重复的 `stage_started` 横幅。

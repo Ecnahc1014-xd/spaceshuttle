@@ -1334,6 +1334,11 @@ local function SyncVehicleTrails(game, dt)
                     geometry:DefineTexCoord(Vector2(0, 0))
                 end
                 geometry:Commit()
+                -- 🔴 必须在 Commit 后**重新绑定材质**：`CustomGeometry:Clear()` 会连
+                -- 材质槽一起清空（实测重建后 GetMaterial(0) == nil），只在 Init 设
+                -- 一次的话几何有顶点也画不出来——v0.13.22/23「特效不可见」的真根因。
+                -- 敌机 RebuildEnemyMesh 每次 Clear 后都重设材质，正是它可见的原因。
+                geometry:SetMaterial(0, trailMaterial_)
                 record.node.enabled = true
             else
                 geometry:Clear()
