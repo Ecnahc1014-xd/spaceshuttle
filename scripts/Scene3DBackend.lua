@@ -442,7 +442,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.28"
+local BUILD_VERSION = "0.13.29"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -892,6 +892,76 @@ local function WrapTextLines(ctx, text, size, maxWidth)
     nvgRestore(ctx)
     if #line > 0 then lines[#lines + 1] = line end
     return lines
+end
+
+-- 实测文本像素宽度（设计空间）。测量期间临时重置 transform，
+-- 与 WrapTextLines 同一套约定（调用方处于 CONTAIN 缩放 transform 下）。
+local function MeasurePixelWidth(ctx, text, size)
+    UseTechFont(ctx)
+    nvgFontSize(ctx, size)
+    nvgSave(ctx)
+    nvgResetTransform(ctx)
+    local _, bounds = nvgTextBounds(ctx, 0, 0, text, nil)
+    local w
+    if bounds and bounds[1] and bounds[3] then
+        w = bounds[3] - bounds[1]
+    else
+        w = (utf8.len(text) or #text) * size
+    end
+    nvgRestore(ctx)
+    return w
+end
+
+-- v0.13.29：升级卡数值条文案自适应折行。value 文案由数据驱动（Game.lua 的 UPGRADE_POOL[].value），
+-- 长度不一，固定单行会溢出卡片。做法：先按 " / " 拆成语义段，再贪心打包——能塞进同一行的段合在一起，
+-- 塞不下就换行（**不在段中间切断**，避免 "弹速+10%" 被切成 "弹速+1"/"0% ..."）。
+-- 一行装不下时整条降到 14px 重排（既避免溢出，分段也更均衡）；仍超宽才逐字符兜底。
+-- 返回 lines, size，调用方按返回的 size 绘制，保证测量与绘制同一字号。
+local function SplitValueLines(ctx, text, size, maxWidth)
+    local segs = {}
+    for seg in string.gmatch(text, "[^/]+") do
+        local s = seg:gsub("^%s+", "")
+        s = s:gsub("%s+$", "")
+        if s ~= "" then segs[#segs + 1] = s end
+    end
+    if #segs == 0 then return { text }, size end
+
+    local function pack(atSize)
+        local packed = { segs[1] }
+        for i = 2, #segs do
+            local cand = packed[#packed] .. " / " .. segs[i]
+            if #packed < 2 and MeasurePixelWidth(ctx, cand, atSize) <= maxWidth then
+                packed[#packed] = cand
+            else
+                packed[#packed + 1] = segs[i]
+            end
+        end
+        return packed
+    end
+
+    local function layout(atSize)
+        local lines = {}
+        for _, seg in ipairs(pack(atSize)) do
+            for _, l in ipairs(WrapTextLines(ctx, seg, atSize, maxWidth)) do
+                lines[#lines + 1] = l
+            end
+        end
+        return lines
+    end
+
+    -- 优先 16px；只有在该字号下折出 3 行以上（长数值卡，如玻璃巨炮）才降一档重排，
+    -- 避免"单行能装下"的卡被无谓缩小。
+    local lines, useSize = layout(size), size
+    if #lines > 2 then
+        useSize = math.max(12, size - 2)
+        lines = layout(useSize)
+    end
+
+    if #lines <= 2 then return lines, useSize end
+    -- 仍超 2 行：溢出部分并回第 2 行，用 " / " 保持分隔语义（不要退化成空格）。
+    local merged = lines[2]
+    for i = 3, #lines do merged = merged .. " / " .. lines[i] end
+    return { lines[1], merged }, useSize
 end
 
 local function DrawModalBackdrop(ctx, x, y, width, height)
@@ -1958,11 +2028,13 @@ local function GetUpgradeCardLayout(game)
     -- v0.10.14：540 宽内三卡 + 两间距，两侧各留 10px 安全边距。
     -- 与 main.lua:TryPickUpgradeAt 的命中常量必须保持一致。
     local cardW = 168
-    local cardH = 300
+    -- v0.13.29：300 → 340。带说明条（解锁/高风险/词条）的卡要同时容纳
+    -- 详情 2 行 + 说明条 + 数值条 2 行，300 高会把详情挤成 1 行并截断文案。
+    local cardH = 340
     local gap = 8
     local totalW = 3 * cardW + 2 * gap
     local startX = game.width * 0.5 - totalW * 0.5 + cardW * 0.5
-    -- v0.10.17：卡片在标题区与底部操作提示之间垂直居中（卡 380..680）。
+    -- v0.10.17：卡片在标题区与底部操作提示之间垂直居中（卡 360..700）。
     local cy = 530
     return cardW, cardH, gap, startX, cy
 end
@@ -2025,21 +2097,44 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, x + 14, y + 136, cardW - 28, 6, C.cyanDim)
 
-    local detailLines = WrapTextLines(ctx,
-        choice.detail or choice.desc or "提升当前弹珠性能", 17, cardW - 18)
-    local detailLineH = 25
-    local maxDetailLines = 2
-    local detailCount = math.min(maxDetailLines, #detailLines)
+    -- v0.13.29：数值条文案长度不一（数据驱动），先量出所需行数（1~2 行），
+    -- 再据此抬高数值条、并让详情区与角标避让，避免长文案溢出卡片。
+    local valueText = choice.value or "强化"
+    local valueLines, valueSize = SplitValueLines(ctx, valueText, 16, cardW - 34)
+    local valueLineCount = math.min(2, math.max(1, #valueLines))
+    local valueLineH = 19
+    local valueBoxH = 8 + valueLineCount * valueLineH
+    local valueBoxBottom = y + cardH - 34
+    local valueBoxTop = valueBoxBottom - valueBoxH
+
+    -- 说明条（解锁 / 高风险 / 词条）位于数值条正上方，详情区不能压到它。
+    local hasFooter = choice.kind == "unlock" or choice.tradeoff or choice.kind == "word"
+    local footerTop = valueBoxTop - 36
     local detailAreaTop = y + 146
-    local detailAreaBottom = y + cardH - 98
+    local detailAreaBottom = (hasFooter and (footerTop - 8) or (valueBoxTop - 10))
+    local detailAvail = detailAreaBottom - detailAreaTop
+
+    -- 详情自适应：17px 下装不下就降到 15px 重排（行距随之收窄），
+    -- 保证长详情（如玻璃巨炮）不因可用高度不足而被截断。
+    local detailText = choice.detail or choice.desc or "提升当前弹珠性能"
+    local detailSize = 17
+    local detailLineH = 25
+    local detailLines = WrapTextLines(ctx, detailText, detailSize, cardW - 18)
+    if #detailLines * detailLineH > detailAvail then
+        detailSize = 15
+        detailLineH = 22
+        local smaller = WrapTextLines(ctx, detailText, detailSize, cardW - 18)
+        if #smaller * detailLineH <= detailAvail then detailLines = smaller end
+    end
+    local maxDetailLines = math.max(1, math.floor(detailAvail / detailLineH))
+    local detailCount = math.min(maxDetailLines, #detailLines)
     local detailTop = detailAreaTop
-        + math.max(0, (detailAreaBottom - detailAreaTop - detailCount * detailLineH) * 0.5)
+        + math.max(0, (detailAvail - detailCount * detailLineH) * 0.5)
     for li = 1, detailCount do
         DrawPixelText(ctx, x + cardW * 0.5, detailTop + (li - 1) * detailLineH,
-            detailLines[li], 17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            detailLines[li], detailSize, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    local footerTop = y + cardH - 90
     if choice.kind == "unlock" then
         DrawTechPanel(ctx, x + 10, footerTop, cardW - 20, 26, C.widget, C.cyan)
         DrawPixelText(ctx, x + cardW * 0.5, footerTop + 4, "新车型 · 本局解锁", 15,
@@ -2054,10 +2149,13 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawRect(ctx, x + 14, y + cardH - 56, cardW - 28, 28, C.widget, 6)
-    DrawStroke(ctx, x + 14, y + cardH - 56, cardW - 28, 28, accent, 6, 1)
-    DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 51, choice.value or "强化", 16, accent,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawRect(ctx, x + 14, valueBoxTop, cardW - 28, valueBoxH, C.widget, 6)
+    DrawStroke(ctx, x + 14, valueBoxTop, cardW - 28, valueBoxH, accent, 6, 1)
+    local valueTextTop = valueBoxTop + (valueBoxH - valueLineCount * valueLineH) * 0.5
+    for li = 1, valueLineCount do
+        DrawPixelText(ctx, x + cardW * 0.5, valueTextTop + (li - 1) * valueLineH,
+            valueLines[li] or "", valueSize or 16, accent, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
 
     local stacks = choice.stacks or 0
     local maxText = choice.maxStacks and choice.maxStacks >= 90 and "∞" or tostring(choice.maxStacks or "-")
