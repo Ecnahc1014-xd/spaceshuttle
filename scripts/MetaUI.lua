@@ -113,6 +113,28 @@ local function Inside(r, px, py)
 end
 
 ---@param ctx any
+---@param x number
+---@param y number
+---@param w number
+---@param label string
+-- v0.13.30b：面板内分区标题——左侧青竖条 + 标题 + 向右淡出的渐变下划线，
+-- 让「选择车型 / 免费补给 / 钻石礼包」这类分隔从平色小字变成有结构的分区头。
+local function SectionHeader(ctx, x, y, w, label)
+    local C = Colors()
+    D.rect(ctx, x, y + 2, 3, 15, C.cyan, 0)
+    D.text(ctx, x + 9, y, label, 18, C.cyan)
+    local lx = x + 9 + (#label * 18) + 12
+    if lx < x + w then
+        nvgBeginPath(ctx)
+        nvgRect(ctx, lx, y + 9, (x + w) - lx, 1)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, lx, y, x + w, y,
+            nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90),
+            nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 0)))
+        nvgFill(ctx)
+    end
+end
+
+---@param ctx any
 ---@param r table
 ---@param label string
 ---@param sub string
@@ -135,8 +157,23 @@ local function Button(ctx, r, label, sub, kind)
     end
 
     D.panel(ctx, r.x, r.y, r.w, r.h, fill, border, 6)
-    if kind == "primary" then
-        D.rect(ctx, r.x + 6, r.y + 2, math.max(0, r.w - 12), 1, {255, 255, 255, 90}, 0)
+    -- v0.13.30：主操作/广告按钮由平色改为受光金属（亮→深渐变 + 倒角），与主菜单 CTA 同语言。
+    -- 只有「实心彩色」的两种 kind 需要；ghost/disabled 保持 D.panel 的机加工底即可。
+    if kind == "primary" or kind == "ad" then
+        local c = (kind == "primary") and C.cyan or C.ad
+        local hi = {
+            math.floor(math.min(255, c[1] + (255 - c[1]) * 0.32)),
+            math.floor(math.min(255, c[2] + (255 - c[2]) * 0.32)),
+            math.floor(math.min(255, c[3] + (255 - c[3]) * 0.32)), 255}
+        local lo = {
+            math.floor(c[1] * 0.72), math.floor(c[2] * 0.72), math.floor(c[3] * 0.72), 255}
+        nvgBeginPath(ctx)
+        nvgRoundedRect(ctx, r.x, r.y, r.w, r.h, 6)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, r.x, r.y, r.x, r.y + r.h,
+            nvgRGBA(hi[1], hi[2], hi[3], 255), nvgRGBA(lo[1], lo[2], lo[3], 255)))
+        nvgFill(ctx)
+        D.stroke(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4, {255, 255, 255, 74}, 5, 1)
+        D.rect(ctx, r.x + 8, r.y + 3, math.max(0, r.w - 16), 1, {255, 255, 255, 120}, 0)
     else
         D.rect(ctx, r.x, r.y + 2, 3, math.max(0, r.h - 4), border, 1)
     end
@@ -188,6 +225,14 @@ local function Shell(ctx, w, h, title, subtitle)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
     D.shell(ctx, x, y, sw, sh, 48)
+    -- v0.13.30b：标题栏加**受光横带**——自上而下由青灰渐变到面板底，让窗口壳有
+    -- 「顶盖」而不是一整块平底；再补一条青识别条与标题下的辉光。命中几何不变。
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, x + 1, y + 1, sw - 2, 47, 5)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x, y + 48,
+        nvgRGBA(26, 44, 68, 255), nvgRGBA(12, 20, 34, 255)))
+    nvgFill(ctx)
+    D.rect(ctx, x + 1, y + 46, sw - 2, 1, {C.cyan[1], C.cyan[2], C.cyan[3], 60}, 0)
     D.rect(ctx, x, y + 48, 3, 22, C.cyan, 0)
 
     local headerIcon = {
@@ -719,7 +764,7 @@ local function DrawShop(ctx, w, meta)
     local layout = GetShopLayout(w)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
-    D.text(ctx, content.x + 4, layout.titleY, "选择车型 · 仅改变外形", 18, C.cyan)
+    SectionHeader(ctx, content.x + 4, layout.titleY, content.w - 8, "选择车型 · 仅改变外形")
 
     local skins = MetaCatalog.GetSkins()
     for i, skin in ipairs(skins) do
@@ -744,7 +789,7 @@ local function DrawShop(ctx, w, meta)
         end
     end
 
-    D.text(ctx, content.x + 4, layout.giftTitleY, "免费补给", 18, C.cyan)
+    SectionHeader(ctx, content.x + 4, layout.giftTitleY, content.w - 8, "免费补给")
     local gifts = MetaCatalog.GetShopEntries()
     for i, gift in ipairs(gifts) do
         local r, btn = GetShopGiftButton(layout, i)

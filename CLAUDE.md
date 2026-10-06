@@ -3,6 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.30（**「界面太便宜」全局质感升级：金属面板 + 有光背景 + 发光窗口壳**；两轮迭代）：
+  - **用户原话**「对一个商业化游戏来说现在的大多界面太便宜了」→ 第一轮改完仍「还是不够贵」→ 第二轮加码。**方向**：沿用 dark-tech 机加工金属（不引入新风格），**升级共享原语而非逐屏重画**——13 个界面全部经 `DrawMachinedPanel`/`DrawWindowShell`/`DrawModalBackdrop`/`Button`，改这几处即全屏生效。
+  - **根因（量化）**：旧 `DrawMachinedPanel` 的渐变只有 **±5 RGB**（肉眼等同纯色）、描边 1.1px、无厚度；`DrawModalBackdrop`/`DrawMenu` 是**一整块平色 C.bg**（占屏 80% 却零层次）；CTA 是一块**纯青平板** `DrawRect(C.cyan)`（把下面的机加工面板整块盖掉）；`Button` 是平色 + 3px 竖条。
+  - **第一轮**：①`DrawMachinedPanel` → 投影落地 + 金属渐变（±16/19/24）+ 上缘内高光/下缘内暗边 + 外描边 1.6 + **四角螺钉**（r≥5 且 w>130 且 h>70；HUD 横条 radius=0 天然跳过）②主菜单 CTA → 青色金属渐变 + 斜向光泽 + 倒角（`GetMenuCtaRect` 命中几何未动）③`MetaUI.Button` primary/ad → 亮→深渐变 + 倒角。
+  - **第二轮（用户「还是不够贵」后加码）**：①`DrawModalBackdrop` → **径向渐变底**（`nvgRadialGradient` 中心偏亮深海军蓝→四周近黑）+ 顶部青色环境辉光 + 四角暗角；②`DrawMenu` 背景同款径向 + 辉光；③`DrawWindowShell` → **外辉光**（`nvgBoxGradient` 青柔光）+ 标题栏受光横带 + 内容区内凹暗角；④`MetaUI.Shell` 标题栏受光渐变横带；⑤新增 `MetaUI.SectionHeader`（青竖条 + 向右淡出渐变下划线）替换店铺分区平色小字。
+  - ⚠️ **不加顶层 local**：`Scene3DBackend` 196/200、`Game` 200/200（AB-166），全部原地改写现有函数体 / 用局部量。`MetaUI` 新增 `SectionHeader` 是模块级 local（34→35，余量充足）。
+  - ⚠️ **`nvgBoxGradient`/`nvgRadialGradient` 可用**（`.emmylua/NanoVG.d.lua` 已声明）——「贵」的关键是**真实柔光**（径向/盒式渐变），线性渐变做不出。
+  - **验证**：官方多人 build+预览上传 ✅（两轮各一次）；LSP 两文件 **0 Error**；真渲染探针 13 界面全渲零 Lua/overlay 错误；像素取证：卡片内部竖向 `(26,37,58)→(13,22,39)` 跨度 ~19 级（旧版更窄更暗）。⚠️ 待 Preview 真机观感。
+  - ⚠️ **教训（AB-177）**：用户说「不够贵/太便宜」时，**先找共用原语**——13 个界面共用的 `DrawMachinedPanel`/背景/按钮才是「廉价」的最大单一来源，逐屏重画是低杠杆；**「贵」的物理来源是层次**（渐变跨度 / 柔光 / 厚度 / 焦点），不是更多装饰线条。
+
 - 版本: 0.13.29（**升级卡 UI 自适应：数值条折行 + 卡高 300→340 + 详情降字号**）：
   - **用户反馈（截图 + 一句「卡片UI适应性优化？」）**：升级面板第 1 张卡（装甲强化）的数值条文案 `-20% 受创 / +8% 零件` 左右两侧**溢出卡片边界**，压到相邻卡。
   - **根因**：数值条文案是**数据驱动**的（`Game.lua` 的 `UPGRADE_POOL[].value`），长度从 5 字（`+1 格`）到 32 字节（`伤害+3 / 弹速+10% / 受创+1`）不等，而 `DrawUpgradeCard` 固定 **16px 单行居中、无任何宽度约束**——最长的两张（玻璃巨炮、装甲强化）必然溢出。
@@ -716,6 +726,13 @@
 - ⚠️ **「不新增 gameState」是加过渡/弹窗态的首选**（v0.13.24）：本项目新增可弹窗状态要在 `UpdateUiState`/`RenderOverlay`/六个输入处理器/结算块全部补分支（v0.13.4 stagewin 的教训），漏一处即「点不动/残影/入库丢」。进关过渡只需一个 `introTimer`（`Update` 里 `>0` 就冻结玩法并 return），零状态分支改动。**能用标志位就别加状态**。
 - ⚠️ **模块不要依赖「后端暴露 vg」**（v0.13.24）：`Scene3DBackend` 未导出 vg，新绘制模块改为**用 Draw 传入的 ctx 懒加载**图片句柄（NanoVG 上下文是进程级单例，ctx 即 vg），既免去后端加访问器，也避免本地验证时的注入顺序问题。
 - ⚠️ **`batch_generate_images` 会给草案也生成 `.meta`，且清理时容易漏**（v0.13.24）：生成后 `mv *.png` 出 assets 时，同名 `*.png.meta` **不会跟着走**（或跟走了但草稿目录里留下），assets 里会残留 `digit_x_<时间戳>.png.meta` 这类孤儿。清理时用 `rm assets/image/<batch>_*_2026*.png.meta` 一并扫掉，再确认 `ls assets/image/<batch>_*` 为空。
+
+## 本批次新增避雷（v0.13.30 界面「不够贵」全局质感升级）
+- 🔴 **AB-177：用户说「界面太便宜/不够贵」时，先找共用原语，别逐屏重画（v0.13.30 用户两轮点名）**：本项目 13 个界面**全部**经 `DrawMachinedPanel`（9 直调 + `DrawBluePanel` 6 + `MetaUI.D.panel` 22）、`DrawWindowShell`、`DrawModalBackdrop`、`MetaUI.Button` 渲染——所以「廉价感」的最大单一来源是这几个函数，改它们 = 全屏生效，且**签名不变、调用点零改动**（也绕开大文件 local 上限）。逐屏重画是低杠杆。
+- 🔴 **AB-177b：「贵」的物理来源是层次，不是更多装饰线条（v0.13.30）**：第一轮只把渐变从 ±5 提到 ±19、加螺钉，用户仍说「还是不够贵」；第二轮加了**真实柔光**（`nvgRadialGradient` 径向底 + `nvgBoxGradient` 窗口外辉光）与**环境光**（顶部青辉光 + 四角暗角）后才成立。量化判据：面板内部竖向渐变跨度（旧 ~7-15 级 → 新 ~19 级）、背景不再是单一色值、窗口有外发光。**先补「光/厚度/焦点」，再谈装饰**。
+- ⚠️ **`nvgRadialGradient` / `nvgBoxGradient` 本项目可用**（`.emmylua/NanoVG.d.lua` 已声明 `nvgBoxGradient(ctx,x,y,w,h,r,f,icol,ocol)`、`nvgRadialGradient(ctx,cx,cy,inr,outr,icol,ocol)`）；线性渐变做不出柔光/暗角，要「贵」就用这两个。大范围单次 fill，无性能问题。
+- ⚠️ **改共享原语时保持签名与命中几何不变**：CTA 改画法但 `GetMenuCtaRect` 未动；`DrawMachinedPanel` 加装饰但参数表未动；`Shell` 加标题横带但 `GetShellLayout` 未动——这样所有命中探针与调用点都不受影响。**视觉升级不该动几何**。
+- ⚠️ **螺钉/装饰要有尺寸门槛**：四角螺钉只在 `r>=5 且 w>130 且 h>70` 画，否则小按钮/细条上会糊成一团；HUD 横条 `radius=0` 天然跳过。装饰门槛没设好会把小控件画脏。
 
 ## 避雷清单
 

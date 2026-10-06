@@ -442,7 +442,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.29"
+local BUILD_VERSION = "0.13.30"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -695,30 +695,67 @@ local function DrawCircuitTexture(ctx, x, y, w, h, tint, alpha)
     nvgRestore(ctx)
 end
 
+-- v0.13.30：机加工金属面板升级（「界面太便宜」的最高杠杆点）。
+-- 旧版渐变只有 ±5 RGB（肉眼等同纯色）、描边 1.1px、无厚度；而全项目 13 个界面的
+-- 面板/按钮/卡片/窗口壳**全部**走这一个函数（9 处直调 + DrawBluePanel 6 处 +
+-- MetaUI 的 D.panel），所以「廉价感」的最大单一来源就在这里。
+-- 升级为：①投影落地（厚度）②可读的金属渐变（顶亮底暗 ~20 级）③受光斜面
+-- （上缘内高光 / 下缘内暗边）④外描边加粗 ⑤四角螺钉（工业机箱语汇）。
+-- ⚠️ 签名不变 → 所有调用点零改动；且**不新增顶层 local**（该文件 196/200，见 AB-166）。
 local function DrawMachinedPanel(ctx, x, y, w, h, fill, border, radius, emphasis)
     local r = radius or 6
+    local a = fill[4] or 255
     local top = {
-        math.min(255, fill[1] + 5), math.min(255, fill[2] + 7),
-        math.min(255, fill[3] + 11), fill[4] or 255,
+        math.min(255, fill[1] + 16), math.min(255, fill[2] + 19),
+        math.min(255, fill[3] + 24), a,
     }
     local bottom = {
-        math.max(0, fill[1] - 2), math.max(0, fill[2] - 2),
-        math.max(0, fill[3] - 4), fill[4] or 255,
+        math.max(0, fill[1] - 5), math.max(0, fill[2] - 6),
+        math.max(0, fill[3] - 8), a,
     }
+    -- ① 投影：向下偏移的暗底，让面板「离地」（只给大面板，小按钮加了会糊成一团）。
+    if r > 0 and w > 80 and h > 48 then
+        DrawRect(ctx, x, y + 2, w, h, {2, 4, 8, 110}, r)
+    end
+    -- ② 金属渐变主体（顶亮底暗，能读出立体）。
     nvgBeginPath(ctx)
     nvgRoundedRect(ctx, x, y, w, h, r)
     nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x, y + h,
         nvgRGBA(top[1], top[2], top[3], top[4]),
         nvgRGBA(bottom[1], bottom[2], bottom[3], bottom[4])))
     nvgFill(ctx)
-    DrawStroke(ctx, x, y, w, h, border, r, emphasis and 1.5 or 1.1)
+    -- ③ 受光斜面：上缘内高光 + 下缘内暗边（叠在渐变上的细线）。
+    if w > 30 and h > 16 then
+        DrawLine(ctx, x + r, y + 1.2, x + w - r, y + 1.2,
+            {255, 255, 255, emphasis and 52 or 34}, 1)
+        DrawLine(ctx, x + r, y + h - 1.2, x + w - r, y + h - 1.2,
+            {0, 0, 0, 72}, 1)
+    end
+    -- ④ 外描边（比旧版略粗，强调态更亮）。
+    DrawStroke(ctx, x, y, w, h, border, r, emphasis and 1.6 or 1.2)
+    -- ⑤ 内槽线（机加工台阶）。
     if w > 46 and h > 24 then
         DrawStroke(ctx, x + 3, y + 3, w - 6, h - 6,
-            {border[1], border[2], border[3], math.min(95, border[4] or 95)}, math.max(1, r - 2), 0.7)
-        DrawLine(ctx, x + r + 3, y + 1.5, x + w - r - 3, y + 1.5,
-            {255, 255, 255, emphasis and 24 or 13}, 1)
+            {border[1], border[2], border[3], math.min(110, border[4] or 110)}, math.max(1, r - 2), 0.7)
     end
-    if emphasis and w > 80 and h > 36 then
+    -- ⑥ 四角螺钉（只在大面板 + 有圆角时；HUD 横条 radius=0 天然跳过）。
+    if r >= 5 and w > 130 and h > 70 then
+        local inset, boltR = 8, 1.7
+        for _, p in ipairs({
+            {x + inset, y + inset}, {x + w - inset, y + inset},
+            {x + inset, y + h - inset}, {x + w - inset, y + h - inset},
+        }) do
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, p[1], p[2], boltR + 1.1)
+            nvgFillColor(ctx, nvgRGBA(0, 0, 0, 130))
+            nvgFill(ctx)
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, p[1], p[2], boltR)
+            nvgFillColor(ctx, nvgRGBA(C.ash[1], C.ash[2], C.ash[3], 155))
+            nvgFill(ctx)
+            DrawLine(ctx, p[1] - boltR * 0.7, p[2], p[1] + boltR * 0.7, p[2], {0, 0, 0, 135}, 0.8)
+        end
+    elseif emphasis and w > 80 and h > 36 then
         for _, px in ipairs({x + 9, x + w - 9}) do
             nvgBeginPath(ctx)
             nvgCircle(ctx, px, y + 9, 1.6)
@@ -729,11 +766,28 @@ local function DrawMachinedPanel(ctx, x, y, w, h, fill, border, radius, emphasis
 end
 
 local function DrawWindowShell(ctx, x, y, w, h, titleH)
+    local th = titleH or 46
+    -- v0.13.30b：窗口加**外辉光 + 内凹内容区**——旧版只有一层平描边，窗口像贴纸
+    -- 不像「一块发光的仪器面板」。外辉光用 boxGradient 在窗体外缘铺一圈青色柔光；
+    -- 内容区再压一层向内渐暗，让里面的卡片「陷进去」。
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x - 22, y - 22, w + 44, h + 44)
+    nvgFillPaint(ctx, nvgBoxGradient(ctx, x, y, w, h, 8, 22,
+        nvgRGBA(0, 200, 184, 46), nvgRGBA(0, 200, 184, 0)))
+    nvgFill(ctx)
     DrawMachinedPanel(ctx, x, y, w, h, C.panel, C.cyanDim, 6, true)
-    DrawRect(ctx, x, y, 4, titleH or 46, C.cyan, 0)
+    DrawRect(ctx, x, y, 4, th, C.cyan, 0)
     DrawCornerBrackets(ctx, x + 4, y + 4, w - 8, h - 8, C.cyanDim, 14, 1.2)
-    DrawLine(ctx, x + 12, y + (titleH or 46), x + w - 12, y + (titleH or 46),
+    DrawLine(ctx, x + 12, y + th, x + w - 12, y + th,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 118}, 1)
+    -- 内容区内凹：标题栏之下压一层极淡的向内暗角，制造「屏幕嵌进机壳」的纵深。
+    if h > th + 40 then
+        nvgBeginPath(ctx)
+        nvgRect(ctx, x + 3, y + th + 2, w - 6, h - th - 5)
+        nvgFillPaint(ctx, nvgBoxGradient(ctx, x + 3, y + th + 2, w - 6, h - th - 5, 5, 16,
+            nvgRGBA(0, 0, 0, 90), nvgRGBA(0, 0, 0, 0)))
+        nvgFill(ctx)
+    end
 end
 
 -- v0.13.17：模态窗（结算/胜利/暂停）的 dark-tech 装饰叠加——环形刻度 + 虚线轴 + 半调底纹。
@@ -964,8 +1018,34 @@ local function SplitValueLines(ctx, text, size, maxWidth)
     return { lines[1], merged }, useSize
 end
 
+-- v0.13.30b：模态背景从「平色 C.bg + 小网格」升级为**有光的环境**——
+-- 旧版是一整块纯色，占屏 80% 面积却毫无层次，是「廉价」的最大来源。
+-- 现为：径向渐变底（中心偏亮的深海军蓝 → 四周近黑，模拟穹顶照明）+ 顶部青色
+-- 环境辉光 + 四角暗角（把视线收拢到中央内容）。仍是单次 fill，性能无忧。
 local function DrawModalBackdrop(ctx, x, y, width, height)
-    DrawRect(ctx, x, y, width, height, C.bg, 0)
+    local cx, cy = x + width * 0.5, y + height * 0.34
+    local rOut = math.max(width, height) * 0.78
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x, y, width, height)
+    nvgFillPaint(ctx, nvgRadialGradient(ctx, cx, cy, 30, rOut,
+        nvgRGBA(15, 26, 47, 255), nvgRGBA(4, 7, 15, 255)))
+    nvgFill(ctx)
+    -- 顶部环境辉光：青色自顶部淡入，给界面一个「上方有光源」的暗示。
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x, y, width, height * 0.5)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x, y + height * 0.5,
+        nvgRGBA(0, 190, 176, 34), nvgRGBA(0, 190, 176, 0)))
+    nvgFill(ctx)
+    -- 四角暗角：向内的黑色渐变，收拢视觉焦点。
+    local vig = 130
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x, y, width, vig)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x, y + vig, nvgRGBA(0, 0, 0, 150), nvgRGBA(0, 0, 0, 0)))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x, y + height - vig, width, vig)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y + height, x, y + height - vig, nvgRGBA(0, 0, 0, 170), nvgRGBA(0, 0, 0, 0)))
+    nvgFill(ctx)
     DrawMicroGrid(ctx, x + 18, y + 18, 132, 168, 12, 22)
     DrawMicroGrid(ctx, x + width - 150, y + height - 210, 120, 150, 12, 18)
     DrawStatusDots(ctx, x + 22, y + height - 28, 4, C.cyanDim)
@@ -1716,9 +1796,18 @@ local function DrawMenu(ctx, game, meta)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, 0, game.width, game.height)
     nvgGlobalAlpha(ctx, ModalIntro(game))
-    nvgFillColor(ctx, nvgRGBA(C.bg[1], C.bg[2], C.bg[3], 255))
+    -- v0.13.30b：首页背景由平色升级为「有光的环境」——径向渐变 + 顶部青色辉光 +
+    -- 底部暗角，与模态背景同一套语言（旧版整块纯色是廉价感的主要来源）。
     nvgBeginPath(ctx)
     nvgRect(ctx, 0, 0, game.width, game.height)
+    nvgFillPaint(ctx, nvgRadialGradient(ctx, game.width * 0.5, game.height * 0.30,
+        40, math.max(game.width, game.height) * 0.82,
+        nvgRGBA(16, 28, 50, 255), nvgRGBA(4, 7, 15, 255)))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, 0, game.width, game.height * 0.45)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, 0, 0, 0, game.height * 0.45,
+        nvgRGBA(0, 190, 176, 30), nvgRGBA(0, 190, 176, 0)))
     nvgFill(ctx)
     -- 装饰：角标 + 断线边框 + 局部微型网格（dark-tech 骨架，贴边不穿正文）
     DrawCornerBrackets(ctx, 6, 6, game.width - 12, game.height - 12,
@@ -1761,8 +1850,25 @@ local function DrawMenu(ctx, game, meta)
     local cta = GetMenuCtaRect(game)
     local ctaY = cta.y
     DrawMachinedPanel(ctx, 34, ctaY - 5, game.width - 68, 102, C.rail, C.warnDim, 10, true)
-    DrawRect(ctx, cta.x, cta.y, cta.w, cta.h, C.cyan, 7)
-    DrawRect(ctx, cta.x + 12, ctaY + 4, cta.w - 24, 1, {255, 255, 255, 110}, 0)
+    -- v0.13.30：主 CTA 由「纯青平板」改为**受光金属按钮**——旧版 DrawRect 平铺 C.cyan
+    -- 把下面的机加工面板整块盖掉，首页最大元素反而最廉价。现改为：亮→深的青色金属
+    -- 渐变 + 上缘倒角高光 + 下缘内暗边 + 顶三分之一斜向光泽（polished metal）。
+    -- 青底仍配 ink 字，对比度不变；命中几何 GetMenuCtaRect 未动。
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, cta.x, cta.y, cta.w, cta.h, 7)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, cta.x, cta.y, cta.x, cta.y + cta.h,
+        nvgRGBA(74, 246, 228, 255), nvgRGBA(0, 176, 162, 255)))
+    nvgFill(ctx)
+    -- 斜向光泽：左上白 → 中部透明，铺在顶 45%（不做整面，避免发灰）。
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, cta.x, cta.y, cta.w, cta.h * 0.45, 7)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, cta.x, cta.y, cta.x + cta.w * 0.7, cta.y + cta.h * 0.45,
+        nvgRGBA(255, 255, 255, 86), nvgRGBA(255, 255, 255, 0)))
+    nvgFill(ctx)
+    -- 倒角：上缘内高光 + 下缘内暗边（厚度感）。
+    DrawStroke(ctx, cta.x + 3, cta.y + 3, cta.w - 6, cta.h - 6, {255, 255, 255, 92}, 5, 1.2)
+    DrawRect(ctx, cta.x + 10, cta.y + 4, cta.w - 20, 1, {255, 255, 255, 140}, 0)
+    DrawRect(ctx, cta.x + 10, cta.y + cta.h - 4, cta.w - 20, 1, {0, 0, 0, 60}, 0)
     DrawIcon(ctx, "premium_supply_crate", 164, ctaY + 28, 32, 1)
     DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 14, "开始战斗", 31, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
