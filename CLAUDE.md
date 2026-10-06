@@ -3,7 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
-- 版本: 0.13.31（**「华丽 + 交互 + 动态」三件套：悬停发光 + 指针追踪 + 持续动效 + CTA 扫光**）：
+- 版本: 0.13.32（首页实车主视觉 + 六车型展示商店；技术验收完成，审美待用户验收）：
+  - 用户在 v0.13.31 后仍明确反馈「不够贵」。**v0.13.30/31 均未获审美验收**；渐变、柔光和扫光不是商业化视觉达标的证据。
+  - 本轮方向由助手选择：用真实六车型商品展示建立主视觉，保留 dark-tech 配色、天赋/钱包/福利/收藏分组；浏览与购买/装备分离。售价、战斗属性、支付和广告规则不变。
+  - 新模块 `ui/VehicleShowcase.lua` 复用 `VehicleGeometry.Build`，独立 LOCAL 场景、正交相机、透明 RenderTarget；隐藏不更新、只换车型重建，可见最高 30Hz。释放自有图像/纹理/场景后才销毁共享 NanoVG 上下文。
+  - `GetControlFx` 由可交互控件显式登记几何、独立悬停/按压缓动、命中过 `WindowInput`；取消普通面板按尺寸自动发光。触摸结束/失焦清状态，鼠标松手保留悬停；绿色实心广告按钮改深色文字。
+  - 已验证：最终官方多人 build+预览上传成功、workspace LSP 0 Error（仍有既有 Warning/Hint）；六车型真实像素、正向色标、全摆动取景、逐车 Shutdown→Init→Draw PASS。首页/商店实图已目视检查，浏览/购买门控、不改零件/装备、隐藏停更与 30Hz PASS；真实输入探针覆盖主 TouchID=0、第二指画布外结束、混合鼠标不抢主触点、右键不清左键、失焦/禁用/渐灭与全部首页命中。暂停真实渲染按钮反馈、直接 Backend.Init 及 ClientMain.Stop/Start 资源释放重建 PASS；最坏升级卡仍340高、完整折行，无 Lua/overlay 错误。离屏验证不代表手机帧率、联网支付或用户审美通过。
+  - 运行时差异实锤：Forward 路径需 `EngineRes/RenderPaths/Forward.xml`；bbox 用 `CustomGeometry:GetBoundingBox()`；`SetOrthoSize(float)` 会把 aspect 复位为1，取景后最后重设16:9。GLES/OpenGL RT采样翻Y，只修目标纹理绘制、不反转车辆几何；先用世界上下色标验证，再看宿主实图，不能只数红色像素。
+  - 交互新契约：`Begin/Move/EndTouchPointer` 按主 TouchID 维护视觉所有权（收进 uiFx，0为有效ID），非主结束/鼠标不抢反馈；失焦/Shutdown清所有权。只改反馈，不重写既有多指业务。`DrawMachinedPanel` 不再自动猜按钮，新增可操作控件显式登记 `GetControlFx`，普通展示/禁用无假反馈。
+
+- 历史版本: 0.13.31（**「华丽 + 交互 + 动态」三件套：悬停发光 + 指针追踪 + 持续动效 + CTA 扫光**）：
   - **用户原话**「还不够华丽！还不够交互，还不够动态」——承接 v0.13.30 的静态质感升级。前两轮只做了「好看」，这一轮补「活」：**交互反馈 + 持续动画**。
   - **新增状态载体（1 个顶层 local 收表，守 AB-166）**：`uiFx = { hover={x,y,active}, hoverGlow=0..1, anim=秒 }`。`hoverGlow` 是**平滑**强度（`UpdateScene` 里按 dt×6.5 逼近目标，渐亮渐灭，非硬切）；`anim` 是全屏共享动画相位（流动光/呼吸/脉冲的公共时钟）。
   - **后端新 API（只读 uiFx）**：`Backend.SetPointer(uiX,uiY)` / `ClearPointer()` / `IsHovering(rect)` / `GetHoverGlow()` / `GetAnimPhase()`。

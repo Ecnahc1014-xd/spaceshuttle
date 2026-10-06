@@ -68,12 +68,10 @@ local nvgFontZpix_ = -1
 -- A1/A2：模态与波次横幅的入场动画计时。记录当前玩法 state 的进入时刻，
 -- 渲染时据此计算淡入/滑入进度，避免硬切（不破坏酸性风格，纯透明度/位移 easing）。
 local uiState_ = nil
--- v0.13.30c：「华丽 + 交互 + 动态」三件套的状态载体（收进一张表，只占 1 个顶层 local，
--- 守 AB-166 的 Lua 200 上限）。
---   hover  = {x, y, active}：最近一次指针位置（设计坐标），供按钮悬停发光。
---   hoverGlow = 0..1 的**平滑**悬停强度（悬停时升、移开时降，不是硬切）。
---   anim   = 全屏共享的持续动画相位源（流动光/脉冲/呼吸都由它派生）。
-local uiFx = { hover = { x = -999, y = -999, active = false }, hoverGlow = 0.0, anim = 0.0 }
+-- 指针与控件缓动状态收进一张表，避免新增顶层 local 超限。
+-- 控件主动登记自己的几何；普通面板/禁用控件不按尺寸继承交互。
+local uiFx = { hover = { x = -999, y = -999, active = false }, anim = 0.0,
+    pressed = false, controls = {}, epoch = 0, scope = "" }
 local uiStateEnter_ = 0
 local uiGameVisual_ = nil
 local uiGameLeaving_ = nil
@@ -448,7 +446,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.31"
+local BUILD_VERSION = "0.13.32"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -768,19 +766,6 @@ local function DrawMachinedPanel(ctx, x, y, w, h, fill, border, radius, emphasis
             nvgFillColor(ctx, nvgRGBA(C.warn[1], C.warn[2], C.warn[3], 150))
             nvgFill(ctx)
         end
-    end
-    -- ⑦ v0.13.30c「交互」：指针悬停 → 加色外辉光 + 亮边。只对**按钮尺寸**的面板生效
-    -- （h<=80：按钮 36~48、小卡），避免 HUD 横条/大面板被误点亮。
-    -- 强度取全屏平滑值 uiFx.hoverGlow（悬停渐亮、移开渐灭），非硬切。
-    if h <= 80 and w >= 40 and uiFx.hoverGlow > 0.01
-        and Backend.IsHovering({ x = x, y = y, w = w, h = h }) then
-        local g = uiFx.hoverGlow
-        nvgBeginPath(ctx)
-        nvgRect(ctx, x - 14, y - 14, w + 28, h + 28)
-        nvgFillPaint(ctx, nvgBoxGradient(ctx, x, y, w, h, math.max(2, r), 14,
-            nvgRGBA(0, 236, 214, math.floor(96 * g)), nvgRGBA(0, 236, 214, 0)))
-        nvgFill(ctx)
-        DrawStroke(ctx, x, y, w, h, {0, 245, 224, math.floor(210 * g)}, r, 1.8)
     end
 end
 
@@ -1808,7 +1793,7 @@ end
 -- v0.13.4：主菜单「开始战斗」CTA 几何（绘制与命中共用，禁止两套常量）。
 local function GetMenuCtaRect(game)
     local w = (game and game.width) or DESIGN_W
-    return { x = 42, y = 262, w = w - 84, h = 92 }
+    return { x = 42, y = 430, w = w - 84, h = 72 }
 end
 
 local function DrawMenu(ctx, game, meta)
@@ -1828,24 +1813,9 @@ local function DrawMenu(ctx, game, meta)
     nvgFillPaint(ctx, nvgLinearGradient(ctx, 0, 0, 0, game.height * 0.45,
         nvgRGBA(0, 190, 176, 30), nvgRGBA(0, 190, 176, 0)))
     nvgFill(ctx)
-    -- 装饰：角标 + 断线边框 + 局部微型网格（dark-tech 骨架，贴边不穿正文）
-    DrawCornerBrackets(ctx, 6, 6, game.width - 12, game.height - 12,
-        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 150}, 22, 1.5)
-    DrawBrokenFrame(ctx, 3, 3, game.width - 6, game.height - 6,
-        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 80}, 48)
-    DrawMicroGrid(ctx, 16, 84, 96, 120, 12, 16)
-    DrawMicroGrid(ctx, game.width - 112, game.height - 220, 96, 140, 12, 14)
-    -- v0.13.17 氛围层（克制档）：半调网点铺底 + 右侧装饰位扫描带 + 边角虚线轴 + 十字取样点。
-    -- 全部贴在装饰区（网格旁/贴边），不进入标题、CTA、卡片与任何命中区。
-    AnomalyPulse(game.elapsed)
-    DrawHalftone(ctx, 6, 6, game.width - 12, game.height - 12, 9, 14)
-    DrawScanBand(ctx, game.width - 116, 150, 104, 150, game.elapsed)
-    DrawDashLine(ctx, 18, 300, 18, 560,
-        {C.klein[1], C.klein[2], C.klein[3], 46}, 1, 5, 4)
-    DrawDashLine(ctx, game.width - 18, 300, game.width - 18, 560,
-        {C.klein[1], C.klein[2], C.klein[3], 46}, 1, 5, 4)
-    DrawCrossMark(ctx, 24, 640, 3, {C.ghost[1], C.ghost[2], C.ghost[3], 90})
-    DrawCrossMark(ctx, game.width - 24, 640, 3, {C.ghost[1], C.ghost[2], C.ghost[3], 90})
+    -- 留出整块实车主视觉，不再把网格/扫描带铺过商品与标题。
+    DrawCornerBrackets(ctx, 8, 8, game.width - 16, game.height - 16,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 100}, 18, 1)
 
     -- ① 像素字标标题（v0.12.8）：AI 生成+管线量化的成品图，母版 120 高，
     -- NEAREST 1× 等比居中显示，每 5 秒轮播下一张（起点在进菜单时随机）；
@@ -1854,21 +1824,24 @@ local function DrawMenu(ctx, game, meta)
     if logo then
         local lx = (game.width - logo.w) * 0.5
         nvgBeginPath(ctx)
-        nvgRect(ctx, lx, 90, logo.w, LOGO_H)
-        nvgFillPaint(ctx, nvgImagePattern(ctx, lx, 90, logo.w, LOGO_H,
+        nvgRect(ctx, lx, 28, logo.w, LOGO_H)
+        nvgFillPaint(ctx, nvgImagePattern(ctx, lx, 28, logo.w, LOGO_H,
             0, logo.img, 1))
         nvgFill(ctx)
     else
-        DrawPixelLogo(ctx, game.width * 0.5, 96, GAME_SHORT_TITLE, 104, C.cyan)
+        DrawPixelLogo(ctx, game.width * 0.5, 32, GAME_SHORT_TITLE, 104, C.cyan)
     end
-    DrawSegmentedRule(ctx, 120, 218, game.width - 240, 12, C.cyanDim)
-    DrawPixelText(ctx, game.width * 0.5, 232, "拖拽发射重卡 · 逐块撕碎敌机编队", 17, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, 164, "拖拽发射重卡 · 逐块撕碎敌机编队", 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if meta then MetaUI.DrawHomeVehicle(ctx, game.width, meta) end
 
     -- ② 主 CTA：v0.13.4 起点击打开「选关界面」，不再直接开局。几何走 GetMenuCtaRect。
     local cta = GetMenuCtaRect(game)
     local ctaY = cta.y
-    DrawMachinedPanel(ctx, 34, ctaY - 5, game.width - 68, 102, C.rail, C.warnDim, 10, true)
+    local glow, press = Backend.GetControlFx(cta, true)
+    nvgSave(ctx)
+    nvgTranslate(ctx, 0, press * 2)
+    DrawMachinedPanel(ctx, 34, ctaY - 5, game.width - 68, cta.h + 10, C.rail, C.warnDim, 10, true)
     -- v0.13.30：主 CTA 由「纯青平板」改为**受光金属按钮**——旧版 DrawRect 平铺 C.cyan
     -- 把下面的机加工面板整块盖掉，首页最大元素反而最廉价。现改为：亮→深的青色金属
     -- 渐变 + 上缘倒角高光 + 下缘内暗边 + 顶三分之一斜向光泽（polished metal）。
@@ -1889,13 +1862,13 @@ local function DrawMenu(ctx, game, meta)
     DrawRect(ctx, cta.x + 10, cta.y + 4, cta.w - 20, 1, {255, 255, 255, 140}, 0)
     DrawRect(ctx, cta.x + 10, cta.y + cta.h - 4, cta.w - 20, 1, {0, 0, 0, 60}, 0)
     -- v0.13.30c「华丽 + 动态」：一条斜向高光带周期性扫过 CTA（3.2s 一轮，确定性）。
-    -- 用裁剪保证光带不越出圆角按钮；扫光用白→透明渐变，避免把青底冲淡。
+    -- 裁进圆角内侧的矩形区域，避免光带碰到宿主边缘。
     local sweep = (game.elapsed % 3.2) / 3.2
     if sweep < 0.55 then
         local t = sweep / 0.55
         local bandX = cta.x - 120 + t * (cta.w + 240)
         nvgSave(ctx)
-        nvgIntersectScissor(ctx, cta.x, cta.y, cta.w, cta.h)
+        nvgIntersectScissor(ctx, cta.x + 7, cta.y + 3, cta.w - 14, cta.h - 6)
         nvgBeginPath(ctx)
         nvgMoveTo(ctx, bandX, cta.y)
         nvgLineTo(ctx, bandX + 58, cta.y)
@@ -1906,13 +1879,17 @@ local function DrawMenu(ctx, game, meta)
         nvgFill(ctx)
         nvgRestore(ctx)
     end
-    DrawIcon(ctx, "premium_supply_crate", 164, ctaY + 28, 32, 1)
-    DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 14, "开始战斗", 31, C.ink,
+    if glow > 0.01 then
+        DrawStroke(ctx, cta.x, cta.y, cta.w, cta.h,
+            {255, 255, 255, math.floor(glow * 220)}, 7, 2)
+    end
+    DrawPixelText(ctx, game.width * 0.5, ctaY + 8, "开始战斗", 31, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 56, "选择关卡", 14, C.ink,
+    DrawPixelText(ctx, game.width * 0.5, ctaY + 45, "选择关卡", 14, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, ctaY + 102,
-        "v" .. BUILD_VERSION .. " · " .. GAME_TITLE, 13, C.dim,
+    nvgRestore(ctx)
+    DrawPixelText(ctx, game.width * 0.5, 932,
+        "v" .. BUILD_VERSION .. " · " .. GAME_TITLE, 12, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     -- ③ 变现闭环三段式：钱包连接器 + 今日福利(赚) + 养成收藏(花) + 图鉴/排行（布局/命中同源 MetaUI）
@@ -2503,9 +2480,16 @@ local function DrawPaused(ctx, game, meta, presentation)
     }
     for i, offer in ipairs(offers) do
         local r = offer.rect
+        local glow, press = Backend.GetControlFx(r, offer.ready == true and presentation.adStatus ~= "loading")
+        nvgSave(ctx)
+        nvgTranslate(ctx, 0, press * 2)
         DrawMachinedPanel(ctx, r.x, r.y, r.w, r.h,
             offer.ready and C.card or C.widget,
             offer.ready and C.adDim or C.cyanDim, 7, offer.ready)
+        if glow > 0.01 then
+            DrawStroke(ctx, r.x, r.y, r.w, r.h,
+                {C.ad[1], C.ad[2], C.ad[3], math.floor(glow * 210)}, 7, 1.8)
+        end
         DrawRect(ctx, r.x + 10, r.y + 8, 48, 48,
             offer.ready and C.rail or C.panel, 6)
         DrawStroke(ctx, r.x + 10, r.y + 8, 48, 48,
@@ -2522,6 +2506,7 @@ local function DrawPaused(ctx, game, meta, presentation)
         if not offer.ready then DrawStroke(ctx, pill.x, pill.y, pill.w, pill.h, C.cyanDim, 5, 1) end
         DrawPixelText(ctx, pill.x + pill.w * 0.5, pill.y + 7, offer.tag, 12,
             offer.ready and C.ink or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        nvgRestore(ctx)
     end
 
     DrawRect(ctx, layout.resume.x, layout.resume.y, layout.resume.w, layout.resume.h, C.cyan, 8)
@@ -2534,11 +2519,19 @@ local function DrawPaused(ctx, game, meta, presentation)
     nvgFill(ctx)
     DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.5 + 14, layout.resume.y + 12,
         "继续战斗", 19, C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    local menuGlow, menuPress = Backend.GetControlFx(layout.menu, true)
+    nvgSave(ctx)
+    nvgTranslate(ctx, 0, menuPress * 2)
     DrawMachinedPanel(ctx, layout.menu.x, layout.menu.y, layout.menu.w, layout.menu.h,
         C.widget, C.cyanDim, 8, false)
+    if menuGlow > 0.01 then
+        DrawStroke(ctx, layout.menu.x, layout.menu.y, layout.menu.w, layout.menu.h,
+            {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(menuGlow * 200)}, 8, 1.5)
+    end
     DrawIcon(ctx, "home", layout.menu.x + 56, layout.menu.y + 12, 24, 1)
     DrawPixelText(ctx, layout.menu.x + layout.menu.w * 0.5 + 14, layout.menu.y + 12,
         "返回主菜单", 17, C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgRestore(ctx)
 
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
@@ -2990,6 +2983,9 @@ end
 
 function Backend.Init()
     if scene_ then
+        MetaUI.Shutdown()
+        Backend.ClearPointer()
+        uiFx.controls = {}
         Renderer3D.Shutdown()
         if vg_ then
             nvgDelete(vg_)
@@ -3020,6 +3016,8 @@ function Backend.Init()
         hovering = Backend.IsHovering,
         hoverGlow = Backend.GetHoverGlow,
         anim = Backend.GetAnimPhase,
+        controlFx = Backend.GetControlFx,
+        measure = MeasurePixelWidth,
     })
     scene_ = Scene()
     scene_:CreateComponent("Octree")
@@ -3133,6 +3131,10 @@ function Backend.Init()
 end
 
 function Backend.Shutdown()
+    MetaUI.Shutdown()
+    Backend.ClearPointer()
+    uiFx.controls = {}
+    uiFx.anim, uiFx.epoch, uiFx.scope = 0, 0, ""
     Renderer3D.Shutdown()
     uiState_, uiGameVisual_, uiGameLeaving_ = nil, nil, nil
     metaScreen_, metaScreenLeaving_, metaSupplyLeaving_ = nil, nil, nil
@@ -3188,18 +3190,23 @@ end
 -- NanoVGRender 晚于 3D Viewport，不能在其中才 RebuildGeometry，否则必然看到旧网格。
 function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
     UpdateUiState(gameSnapshot, metaState)
-    -- v0.13.30c：推进全屏共享的动画相位（流动光/呼吸/脉冲都派生自它），
-    -- 并把悬停强度朝目标平滑逼近——悬停「亮起/熄灭」是渐变而非硬切。
-    local dtAnim = math.min(0.05, math.max(0, gameSnapshot.elapsed - (uiFx.anim or 0)))
-    if dtAnim <= 0 or dtAnim > 0.049 then dtAnim = 1 / 60 end
+    -- 共享时间只驱动循环动画；各控件的进入/退出与按压分别缓动。
+    local dtAnim = math.min(0.05, math.max(0, gameSnapshot.elapsed - uiFx.anim))
     uiFx.anim = gameSnapshot.elapsed
-    local target = uiFx.hover.active and 1.0 or 0.0
-    local step = dtAnim * 6.5
-    if uiFx.hoverGlow < target then
-        uiFx.hoverGlow = math.min(target, uiFx.hoverGlow + step)
-    elseif uiFx.hoverGlow > target then
-        uiFx.hoverGlow = math.max(target, uiFx.hoverGlow - step)
+    uiFx.epoch = uiFx.epoch + 1
+    uiFx.scope = tostring(gameSnapshot.state) .. ":" .. tostring(metaState and metaState.screen or "")
+        .. ":" .. tostring(metaState and metaState.supplyOpen or false)
+    for key, control in pairs(uiFx.controls) do
+        if uiFx.epoch - control.seen > 2 then
+            uiFx.controls[key] = nil
+        else
+            local hoverTarget = control.hit and uiFx.hover.active and 1 or 0
+            local pressTarget = control.hit and uiFx.pressed and 1 or 0
+            control.glow = control.glow + (hoverTarget - control.glow) * math.min(1, dtAnim * 12)
+            control.press = control.press + (pressTarget - control.press) * math.min(1, dtAnim * 22)
+        end
     end
+    MetaUI.Update(dtAnim, metaState, gameSnapshot.state)
     -- 缓存本帧快照，供本文件内的 NanoVGRender 处理器直接使用（不依赖外部调用）。
     lastGame_ = gameSnapshot
     lastPresentation_ = presentationSnapshot
@@ -3424,16 +3431,13 @@ function Backend.IsItemPanelOpen()
     return itemPanelOpen_
 end
 
--- ============================================================================
--- v0.13.30c：「交互」——指针追踪 + 悬停反馈 + 动画相位。
--- 编排层在每次 MouseMove/TouchMove 把**设计坐标**喂进来；绘制端用
--- `Backend.IsHovering(rect)` 判悬停，`Backend.GetHoverGlow()` 取平滑强度，
--- `Backend.GetAnimPhase()` 取持续动画相位（流动光/呼吸/脉冲的公共时钟）。
--- 全部只读 uiFx 一张表，不新增顶层 local。
--- ============================================================================
+-- 控件显式登记几何，缓动统一由 UpdateScene 推进。
+-- 持续按住的主触点拥有反馈；其他触点及鼠标不能覆盖它。
 ---@param uiX number 设计坐标 X（已过 ScreenToUi）
 ---@param uiY number 设计坐标 Y
-function Backend.SetPointer(uiX, uiY)
+---@param touchId integer|nil 省略表示鼠标
+function Backend.SetPointer(uiX, uiY, touchId)
+    if uiFx.touchId ~= nil and touchId ~= uiFx.touchId then return end
     uiFx.hover.x = uiX
     uiFx.hover.y = uiY
     uiFx.hover.active = true
@@ -3442,6 +3446,57 @@ end
 -- 指针离开画布/触摸结束：熄灭悬停（强度会平滑降下来，不是硬切）。
 function Backend.ClearPointer()
     uiFx.hover.active = false
+    uiFx.pressed = false
+    uiFx.touchId = nil
+end
+
+function Backend.BeginTouchPointer(id, x, y)
+    if uiFx.touchId ~= nil then return false end
+    uiFx.touchId = id
+    Backend.SetPointer(x, y, id)
+    Backend.SetPointerPressed(true, id)
+    return true
+end
+
+function Backend.MoveTouchPointer(id, x, y)
+    if uiFx.touchId == id then Backend.SetPointer(x, y, id) end
+end
+
+function Backend.EndTouchPointer(id)
+    if uiFx.touchId == id then Backend.ClearPointer() end
+end
+
+---@param pressed boolean
+---@param touchId integer|nil 省略表示鼠标
+function Backend.SetPointerPressed(pressed, touchId)
+    if uiFx.touchId ~= nil and touchId ~= uiFx.touchId then return end
+    uiFx.pressed = pressed == true
+end
+
+-- 只由可交互控件显式调用，不能按面板尺寸猜按钮。缓动在 UpdateScene 推进。
+function Backend.GetControlFx(rect, enabled)
+    local key = uiFx.scope .. string.format(":%.2f:%.2f:%.2f:%.2f", rect.x, rect.y, rect.w, rect.h)
+    local control = uiFx.controls[key]
+    if not control then
+        control = {glow = 0, press = 0, hit = false, seen = uiFx.epoch}
+        uiFx.controls[key] = control
+    end
+    control.seen = uiFx.epoch
+    if not enabled then
+        control.hit, control.glow, control.press = false, 0, 0
+        return 0, 0
+    end
+    local x, y = uiFx.hover.x, uiFx.hover.y
+    if lastMeta_ and lastMeta_.supplyOpen then
+        x, y = WindowInput(x, y, metaSupplyEnter_)
+    elseif lastMeta_ and lastMeta_.screen and lastMeta_.screen ~= "" then
+        x, y = WindowInput(x, y, metaScreenEnter_)
+    elseif lastGame_ and lastGame_.state ~= "menu" and lastGame_.state ~= "playing" then
+        x, y = WindowInput(x, y, uiStateMotionEnter_)
+    end
+    control.hit = uiFx.hover.active and x >= rect.x and x <= rect.x + rect.w
+        and y >= rect.y and y <= rect.y + rect.h
+    return control.glow, control.press
 end
 
 ---@param rect table {x,y,w,h}
@@ -3454,7 +3509,9 @@ end
 
 ---@return number 0..1 平滑悬停强度（全屏共享，不针对单个控件）
 function Backend.GetHoverGlow()
-    return uiFx.hoverGlow
+    local glow = 0
+    for _, control in pairs(uiFx.controls) do glow = math.max(glow, control.glow) end
+    return glow
 end
 
 ---@return number 持续动画相位（秒），全屏共享

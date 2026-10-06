@@ -4,8 +4,10 @@
 -- 只读 meta 状态与 MetaCatalog；所有状态变更由编排层（main.lua）执行。
 
 local MetaCatalog = require "MetaCatalog"
+local VehicleShowcase = require "ui.VehicleShowcase"
 
 local MetaUI = {}
+local showroom = { index = 1, screen = "", key = "default" }
 
 -- 元层界面状态：由编排层（main.lua）组装，本模块只读。
 ---@class MetaTaskView
@@ -89,7 +91,9 @@ local MetaUI = {}
 ---@field icon fun(ctx:any, key:string, x:number, y:number, size:number, alpha:number|nil) 绘制 32×32 像素图标（可选资源，返回 false 表示未加载）
 ---@field hovering fun(rect:table):boolean v0.13.30c 指针是否悬停在该矩形内
 ---@field hoverGlow fun():number v0.13.30c 0..1 平滑悬停强度（全屏共享）
----@field anim fun():number v0.13.30c 持续动画相位（秒）
+---@field anim fun():number 持续动画相位（秒）
+---@field controlFx fun(rect:table, enabled:boolean):number, number 控件悬停与按压强度
+---@field measure fun(ctx:any, s:string, size:number):number 设计空间实测文字宽度
 
 ---@type MetaUiDeps
 local D = nil
@@ -97,6 +101,37 @@ local D = nil
 ---@param deps MetaUiDeps
 function MetaUI.Init(deps)
     D = deps
+    showroom.screen = ""
+    showroom.index = 1
+end
+
+-- 展示状态与玩家装备分离：浏览不会购买、换装或改写战斗快照。
+function MetaUI.Update(dt, meta, gameState)
+    local screen = meta and meta.screen or ""
+    if screen ~= showroom.screen then
+        showroom.screen = screen
+        if screen == "shop" then
+            for i, skin in ipairs(MetaCatalog.GetSkins()) do
+                if skin.key == meta.selectedSkin then showroom.index = i; break end
+            end
+        end
+    end
+    local skin = MetaCatalog.GetSkins()[showroom.index] or MetaCatalog.GetSkins()[1]
+    showroom.key = screen == "shop" and skin.key or (meta and meta.selectedSkin or "default")
+    local visible = gameState == "menu" and not (meta and meta.supplyOpen)
+        and (screen == "" or screen == "shop")
+    VehicleShowcase.Update(dt, visible, showroom.key)
+end
+
+function MetaUI.PreviewVehicle(index)
+    if not MetaCatalog.GetSkins()[index] then return false end
+    showroom.index = index
+    return true
+end
+
+function MetaUI.Shutdown()
+    VehicleShowcase.Shutdown()
+    showroom.screen = ""
 end
 
 ---@return table
@@ -129,7 +164,7 @@ local function SectionHeader(ctx, x, y, w, label)
     D.rect(ctx, x, y + 2, 3, 15,
         {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(255 * pulse)}, 0)
     D.text(ctx, x + 9, y, label, 18, C.cyan)
-    local lx = x + 9 + (#label * 18) + 12
+    local lx = x + 9 + D.measure(ctx, label, 18) + 12
     if lx < x + w then
         nvgBeginPath(ctx)
         nvgRect(ctx, lx, y + 9, (x + w) - lx, 1)
@@ -139,8 +174,8 @@ local function SectionHeader(ctx, x, y, w, label)
         nvgFill(ctx)
         -- 沿下划线循环流动的光点（确定性：由 anim 相位驱动，非随机）。
         local span = (x + w) - lx
-        local dot = lx + (D.anim() * 46) % span
-        D.rect(ctx, dot, y + 8, 7, 2, {C.cyan[1], C.cyan[2], C.cyan[3], 190}, 1)
+        local dot = lx + (D.anim() * 46) % math.max(1, span - 7)
+        D.rect(ctx, dot, y + 8, math.min(7, span), 2, {C.cyan[1], C.cyan[2], C.cyan[3], 190}, 1)
     end
 end
 
@@ -155,7 +190,7 @@ local function Button(ctx, r, label, sub, kind)
     if kind == "primary" then
         border, labelColor, fill = C.cyan, C.ink, C.cyan
     elseif kind == "ad" then
-        border, labelColor, fill = C.ad, C.ad, C.card
+        border, labelColor, fill = C.ad, C.ink, C.card
     elseif kind == "disabled" then
         border, labelColor, fill = C.cyanDim, C.dim, C.widget
     elseif kind == "gold" then
@@ -166,6 +201,9 @@ local function Button(ctx, r, label, sub, kind)
         border, labelColor, fill = C.cyanDim, C.text, C.card
     end
 
+    local glow, press = D.controlFx(r, kind ~= "disabled")
+    nvgSave(ctx)
+    nvgTranslate(ctx, 0, press * 2)
     D.panel(ctx, r.x, r.y, r.w, r.h, fill, border, 6)
     -- v0.13.30：主操作/广告按钮由平色改为受光金属（亮→深渐变 + 倒角），与主菜单 CTA 同语言。
     -- 只有「实心彩色」的两种 kind 需要；ghost/disabled 保持 D.panel 的机加工底即可。
@@ -187,9 +225,9 @@ local function Button(ctx, r, label, sub, kind)
     else
         D.rect(ctx, r.x, r.y + 2, 3, math.max(0, r.h - 4), border, 1)
     end
-    -- v0.13.30c「交互」：指针悬停 → 加色外辉光 + 亮边（全屏平滑强度，渐亮渐灭）。
-    if kind ~= "disabled" and D.hoverGlow() > 0.01 and D.hovering(r) then
-        local g = D.hoverGlow()
+    -- 每个可操作控件独立缓动；禁用控件与展示底板不会继承悬停。
+    if glow > 0.01 then
+        local g = glow
         local hc = (kind == "primary" and C.cyan) or (kind == "ad" and C.ad)
             or (kind == "gold" and C.warn) or C.cyan
         nvgBeginPath(ctx)
@@ -204,11 +242,12 @@ local function Button(ctx, r, label, sub, kind)
         D.text(ctx, cx, r.y + r.h * 0.5 - 18, label, 16, labelColor,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         D.text(ctx, cx, r.y + r.h * 0.5 + 5, sub, 13,
-            kind == "primary" and C.ink or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            (kind == "primary" or kind == "ad") and C.ink or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         D.text(ctx, cx, r.y + r.h * 0.5 - 8, label, 16, labelColor,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
+    nvgRestore(ctx)
 end
 
 ---@param ctx any
@@ -310,12 +349,12 @@ local function GetMenuBarLayout()
         end
         return r
     end
-    -- v0.13.8：整体下移 + 拉开行距，填掉底部大片空白（原内容止于 ~808，画布高 960）。
+    -- 首页主视觉之后按天赋/钱包/福利/收藏收束，底部保留版本说明。
     return {
-        fleet  = { x = 18, y = 400, w = 504, h = 106 },
-        wallet = { x = 18, y = 524, w = 504, h = 62 },
-        daily  = row(628, 102, 3),
-        grow   = row(770, 102, 4),
+        fleet  = { x = 18, y = 532, w = 504, h = 84 },
+        wallet = { x = 18, y = 632, w = 504, h = 62 },
+        daily  = row(732, 80, 3),
+        grow   = row(842, 80, 4),
     }
 end
 
@@ -326,45 +365,21 @@ end
 ---@param meta MetaState
 function MetaUI.DrawHomeFleet(ctx, w, meta)
     local C = Colors()
-    local L = GetMenuBarLayout()
-    local r = L.fleet
-    local owned = meta.talentCount or 0
-    local total = meta.talentTotal or 42
-    local stars = meta.totalStars or 0
-    local stageCount = meta.talentStageCount or 0
-    local hot = meta.talentAffordable and true or false
-    local border = hot and C.cyan or C.cyanDim
-
-    D.panel(ctx, r.x, r.y, r.w, r.h, C.rail, border, 8)
-    D.rect(ctx, r.x, r.y, 4, r.h, C.cyan, 0)
-    -- 大图标框（有可解锁节点时亮框）
-    local iconBox = { x = r.x + 14, y = r.y + 15, w = 68, h = 68 }
-    D.panel(ctx, iconBox.x, iconBox.y, iconBox.w, iconBox.h, C.panel, border, 8)
-    D.icon(ctx, "premium_energy_core", iconBox.x + 18, iconBox.y + 18, 32, 1)
-
-    local tx = iconBox.x + iconBox.w + 16
-    D.text(ctx, tx, r.y + 16, "天赋树", 21, C.text)
-    D.text(ctx, tx, r.y + 48, string.format("已解锁 %d/%d 节点", owned, total), 14, C.dim)
-
-    -- 解锁进度条
-    local barW = r.w - (tx - r.x) - 128
-    D.progress(ctx, tx, r.y + 72, barW, total > 0 and (owned / total) or 0, C.cyan, 10)
-
-    -- 右侧「进入」胶囊（明确的点击目标）
-    local cta = { x = r.x + r.w - 108, y = r.y + 30, w = 94, h = 46 }
-    D.panel(ctx, cta.x, cta.y, cta.w, cta.h, C.cyan, C.cyan, 8)
-    D.text(ctx, cta.x + cta.w * 0.5, cta.y + 12, "进入 ›", 19, C.ink,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    -- 底部一行状态：星级 / 已开放阶段 / 可解锁提示
-    D.text(ctx, tx, r.y + 88,
-        string.format("★ %d  ·  已开放 %d/%d 阶段", stars, stageCount, meta.talentMaxStage or 7),
-        13, C.dim)
-    D.text(ctx, cta.x - 12, r.y + 88,
-        hot and "有可解锁节点" or "继续通关解锁", 13,
-        hot and C.warn or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    if hot then
-        D.rect(ctx, r.x + r.w - 14, r.y + 10, 7, 7, C.warn, 4)
+    local r = GetMenuBarLayout().fleet
+    local owned, total = meta.talentCount or 0, meta.talentTotal or 42
+    local hot = meta.talentAffordable == true
+    local glow = D.controlFx(r, true)
+    D.panel(ctx, r.x, r.y, r.w, r.h, C.rail, hot and C.cyan or C.cyanDim, 8)
+    D.icon(ctx, "premium_energy_core", r.x + 16, r.y + 23, 32, 1)
+    D.text(ctx, r.x + 62, r.y + 12, "天赋树", 22, C.text)
+    D.text(ctx, r.x + 62, r.y + 43,
+        string.format("%d/%d 节点  ·  ★ %d", owned, total, meta.totalStars or 0), 15, C.dim)
+    D.progress(ctx, r.x + 62, r.y + 68, r.w - 196, total > 0 and owned / total or 0, C.cyan, 4)
+    local cta = { x = r.x + r.w - 114, y = r.y + 20, w = 98, h = 44 }
+    Button(ctx, cta, "进入 ›", "", "primary")
+    if hot then D.rect(ctx, r.x + r.w - 12, r.y + 9, 6, 6, C.warn, 3) end
+    if glow > 0.01 then
+        D.stroke(ctx, r.x, r.y, r.w, r.h, {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 180)}, 8, 1.4)
     end
 end
 
@@ -412,6 +427,43 @@ local function GetGrowDefs(meta)
     }
 end
 
+-- 展台只承载视觉，不提供隐式购买/换装操作；阴影和环形底座让车辆落在环境里。
+local function DrawVehicleStage(ctx, r)
+    local C = Colors()
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, r.x, r.y, r.w, r.h)
+    local cx, cy = r.x + r.w * 0.5, r.y + r.h * 0.73
+    nvgBeginPath(ctx)
+    nvgRect(ctx, r.x, r.y, r.w, r.h)
+    nvgFillPaint(ctx, nvgRadialGradient(ctx, cx, cy - r.h * 0.25, 8, r.w * 0.52,
+        nvgRGBA(24, 47, 64, 175), nvgRGBA(7, 11, 20, 0)))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgEllipse(ctx, cx, cy, r.w * 0.38, r.h * 0.12)
+    nvgFillPaint(ctx, nvgRadialGradient(ctx, cx, cy, 4, r.w * 0.38,
+        nvgRGBA(0, 0, 0, 170), nvgRGBA(0, 0, 0, 0)))
+    nvgFill(ctx)
+    nvgBeginPath(ctx)
+    nvgEllipse(ctx, cx, cy, r.w * 0.39, r.h * 0.15)
+    nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 120))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+    if not VehicleShowcase.Draw(ctx, r.x, r.y, r.w, r.h) then
+        D.text(ctx, cx, r.y + r.h * 0.4, "实车预览暂不可用", 17, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+    nvgRestore(ctx)
+end
+
+function MetaUI.DrawHomeVehicle(ctx, w, meta)
+    local C = Colors()
+    local skin = MetaCatalog.GetSkin(meta and meta.selectedSkin or "default") or MetaCatalog.GetSkins()[1]
+    DrawVehicleStage(ctx, {x = 18, y = 192, w = w - 36, h = 220})
+    D.text(ctx, 34, 196, "当前车型", 14, C.dim)
+    D.text(ctx, w - 34, 196, skin.name, 18, C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    D.text(ctx, w * 0.5, 398, skin.desc, 17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+end
+
 ---@param ctx any
 ---@param w number
 ---@param meta MetaState
@@ -421,7 +473,14 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
 
     MetaUI.DrawHomeFleet(ctx, w, meta)
 
+    local walletGlow, walletPress = D.controlFx(L.wallet, true)
+    nvgSave(ctx)
+    nvgTranslate(ctx, 0, walletPress * 2)
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
+    if walletGlow > 0.01 then
+        D.stroke(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h,
+            {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(walletGlow * 190)}, 6, 1.5)
+    end
     D.rect(ctx, L.wallet.x, L.wallet.y, 3, L.wallet.h, C.cyan, 0)
     D.icon(ctx, "parts", L.wallet.x + 12, L.wallet.y + 15, 32)
     D.text(ctx, L.wallet.x + 52, L.wallet.y + 11, "零件", 13, C.dim)
@@ -440,39 +499,39 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     D.icon(ctx, "premium_energy_core", wb.x + 8, wb.y + 5, 28)
     D.text(ctx, wb.x + 64, wb.y + 11, "充值", 16, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgRestore(ctx)
 
     local rows = {
         { label = "今日福利", rects = L.daily, defs = GetDailyDefs(meta) },
         { label = "养成收藏", rects = L.grow, defs = GetGrowDefs(meta) },
     }
     for _, rowDef in ipairs(rows) do
-        D.text(ctx, 18, rowDef.rects[1].y - 14, rowDef.label, 15, C.cyanDim)
-        D.rect(ctx, 112, rowDef.rects[1].y - 7, 36, 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 0)
+        SectionHeader(ctx, 18, rowDef.rects[1].y - 27, 504, rowDef.label)
+        D.panel(ctx, 18, rowDef.rects[1].y, 504, rowDef.rects[1].h, C.panel, C.cyanDim, 6)
         for i, def in ipairs(rowDef.defs) do
             local rr = rowDef.rects[i]
-            local border = def.hot and (def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.cyan))
-                or C.cyanDim
-            D.panel(ctx, rr.x, rr.y, rr.w, rr.h, C.card, border, 6)
-            D.rect(ctx, rr.x + 9, rr.y + 1, rr.w - 18, 1,
-                {border[1], border[2], border[3], def.hot and 100 or 40}, 0)
-            D.panel(ctx, rr.x + rr.w * 0.5 - 23, rr.y + 8, 46, 44, C.rail, border, 5)
-            local drewIcon = D.icon(ctx, def.icon, rr.x + rr.w * 0.5 - 16, rr.y + 14, 32,
-                def.hot and 1 or 0.82)
-            D.text(ctx, rr.x + rr.w * 0.5, rr.y + (drewIcon and 58 or 22),
-                def.label, 15, def.hot and C.text or C.dim,
-                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-            local lines = D.wrap(ctx, def.sub, 12, rr.w - 10)
-            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 80, lines[1] or "", 12,
-                def.tone == "ad" and C.ad or (def.tone == "gold" and C.warn or C.dim),
-                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-            if def.hot then
-                D.rect(ctx, rr.x + rr.w - 12, rr.y + 7, 5, 5, border, 3)
+            local accent = def.tone == "ad" and C.ad or C.cyan
+            local glow, press = D.controlFx(rr, true)
+            if glow > 0.01 then
+                D.rect(ctx, rr.x + 3, rr.y + 3, rr.w - 6, rr.h - 6,
+                    {accent[1], accent[2], accent[3], math.floor(26 * glow)}, 4)
             end
+            if i > 1 then
+                D.rect(ctx, rr.x - 4, rr.y + 16, 1, rr.h - 32, C.rail, 0)
+            end
+            D.icon(ctx, def.icon, rr.x + rr.w * 0.5 - 16, rr.y + 5 + press * 2, 32,
+                def.hot and 1 or 0.85)
+            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 39 + press * 2, def.label, 17, C.text,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            local subSize = D.measure(ctx, def.sub, 14) <= rr.w - 10 and 14 or 12
+            D.text(ctx, rr.x + rr.w * 0.5, rr.y + 60, def.sub, subSize,
+                def.tone == "ad" and C.ad or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            if def.hot then D.rect(ctx, rr.x + rr.w - 14, rr.y + 9, 5, 5, accent, 3) end
         end
     end
 
     if meta.toast and meta.toast ~= "" then
-        D.text(ctx, w * 0.5, 892, meta.toast, 16, C.warn,
+        D.text(ctx, w * 0.5, 510, meta.toast, 16, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 end
@@ -739,92 +798,84 @@ end
 
 local function GetShopLayout(w)
     local content, close = GetShellLayout(w)
-    local rowH, rowStep = 72, 78
-    local rowY = content.y + 35
-    local giftTitleY = rowY + #MetaCatalog.GetSkins() * rowStep + 4
     return {
-        content = content, close = close,
-        titleY = content.y + 8,
-        rowY = rowY,
-        rowH = rowH,
-        rowStep = rowStep,
-        giftTitleY = giftTitleY,
-        giftRowY = giftTitleY + 30,
+        content = content, close = close, titleY = content.y + 8,
+        stage = {x = content.x, y = content.y + 48, w = content.w, h = 220},
+        rowY = content.y + 332, rowH = 56, rowStep = 64,
+        purchase = {x = content.x + content.w - 182, y = content.y + 474, w = 180, h = 52},
+        giftTitleY = content.y + 552, giftRowY = content.y + 582,
     }
 end
 
+-- 六个浏览位与独立购买区；浏览位永远不扣款。
 local function GetShopCarButton(layout, index)
-    local r = {x = layout.content.x, y = layout.rowY + (index - 1) * layout.rowStep,
-        w = layout.content.w, h = layout.rowH}
-    return r, {x = r.x + r.w - 126, y = r.y + 12, w = 112, h = 48}
+    local gap = 8
+    local bw = (layout.content.w - gap * 2) / 3
+    local col, row = (index - 1) % 3, math.floor((index - 1) / 3)
+    return {x = layout.content.x + col * (bw + gap), y = layout.rowY + row * layout.rowStep,
+        w = bw, h = layout.rowH}, layout.purchase
 end
 
 local function GetShopGiftButton(layout, index)
-    local r = {x = layout.content.x, y = layout.giftRowY + (index - 1) * 68,
-        w = layout.content.w, h = 60}
-    return r, {x = r.x + r.w - 148, y = r.y + 6, w = 132, h = 48}
-end
-
-local function DrawCarSilhouette(ctx, r, skin, color)
-    local cell = 7
-    local x0 = r.x + 18
-    local y0 = r.y + 15
-    for row, pixels in ipairs(skin.silhouette) do
-        for col = 1, #pixels do
-            if pixels:sub(col, col) == "#" then
-                D.rect(ctx, x0 + (col - 1) * cell, y0 + (row - 1) * cell,
-                    cell - 1, cell - 1, color, 0)
-            end
-        end
-    end
+    local r = {x = layout.content.x, y = layout.giftRowY + (index - 1) * 60,
+        w = layout.content.w, h = 56}
+    return r, {x = r.x + r.w - 146, y = r.y + 4, w = 132, h = 48}
 end
 
 local function DrawShop(ctx, w, meta)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "车型商店",
-        string.format("零件 %d", meta.parts or 0))
+    local content, close = Shell(ctx, w, 960, "车型商店", "实车展示")
     local layout = GetShopLayout(w)
+    local skins = MetaCatalog.GetSkins()
+    local skin = skins[showroom.index]
+    local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
+    local equipped = meta.selectedSkin == skin.key
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
-    SectionHeader(ctx, content.x + 4, layout.titleY, content.w - 8, "选择车型 · 仅改变外形")
-
-    local skins = MetaCatalog.GetSkins()
-    for i, skin in ipairs(skins) do
-        local r, btn = GetShopCarButton(layout, i)
-        local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
-        local selected = meta.selectedSkin == skin.key
-        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, selected and C.cyan or C.cyanDim, 6)
-        D.panel(ctx, r.x + 9, r.y + 8, 76, 55, C.widget, C.cyanDim, 4)
-        DrawCarSilhouette(ctx, r, skin, selected and C.cyan or C.text)
-        D.text(ctx, r.x + 94, r.y + 8, skin.name, 18, C.text)
-        D.text(ctx, r.x + 94, r.y + 34,
-            selected and "当前使用" or (owned and "已拥有" or ("售价 " .. skin.cost .. " 零件")),
-            15, selected and C.cyan or C.dim)
-        if selected then
-            Button(ctx, btn, "使用中", "", "disabled")
-        elseif owned then
-            Button(ctx, btn, "使用", "", "ghost")
-        elseif (meta.parts or 0) >= skin.cost then
-            Button(ctx, btn, "购买", tostring(skin.cost), "primary")
-        else
-            Button(ctx, btn, "零件不足", tostring(skin.cost), "disabled")
+    D.text(ctx, content.x + 4, layout.titleY, skin.name, 32, C.text)
+    D.text(ctx, content.x + content.w - 4, layout.titleY + 7,
+        string.format("%02d / %02d", showroom.index, #skins), 18, C.dim,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    DrawVehicleStage(ctx, layout.stage)
+    D.text(ctx, content.x + content.w * 0.5, content.y + 275, skin.desc, 18, C.text,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    D.text(ctx, content.x + content.w * 0.5, content.y + 305, "浏览车型 · 仅改变外形", 15, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    for i, entry in ipairs(skins) do
+        local r = GetShopCarButton(layout, i)
+        local active = i == showroom.index
+        local glow, press = D.controlFx(r, true)
+        D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card,
+            active and C.cyan or C.cyanDim, 5)
+        if active then D.rect(ctx, r.x + 4, r.y + r.h - 3, r.w - 8, 2, C.cyan, 0) end
+        if glow > 0.01 then
+            D.stroke(ctx, r.x, r.y, r.w, r.h,
+                {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 200)}, 5, 1.4)
         end
+        D.text(ctx, r.x + 10, r.y + 7 + press * 2, entry.name, 18, active and C.text or C.dim)
+        local has = entry.cost == 0 or (meta.skins and meta.skins[entry.key] == true)
+        D.text(ctx, r.x + 10, r.y + 33,
+            meta.selectedSkin == entry.key and "使用中" or (has and "已拥有" or tostring(entry.cost) .. " 零件"),
+            14, has and C.cyanDim or C.dim)
     end
-
+    local buyY = layout.purchase.y
+    D.icon(ctx, "parts", content.x + 4, buyY + 10, 32, 1)
+    D.text(ctx, content.x + 46, buyY + 2, equipped and "当前使用" or (owned and "已拥有" or tostring(skin.cost)),
+        28, equipped and C.cyan or C.text)
+    D.text(ctx, content.x + 46, buyY + 36,
+        owned and "已纳入车型收藏" or string.format("持有 %d 零件", meta.parts or 0), 14, C.dim)
+    local kind = (equipped or (not owned and (meta.parts or 0) < skin.cost)) and "disabled" or "primary"
+    local label = equipped and "使用中" or (owned and "装备此车" or ((meta.parts or 0) >= skin.cost and "购买车型" or "零件不足"))
+    Button(ctx, layout.purchase, label, "", kind)
     SectionHeader(ctx, content.x + 4, layout.giftTitleY, content.w - 8, "免费补给")
-    local gifts = MetaCatalog.GetShopEntries()
-    for i, gift in ipairs(gifts) do
+    for i, gift in ipairs(MetaCatalog.GetShopEntries()) do
         local r, btn = GetShopGiftButton(layout, i)
         local used = meta.giftUsed and meta.giftUsed[gift.key] or 0
         local limit = MetaCatalog.GetAdGiftDailyLimit(gift.key)
-        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, used < limit and C.ad or C.cyanDim, 6)
-        D.text(ctx, r.x + 16, r.y + 8, gift.name, 18, used < limit and C.text or C.dim)
-        D.text(ctx, r.x + 16, r.y + 32, gift.desc, 15, C.dim)
-        if used < limit then
-            Button(ctx, btn, "看广告", string.format("%d/%d", used, limit), "ad")
-        else
-            Button(ctx, btn, "今日已领", "", "disabled")
-        end
+        D.text(ctx, r.x + 4, r.y + 3, gift.name, 18, C.text)
+        D.text(ctx, r.x + 4, r.y + 29, gift.desc, 15, C.dim)
+        Button(ctx, btn, used < limit and "看广告" or "今日已领",
+            used < limit and string.format("%d/%d", used, limit) or "", used < limit and "ad" or "disabled")
     end
     nvgRestore(ctx)
     return content, close
@@ -837,14 +888,14 @@ local function HitTestShop(uiX, uiY, w, meta)
     if Inside(layout.close, uiX, uiY) then return "close", nil end
     if not Inside(layout.content, uiX, uiY) then return nil, nil end
     local skins = MetaCatalog.GetSkins()
-    for i, skin in ipairs(skins) do
-        local _, btn = GetShopCarButton(layout, i)
-        local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
-        if Inside(btn, uiX, uiY) and meta.selectedSkin ~= skin.key
-            and (owned or (meta.parts or 0) >= skin.cost) then
-            return "buy_skin", i
-        end
+    for i in ipairs(skins) do
+        local r = GetShopCarButton(layout, i)
+        if Inside(r, uiX, uiY) then return "preview_skin", i end
     end
+    local skin = skins[showroom.index]
+    local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
+    if Inside(layout.purchase, uiX, uiY) and meta.selectedSkin ~= skin.key
+        and (owned or (meta.parts or 0) >= skin.cost) then return "buy_skin", showroom.index end
     local gifts = MetaCatalog.GetShopEntries()
     for i, gift in ipairs(gifts) do
         local _, btn = GetShopGiftButton(layout, i)

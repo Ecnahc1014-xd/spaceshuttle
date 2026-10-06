@@ -925,6 +925,9 @@ local function HandleMetaAction(action, index)
         HandleSupply("double")
     elseif action == "claim" and index then
         HandleClaimTask(index)
+    elseif action == "preview_skin" and index then
+        -- 展台浏览只改变预览车型，不购买、不装备、不写存档。
+        MetaUI.PreviewVehicle(index)
     elseif action == "buy_skin" and index then
         HandleShopSkin(index)
     elseif action == "ad_gift" and index then
@@ -1348,6 +1351,7 @@ function ClientMain.Start(opts)
     SubscribeToEvent("KeyDown", HandleKeyDown)
     SubscribeToEvent("KeyUp", HandleKeyUp)
     SubscribeToEvent("ScreenMode", HandleScreenMode)
+    SubscribeToEvent("InputFocus", HandleInputFocus)
 
     print("[Main] rendering, ads and cloud save connected")
     started_ = true
@@ -1355,6 +1359,8 @@ function ClientMain.Start(opts)
 end
 
 function ClientMain.Stop()
+    RenderBackend.ClearPointer()
+    UnsubscribeFromEvent("InputFocus")
     started_ = false
     pcall(SysNotif.UnregisterHandler)
     if not GameMode.IsOffline() then
@@ -1464,6 +1470,14 @@ function HandleScreenMode()
     RenderBackend.Resize()
 end
 
+---@param eventType string
+---@param eventData InputFocusEventData
+function HandleInputFocus(eventType, eventData)
+    if not eventData:GetBool("Focus") or eventData:GetBool("Minimized") then
+        RenderBackend.ClearPointer()
+    end
+end
+
 -- v0.12.5：顶端通知条优先消费点击（任意状态都在最上层）。
 ---@return boolean consumed
 local function TryBannerAt(screenX, screenY)
@@ -1481,6 +1495,9 @@ function HandleMouseDown(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    local pointerX, pointerY = RenderBackend.ScreenToUi(screenX, screenY)
+    RenderBackend.SetPointer(pointerX, pointerY)
+    RenderBackend.SetPointerPressed(true)
     -- v0.12.5：顶部通知条永远最先吃点击（覆盖 HUD 下沿，可能与任何模态重叠）。
     if TryBannerAt(screenX, screenY) then
         metaPointerConsumed = true
@@ -1530,6 +1547,8 @@ end
 
 function HandleMouseUp(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
+    -- 所有业务提前返回前释放左键按压；其他鼠标按钮不影响它。
+    RenderBackend.SetPointerPressed(false)
     if talentScrollArmed then
         local moved = TalentTree.ScrollEnd()
         talentScrollArmed = false
@@ -1599,6 +1618,8 @@ end
 function HandleTouchBegin(eventType, eventData)
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    local pointerX, pointerY = RenderBackend.ScreenToUi(screenX, screenY)
+    RenderBackend.BeginTouchPointer(eventData:GetInt("TouchID"), pointerX, pointerY)
     -- v0.12.5：顶部通知条永远最先吃触摸。
     if TryBannerAt(screenX, screenY) then
         metaPointerConsumed = true
@@ -1646,10 +1667,10 @@ function HandleTouchBegin(eventType, eventData)
 end
 
 function HandleTouchMove(eventType, eventData)
-    -- v0.13.30c：触摸拖动同样喂指针（手指按住 = 悬停生效），先于各分支 return。
+    -- 只移动主触点的视觉反馈；业务输入仍沿用原有处理路径。
     local tsx, tsy = GetScreenCoordinates(eventData)
     local thx, thy = RenderBackend.ScreenToUi(tsx, tsy)
-    RenderBackend.SetPointer(thx, thy)
+    RenderBackend.MoveTouchPointer(eventData:GetInt("TouchID"), thx, thy)
     if talentScrollArmed then
         local _, uiY = RenderBackend.ScreenToUi(tsx, tsy)
         TalentTree.ScrollMove(uiY, designWidth_)
@@ -1667,6 +1688,8 @@ function HandleTouchMove(eventType, eventData)
 end
 
 function HandleTouchEnd(eventType, eventData)
+    -- 仅主触点结束时清反馈，画布外或第二根手指的抬起不能取消主指按压。
+    RenderBackend.EndTouchPointer(eventData:GetInt("TouchID"))
     if talentScrollArmed then
         local moved = TalentTree.ScrollEnd()
         talentScrollArmed = false
