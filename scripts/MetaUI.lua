@@ -87,6 +87,9 @@ local MetaUI = {}
 ---@field backdrop fun(ctx:any, x:number, y:number, w:number, h:number)
 ---@field wrap fun(ctx:any, s:string, size:number, maxW:number) 返回行数组
 ---@field icon fun(ctx:any, key:string, x:number, y:number, size:number, alpha:number|nil) 绘制 32×32 像素图标（可选资源，返回 false 表示未加载）
+---@field hovering fun(rect:table):boolean v0.13.30c 指针是否悬停在该矩形内
+---@field hoverGlow fun():number v0.13.30c 0..1 平滑悬停强度（全屏共享）
+---@field anim fun():number v0.13.30c 持续动画相位（秒）
 
 ---@type MetaUiDeps
 local D = nil
@@ -121,7 +124,10 @@ end
 -- 让「选择车型 / 免费补给 / 钻石礼包」这类分隔从平色小字变成有结构的分区头。
 local function SectionHeader(ctx, x, y, w, label)
     local C = Colors()
-    D.rect(ctx, x, y + 2, 3, 15, C.cyan, 0)
+    -- v0.13.30c「动态」：左竖条随全屏动画相位轻微呼吸（亮度 60%~100%）。
+    local pulse = 0.6 + 0.4 * (0.5 + 0.5 * math.sin(D.anim() * 2.2))
+    D.rect(ctx, x, y + 2, 3, 15,
+        {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(255 * pulse)}, 0)
     D.text(ctx, x + 9, y, label, 18, C.cyan)
     local lx = x + 9 + (#label * 18) + 12
     if lx < x + w then
@@ -131,6 +137,10 @@ local function SectionHeader(ctx, x, y, w, label)
             nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90),
             nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 0)))
         nvgFill(ctx)
+        -- 沿下划线循环流动的光点（确定性：由 anim 相位驱动，非随机）。
+        local span = (x + w) - lx
+        local dot = lx + (D.anim() * 46) % span
+        D.rect(ctx, dot, y + 8, 7, 2, {C.cyan[1], C.cyan[2], C.cyan[3], 190}, 1)
     end
 end
 
@@ -176,6 +186,18 @@ local function Button(ctx, r, label, sub, kind)
         D.rect(ctx, r.x + 8, r.y + 3, math.max(0, r.w - 16), 1, {255, 255, 255, 120}, 0)
     else
         D.rect(ctx, r.x, r.y + 2, 3, math.max(0, r.h - 4), border, 1)
+    end
+    -- v0.13.30c「交互」：指针悬停 → 加色外辉光 + 亮边（全屏平滑强度，渐亮渐灭）。
+    if kind ~= "disabled" and D.hoverGlow() > 0.01 and D.hovering(r) then
+        local g = D.hoverGlow()
+        local hc = (kind == "primary" and C.cyan) or (kind == "ad" and C.ad)
+            or (kind == "gold" and C.warn) or C.cyan
+        nvgBeginPath(ctx)
+        nvgRect(ctx, r.x - 13, r.y - 13, r.w + 26, r.h + 26)
+        nvgFillPaint(ctx, nvgBoxGradient(ctx, r.x, r.y, r.w, r.h, 6, 13,
+            nvgRGBA(hc[1], hc[2], hc[3], math.floor(104 * g)), nvgRGBA(hc[1], hc[2], hc[3], 0)))
+        nvgFill(ctx)
+        D.stroke(ctx, r.x, r.y, r.w, r.h, {hc[1], hc[2], hc[3], math.floor(215 * g)}, 6, 1.8)
     end
     local cx = r.x + r.w * 0.5
     if sub ~= "" then

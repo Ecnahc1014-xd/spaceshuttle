@@ -68,6 +68,12 @@ local nvgFontZpix_ = -1
 -- A1/A2：模态与波次横幅的入场动画计时。记录当前玩法 state 的进入时刻，
 -- 渲染时据此计算淡入/滑入进度，避免硬切（不破坏酸性风格，纯透明度/位移 easing）。
 local uiState_ = nil
+-- v0.13.30c：「华丽 + 交互 + 动态」三件套的状态载体（收进一张表，只占 1 个顶层 local，
+-- 守 AB-166 的 Lua 200 上限）。
+--   hover  = {x, y, active}：最近一次指针位置（设计坐标），供按钮悬停发光。
+--   hoverGlow = 0..1 的**平滑**悬停强度（悬停时升、移开时降，不是硬切）。
+--   anim   = 全屏共享的持续动画相位源（流动光/脉冲/呼吸都由它派生）。
+local uiFx = { hover = { x = -999, y = -999, active = false }, hoverGlow = 0.0, anim = 0.0 }
 local uiStateEnter_ = 0
 local uiGameVisual_ = nil
 local uiGameLeaving_ = nil
@@ -442,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.30"
+local BUILD_VERSION = "0.13.31"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -762,6 +768,19 @@ local function DrawMachinedPanel(ctx, x, y, w, h, fill, border, radius, emphasis
             nvgFillColor(ctx, nvgRGBA(C.warn[1], C.warn[2], C.warn[3], 150))
             nvgFill(ctx)
         end
+    end
+    -- ⑦ v0.13.30c「交互」：指针悬停 → 加色外辉光 + 亮边。只对**按钮尺寸**的面板生效
+    -- （h<=80：按钮 36~48、小卡），避免 HUD 横条/大面板被误点亮。
+    -- 强度取全屏平滑值 uiFx.hoverGlow（悬停渐亮、移开渐灭），非硬切。
+    if h <= 80 and w >= 40 and uiFx.hoverGlow > 0.01
+        and Backend.IsHovering({ x = x, y = y, w = w, h = h }) then
+        local g = uiFx.hoverGlow
+        nvgBeginPath(ctx)
+        nvgRect(ctx, x - 14, y - 14, w + 28, h + 28)
+        nvgFillPaint(ctx, nvgBoxGradient(ctx, x, y, w, h, math.max(2, r), 14,
+            nvgRGBA(0, 236, 214, math.floor(96 * g)), nvgRGBA(0, 236, 214, 0)))
+        nvgFill(ctx)
+        DrawStroke(ctx, x, y, w, h, {0, 245, 224, math.floor(210 * g)}, r, 1.8)
     end
 end
 
@@ -1869,6 +1888,24 @@ local function DrawMenu(ctx, game, meta)
     DrawStroke(ctx, cta.x + 3, cta.y + 3, cta.w - 6, cta.h - 6, {255, 255, 255, 92}, 5, 1.2)
     DrawRect(ctx, cta.x + 10, cta.y + 4, cta.w - 20, 1, {255, 255, 255, 140}, 0)
     DrawRect(ctx, cta.x + 10, cta.y + cta.h - 4, cta.w - 20, 1, {0, 0, 0, 60}, 0)
+    -- v0.13.30c「华丽 + 动态」：一条斜向高光带周期性扫过 CTA（3.2s 一轮，确定性）。
+    -- 用裁剪保证光带不越出圆角按钮；扫光用白→透明渐变，避免把青底冲淡。
+    local sweep = (game.elapsed % 3.2) / 3.2
+    if sweep < 0.55 then
+        local t = sweep / 0.55
+        local bandX = cta.x - 120 + t * (cta.w + 240)
+        nvgSave(ctx)
+        nvgIntersectScissor(ctx, cta.x, cta.y, cta.w, cta.h)
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, bandX, cta.y)
+        nvgLineTo(ctx, bandX + 58, cta.y)
+        nvgLineTo(ctx, bandX + 22, cta.y + cta.h)
+        nvgLineTo(ctx, bandX - 36, cta.y + cta.h)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, bandX - 36, cta.y, bandX + 58, cta.y,
+            nvgRGBA(255, 255, 255, 0), nvgRGBA(255, 255, 255, 120)))
+        nvgFill(ctx)
+        nvgRestore(ctx)
+    end
     DrawIcon(ctx, "premium_supply_crate", 164, ctaY + 28, 32, 1)
     DrawPixelText(ctx, game.width * 0.5 + 6, ctaY + 14, "开始战斗", 31, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -2978,6 +3015,11 @@ function Backend.Init()
         backdrop = DrawModalBackdrop,
         wrap = WrapTextLines,
         icon = DrawIcon,
+        -- v0.13.30c：把「悬停查询 + 动画相位」注入元层，让 MetaUI 的按钮也能悬停发光、
+        -- 分区标题/进度条也能动起来（避免 MetaUI 反向 require 后端）。
+        hovering = Backend.IsHovering,
+        hoverGlow = Backend.GetHoverGlow,
+        anim = Backend.GetAnimPhase,
     })
     scene_ = Scene()
     scene_:CreateComponent("Octree")
@@ -3146,6 +3188,18 @@ end
 -- NanoVGRender 晚于 3D Viewport，不能在其中才 RebuildGeometry，否则必然看到旧网格。
 function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
     UpdateUiState(gameSnapshot, metaState)
+    -- v0.13.30c：推进全屏共享的动画相位（流动光/呼吸/脉冲都派生自它），
+    -- 并把悬停强度朝目标平滑逼近——悬停「亮起/熄灭」是渐变而非硬切。
+    local dtAnim = math.min(0.05, math.max(0, gameSnapshot.elapsed - (uiFx.anim or 0)))
+    if dtAnim <= 0 or dtAnim > 0.049 then dtAnim = 1 / 60 end
+    uiFx.anim = gameSnapshot.elapsed
+    local target = uiFx.hover.active and 1.0 or 0.0
+    local step = dtAnim * 6.5
+    if uiFx.hoverGlow < target then
+        uiFx.hoverGlow = math.min(target, uiFx.hoverGlow + step)
+    elseif uiFx.hoverGlow > target then
+        uiFx.hoverGlow = math.max(target, uiFx.hoverGlow - step)
+    end
     -- 缓存本帧快照，供本文件内的 NanoVGRender 处理器直接使用（不依赖外部调用）。
     lastGame_ = gameSnapshot
     lastPresentation_ = presentationSnapshot
@@ -3368,6 +3422,44 @@ end
 ---@return boolean open
 function Backend.IsItemPanelOpen()
     return itemPanelOpen_
+end
+
+-- ============================================================================
+-- v0.13.30c：「交互」——指针追踪 + 悬停反馈 + 动画相位。
+-- 编排层在每次 MouseMove/TouchMove 把**设计坐标**喂进来；绘制端用
+-- `Backend.IsHovering(rect)` 判悬停，`Backend.GetHoverGlow()` 取平滑强度，
+-- `Backend.GetAnimPhase()` 取持续动画相位（流动光/呼吸/脉冲的公共时钟）。
+-- 全部只读 uiFx 一张表，不新增顶层 local。
+-- ============================================================================
+---@param uiX number 设计坐标 X（已过 ScreenToUi）
+---@param uiY number 设计坐标 Y
+function Backend.SetPointer(uiX, uiY)
+    uiFx.hover.x = uiX
+    uiFx.hover.y = uiY
+    uiFx.hover.active = true
+end
+
+-- 指针离开画布/触摸结束：熄灭悬停（强度会平滑降下来，不是硬切）。
+function Backend.ClearPointer()
+    uiFx.hover.active = false
+end
+
+---@param rect table {x,y,w,h}
+---@return boolean
+function Backend.IsHovering(rect)
+    if not uiFx.hover.active or not rect then return false end
+    local x, y = uiFx.hover.x, uiFx.hover.y
+    return x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h
+end
+
+---@return number 0..1 平滑悬停强度（全屏共享，不针对单个控件）
+function Backend.GetHoverGlow()
+    return uiFx.hoverGlow
+end
+
+---@return number 持续动画相位（秒），全屏共享
+function Backend.GetAnimPhase()
+    return uiFx.anim
 end
 
 function Backend.SetItemPanelOpen(open)

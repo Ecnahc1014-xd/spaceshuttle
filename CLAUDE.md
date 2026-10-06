@@ -3,6 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.31（**「华丽 + 交互 + 动态」三件套：悬停发光 + 指针追踪 + 持续动效 + CTA 扫光**）：
+  - **用户原话**「还不够华丽！还不够交互，还不够动态」——承接 v0.13.30 的静态质感升级。前两轮只做了「好看」，这一轮补「活」：**交互反馈 + 持续动画**。
+  - **新增状态载体（1 个顶层 local 收表，守 AB-166）**：`uiFx = { hover={x,y,active}, hoverGlow=0..1, anim=秒 }`。`hoverGlow` 是**平滑**强度（`UpdateScene` 里按 dt×6.5 逼近目标，渐亮渐灭，非硬切）；`anim` 是全屏共享动画相位（流动光/呼吸/脉冲的公共时钟）。
+  - **后端新 API（只读 uiFx）**：`Backend.SetPointer(uiX,uiY)` / `ClearPointer()` / `IsHovering(rect)` / `GetHoverGlow()` / `GetAnimPhase()`。
+  - **交互（悬停发光）**：①`DrawMachinedPanel` 末尾——`h<=80 且 w>=40`（按钮尺寸）且指针命中 → `nvgBoxGradient` 青色外辉光 + 亮边，强度取 `hoverGlow`；大面板/HUD 横条天然跳过。②`MetaUI.Button` 非 disabled → 按 kind 取色（青/绿/金）同款外辉光。③注入 `MetaUI.Init{hovering, hoverGlow, anim}`（不反向 require）。
+  - **动态（持续动效）**：①主菜单 CTA **周期性斜向扫光**（3.2s 一轮，`elapsed%3.2` 确定性，`nvgIntersectScissor` 裁剪不越圆角）；②`MetaUI.SectionHeader` 左竖条随相位**呼吸**（60%~100% 亮度）+ 下划线上**循环流动光点**。
+  - **指针喂入**：`client_main` 的 `HandleMouseMove`/`HandleTouchMove` **先于所有分支 return** 调 `Backend.SetPointer`（悬停是全局反馈，不该被拖拽/模态分支吞掉）。
+  - **验证**：官方多人 build+预览上传 ✅；LSP 两文件 **0 Error**；真渲染探针 `probe_hover`（把指针放到商店「购买」按钮上）像素取证——悬停按钮边缘 `(0,188,170)` 亮青辉光 vs 对照按钮 `(10,14,23)` 纯底色；CTA 扫光截图可见斜向光带；零 Lua/overlay 错误。BUILD_VERSION/大厅 →0.13.31。
+  - ⚠️ **教训（AB-178）**：「华丽/动态」= **交互反馈（悬停/按下）+ 持续动画（扫光/呼吸/流动）**，不是静态装饰。用户连说两轮「不够」的根因是前几轮全是**静止画面**——一个完全静止的 UI 再精致也读作「截图」。做这类需求先找**共享原语的入口**（面板/按钮各一处）加反馈，并给一个**全屏共享动画时钟**（本项目 `uiFx.anim`），避免每个元素各自 `math.sin(elapsed*…)` 造成不同步。
+
 - 版本: 0.13.30（**「界面太便宜」全局质感升级：金属面板 + 有光背景 + 发光窗口壳**；两轮迭代）：
   - **用户原话**「对一个商业化游戏来说现在的大多界面太便宜了」→ 第一轮改完仍「还是不够贵」→ 第二轮加码。**方向**：沿用 dark-tech 机加工金属（不引入新风格），**升级共享原语而非逐屏重画**——13 个界面全部经 `DrawMachinedPanel`/`DrawWindowShell`/`DrawModalBackdrop`/`Button`，改这几处即全屏生效。
   - **根因（量化）**：旧 `DrawMachinedPanel` 的渐变只有 **±5 RGB**（肉眼等同纯色）、描边 1.1px、无厚度；`DrawModalBackdrop`/`DrawMenu` 是**一整块平色 C.bg**（占屏 80% 却零层次）；CTA 是一块**纯青平板** `DrawRect(C.cyan)`（把下面的机加工面板整块盖掉）；`Button` 是平色 + 3px 竖条。
@@ -733,6 +743,13 @@
 - ⚠️ **`nvgRadialGradient` / `nvgBoxGradient` 本项目可用**（`.emmylua/NanoVG.d.lua` 已声明 `nvgBoxGradient(ctx,x,y,w,h,r,f,icol,ocol)`、`nvgRadialGradient(ctx,cx,cy,inr,outr,icol,ocol)`）；线性渐变做不出柔光/暗角，要「贵」就用这两个。大范围单次 fill，无性能问题。
 - ⚠️ **改共享原语时保持签名与命中几何不变**：CTA 改画法但 `GetMenuCtaRect` 未动；`DrawMachinedPanel` 加装饰但参数表未动；`Shell` 加标题横带但 `GetShellLayout` 未动——这样所有命中探针与调用点都不受影响。**视觉升级不该动几何**。
 - ⚠️ **螺钉/装饰要有尺寸门槛**：四角螺钉只在 `r>=5 且 w>130 且 h>70` 画，否则小按钮/细条上会糊成一团；HUD 横条 `radius=0` 天然跳过。装饰门槛没设好会把小控件画脏。
+
+## 本批次新增避雷（v0.13.31 华丽/交互/动态）
+- 🔴 **AB-178：「华丽 + 动态」= 交互反馈 + 持续动画，不是静态装饰（v0.13.31 用户连说两轮「不够」）**：v0.13.30 把质感（渐变/柔光/厚度）做足后，用户仍说「还不够华丽！还不够交互，还不够动态」——根因是前几轮产出全是**静止画面**，再精致也读作「截图」。做法：①**交互反馈**（指针悬停 → 加色外辉光 + 亮边；悬停强度用**平滑**值渐亮渐灭，非硬切）；②**持续动画**（CTA 周期性扫光、分区标题呼吸 + 流动光点）。找**共享原语入口**各加一处（`DrawMachinedPanel`/`MetaUI.Button`），不要逐屏做。
+- ⚠️ **全屏共享一个动画时钟，别每个元素各自 `math.sin(elapsed*…)`（v0.13.31）**：本项目用 `uiFx.anim`（`UpdateScene` 里写 `gameSnapshot.elapsed`）作为**唯一相位源**，所有呼吸/流动/扫光都派生自它——元素才会**同步**。各自取 elapsed 会相位不一致，读起来像 bug。
+- ⚠️ **悬停状态要「全局喂入」，不能被模态/拖拽分支吞掉（v0.13.31）**：`HandleMouseMove`/`HandleTouchMove` 里 `Backend.SetPointer` 必须在**所有 return 之前**调用——否则拖拽滚动/元层面板打开时悬停失效。悬停是全局交互反馈，与业务分支正交。
+- ⚠️ **装饰性动画必须确定性 + 可裁剪（v0.13.31）**：CTA 扫光用 `elapsed % 3.2` 定相位（非随机），并用 `nvgIntersectScissor` 裁进圆角内（否则斜光带会越出按钮边缘）。任何循环动效都要有明确周期，且不越出宿主几何。
+- ⚠️ **悬停判定要用**设计坐标**，且只对按钮尺寸生效（v0.13.31）**：`Backend.SetPointer` 收的是 `ScreenToUi` 后的设计坐标（与绘制同空间）；`DrawMachinedPanel` 里悬停发光限 `h<=80 且 w>=40`，否则 HUD 横条/大面板会被误点亮。
 
 ## 避雷清单
 

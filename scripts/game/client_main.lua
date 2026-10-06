@@ -1574,23 +1574,25 @@ function HandleMouseUp(eventType, eventData)
 end
 
 function HandleMouseMove(eventType, eventData)
+    -- v0.13.30c：先喂指针位置给后端（悬停发光用），任何模态下都要更新——
+    -- 悬停是「全局交互反馈」，不该被拖拽/模态分支提前 return 掉。
+    local sx, sy = GetScreenCoordinates(eventData)
+    local hx, hy = RenderBackend.ScreenToUi(sx, sy)
+    RenderBackend.SetPointer(hx, hy)
     -- v0.13.8：天赋树拖拽滚动优先于一切（元层面板打开时 IsMetaCapturing 会拦下后续）。
     if talentScrollArmed then
-        local screenX, screenY = GetScreenCoordinates(eventData)
-        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        local _, uiY = RenderBackend.ScreenToUi(sx, sy)
         TalentTree.ScrollMove(uiY, designWidth_)
         return
     end
     if stageSelectScrollArmed then
-        local screenX, screenY = GetScreenCoordinates(eventData)
-        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        local _, uiY = RenderBackend.ScreenToUi(sx, sy)
         StageSelect.ScrollMove(uiY, designWidth_)
         return
     end
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
         or IsMetaCapturing() or metaPointerConsumed then return end
-    local screenX, screenY = GetScreenCoordinates(eventData)
-    local x, y = RenderBackend.ScreenToGame(screenX, screenY)
+    local x, y = RenderBackend.ScreenToGame(sx, sy)
     Game.PointerMove(x, y)
 end
 
@@ -1644,22 +1646,23 @@ function HandleTouchBegin(eventType, eventData)
 end
 
 function HandleTouchMove(eventType, eventData)
+    -- v0.13.30c：触摸拖动同样喂指针（手指按住 = 悬停生效），先于各分支 return。
+    local tsx, tsy = GetScreenCoordinates(eventData)
+    local thx, thy = RenderBackend.ScreenToUi(tsx, tsy)
+    RenderBackend.SetPointer(thx, thy)
     if talentScrollArmed then
-        local screenX, screenY = GetScreenCoordinates(eventData)
-        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        local _, uiY = RenderBackend.ScreenToUi(tsx, tsy)
         TalentTree.ScrollMove(uiY, designWidth_)
         return
     end
     if stageSelectScrollArmed then
-        local screenX, screenY = GetScreenCoordinates(eventData)
-        local _, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        local _, uiY = RenderBackend.ScreenToUi(tsx, tsy)
         StageSelect.ScrollMove(uiY, designWidth_)
         return
     end
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
         or IsMetaCapturing() or metaPointerConsumed then return end
-    local screenX, screenY = GetScreenCoordinates(eventData)
-    local x, y = RenderBackend.ScreenToGame(screenX, screenY)
+    local x, y = RenderBackend.ScreenToGame(tsx, tsy)
     Game.PointerMove(x, y)
 end
 
