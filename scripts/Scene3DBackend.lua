@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.38"
+local BUILD_VERSION = "0.13.39"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -702,31 +702,19 @@ local function DrawCircuitTexture(ctx, x, y, w, h, tint, alpha)
     nvgRestore(ctx)
 end
 
--- v0.13.30：机加工金属面板升级（「界面太便宜」的最高杠杆点）。
--- 旧版渐变只有 ±5 RGB（肉眼等同纯色）、描边 1.1px、无厚度；而全项目 13 个界面的
--- 面板/按钮/卡片/窗口壳**全部**走这一个函数（9 处直调 + DrawBluePanel 6 处 +
--- MetaUI 的 D.panel），所以「廉价感」的最大单一来源就在这里。
--- 升级为：①投影落地（厚度）②可读的金属渐变（顶亮底暗 ~20 级）③受光斜面
--- （上缘内高光 / 下缘内暗边）④外描边加粗 ⑤四角螺钉（工业机箱语汇）。
--- ⚠️ 签名不变 → 所有调用点零改动；且**不新增顶层 local**（该文件 196/200，见 AB-166）。
+-- 共享表面遵循深海军技术舱规范，调用签名与命中几何保持不变。
 local function DrawMachinedPanel(ctx, x, y, w, h, fill, border, radius, emphasis)
     uiFx.surface.Panel(ctx, x, y, w, h, fill, border, radius, emphasis)
 end
 
 local function DrawWindowShell(ctx, x, y, w, h, titleH)
-    local th = titleH or 46
-    DrawMachinedPanel(ctx, x, y, w, h, C.panel, C.cyanDim, 8, false)
-    DrawRect(ctx, x + 1, y + 1, w - 2, th - 1, {25, 37, 53, 250}, 7)
-    DrawRect(ctx, x + 1, y + th - 5, w - 2, 5, {25, 37, 53, 250}, 0)
-    DrawLine(ctx, x + 16, y + th, x + w - 16, y + th, {123, 155, 171, 80}, 1)
-    DrawRect(ctx, x + 14, y + 14, 3, th - 28, C.cyan, 1)
+    uiFx.surface.Window(ctx, x, y, w, h, titleH)
 end
 
--- v0.13.17：模态窗（结算/胜利/暂停）的 dark-tech 装饰叠加——环形刻度 + 虚线轴 + 半调底纹。
+-- 模态窗只保留边缘刻度、虚线与取样点，不在正文背后铺纹理。
 -- 克制档：只做静态/低频装饰，不进入窗内正文与按钮命中区。
 local function DrawModalTechDecor(ctx, x, y, w, h, elapsed)
     AnomalyPulse(elapsed)
-    DrawHalftone(ctx, x + 4, y + 4, w - 8, h - 10, 8, 16)
     DrawTickRing(ctx, x + w - 40, y + 40, 22, -30, 210, 15,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 120})
     DrawDashLine(ctx, x + 10, y + h - 14, x + 84, y + h - 14,
@@ -953,37 +941,9 @@ local function SplitValueLines(ctx, text, size, maxWidth)
     return { lines[1], merged }, useSize
 end
 
--- v0.13.30b：模态背景从「平色 C.bg + 小网格」升级为**有光的环境**——
--- 旧版是一整块纯色，占屏 80% 面积却毫无层次，是「廉价」的最大来源。
--- 现为：径向渐变底（中心偏亮的深海军蓝 → 四周近黑，模拟穹顶照明）+ 顶部青色
--- 环境辉光 + 四角暗角（把视线收拢到中央内容）。仍是单次 fill，性能无忧。
+-- 模态外层沿用技术舱屏边支架，正文背景保持干净。
 local function DrawModalBackdrop(ctx, x, y, width, height)
-    local cx, cy = x + width * 0.5, y + height * 0.34
-    local rOut = math.max(width, height) * 0.78
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x, y, width, height)
-    nvgFillPaint(ctx, nvgRadialGradient(ctx, cx, cy, 30, rOut,
-        nvgRGBA(15, 26, 47, 255), nvgRGBA(4, 7, 15, 255)))
-    nvgFill(ctx)
-    -- 顶部环境辉光：青色自顶部淡入，给界面一个「上方有光源」的暗示。
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x, y, width, height * 0.5)
-    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x, y + height * 0.5,
-        nvgRGBA(0, 190, 176, 34), nvgRGBA(0, 190, 176, 0)))
-    nvgFill(ctx)
-    -- 四角暗角：向内的黑色渐变，收拢视觉焦点。
-    local vig = 130
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x, y, width, vig)
-    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x, y + vig, nvgRGBA(0, 0, 0, 150), nvgRGBA(0, 0, 0, 0)))
-    nvgFill(ctx)
-    nvgBeginPath(ctx)
-    nvgRect(ctx, x, y + height - vig, width, vig)
-    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y + height, x, y + height - vig, nvgRGBA(0, 0, 0, 170), nvgRGBA(0, 0, 0, 0)))
-    nvgFill(ctx)
-    DrawMicroGrid(ctx, x + 18, y + 18, 132, 168, 12, 22)
-    DrawMicroGrid(ctx, x + width - 150, y + height - 210, 120, 150, 12, 18)
-    DrawStatusDots(ctx, x + 22, y + height - 28, 4, C.cyanDim)
+    uiFx.surface.Background(ctx, x, y, width, height)
 end
 
 local function DrawBluePanel(ctx, x, y, width, height, fill, border, radius)
@@ -1484,26 +1444,8 @@ local function DrawMenu(ctx, game, meta)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, 0, game.width, game.height)
     nvgGlobalAlpha(ctx, ModalIntro(game))
-    -- v0.13.30b：首页背景由平色升级为「有光的环境」——径向渐变 + 顶部青色辉光 +
-    -- 底部暗角，与模态背景同一套语言（旧版整块纯色是廉价感的主要来源）。
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, game.width, game.height)
-    nvgFillPaint(ctx, nvgRadialGradient(ctx, game.width * 0.5, game.height * 0.30,
-        40, math.max(game.width, game.height) * 0.82,
-        nvgRGBA(16, 28, 50, 255), nvgRGBA(4, 7, 15, 255)))
-    nvgFill(ctx)
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, game.width, game.height * 0.45)
-    nvgFillPaint(ctx, nvgLinearGradient(ctx, 0, 0, 0, game.height * 0.45,
-        nvgRGBA(0, 190, 176, 30), nvgRGBA(0, 190, 176, 0)))
-    nvgFill(ctx)
-    uiFx.surface.Environment(ctx, "hangar", {x=0,y=-120,w=game.width,h=game.height}, 0.54)
-    nvgBeginPath(ctx)
-    nvgRect(ctx, 0, 0, game.width, game.height)
-    nvgFillPaint(ctx, nvgLinearGradient(ctx, 0, 300, 0, 600,
-        nvgRGBA(7, 11, 20, 0), nvgRGBA(7, 11, 20, 245)))
-    nvgFill(ctx)
-    -- 留出整块实车主视觉，不再把网格/扫描带铺过商品与标题。
+    -- 首页、功能页共享深海军底与屏边支架；真实车辆仍使用独立正交展台。
+    uiFx.surface.Background(ctx, 0, 0, game.width, game.height)
     DrawCornerBrackets(ctx, 8, 8, game.width - 16, game.height - 16,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 100}, 18, 1)
 
@@ -1532,27 +1474,10 @@ local function DrawMenu(ctx, game, meta)
     nvgSave(ctx)
     nvgTranslate(ctx, 0, press * 2)
     uiFx.surface.Button(ctx, cta, C.cyan, glow, uiFx.anim)
-    -- v0.13.30c「华丽 + 动态」：一条斜向高光带周期性扫过 CTA（3.2s 一轮，确定性）。
-    -- 裁进圆角内侧的矩形区域，避免光带碰到宿主边缘。
-    local sweep = (game.elapsed % 3.2) / 3.2
-    if sweep < 0.55 then
-        local t = sweep / 0.55
-        local bandX = cta.x - 120 + t * (cta.w + 240)
-        nvgSave(ctx)
-        nvgIntersectScissor(ctx, cta.x + 7, cta.y + 3, cta.w - 14, cta.h - 6)
-        nvgBeginPath(ctx)
-        nvgMoveTo(ctx, bandX, cta.y)
-        nvgLineTo(ctx, bandX + 58, cta.y)
-        nvgLineTo(ctx, bandX + 22, cta.y + cta.h)
-        nvgLineTo(ctx, bandX - 36, cta.y + cta.h)
-        nvgFillPaint(ctx, nvgLinearGradient(ctx, bandX - 36, cta.y, bandX + 58, cta.y,
-            nvgRGBA(255, 255, 255, 0), nvgRGBA(255, 255, 255, 120)))
-        nvgFill(ctx)
-        nvgRestore(ctx)
-    end
+    -- 悬停反馈只压暗色面并强调短边刻度，不再扩散发光。
     if glow > 0.01 then
-        DrawStroke(ctx, cta.x, cta.y, cta.w, cta.h,
-            {255, 255, 255, math.floor(glow * 220)}, 7, 2)
+        DrawCornerBrackets(ctx, cta.x + 2, cta.y + 2, cta.w - 4, cta.h - 4,
+            {C.ink[1], C.ink[2], C.ink[3], math.floor(glow * 160)}, 10, 1)
     end
     DrawPixelText(ctx, game.width * 0.5, ctaY + 8, "开始战斗", 31, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -2692,7 +2617,7 @@ function Backend.Init()
         anim = Backend.GetAnimPhase,
         controlFx = Backend.GetControlFx,
         measure = MeasurePixelWidth,
-        environment = uiFx.surface.Environment,
+        stage = uiFx.surface.Stage,
         button = function(ctx, rect, color, glow)
             uiFx.surface.Button(ctx, rect, color, glow, uiFx.anim)
         end,
@@ -2787,7 +2712,7 @@ function Backend.Init()
         return false
     end
     nvgFontZpix_ = fontId
-    uiFx.surface.Init(vg_)
+    uiFx.surface.Init(vg_, C)
     -- 独立组件子树共享宿主画布，不新增主块local，不接管UI全局root。
     uiFx.battle = require "ui.BattleHUD"
     uiFx.battle.Init(vg_, { C = C, rect = DrawRect, stroke = DrawStroke,

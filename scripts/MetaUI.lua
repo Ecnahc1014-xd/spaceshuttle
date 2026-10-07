@@ -94,7 +94,7 @@ local showroom = { index = 1, screen = "", key = "default" }
 ---@field anim fun():number 持续动画相位（秒）
 ---@field controlFx fun(rect:table, enabled:boolean):number, number 控件悬停与按压强度
 ---@field measure fun(ctx:any, s:string, size:number):number 设计空间实测文字宽度
----@field environment fun(ctx:any,key:string,r:table,alpha:number):boolean
+---@field stage fun(ctx:any,r:table,phase:number) 绘制程序化技术展台
 ---@field button fun(ctx:any,r:table,color:table,glow:number)
 ---@field fit fun(ctx:any,text:string,size:number,width:number,minimum:number):number, boolean
 
@@ -158,13 +158,16 @@ end
 ---@param y number
 ---@param w number
 ---@param label string
--- v0.13.30b：面板内分区标题——左侧青竖条 + 标题 + 向右淡出的渐变下划线，
--- 让「选择车型 / 免费补给 / 钻石礼包」这类分隔从平色小字变成有结构的分区头。
+-- 标题左竖标与断续刻度统一分区语言，正文区域保持干净。
 local function SectionHeader(ctx, x, y, w, label)
     local C = Colors()
-    D.text(ctx, x, y, label, 17, C.text)
-    local lx = x + D.measure(ctx, label, 17) + 16
-    D.rect(ctx, lx, y + 10, math.max(0, x + w - lx), 1, {120, 148, 162, 42}, 0)
+    D.rect(ctx, x, y + 2, 3, 16, C.cyanDim, 1)
+    D.text(ctx, x + 9, y, label, 17, C.text)
+    local lx = x + 9 + D.measure(ctx, label, 17) + 14
+    local remain = math.max(0, x + w - lx)
+    if remain >= 20 then
+        D.rule(ctx, lx, y + 10, remain, 8, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 95})
+    end
 end
 
 ---@param ctx any
@@ -203,12 +206,11 @@ local function Button(ctx, r, label, sub, kind)
         local g = glow
         local hc = (kind == "primary" and C.cyan) or (kind == "ad" and C.ad)
             or (kind == "gold" and C.warn) or (kind == "danger" and C.error) or C.cyan
-        nvgBeginPath(ctx)
-        nvgRect(ctx, r.x - 13, r.y - 13, r.w + 26, r.h + 26)
-        nvgFillPaint(ctx, nvgBoxGradient(ctx, r.x, r.y, r.w, r.h, 6, 13,
-            nvgRGBA(hc[1], hc[2], hc[3], math.floor(104 * g)), nvgRGBA(hc[1], hc[2], hc[3], 0)))
-        nvgFill(ctx)
-        D.stroke(ctx, r.x, r.y, r.w, r.h, {hc[1], hc[2], hc[3], math.floor(215 * g)}, 6, 1.8)
+        D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4,
+            {hc[1], hc[2], hc[3], math.floor(18 * g)}, 4)
+        D.stroke(ctx, r.x, r.y, r.w, r.h, {hc[1], hc[2], hc[3], math.floor(190 * g)}, 6, 1)
+        D.corner(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4,
+            {hc[1], hc[2], hc[3], math.floor(180 * g)}, 7, 1)
     end
     local cx = r.x + r.w * 0.5
     if sub ~= "" then
@@ -333,12 +335,12 @@ function MetaUI.DrawHomeFleet(ctx, w, meta)
     D.panel(ctx, r.x, r.y, r.w, r.h, C.card, {120, 148, 162, 65}, 8)
     D.rect(ctx, r.x + 1, r.y + 20, 2, r.h - 40, hot and C.cyan or C.dim, 1)
     D.icon(ctx, "premium_energy_core", r.x + 16, r.y + 23, 32, 1)
-    D.text(ctx, r.x + 62, r.y + 12, "天赋树", 22, C.text)
+    D.text(ctx, r.x + 62, r.y + 10, "天赋树", 28, C.text)
     D.text(ctx, r.x + 62, r.y + 43,
         string.format("%d/%d 节点  ·  ★ %d", owned, total, meta.totalStars or 0), 15, C.dim)
     D.progress(ctx, r.x + 62, r.y + 68, r.w - 196, total > 0 and owned / total or 0, C.cyan, 4)
     local cta = { x = r.x + r.w - 114, y = r.y + 20, w = 98, h = 44 }
-    Button(ctx, cta, "进入 ›", "", "ghost")
+    Button(ctx, cta, "进入 ›", "", "primary")
     if hot then D.rect(ctx, r.x + r.w - 12, r.y + 9, 6, 6, C.warn, 3) end
     if glow > 0.01 then
         D.stroke(ctx, r.x, r.y, r.w, r.h, {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 180)}, 8, 1.4)
@@ -389,25 +391,14 @@ local function GetGrowDefs(meta)
     }
 end
 
--- 展台只承载视觉，不提供隐式购买/换装操作；阴影和环形底座让车辆落在环境里。
+-- 展台仅承载真实车辆；程序化支架与刻度共用技术舱语言，无隐式购买操作。
 local function DrawVehicleStage(ctx, r, home)
     local C = Colors()
     nvgSave(ctx)
     nvgIntersectScissor(ctx, r.x, r.y, r.w, r.h)
-    if not home then D.environment(ctx, "showroom", r, 0.86) end
-    local cx, cy = r.x + r.w * 0.5, r.y + r.h * 0.73
-    nvgBeginPath(ctx)
-    nvgRect(ctx, r.x, r.y, r.w, r.h)
-    nvgFillPaint(ctx, nvgRadialGradient(ctx, cx, cy - r.h * 0.25, 8, r.w * 0.52,
-        nvgRGBA(24, 47, 64, 175), nvgRGBA(7, 11, 20, 0)))
-    nvgFill(ctx)
-    nvgBeginPath(ctx)
-    nvgEllipse(ctx, cx, cy, r.w * 0.38, r.h * 0.12)
-    nvgFillPaint(ctx, nvgRadialGradient(ctx, cx, cy, 4, r.w * 0.38,
-        nvgRGBA(0, 0, 0, 170), nvgRGBA(0, 0, 0, 0)))
-    nvgFill(ctx)
+    D.stage(ctx, r, D.anim())
     if not VehicleShowcase.Draw(ctx, r.x, r.y, r.w, r.h) then
-        D.text(ctx, cx, r.y + r.h * 0.4, "实车预览暂不可用", 17, C.dim,
+        D.text(ctx, r.x + r.w * 0.5, r.y + r.h * 0.4, "实车预览暂不可用", 17, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
@@ -479,11 +470,13 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     }
     for _, rowDef in ipairs(rows) do
         SectionHeader(ctx, 18, rowDef.rects[1].y - 27, 504, rowDef.label)
-        D.rect(ctx, 18, rowDef.rects[1].y, 504, rowDef.rects[1].h, {14, 23, 38, 160}, 7)
         for i, def in ipairs(rowDef.defs) do
             local rr = rowDef.rects[i]
             local accent = def.tone == "ad" and C.ad or C.cyan
             local glow, press = D.controlFx(rr, true)
+            D.panel(ctx, rr.x, rr.y, rr.w, rr.h, C.card, C.cyanDim, 4)
+            D.corner(ctx, rr.x + 2, rr.y + 2, rr.w - 4, rr.h - 4,
+                {C.dim[1], C.dim[2], C.dim[3], 95}, 6, 1)
             if glow > 0.01 then
                 D.rect(ctx, rr.x + 3, rr.y + 3, rr.w - 6, rr.h - 6,
                     {accent[1], accent[2], accent[3], math.floor(26 * glow)}, 4)

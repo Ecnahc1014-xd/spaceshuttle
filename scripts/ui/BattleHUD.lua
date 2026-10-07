@@ -123,9 +123,8 @@ end
 function BattleHUD.Init(ctx, deps)
     BattleHUD.Shutdown()
     D = deps
-    -- 在宿主 Init 中创建一次；缺字体回退既有 zpix，不能阻断游戏启动。
-    local font = nvgCreateFont(ctx, "battle-sans", "Fonts/MiSans-Regular.ttf")
-    state.font = font and font >= 0 and "battle-sans" or "zpix"
+    -- 像素字体由宿主一次注册；组件读数与菜单/模态保持同一种字体身份。
+    state.font = "zpix"
     state.ready = true
     print("[BattleHUD] 组件仪表舱就绪，字体=" .. state.font .. "，共享宿主渲染/输入")
 end
