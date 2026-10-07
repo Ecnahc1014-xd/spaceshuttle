@@ -3,7 +3,7 @@
 local VehicleGeometry = {}
 
 local SECTION_COUNT = 6
-local PLANAR_RADIUS = 1.84 / (0.98 * 1.12)
+local PLANAR_RADIUS = 1.84 / 1.12 -- 与 Renderer3D 的 0.98 填充量配合，保留碰撞圆余量。
 
 local function FaceNormal(a, b, c)
     local ux, uy, uz = b.x - a.x, b.y - a.y, b.z - a.z
@@ -147,9 +147,10 @@ local function AddWheels(tire, metal, positions, offset, radius, spokes)
             local y = sign * offset
             -- 胎冠窄于中段，胎肩为斜面；胎侧、凹轮辋、辐条、中心盖分层。
             local bands = {{-0.10, 0.89}, {-0.075, 1}, {0.075, 1}, {0.10, 0.89}}
+            local segments = 16
             for band = 1, #bands - 1 do
-                for i = 0, 19 do
-                    local a, b = i * math.pi / 10, (i + 1) * math.pi / 10
+                for i = 0, segments - 1 do
+                    local a, b = i * math.pi * 2 / segments, (i + 1) * math.pi * 2 / segments
                     local r0, r1 = radius * bands[band][2], radius * bands[band + 1][2]
                     AddQuad(tire,
                         Vector3(x + math.cos(a) * r0, y + bands[band][1], math.sin(a) * r0),
@@ -159,17 +160,30 @@ local function AddWheels(tire, metal, positions, offset, radius, spokes)
                         Vector3(math.cos((a + b) * 0.5), 0, math.sin((a + b) * 0.5)))
                 end
             end
-            AddCylinderY(tire, x, y, 0, radius * 0.89, 0.20, 20)
-            local faceY = y + sign * 0.104
-            AddCylinderY(tire, x, faceY, 0, radius * 0.66, 0.012, 20)
-            AddArcY(metal, x, faceY + sign * 0.008, 0, radius * 0.53, radius * 0.64, 0.014, 0, math.pi * 2, 20)
-            AddCylinderY(metal, x, faceY + sign * 0.019, 0, radius * 0.16, 0.030, 12)
+            -- 胎侧只补两个端面，不在胎肩内部再放重叠圆柱；轮辋背面由胎侧遮住。
+            for _, faceSign in ipairs({-1, 1}) do
+                local cy = y + faceSign * 0.10
+                for i = 0, segments - 1 do
+                    local a, b = i * math.pi * 2 / segments, (i + 1) * math.pi * 2 / segments
+                    AddTriangle(tire, Vector3(x, cy, 0),
+                        Vector3(x + math.cos(a) * radius * 0.89, cy, math.sin(a) * radius * 0.89),
+                        Vector3(x + math.cos(b) * radius * 0.89, cy, math.sin(b) * radius * 0.89), Vector3(0, faceSign, 0))
+                end
+            end
+            local faceY = y + sign * 0.111
+            AddArcY(metal, x, faceY, 0, radius * 0.53, radius * 0.64, 0.014, 0, math.pi * 2, segments)
+            AddCylinderY(metal, x, faceY + sign * 0.012, 0, radius * 0.16, 0.025, 8)
             for i = 0, spokes - 1 do
                 local angle = i * math.pi * 2 / spokes
-                AddRod(metal,
-                    Vector3(x + math.cos(angle) * radius * 0.14, faceY, math.sin(angle) * radius * 0.14),
-                    Vector3(x + math.cos(angle + 0.15) * radius * 0.57, faceY, math.sin(angle + 0.15) * radius * 0.57),
-                    radius * 0.048, 4)
+                local a = Vector3(x + math.cos(angle) * radius * 0.14, faceY + sign * 0.01, math.sin(angle) * radius * 0.14)
+                local b = Vector3(x + math.cos(angle + 0.15) * radius * 0.57, faceY + sign * 0.01, math.sin(angle + 0.15) * radius * 0.57)
+                local edge = Vector3(-math.sin(angle), 0, math.cos(angle)) * (radius * 0.046)
+                local depth = Vector3(0, -sign * radius * 0.035, 0)
+                AddQuad(metal, a - edge, b - edge, b + edge, a + edge, Vector3(0, sign, 0))
+                AddQuad(metal, a - edge, a - edge + depth, b - edge + depth, b - edge, -edge)
+                AddQuad(metal, a + edge, b + edge, b + edge + depth, a + edge + depth, edge)
+                -- 背侧也保留体积面；两端嵌入中心盖/轮圈，无需重复端盖。
+                AddQuad(metal, a - edge + depth, a + edge + depth, b + edge + depth, b - edge + depth, Vector3(0, -sign, 0))
             end
             for _, dx in ipairs({-0.16, 0.16}) do
                 AddRod(metal, Vector3(x + dx, sign * 0.38, -0.12), Vector3(x, y - sign * 0.095, 0), 0.026, 6)
@@ -239,6 +253,32 @@ local function AddSideWindow(glass, sign, upperRear, upperFront, lowerRear, lowe
         Vector3(lowerFront, sign * lowerY, bottomZ), Vector3(lowerRear, sign * lowerY, bottomZ), Vector3(0, sign, 0))
 end
 
+local function AddSurfaceWindows(glass, cx, zNear, zFar, nearLength, nearWidth, farLength, farWidth, bevel,
+        topZ, bottomZ, sideRear, sideFront)
+    -- 与车壳同一组锥台参数插值，窗角限制在倒角内，法向外偏 0.006 防穿面。
+    local function Section(z)
+        local t = (z - zNear) / (zFar - zNear)
+        return (nearLength + (farLength - nearLength) * t) * 0.5,
+            (nearWidth + (farWidth - nearWidth) * t) * 0.5
+    end
+    local topX, topY = Section(topZ)
+    local bottomX, bottomY = Section(bottomZ)
+    local slope = (farLength - nearLength) * 0.5 / (zFar - zNear)
+    local offsetX = 0.006 * math.sqrt(1 + slope * slope)
+    AddWindshield(glass, cx + topX + offsetX, cx + bottomX + offsetX, topZ, bottomZ,
+        (topY - bevel) * 1.76, (bottomY - bevel) * 1.76)
+    local sideSlope = (farWidth - nearWidth) * 0.5 / (zFar - zNear)
+    local offsetY = 0.006 * math.sqrt(1 + sideSlope * sideSlope)
+    local topRear = math.max(sideRear, cx - topX + bevel + 0.02)
+    local topFront = math.min(sideFront, cx + topX - bevel - 0.02)
+    local bottomRear = math.max(sideRear, cx - bottomX + bevel + 0.02)
+    local bottomFront = math.min(sideFront, cx + bottomX - bevel - 0.02)
+    for _, sign in ipairs({-1, 1}) do
+        AddSideWindow(glass, sign, topRear, topFront, bottomRear, bottomFront,
+            topY + offsetY, bottomY + offsetY, topZ, bottomZ)
+    end
+end
+
 local function AddLamps(light, nose, tail, width, z)
     for _, sign in ipairs({-1, 1}) do
         AddRoundedPrism(light, nose, sign * width, z, z + 0.075, 0.022, 0.18, 0.005)
@@ -264,16 +304,15 @@ local function BuildTruck(body, side, tire, metal, glass, light)
     for _, sign in ipairs({-1, 1}) do
         AddRoundedPrism(side, -0.62, sign * 0.615, -0.67, -0.40, 1.86, 0.036, 0.012)
         AddRoundedPrism(side, 1.02, sign * 0.615, -0.57, -0.40, 0.77, 0.035, 0.012)
-        AddSideWindow(glass, sign, 0.63, 1.34, 0.61, 1.38, 0.593, 0.621, -0.90, -0.66)
         AddRod(tire, Vector3(0.60, sign * 0.622, -0.96), Vector3(0.58, sign * 0.635, -0.48), 0.012, 4)
         AddRoundedPrism(metal, 0.72, sign * 0.638, -0.59, -0.564, 0.15, 0.018, 0.006)
-        AddRoundedPrism(metal, 1.0, sign * 0.66, -0.19, -0.12, 0.47, 0.14, 0.015)
+        AddRoundedPrism(metal, 0.47, sign * 0.66, -0.19, -0.12, 0.33, 0.14, 0.015)
         AddRoundedPrism(metal, -0.62, sign * 0.64, -0.75, -0.72, 1.88, 0.035, 0.010)
         for _, x in ipairs({-1.30, -0.95, -0.60, -0.25, 0.10}) do
             AddRoundedPrism(metal, x, sign * 0.638, -0.68, -0.43, 0.014, 0.012, 0.003)
         end
     end
-    AddWindshield(glass, 1.51, 1.553, -0.95, -0.68, 0.92, 1.01)
+    AddSurfaceWindows(glass, 0.98, -1.02, -0.40, 1.08, 1.16, 1.18, 1.24, 0.07, -0.90, -0.66, 0.63, 1.38)
     for _, y in ipairs({-0.26, 0.26}) do
         AddRod(tire, Vector3(1.558, y - 0.14, -0.682), Vector3(1.549, y + 0.07, -0.77), 0.009, 4)
     end
@@ -306,13 +345,11 @@ local function BuildSUV(body, side, tire, metal, glass, light)
     AddFrustum(body, -0.22, 0, -0.88, -0.36, 1.90, 1.07, 2.18, 1.20, 0.16)
     AddFrustum(body, 1.22, 0, -0.48, -0.36, 0.67, 1.09, 0.79, 1.21, 0.09)
     AddRoundedPrism(body, -0.23, 0, -0.925, -0.874, 1.72, 1.02, 0.12)
-    AddWindshield(glass, 0.703, 0.847, -0.83, -0.48, 0.89, 1.05)
+    AddSurfaceWindows(glass, -0.22, -0.88, -0.36, 1.90, 1.07, 2.18, 1.20, 0.16, -0.79, -0.49, -1.05, 0.64)
     for _, sign in ipairs({-1, 1}) do
-        AddSideWindow(glass, sign, -0.39, 0.53, -0.46, 0.64, 0.558, 0.599, -0.79, -0.48)
-        AddSideWindow(glass, sign, -1.05, -0.49, -1.10, -0.54, 0.558, 0.599, -0.79, -0.48)
         AddRod(tire, Vector3(-0.47, sign * 0.56, -0.87), Vector3(-0.53, sign * 0.61, -0.41), 0.021, 4)
         AddRoundedPrism(side, 0, sign * 0.64, -0.39, -0.34, 2.40, 0.035, 0.010)
-        AddRoundedPrism(metal, -0.10, sign * 0.69, -0.11, -0.04, 1.42, 0.14, 0.015)
+        AddRoundedPrism(metal, -0.0675, sign * 0.69, -0.11, -0.04, 1.355, 0.14, 0.015)
         AddRoundedPrism(metal, -0.15, sign * 0.43, -0.98, -0.94, 1.53, 0.036, 0.008)
         for _, x in ipairs({-0.78, 0.47}) do
             AddRod(metal, Vector3(x, sign * 0.43, -0.905), Vector3(x, sign * 0.43, -0.962), 0.022, 6)
@@ -335,12 +372,11 @@ local function BuildSports(body, side, tire, metal, glass, light)
     AddFrustum(body, -0.19, 0, -0.66, -0.29, 1.22, 0.84, 1.72, 1.12, 0.17)
     AddRoundedPrism(body, -0.22, 0, -0.69, -0.649, 0.72, 0.76, 0.09)
     AddFrustum(body, -1.15, 0, -0.40, -0.29, 0.58, 1.00, 0.67, 1.14, 0.13)
-    AddWindshield(glass, 0.393, 0.614, -0.632, -0.344, 0.73, 0.94)
-    AddQuad(glass, Vector3(-0.71, -0.33, -0.632), Vector3(-0.94, -0.44, -0.348),
-        Vector3(-0.94, 0.44, -0.348), Vector3(-0.71, 0.33, -0.632), Vector3(-1, 0, -1))
+    AddSurfaceWindows(glass, -0.19, -0.66, -0.29, 1.22, 0.84, 1.72, 1.12, 0.17, -0.60, -0.45, -0.72, 0.43)
+    AddQuad(glass, Vector3(-0.847, -0.24, -0.60), Vector3(-0.975, -0.30, -0.41),
+        Vector3(-0.975, 0.30, -0.41), Vector3(-0.847, 0.24, -0.60), Vector3(-1, 0, -1))
     for _, sign in ipairs({-1, 1}) do
-        AddSideWindow(glass, sign, -0.64, 0.26, -0.85, 0.43, 0.459, 0.552, -0.60, -0.35)
-        AddRoundedPrism(side, -0.11, sign * 0.62, -0.10, -0.055, 1.48, 0.12, 0.012)
+        AddRoundedPrism(side, -0.0675, sign * 0.62, -0.10, -0.055, 1.395, 0.12, 0.012)
         AddRoundedPrism(tire, -0.64, sign * 0.628, -0.27, -0.12, 0.32, 0.012, 0.007)
         AddRoundedPrism(metal, -0.97, sign * 0.38, -0.48, -0.395, 0.07, 0.05, 0.010)
         AddRod(metal, Vector3(-0.97, sign * 0.38, -0.44), Vector3(-1.40, sign * 0.38, -0.535), 0.020, 6)
@@ -362,9 +398,8 @@ local function BuildVan(body, side, tire, metal, glass, light)
     AddRoundedPrism(body, -0.50, 0, -0.98, -0.35, 2.05, 1.12, 0.085)
     AddFrustum(body, 1.05, 0, -0.90, -0.35, 0.99, 1.02, 1.13, 1.14, 0.06)
     AddRoundedPrism(side, -0.50, 0, -1.01, -0.977, 1.82, 0.99, 0.05)
-    AddWindshield(glass, 1.538, 1.592, -0.827, -0.59, 0.84, 0.92)
+    AddSurfaceWindows(glass, 1.05, -0.90, -0.35, 0.99, 1.02, 1.13, 1.14, 0.06, -0.81, -0.58, 0.69, 1.45)
     for _, sign in ipairs({-1, 1}) do
-        AddSideWindow(glass, sign, 0.69, 1.42, 0.66, 1.45, 0.533, 0.563, -0.81, -0.58)
         AddRoundedPrism(side, -0.48, sign * 0.573, -0.79, -0.39, 1.82, 0.03, 0.010)
         AddRoundedPrism(tire, -0.45, sign * 0.595, -0.82, -0.40, 0.018, 0.012, 0.004)
         AddRoundedPrism(metal, -0.63, sign * 0.593, -0.81, -0.79, 1.42, 0.020, 0.004)
@@ -388,13 +423,12 @@ local function BuildArmored(body, side, tire, metal, glass, light)
     AddFrustum(body, -0.35, 0, -0.85, -0.37, 1.95, 1.05, 2.26, 1.29, 0.15)
     AddFrustum(body, 1.03, 0, -0.66, -0.36, 0.85, 0.91, 1.11, 1.19, 0.15)
     AddRoundedPrism(side, -0.25, 0, -0.89, -0.848, 1.55, 0.88, 0.09)
-    AddWindshield(glass, 1.436, 1.544, -0.613, -0.428, 0.62, 0.84)
+    AddSurfaceWindows(glass, 1.03, -0.66, -0.36, 0.85, 0.91, 1.11, 1.19, 0.15, -0.59, -0.45, 0.75, 1.35)
     for _, sign in ipairs({-1, 1}) do
         for _, x in ipairs({-1.02, -0.40, 0.22}) do
             AddFrustum(side, x, sign * 0.619, -0.70, -0.41, 0.51, 0.065, 0.56, 0.105, 0.016)
             AddRoundedPrism(metal, x + 0.13, sign * 0.677, -0.59, -0.552, 0.035, 0.012, 0.004)
         end
-        AddSideWindow(glass, sign, 0.75, 1.27, 0.70, 1.35, 0.50, 0.574, -0.59, -0.45)
         AddRod(metal, Vector3(-0.87, sign * 0.37, -0.873), Vector3(-0.87, sign * 0.37, -0.91), 0.025, 6)
         AddRod(metal, Vector3(-0.19, sign * 0.37, -0.873), Vector3(-0.19, sign * 0.37, -0.91), 0.025, 6)
         AddRoundedPrism(metal, -0.53, sign * 0.37, -0.935, -0.90, 0.77, 0.040, 0.008)
@@ -419,7 +453,7 @@ local function BuildBuggy(body, side, tire, metal, glass, light)
         local footFront = Vector3(0.35, sign * 0.43, -0.27)
         local topFront = Vector3(0.04, sign * 0.40, -0.78)
         local topRear = Vector3(-0.70, sign * 0.40, -0.78)
-        local footRear = Vector3(-1.04, sign * 0.43, -0.27)
+        local footRear = Vector3(-1.04, sign * 0.43, -0.28)
         AddRod(metal, footFront, topFront, 0.036, 8)
         AddRod(metal, topFront, topRear, 0.036, 8)
         AddRod(metal, topRear, footRear, 0.036, 8)
@@ -431,7 +465,7 @@ local function BuildBuggy(body, side, tire, metal, glass, light)
         AddRod(metal, Vector3(x, -0.40, -0.78), Vector3(x, 0.40, -0.78), 0.036, 8)
     end
     AddRod(metal, Vector3(-0.70, -0.40, -0.78), Vector3(-1.04, 0.43, -0.27), 0.026, 6)
-    AddWindshield(glass, 0.055, 0.31, -0.735, -0.32, 0.72, 0.80)
+    AddWindshield(glass, 0.055, 0.31, -0.755, -0.32, 0.76, 0.80)
     AddRoundedPrism(metal, 1.51, 0, -0.29, -0.20, 0.075, 1.07, 0.02)
     for _, sign in ipairs({-1, 1}) do
         AddRod(metal, Vector3(1.15, sign * 0.36, -0.20), Vector3(1.51, sign * 0.36, -0.27), 0.025, 6)
@@ -441,6 +475,12 @@ local function BuildBuggy(body, side, tire, metal, glass, light)
     AddRoundedPrism(metal, -1.52, 0, -0.29, -0.20, 0.075, 1.01, 0.02)
     AddWheels(tire, metal, axles, 0.78, 0.28, 6)
     AddFenders(body, axles, 0.78, 0.28)
+    -- 沙地车轮距宽于窄侧壳，轮眉必须通过短支座接回侧围，不能悬浮在胎外。
+    for _, x in ipairs(axles) do
+        for _, sign in ipairs({-1, 1}) do
+            AddRod(metal, Vector3(x, sign * 0.50, -0.278), Vector3(x, sign * 0.688, -0.332), 0.022, 6)
+        end
+    end
     AddLamps(light, 1.55, -1.56, 0.38, -0.32)
 end
 
@@ -448,18 +488,14 @@ local BUILDERS = {
     default = BuildTruck, arctic = BuildSUV, crimson = BuildSports,
     jade = BuildVan, obsidian = BuildArmored, rally = BuildBuggy,
 }
-local logged = {}
+-- 只保留最近一个车型的不可变顶点/法线，零引擎资源引用；同车型补弹只提交不重算。
+local meshCache = {key = "", sections = {}, count = 0, fit = 1, radius = 0}
 
----@param geometry CustomGeometry
----@param vehicleKey string
----@param materials Material[]
-function VehicleGeometry.Build(geometry, vehicleKey, materials)
+local function GetMesh(key)
+    if meshCache.key == key then return meshCache end
     local sections = {}
     for i = 1, SECTION_COUNT do sections[i] = {} end
-    local key = BUILDERS[vehicleKey] and vehicleKey or "default"
     BUILDERS[key](sections[1], sections[2], sections[3], sections[4], sections[5], sections[6])
-
-    -- 整车等比拟合，不逐顶点径向钳制：后者会压瘪轮胎、扭曲面片且遗留错误法线。
     local maxRadius = 0
     for _, vertices in ipairs(sections) do
         for _, vertex in ipairs(vertices) do
@@ -470,20 +506,31 @@ function VehicleGeometry.Build(geometry, vehicleKey, materials)
     local fit = math.min(1, PLANAR_RADIUS / maxRadius)
     local count = 0
     for _, vertices in ipairs(sections) do
-        for _, vertex in ipairs(vertices) do vertex.position = vertex.position * fit end
         for i = 1, #vertices, 3 do
-            local normal = FaceNormal(vertices[i].position, vertices[i + 1].position, vertices[i + 2].position)
+            local a, b, c = vertices[i].position * fit, vertices[i + 1].position * fit, vertices[i + 2].position * fit
+            vertices[i].position, vertices[i + 1].position, vertices[i + 2].position = a, b, c
+            local normal = FaceNormal(a, b, c)
             vertices[i].normal, vertices[i + 1].normal, vertices[i + 2].normal = normal, normal, normal
         end
         count = count + #vertices
     end
+    meshCache = {key = key, sections = sections, count = count, fit = fit, radius = maxRadius * fit}
+    print(string.format("[VehicleGeometry] key=%s vertices=%d sections=6 fit=%.4f radius=%.4f", key, count, fit, maxRadius * fit))
+    return meshCache
+end
 
+---@param geometry CustomGeometry
+---@param vehicleKey string
+---@param materials Material[]
+function VehicleGeometry.Build(geometry, vehicleKey, materials)
+    local key = BUILDERS[vehicleKey] and vehicleKey or "default"
+    local mesh = GetMesh(key)
     geometry:Clear()
     geometry:SetNumGeometries(SECTION_COUNT)
     geometry:SetDynamic(false)
     for sectionIndex = 0, SECTION_COUNT - 1 do
         geometry:BeginGeometry(sectionIndex, TRIANGLE_LIST)
-        for _, vertex in ipairs(sections[sectionIndex + 1]) do
+        for _, vertex in ipairs(mesh.sections[sectionIndex + 1]) do
             geometry:DefineVertex(vertex.position)
             geometry:DefineNormal(vertex.normal)
         end
@@ -491,10 +538,6 @@ function VehicleGeometry.Build(geometry, vehicleKey, materials)
     geometry:Commit()
     for sectionIndex = 0, SECTION_COUNT - 1 do
         geometry:SetMaterial(sectionIndex, materials[sectionIndex + 1])
-    end
-    if not logged[key] then
-        logged[key] = true
-        print(string.format("[VehicleGeometry] key=%s vertices=%d sections=6 fit=%.4f radius=%.4f", key, count, fit, maxRadius * fit))
     end
 end
 

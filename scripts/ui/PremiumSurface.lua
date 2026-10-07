@@ -1,16 +1,28 @@
 -- PremiumSurface.lua
 -- 商业界面的共享字体和表面工艺，沿用现有 NanoVG 宿主，不创建渲染上下文。
 local Surface = {}
-local state = { regular = -1, bold = -1, context = nil }
+local state = { regular = -1, bold = -1, context = nil, images = {} }
 
 function Surface.Init(ctx)
     state.context = ctx
     state.regular = nvgCreateFont(ctx, "premium-body", "Fonts/MiSans-Regular.ttf")
     state.bold = nvgCreateFont(ctx, "premium-title", "Fonts/MiSans-Bold.ttf")
+    state.images = {}
+    for key, path in pairs({
+        hangar = "image/premium_hangar_plate_20261007104817.png",
+        showroom = "image/premium_showroom_plate_20261007104826.png",
+    }) do
+        local ok, image = pcall(nvgCreateImage, ctx, path, 0)
+        if ok and image > 0 then state.images[key] = image end
+    end
     print("[PremiumSurface] fonts regular=" .. tostring(state.regular) .. " bold=" .. tostring(state.bold))
 end
 
 function Surface.Shutdown()
+    if state.context then
+        for _, image in pairs(state.images) do nvgDeleteImage(state.context, image) end
+    end
+    state.images = {}
     state.regular, state.bold, state.context = -1, -1, nil
 end
 
@@ -57,7 +69,7 @@ function Surface.Panel(ctx, x, y, w, h, fill, border, radius, emphasis)
 end
 
 -- 统一主操作；磨砂色面与窄边，不用多层果冻高光抢走商品焦点。
-function Surface.Button(ctx, r, color, glow)
+function Surface.Button(ctx, r, color, glow, phase)
     nvgBeginPath(ctx)
     nvgRoundedRect(ctx, r.x, r.y + 3, r.w, r.h, 6)
     nvgFillColor(ctx, nvgRGBA(1, 6, 12, 150))
@@ -73,6 +85,51 @@ function Surface.Button(ctx, r, color, glow)
     nvgStrokeColor(ctx, nvgRGBA(220, 255, 252, math.floor(72 + (glow or 0) * 140)))
     nvgStrokeWidth(ctx, 1)
     nvgStroke(ctx)
+    if phase then
+        nvgSave(ctx)
+        nvgIntersectScissor(ctx, r.x + 7, r.y + r.h - 3, r.w - 14, 2)
+        local x = r.x - 48 + ((phase % 6) / 6) * (r.w + 96)
+        nvgBeginPath(ctx)
+        nvgRect(ctx, x, r.y + r.h - 3, 48, 1)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, x, r.y, x + 48, r.y,
+            nvgRGBA(238, 255, 252, 0), nvgRGBA(238, 255, 252, 120)))
+        nvgFill(ctx)
+        nvgRestore(ctx)
+    end
+end
+
+function Surface.FitText(ctx, text, size, width, minimum)
+    nvgSave(ctx)
+    nvgResetTransform(ctx)
+    local fitted = size
+    while true do
+        Surface.UseFont(ctx, fitted)
+        nvgFontSize(ctx, fitted)
+        local advance = nvgTextBounds(ctx, 0, 0, text, nil)
+        if advance <= width or fitted <= (minimum or 15) then
+            nvgRestore(ctx)
+            return fitted, advance <= width
+        end
+        fitted = fitted - 1
+    end
+end
+
+-- 环境插画不是像素图标，按原始纵横比绘制并交给宿主控制阅读遮罩。
+function Surface.Environment(ctx, key, r, alpha)
+    local image = state.images[key]
+    if not image then return false end
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, r.x, r.y, r.w, r.h)
+    nvgBeginPath(ctx)
+    nvgRect(ctx, r.x, r.y, r.w, r.h)
+    local aspect = key == "hangar" and (9 / 16) or (16 / 9)
+    local dw = math.max(r.w, r.h * aspect)
+    local dh = dw / aspect
+    local dx, dy = r.x + (r.w - dw) * 0.5, r.y + (r.h - dh) * 0.5
+    nvgFillPaint(ctx, nvgImagePattern(ctx, dx, dy, dw, dh, 0, image, alpha or 1))
+    nvgFill(ctx)
+    nvgRestore(ctx)
+    return true
 end
 
 return Surface

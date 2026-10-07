@@ -126,6 +126,8 @@ local function ProbeFxaa()
 end
 
 CleanupFailedInit = function()
+    if uiFx.surface then uiFx.surface.Shutdown() end
+    if uiFx.battle then uiFx.battle.Shutdown() end
     if vg_ then
         nvgDelete(vg_)
         vg_ = nil
@@ -446,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.33"
+local BUILD_VERSION = "0.13.38"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -839,6 +841,7 @@ local function WrapTextLines(ctx, text, size, maxWidth)
     local lines = {}
     local line = ""
     UseTechFont(ctx)
+    uiFx.surface.UseFont(ctx, size)
     nvgFontSize(ctx, size)
     -- 调用方处于 CONTAIN 缩放（高分屏 scale 可为 2/3）后的 transform 下，
     -- 测量期间临时重置 transform，保证按设计空间宽度折行。
@@ -883,6 +886,7 @@ end
 -- 与 WrapTextLines 同一套约定（调用方处于 CONTAIN 缩放 transform 下）。
 local function MeasurePixelWidth(ctx, text, size)
     UseTechFont(ctx)
+    uiFx.surface.UseFont(ctx, size)
     nvgFontSize(ctx, size)
     nvgSave(ctx)
     nvgResetTransform(ctx)
@@ -1163,45 +1167,8 @@ local AIRCRAFT_LABELS = {
 local function DrawNextWavePreview(ctx, game)
     local plan = game.nextWave
     if not plan then return end
-    local preview = VisualCatalog.GetAircraftPreview(plan.aircraftKey)
-    local panelW, panelH = 168, 86
-    local px = DESIGN_W * 0.5 - panelW * 0.5
-    local py = BOTTOM_DOCK_Y + 4
-    local kind = plan.kind or "normal"
-    local accent = kind == "boss" and C.error or (kind == "elite" and C.warn or C.cyan)
-    DrawTechPanel(ctx, px, py, panelW, panelH, C.card, accent)
-    DrawRect(ctx, px, py, 3, panelH, accent, 0)
-
-    local cooldown = game.waveCooldown or 0
-    local eta = string.format("%d", math.max(0, math.floor(cooldown + 0.999)))
-    DrawPixelText(ctx, px + 8, py + 4,
-        kind == "boss" and "首领" or (kind == "elite" and "精英" or "下一波"), 15, accent)
-    DrawPixelText(ctx, px + panelW - 8, py + 4, eta .. "秒", 15, C.cyan,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-
-    if preview and preview.cells then
-        local cell = math.max(2, math.floor(math.min(52 / preview.gridW, 26 / preview.gridH)))
-        local artW = preview.gridW * cell
-        local artH = preview.gridH * cell
-        local ax = px + math.floor((panelW - artW) * 0.5)
-        local ay = py + 22 + math.floor((26 - artH) * 0.5)
-        for i = 1, #preview.cells do
-            local c = preview.cells[i]
-            nvgBeginPath(ctx)
-            nvgRect(ctx, ax + (c.col - 1) * cell, ay + (c.row - 1) * cell, cell - 0.5, cell - 0.5)
-            nvgFillColor(ctx, nvgRGBA(c.r, c.g, c.b, 255))
-            nvgFill(ctx)
-        end
-    end
-
-    -- v0.13.26：说明敌人在屏幕上沿之外生成，需要下落一段才进入画面。
-    DrawPixelText(ctx, px + 8, py + 52, "自远方飞入", 12, C.dim)
-
-    local label = AIRCRAFT_LABELS[plan.aircraftKey] or plan.aircraftKey
-    local countText = kind == "boss" and "首领" or (kind == "elite" and "精英" or (tostring(plan.count or 0) .. "架"))
-    DrawPixelText(ctx, px + 8, py + 68, label, 15, C.text)
-    DrawPixelText(ctx, px + panelW - 8, py + 68, countText, 15,
-        accent, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    uiFx.battle.DrawPreview(ctx, game, VisualCatalog.GetAircraftPreview(plan.aircraftKey),
+        AIRCRAFT_LABELS[plan.aircraftKey] or plan.aircraftKey)
 end
 
 -- v0.12.11 修复（AB-100 前向引用）：DrawIcon 的 local function 定义在本文件后段
@@ -1211,80 +1178,7 @@ end
 local DrawIcon = nil
 
 local function DrawAmmoSlots(ctx, game, presentation)
-    local queueCounts = {}
-    for _, ballType in ipairs(game.ballQueue or {}) do
-        queueCounts[ballType] = (queueCounts[ballType] or 0) + 1
-    end
-    if game.activeBall then
-        queueCounts[game.activeBall.ballType] = (queueCounts[game.activeBall.ballType] or 0) + 1
-    end
-
-    DrawRect(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, DESIGN_H - BOTTOM_DOCK_Y, C.panel, 0)
-    DrawLine(ctx, 0, BOTTOM_DOCK_Y, DESIGN_W, BOTTOM_DOCK_Y, C.cyanDim, 1)
-    DrawRect(ctx, 0, BOTTOM_DOCK_Y, 4, DESIGN_H - BOTTOM_DOCK_Y, C.cyan, 0)
-    DrawCircuitTexture(ctx, 6, BOTTOM_DOCK_Y + 18, DESIGN_W - 12, 72, C.cyanDim, 12)
-    DrawEdgeTicks(ctx, 16, BOTTOM_DOCK_Y + 1, DESIGN_W - 32, 21,
-        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
-
-    -- v0.10.24：主球回库补弹时 Dock 顶边一道青色轻扫光（0.3s 衰减）。
-    local reload = presentation.reloadFlash or 0
-    if reload > 0 then
-        local a = math.floor(190 * (reload / 0.3))
-        local sweep = reload / 0.3
-        local sx = DESIGN_W * (1 - sweep)
-        DrawLine(ctx, sx, BOTTOM_DOCK_Y, DESIGN_W, BOTTOM_DOCK_Y,
-            {C.cyan[1], C.cyan[2], C.cyan[3], a}, 2)
-    end
-
-    DrawPixelText(ctx, 14, BOTTOM_DOCK_Y + 4, "弹药矩阵", 15, C.cyan)
-    DrawPixelText(ctx, DESIGN_W - 14, BOTTOM_DOCK_Y + 4,
-        "升级解锁车辆 · 拖拽发射", 14, C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawLine(ctx, 14, BOTTOM_DOCK_Y + 22, DESIGN_W - 14, BOTTOM_DOCK_Y + 22,
-        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 85}, 1)
-
-    local slotSize = 64
-    local slotGap = 6
-    local slotY = BOTTOM_DOCK_Y + 26
-    local leftStart = 10
-    local rightStart = DESIGN_W - 10 - slotSize * 2 - slotGap
-    local ammoIcons = {
-        normal = "ammo_normal", ice = "ammo_ice", speed = "ammo_speed", giant = "ammo_giant",
-    }
-    for i, ballType in ipairs(SLOT_TYPES) do
-        local pairIndex = (i - 1) % 2
-        local x = (i <= 2 and leftStart or rightStart) + pairIndex * (slotSize + slotGap)
-        local color = SLOT_COLORS[ballType]
-        local unlocked = game.unlockedBalls and game.unlockedBalls[ballType] == true
-        local selected = unlocked and game.activeBall and game.activeBall.ballType == ballType
-        local fill = selected and C.widget or (unlocked and C.card or C.rail)
-        local border = selected and C.cyan
-            or (unlocked and {color[1], color[2], color[3], 170} or C.cyanDim)
-        if selected then
-            DrawRect(ctx, x - 2, slotY - 2, slotSize + 4, slotSize + 4,
-                {C.cyan[1], C.cyan[2], C.cyan[3], 32}, 8)
-        end
-        DrawMachinedPanel(ctx, x, slotY, slotSize, slotSize, fill, border, 6, selected == true)
-        if selected then
-            DrawRect(ctx, x, slotY, 3, slotSize, C.cyan, 0)
-        end
-        DrawPixelText(ctx, x + 6, slotY + 3, string.format("%d", i), 12, C.dim)
-        DrawPixelText(ctx, x + slotSize - 6, slotY + 3,
-            unlocked and ("×" .. tostring(queueCounts[ballType] or 0)) or "锁", 13,
-            selected and C.cyan or (unlocked and color or C.dim),
-            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        -- 32×32 图标始终原生尺寸，锁定态降低亮度而不改变图标资源。
-        DrawIcon(ctx, ammoIcons[ballType], x + 16, slotY + 7, 32,
-            selected and 1 or (unlocked and 0.86 or 0.28))
-        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 40, SLOT_NAMES[ballType], 14,
-            selected and C.text or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, x + slotSize * 0.5, slotY + 54,
-            selected and "待发" or (unlocked and "待命" or "待解锁"), 11,
-            selected and C.cyan or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawRect(ctx, x + 6, slotY + slotSize - 3, slotSize - 12, selected and 2 or 1,
-            unlocked and {color[1], color[2], color[3], selected and 230 or 105}
-                or C.cyanDim, 0)
-    end
-
+    uiFx.battle.DrawAmmo(ctx, game, presentation)
     DrawNextWavePreview(ctx, game)
 end
 
@@ -1295,8 +1189,9 @@ local function DrawPullHint(ctx, game)
     if not game.showPullHint then return end
     if not handImage_ or handImage_ <= 0 then return end
 
-    local slingX = game.slingX or DESIGN_W * 0.5
-    local slingY = game.slingY or (BOTTOM_DOCK_Y - 16)
+    local slingX, projectedY = ProjectGamePoint(game.slingX or DESIGN_W * 0.5,
+        game.slingY or (BOTTOM_DOCK_Y - 16))
+    local slingY = math.min(BOTTOM_DOCK_Y - 48, projectedY)
     -- 循环周期 1.6s：前 0.15 淡入 → 0.75 下滑 → 0.35 停在低位 → 0.35 淡出。
     local period = 1.6
     local t = (game.elapsed or 0) % period
@@ -1318,6 +1213,8 @@ local function DrawPullHint(ctx, game)
 
     nvgSave(ctx)
     nvgGlobalAlpha(ctx, alpha)
+    -- 整块手势和文案均裁在战场内，不压住HUD或下一波预告。
+    nvgIntersectScissor(ctx, 0, HUD_HEIGHT, DESIGN_W, BOTTOM_DOCK_Y - HUD_HEIGHT - 4)
 
     -- 拖拽轨迹：从手起点到终点的一条青色点状虚线。
     local trackX = slingX
@@ -1343,8 +1240,8 @@ local function DrawPullHint(ctx, game)
     nvgFillPaint(ctx, nvgImagePattern(ctx, handX, handY, handW, handH, 0, handImage_, 1))
     nvgFill(ctx)
 
-    -- 文案：放在手下方，跟着手一起走。
-    DrawPixelText(ctx, slingX, bottomY + handH - 8, "向下拖拽 松手发射",
+    -- 文案也限制在Dock上方，保持预告标题完整。
+    DrawPixelText(ctx, slingX, math.min(BOTTOM_DOCK_Y - 24, bottomY + handH - 8), "向下拖拽 松手发射",
         15, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     nvgRestore(ctx)
@@ -1501,63 +1398,9 @@ end
 ---@param ctx any
 ---@param game table
 local function DrawItemSlots(ctx, game)
-    local items = game.items
-    if not items then return end
+    if not game.items then return end
     local tab, slots = GetItemPanelLayout()
-
-    local totalCharges = 0
-    local grantable = 0
-    for i = 1, #items do
-        local def = items[i]
-        if def then
-            if (def.charges or 0) > 0 then totalCharges = totalCharges + 1 end
-            if def.canGrant then grantable = grantable + 1 end
-        end
-    end
-
-    -- 收起/展开标签
-    DrawRect(ctx, tab.x, tab.y, tab.w, tab.h, itemPanelOpen_ and C.card or C.widget, 6)
-    DrawStroke(ctx, tab.x, tab.y, tab.w, tab.h,
-        totalCharges > 0 and C.cyan or C.cyanDim, 6, 1.2)
-    DrawPixelText(ctx, tab.x + tab.w * 0.5, tab.y + 9,
-        itemPanelOpen_ and "收起" or "道具", 15,
-        totalCharges > 0 and C.cyan or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    if not itemPanelOpen_ and totalCharges > 0 then
-        DrawRect(ctx, tab.x + tab.w - 10, tab.y - 4, 16, 16, C.cyan, 8)
-        DrawPixelText(ctx, tab.x + tab.w - 2, tab.y - 2, tostring(totalCharges), 13, C.ink,
-            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    end
-    if not itemPanelOpen_ and totalCharges == 0 and grantable > 0 then
-        DrawRect(ctx, tab.x + tab.w - 8, tab.y - 2, 8, 8, C.ad, 4)
-    end
-
-    if not itemPanelOpen_ then return end
-    for i = 1, #slots do
-        local def = items[i]
-        if def then
-            local r = slots[i]
-            local col = def.color or C.cyan
-            local owned = (def.charges or 0) > 0
-            local iconSize = 26
-            local iconX = r.x + (r.w - iconSize) * 0.5
-            if owned then
-                DrawRect(ctx, r.x, r.y, r.w, r.h, C.card, 6)
-                DrawStroke(ctx, r.x, r.y, r.w, r.h, col, 6, 1.4)
-                DrawIcon(ctx, def.key, iconX, r.y + 6, iconSize, 1)
-                DrawPixelText(ctx, r.x + r.w - 4, r.y + r.h - 18,
-                    "×" .. tostring(def.charges), 14, col, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-                DrawPixelText(ctx, r.x + 4, r.y + r.h - 18, def.name or "", 13, C.text)
-            elseif def.canGrant then
-                DrawRect(ctx, r.x, r.y, r.w, r.h, C.widget, 6)
-                DrawStroke(ctx, r.x, r.y, r.w, r.h, C.adDim, 6, 1.2)
-                DrawIcon(ctx, def.key, iconX, r.y + (r.h - iconSize) * 0.5, iconSize, 0.5)
-                DrawRect(ctx, r.x + r.w - 10, r.y + 2, 8, 8, C.ad, 4)
-            else
-                DrawRect(ctx, r.x, r.y, r.w, r.h, C.widget, 6)
-                DrawIcon(ctx, def.key, iconX, r.y + (r.h - iconSize) * 0.5, iconSize, 0.2)
-            end
-        end
-    end
+    uiFx.battle.DrawItems(ctx, game, tab, slots, itemPanelOpen_)
 end
 
 local function DrawLetterboxBackground(ctx, width, height)
@@ -1584,34 +1427,10 @@ local function FindBoss(game)
     return nil
 end
 
-local function DrawBossPhaseBar(ctx, game, boss)
-    -- A6：Boss 阶段条。纯规则字段驱动（bossPhase 1/2/3，vulnerable 时高亮），
-    -- 渲染层只读消费，不触达规则层。酸性风格：分段硬边指示 + 易伤脉冲。
-    local cx = game.width * 0.5
-    local barW = 220
-    local x0 = cx - barW * 0.5
-    local y = HUD_HEIGHT + 34
-    DrawPixelText(ctx, cx, y - 24, "首领阶段", 16, C.warn,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    local segments = 3
-    local segW = barW / segments
-    for s = 1, segments do
-        local filled = s <= (boss.bossPhase or 1)
-        local vul = (boss.bossPhase == 2)
-        local col = filled and (vul and C.warn or C.cyan) or C.dim
-        DrawTechPanel(ctx, x0 + (s - 1) * segW + 2, y, segW - 4, 12,
-            filled and C.widget or C.card, col)
-        if filled then
-            DrawPixelText(ctx, x0 + (s - 1) * segW + segW * 0.5, y + 1, tostring(s), 14,
-                col, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        end
-    end
-    if boss.bossPhase == 2 then
-        local pulse = 0.5 + 0.5 * math.sin(game.elapsed * 6)
-        DrawPixelText(ctx, cx, y + 16, "虚弱中 伤害×1.5",
-            15, {C.warn[1], C.warn[2], C.warn[3], 150 + math.floor(105 * pulse)},
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    end
+local function DrawBossPhaseBar(ctx, game, boss, presentation)
+    -- 短时入场预告优先，避免阶段提示与首领横幅互相叠字。
+    if (presentation.waveBannerTimer or 0) > 0 then return end
+    uiFx.battle.DrawBoss(ctx, game, boss)
 end
 
 -- v0.10.23：基地受击时屏幕四边向内的红色危险渐变（不遮挡中心战斗区）。
@@ -1640,69 +1459,7 @@ local function GetHudPauseRect(game)
 end
 
 local function DrawHud(ctx, game, presentation)
-    local hpRatio = game.maxBaseHp > 0 and game.baseHp / game.maxBaseHp or 0
-    local hpColor
-    if hpRatio > 0.35 then
-        hpColor = C.text
-    else
-        local pulse = 0.5 + 0.5 * math.sin((game.elapsed or 0) * 7)
-        hpColor = {235 + math.floor(20 * pulse), 70 + math.floor(40 * pulse), 70}
-    end
-
-    DrawMachinedPanel(ctx, 0, 0, game.width, HUD_HEIGHT, C.panel, C.cyanDim, 0, false)
-    DrawRect(ctx, 0, 0, 4, HUD_HEIGHT, C.cyan, 0)
-    DrawLine(ctx, 0, HUD_HEIGHT - 1, game.width, HUD_HEIGHT - 1, C.cyanDim, 1)
-    DrawEdgeTicks(ctx, 16, HUD_HEIGHT - 8, game.width - 32, 21,
-        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 95})
-    DrawLine(ctx, 151, 12, 151, 62, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 1)
-    DrawLine(ctx, 377, 12, 377, 62, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 1)
-
-    DrawPixelText(ctx, 14, 5, "本局得分", 13, C.dim)
-    DrawPixelText(ctx, 14, 20, string.format("%d", game.score), 28, C.text)
-    local cloud = presentation and presentation.cloudStatus
-    local cloudColor = cloud == "ok" and C.cyan or (cloud == "unavailable" and C.warn or C.cyanDim)
-    DrawRect(ctx, 140, 8, 5, 5, cloudColor, 3)
-    DrawPixelText(ctx, 14, 58, "最高 " .. tostring(game.highScore), 12, C.dim)
-
-    local centerX = 264
-    DrawPixelText(ctx, centerX, 5, string.format("第 %d 关 · 作战波次", game.stage or 1), 13, C.cyanDim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, centerX, 19, string.format("%d / %d", game.stageWave or game.wave,
-        game.wavesPerStage or 10), 29, C.text,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    local combo = game.clearStreak or 0
-    local comboColor = combo >= 2 and C.warn or C.dim
-    local comboSize = combo >= 2 and (13 + math.floor(2 * (0.5 + 0.5 * math.sin((game.elapsed or 0) * 8)))) or 13
-    DrawPixelText(ctx, centerX, 57,
-        string.format("敌机 %d   连击 ×%d", game.concurrentCount or 0, combo),
-        comboSize, comboColor, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
-    DrawIcon(ctx, "barrier", 391, 4, 18, 0.9)
-    DrawPixelText(ctx, 414, 5, "基地耐久", 13, C.dim)
-    DrawPixelText(ctx, 384, 23, string.format("%d", game.baseHp), 22, hpColor)
-    DrawPixelText(ctx, 426, 29, "/ " .. tostring(game.maxBaseHp), 13, C.dim)
-    DrawPixelBar(ctx, 384, 53, 106, 8, hpRatio, hpRatio > 0.35 and C.cyan or hpColor)
-    DrawPixelText(ctx, 384, 68, "零件 +" .. tostring(game.runParts or 0), 12,
-        (game.partsBoostTime or 0) > 0 and C.ad or C.warn)
-    if (game.partsBoostTime or 0) > 0 then
-        -- v0.13.17：用上 boost 图标（此前已加载却从未绘制），标出「零件翻倍」增益生效。
-        DrawIcon(ctx, "boost", 464, 66, 16, 1)
-        DrawPixelText(ctx, 490, 68, "×2", 12, C.ad, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    end
-
-    if game.state == "playing" then
-        local pauseBtn = GetHudPauseRect(game)
-        DrawMachinedPanel(ctx, pauseBtn.x, pauseBtn.y, pauseBtn.w, pauseBtn.h, C.card, C.cyanDim, 6, false)
-        if not DrawIcon(ctx, "pause", pauseBtn.x + 4, pauseBtn.y + 4, 20, 1) then
-            DrawRect(ctx, pauseBtn.x + 8, pauseBtn.y + 7, 4, 14, C.cyan, 1)
-            DrawRect(ctx, pauseBtn.x + 16, pauseBtn.y + 7, 4, 14, C.cyan, 1)
-        end
-    end
-
-    local xpRatio = game.xpToNext > 0 and game.xp / game.xpToNext or 0
-    DrawIcon(ctx, "levelup", 16, 71, 16, 0.9)
-    DrawPixelText(ctx, 36, 72, string.format("Lv.%d", game.playerLevel), 12, C.cyan)
-    DrawPixelBar(ctx, 78, 75, 68, 7, xpRatio, C.cyan)
+    uiFx.battle.DrawHud(ctx, game, presentation, GetHudPauseRect(game))
 end
 
 -- v0.12.7：像素大 logo。⚠️ zpix 位图字体逐字（单码位）绘制在超大字号会退化成
@@ -1740,6 +1497,12 @@ local function DrawMenu(ctx, game, meta)
     nvgFillPaint(ctx, nvgLinearGradient(ctx, 0, 0, 0, game.height * 0.45,
         nvgRGBA(0, 190, 176, 30), nvgRGBA(0, 190, 176, 0)))
     nvgFill(ctx)
+    uiFx.surface.Environment(ctx, "hangar", {x=0,y=-120,w=game.width,h=game.height}, 0.54)
+    nvgBeginPath(ctx)
+    nvgRect(ctx, 0, 0, game.width, game.height)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, 0, 300, 0, 600,
+        nvgRGBA(7, 11, 20, 0), nvgRGBA(7, 11, 20, 245)))
+    nvgFill(ctx)
     -- 留出整块实车主视觉，不再把网格/扫描带铺过商品与标题。
     DrawCornerBrackets(ctx, 8, 8, game.width - 16, game.height - 16,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 100}, 18, 1)
@@ -1768,7 +1531,7 @@ local function DrawMenu(ctx, game, meta)
     local glow, press = Backend.GetControlFx(cta, true)
     nvgSave(ctx)
     nvgTranslate(ctx, 0, press * 2)
-    uiFx.surface.Button(ctx, cta, C.cyan, glow)
+    uiFx.surface.Button(ctx, cta, C.cyan, glow, uiFx.anim)
     -- v0.13.30c「华丽 + 动态」：一条斜向高光带周期性扫过 CTA（3.2s 一轮，确定性）。
     -- 裁进圆角内侧的矩形区域，避免光带碰到宿主边缘。
     local sweep = (game.elapsed % 3.2) / 3.2
@@ -2773,7 +2536,7 @@ local function RenderOverlay(game, presentation, meta)
         -- v0.13.17：Boss 在场时画阶段条（DrawBossPhaseBar 此前定义了却从未调用）。
         RunOverlayStage("boss-phase", function()
             local boss = FindBoss(game)
-            if boss then DrawBossPhaseBar(vg_, game, boss) end
+            if boss then DrawBossPhaseBar(vg_, game, boss, presentation) end
         end)
         -- v0.13.24：进关准备期过渡界面——画在 HUD/Dock 之后，作为模态压住整屏。
         if (game.introTimer or 0) > 0 then
@@ -2890,8 +2653,10 @@ local function HandleBackendNanoVGRender(eventType, eventData)
 end
 
 function Backend.Init()
+    if uiFx.battle then uiFx.battle.Shutdown() end
     if scene_ then
         MetaUI.Shutdown()
+        if uiFx.surface then uiFx.surface.Shutdown() end
         Backend.ClearPointer()
         uiFx.controls = {}
         Renderer3D.Shutdown()
@@ -2927,6 +2692,11 @@ function Backend.Init()
         anim = Backend.GetAnimPhase,
         controlFx = Backend.GetControlFx,
         measure = MeasurePixelWidth,
+        environment = uiFx.surface.Environment,
+        button = function(ctx, rect, color, glow)
+            uiFx.surface.Button(ctx, rect, color, glow, uiFx.anim)
+        end,
+        fit = uiFx.surface.FitText,
     })
     scene_ = Scene()
     scene_:CreateComponent("Octree")
@@ -3018,6 +2788,11 @@ function Backend.Init()
     end
     nvgFontZpix_ = fontId
     uiFx.surface.Init(vg_)
+    -- 独立组件子树共享宿主画布，不新增主块local，不接管UI全局root。
+    uiFx.battle = require "ui.BattleHUD"
+    uiFx.battle.Init(vg_, { C = C, rect = DrawRect, stroke = DrawStroke,
+        icon = DrawIcon, anim = Backend.GetAnimPhase, controlFx = Backend.GetControlFx,
+        slotTypes = SLOT_TYPES, slotNames = SLOT_NAMES, slotColors = SLOT_COLORS })
 
     -- 手势图是可选资源：缺失时只跳过提示，绝不纳入初始化成功条件。
     handImage_ = nvgCreateImage(vg_, HAND_IMAGE_PATH, 0)
@@ -3041,6 +2816,7 @@ function Backend.Init()
 end
 
 function Backend.Shutdown()
+    if uiFx.battle then uiFx.battle.Shutdown() end
     MetaUI.Shutdown()
     if uiFx.surface then uiFx.surface.Shutdown() end
     Backend.ClearPointer()
@@ -3104,6 +2880,7 @@ function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
     -- 共享时间只驱动循环动画；各控件的进入/退出与按压分别缓动。
     local dtAnim = math.min(0.05, math.max(0, gameSnapshot.elapsed - uiFx.anim))
     uiFx.anim = gameSnapshot.elapsed
+    if uiFx.battle then uiFx.battle.Update(gameSnapshot, dtAnim) end
     uiFx.epoch = uiFx.epoch + 1
     uiFx.scope = tostring(gameSnapshot.state) .. ":" .. tostring(metaState and metaState.screen or "")
         .. ":" .. tostring(metaState and metaState.supplyOpen or false)
