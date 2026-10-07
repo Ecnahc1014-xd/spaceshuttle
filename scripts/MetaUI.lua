@@ -214,7 +214,7 @@ local function Button(ctx, r, label, sub, kind)
     if sub ~= "" then
         D.text(ctx, cx, r.y + r.h * 0.5 - 18, label, D.fit(ctx, label, 17, r.w - 14, 15), labelColor,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        D.text(ctx, cx, r.y + r.h * 0.5 + 5, sub, D.fit(ctx, sub, 15, r.w - 14, 15),
+        D.text(ctx, cx, r.y + r.h * 0.5 + 2, sub, D.fit(ctx, sub, 15, r.w - 14, 15),
             (kind == "primary" or kind == "ad") and C.ink or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         D.text(ctx, cx, r.y + r.h * 0.5 - 11, label, D.fit(ctx, label, 17, r.w - 14, 15), labelColor,

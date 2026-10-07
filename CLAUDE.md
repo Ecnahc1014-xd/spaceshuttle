@@ -8,7 +8,7 @@
   - 新 `ui/PremiumSurface` 复用宿主NanoVG；MiSans正文/标题与像素Logo分层，测量与绘制按同字号选face。普通面板灰蓝受光细边、主操作青/广告绿/付费金，保留显式控件反馈；减少铆钉、青框、标题呼吸，主CTA保留扫光并加共享相位6秒底边流光。新机库/展台两张环境插画等比cover裁剪，首页只用单一机库，商店用横向展台，真实车辆仍由VehicleShowcase绘制，参考里的虚构车不进游戏。
   - 六浏览卡72高与独立购买区命中同源；不改售价、战斗属性、支付/广告/装备规则。FitText测到最低字号并返回fits，长余额超过宽度时钱包两行保留全数位；商店持有余额局部测宽，最低字号不继续缩。Surface图片在正常Shutdown、重复Init和失败清理中均先于宿主nvgDelete释放，环境缺图只局部降级。
   - 五轮均已官方多人build+预览上传、LSP 0 Error（仍有Warning/Hint）；最终真渲染已查首页/商店、九元层面板与暂停、最长升级卡完整两行、主TouchID=0/第二指画布外结束/混合鼠标/右键Up/失焦/禁用/渐灭、首页命中、六车型浏览与购买门控/隐藏停更/30Hz、直接Init及Stop-Start、环境缺图和礼包限次、横屏letterbox。19位余额两行实测87/79px，商店完整持有串234px≤240px。探针最初在Update中测字拿到无效尺寸，改真实绘制阶段测量后通过；不能沿用错误探针PASS。已目视内部实图；Linux既有HDR/缺图/无体素噪音不等于新Lua错误，手机帧率、联网支付和「够贵」审美未宣称通过。
-  - 并发车辆结构与BattleHUD由各自会话独立提交，本批不代提交。POST-1/2执行；POST-3执行：自主参考/阶段验图偏好与字体测绘、环境cover、最低字号饱和抗体。大后端与Game仍超1500行，不把新增小模块声称为全面重构。
+  - 并发车辆结构与BattleHUD由各自会话独立提交，本批不代提交。POST-1/2执行；POST-3执行：自主参考/阶段验图偏好与AB-186字体测绘、AB-187环境cover、AB-188最低字号饱和抗体。大后端与Game仍超1500行，不把新增小模块声称为全面重构。
 
 - 独立批次: 0.13.33-battle（战斗仪表舱精修；展示版本由并发商业化会话统一）：
   - 用户要求「优化战斗界面精致度科技感」。新增 `ui/BattleHUD.lua`，UI.Label/ProgressBar借官方 `UI.RenderWidgetSubtree` 嵌入宿主NanoVG帧，用同540×960 absoluteLayout复用树，不UI.Init/Render/SetRoot/Shutdown，不抢全局root/context，清理树早于宿主删除ctx。后端六个绘制入口委托，新增状态收进uiFx.battle，不增加主块local。
