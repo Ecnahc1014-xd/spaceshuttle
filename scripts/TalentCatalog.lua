@@ -33,8 +33,9 @@ TalentCatalog.MASTERY_CRIT = 5        -- 最后一阶额外暴击率 +5%
 TalentCatalog.STAGE_STARS = { 0, 3, 9, 18, 27, 36, 45 }
 TalentCatalog.MAX_STAGE = #TalentCatalog.STAGE_STARS
 
--- 各阶段单节点解锁花费（零件），随阶段递增。
-local STAGE_COST = { 200, 350, 600, 900, 1300, 1800, 2400 }
+-- 各阶段单节点解锁花费（零件）；保留入门价，相邻两阶至少翻倍。
+-- 六条线路共用此表，界面报价与实际扣费都读取 node.cost；已拥有节点不补扣。
+local STAGE_COST = { 200, 500, 1200, 2500, 5000, 10000, 20000 }
 
 -- 六条线路：2 通用 + 4 车。绘制顺序即此顺序（通用在前，车在后）。
 TalentCatalog.LANES = { "general_a", "general_b", "normal", "ice", "speed", "giant" }

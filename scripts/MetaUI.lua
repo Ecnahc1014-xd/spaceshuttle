@@ -286,16 +286,6 @@ local function Shell(ctx, w, h, title, subtitle)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
     D.shell(ctx, x, y, sw, sh, 48)
-    -- v0.13.30b：标题栏加**受光横带**——自上而下由青灰渐变到面板底，让窗口壳有
-    -- 「顶盖」而不是一整块平底；再补一条青识别条与标题下的辉光。命中几何不变。
-    nvgBeginPath(ctx)
-    nvgRoundedRect(ctx, x + 1, y + 1, sw - 2, 47, 5)
-    nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x, y + 48,
-        nvgRGBA(26, 44, 68, 255), nvgRGBA(12, 20, 34, 255)))
-    nvgFill(ctx)
-    D.rect(ctx, x + 1, y + 46, sw - 2, 1, {C.cyan[1], C.cyan[2], C.cyan[3], 60}, 0)
-    D.rect(ctx, x, y + 48, 3, 22, C.cyan, 0)
-
     local headerIcon = {
         ["每日任务"] = "task",
         ["敌机图鉴"] = "codex",
@@ -309,7 +299,7 @@ local function Shell(ctx, w, h, title, subtitle)
     if iconKey and D.icon(ctx, iconKey, x + 12, y + 8, 32, 1) then
         titleX = x + 52
     end
-    D.text(ctx, titleX, y + 10, title, 22, C.text)
+    D.text(ctx, titleX, y + 8, title, 26, C.text)
     if subtitle ~= "" then
         D.rect(ctx, x + sw - 178, y + 14, 2, 18, C.warn, 0)
         D.text(ctx, x + sw - 58, y + 14, subtitle, 14, C.dim,
@@ -319,8 +309,6 @@ local function Shell(ctx, w, h, title, subtitle)
     D.panel(ctx, close.x, close.y, close.w, close.h, C.card, C.cyanDim, 6)
     D.text(ctx, close.x + close.w * 0.5, close.y + 6, "×", 21, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    D.grid(ctx, x + 14, y + 56, sw - 28, 20, 12, 10)
-    D.rule(ctx, x + 16, y + 54, sw - 32, 12, C.cyanDim, 4)
     return content, close
 end
 
