@@ -74,6 +74,7 @@ local BALL_TYPES = {
         radius = 30, speed = 420, damage = 2,
         pierceAfterBounce = true,
         areaRadiusCells = 3.5,
+        areaCooldown = 1.0,       -- 范围伤害内置冷却（秒），每辆巨型车独立计时
         bounceElasticity = 0.92,   -- WO-05/P4：巨型弹更"沉"
     },
 }
@@ -482,6 +483,7 @@ local function CreateMarble(ballType, words)
         flightTime = 0,
         ignoredBrick = nil,
         giantPiercing = false,
+        giantAreaCooldown = 0,
         words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
     }
     -- P11：注入词条（来自升级或 Boss 授予），逐个调用 apply() 改写 marble 行为。
@@ -2136,6 +2138,12 @@ UpdateMarbles = function(dt)
             if marble.redirectCooldown and marble.redirectCooldown > 0 then
                 marble.redirectCooldown = marble.redirectCooldown - subDt
             end
+            -- 冷却只随玩法子步推进；暂停、升级与广告冻结时不消耗。
+            if (marble.giantAreaCooldown or 0) > 0 then
+                local remaining = marble.giantAreaCooldown - subDt
+                -- 消除累计浮点尾数，确保满 1 秒不多等一个子步。
+                marble.giantAreaCooldown = remaining > 1e-9 and remaining or 0
+            end
 
             local prevX = marble.x
             local prevY = marble.y
@@ -2235,9 +2243,10 @@ UpdateMarbles = function(dt)
             if best then
                 local enemy = best.enemy
                 local brick = best.brick
-                if marble.giantPiercing then
-                    -- 贯穿本步只结算圆域，不反弹；武装保持到本步结束再卸，
-                    -- 避免同帧只打一格就提前解除。
+                if marble.giantPiercing and (marble.giantAreaCooldown or 0) <= 0 then
+                    -- 仅实际圆域命中启动冷却，先置位防同帧连续触发；
+                    -- 冷却期间走普通碰撞，保留反弹武装但不提前释放圆域。
+                    marble.giantAreaCooldown = def.areaCooldown
                     DamageGiantArea(enemy, brick,
                         GetMarbleDamage(marble, def), frameHitBricks)
                     Emit("giant_pierce_consumed", {x = marble.x, y = marble.y})

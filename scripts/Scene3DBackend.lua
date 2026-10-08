@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.41"
+local BUILD_VERSION = "0.13.42"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -943,7 +943,7 @@ end
 
 -- 模态外层沿用技术舱屏边支架，正文背景保持干净。
 local function DrawModalBackdrop(ctx, x, y, width, height)
-    uiFx.surface.Background(ctx, x, y, width, height)
+    uiFx.surface.Background(ctx, x, y, width, height, uiFx.anim)
 end
 
 local function DrawBluePanel(ctx, x, y, width, height, fill, border, radius)
@@ -1445,7 +1445,7 @@ local function DrawMenu(ctx, game, meta)
     nvgIntersectScissor(ctx, 0, 0, game.width, game.height)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     -- 首页、功能页共享深海军底与屏边支架；真实车辆仍使用独立正交展台。
-    uiFx.surface.Background(ctx, 0, 0, game.width, game.height)
+    uiFx.surface.Background(ctx, 0, 0, game.width, game.height, uiFx.anim)
     DrawCornerBrackets(ctx, 8, 8, game.width - 16, game.height - 16,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 100}, 18, 1)
 

@@ -188,13 +188,20 @@ local function SectionHeader(ctx, x, y, w, label)
     local C = Colors()
     local phase = D.anim()
     local pulse = 0.72 + 0.28 * math.sin(phase * math.pi * 0.5)
+    -- 呼吸辉光：让竖标从「一根线」变成有光晕的识别点。
+    nvgBeginPath(ctx)
+    nvgRect(ctx, x - 4, y - 2, 12, 20)
+    nvgFillPaint(ctx, nvgRadialGradient(ctx, x + 1.5, y + 10, 1, 13,
+        nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], math.floor(70 * pulse)),
+        nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 0)))
+    nvgFill(ctx)
     D.rect(ctx, x, y + 2, 3, 16,
-        {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(210 * pulse)}, 1)
+        {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(225 * pulse)}, 1)
     D.text(ctx, x + 9, y, label, 17, C.text)
     local lx = x + 9 + D.measure(ctx, label, 17) + 14
     local remain = math.max(0, x + w - lx)
     if remain >= 20 then
-        D.rule(ctx, lx, y + 10, remain, 8, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 120})
+        D.rule(ctx, lx, y + 10, remain, 8, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 130})
         -- 流动段只走标题右方空白，不经过文字。
         local length = math.min(24, remain * 0.25)
         local scanX = lx + (phase % 6) / 6 * (remain - length)
@@ -202,7 +209,7 @@ local function SectionHeader(ctx, x, y, w, label)
         nvgRect(ctx, scanX, y + 9, length, 2)
         nvgFillPaint(ctx, nvgLinearGradient(ctx, scanX, y, scanX + length, y,
             nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 0),
-            nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 200)))
+            nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 215)))
         nvgFill(ctx)
     end
 end
@@ -379,7 +386,19 @@ function MetaUI.DrawHomeFleet(ctx, w, meta)
     local hot = meta.talentAffordable == true
     local glow = D.controlFx(r, true)
     D.panel(ctx, r.x, r.y, r.w, r.h, C.card, {120, 148, 162, 65}, 8)
+    -- 天赋入口大卡：内受光 / 内沉影 + 左侧竖标发光，做成一个明确的「可进入」载体。
+    D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, math.floor(r.h * 0.42), {255, 255, 255, 18}, 6)
+    D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
+        r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, 42}, 6)
     D.rect(ctx, r.x + 1, r.y + 20, 2, r.h - 40, hot and C.cyan or C.dim, 1)
+    if hot then
+        nvgBeginPath(ctx)
+        nvgRect(ctx, r.x - 6, r.y + 14, 16, r.h - 28)
+        nvgFillPaint(ctx, nvgRadialGradient(ctx, r.x + 2, r.y + r.h * 0.5, 1, 22,
+            nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 78),
+            nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 0)))
+        nvgFill(ctx)
+    end
     D.icon(ctx, "premium_energy_core", r.x + 16, r.y + 23, 32, 1)
     D.text(ctx, r.x + 62, r.y + 10, "天赋树", 28, C.text)
     D.text(ctx, r.x + 62, r.y + 43,
@@ -485,6 +504,11 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     nvgSave(ctx)
     nvgTranslate(ctx, 0, walletPress * 2)
     D.panel(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h, C.rail, C.cyanDim, 6)
+    -- 钱包条内受光 + 内沉影，让整条有舱板厚度。
+    D.rect(ctx, L.wallet.x + 2, L.wallet.y + 2, L.wallet.w - 4,
+        math.floor(L.wallet.h * 0.44), {255, 255, 255, 18}, 4)
+    D.rect(ctx, L.wallet.x + 2, L.wallet.y + math.floor(L.wallet.h * 0.6), L.wallet.w - 4,
+        L.wallet.h - math.floor(L.wallet.h * 0.6) - 2, {0, 0, 0, 40}, 4)
     if walletGlow > 0.01 then
         D.stroke(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h,
             {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(walletGlow * 190)}, 6, 1.5)
@@ -504,7 +528,13 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
 
     local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 12, w = 96, h = 38 }
     D.panel(ctx, wb.x, wb.y, wb.w, wb.h, C.warn, C.warn, 6)
-    D.rect(ctx, wb.x + 6, wb.y + 3, wb.w - 12, 1, {255, 255, 255, 100}, 0)
+    -- 金按钮：顶受光 + 底沉影 + 窄玻璃条，与主按钮同一材质语言。
+    D.rect(ctx, wb.x + 2, wb.y + 2, wb.w - 4, math.floor(wb.h * 0.42),
+        {255, 255, 255, 46}, 4)
+    D.rect(ctx, wb.x + 2, wb.y + math.floor(wb.h * 0.6), wb.w - 4,
+        wb.h - math.floor(wb.h * 0.6) - 2, {0, 0, 0, 62}, 4)
+    D.rect(ctx, wb.x + 3, wb.y + 2, 3, wb.h - 4, {255, 255, 255, 34}, 1)
+    D.rect(ctx, wb.x + 6, wb.y + 3, wb.w - 12, 1, {255, 255, 255, 120}, 0)
     D.icon(ctx, "premium_energy_core", wb.x + 6, wb.y + 3, 32)
     D.text(ctx, wb.x + 64, wb.y + 11, "充值", 16, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -521,11 +551,19 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
             local accent = def.tone == "ad" and C.ad or C.cyan
             local glow, press = D.controlFx(rr, true)
             D.panel(ctx, rr.x, rr.y, rr.w, rr.h, C.card, C.cyanDim, 4)
+            -- 卡面内受光 / 内沉影：让每张福利/收藏卡有独立厚度，不靠阴影堆叠。
+            D.rect(ctx, rr.x + 2, rr.y + 2, rr.w - 4, math.floor(rr.h * 0.4),
+                {255, 255, 255, 16}, 3)
+            D.rect(ctx, rr.x + 2, rr.y + math.floor(rr.h * 0.62), rr.w - 4,
+                rr.h - math.floor(rr.h * 0.62) - 2, {0, 0, 0, 34}, 3)
+            D.rect(ctx, rr.x + 2, rr.y + 1, rr.w - 4, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
             D.corner(ctx, rr.x + 2, rr.y + 2, rr.w - 4, rr.h - 4,
-                {C.dim[1], C.dim[2], C.dim[3], 95}, 6, 1)
+                {C.dim[1], C.dim[2], C.dim[3], 105}, 6, 1)
             if glow > 0.01 then
                 D.rect(ctx, rr.x + 3, rr.y + 3, rr.w - 6, rr.h - 6,
-                    {accent[1], accent[2], accent[3], math.floor(26 * glow)}, 4)
+                    {accent[1], accent[2], accent[3], math.floor(30 * glow)}, 4)
+                D.stroke(ctx, rr.x, rr.y, rr.w, rr.h,
+                    {accent[1], accent[2], accent[3], math.floor(200 * glow)}, 4, 1)
             end
             if i > 1 then
                 D.rect(ctx, rr.x - 4, rr.y + 16, 1, rr.h - 32, C.rail, 0)
@@ -637,6 +675,12 @@ local function DrawTasks(ctx, w, meta)
     for i, task in ipairs(tasks) do
         local r = { x = content.x, y = y + (i - 1) * (rowH + gap), w = content.w, h = rowH }
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, task.claimable and C.warn or C.cyanDim, 6)
+        -- 任务行内受光 / 内沉影，可领取时左缘金色识别条。
+        D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, math.floor(r.h * 0.42), {255, 255, 255, 16}, 4)
+        D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
+            r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, 36}, 4)
+        D.rect(ctx, r.x + 3, r.y + 12, 3, r.h - 24,
+            task.claimable and C.warn or {120, 148, 162, 110}, 1)
         D.text(ctx, r.x + 16, r.y + 12, task.name, 18, C.text)
         D.text(ctx, r.x + 16, r.y + 40,
             string.format("进度 %d / %d", task.progress, task.target), 15, C.dim)
@@ -894,6 +938,11 @@ local function DrawShopTabs(ctx, layout)
         local glow, press = D.controlFx(r, true)
         D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card,
             active and C.cyanDim or {120, 148, 162, 65}, 6)
+        -- 标签内受光 / 内沉影：激活态更亮，未激活仍保留厚度。
+        D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, math.floor(r.h * 0.44),
+            {255, 255, 255, active and 26 or 14}, 4)
+        D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
+            r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, active and 46 or 32}, 4)
         if active then D.rect(ctx, r.x + 8, r.y + r.h - 3, r.w - 16, 2, C.cyan, 0) end
         if glow > 0.01 then
             D.stroke(ctx, r.x, r.y, r.w, r.h,
@@ -913,13 +962,21 @@ local function DrawShopCard(ctx, layout, index, activeIndex, name, owned, equipp
     local active = index == activeIndex
     local glow, press = D.controlFx(r, true)
     D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card, {120, 148, 162, 65}, 5)
+    -- 浏览卡内受光 / 内沉影 + 左识别标记，选中态加青左标。
+    D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, math.floor(r.h * 0.44),
+        {255, 255, 255, active and 24 or 13}, 4)
+    D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
+        r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, active and 44 or 30}, 4)
+    D.rect(ctx, r.x + 2, r.y + 1, r.w - 4, 1, {C.dim[1], C.dim[2], C.dim[3], 72}, 0)
+    D.rect(ctx, r.x + 3, r.y + 8, 3, r.h - 16,
+        active and C.cyan or {120, 148, 162, 120}, 1)
     if active then D.rect(ctx, r.x + 4, r.y + r.h - 3, r.w - 8, 2, C.cyan, 0) end
     if glow > 0.01 then
         D.stroke(ctx, r.x, r.y, r.w, r.h,
             {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 200)}, 5, 1.4)
     end
-    D.text(ctx, r.x + 10, r.y + 12 + press * 2, name, 18, C.text)
-    D.text(ctx, r.x + 10, r.y + 45,
+    D.text(ctx, r.x + 12, r.y + 12 + press * 2, name, 18, C.text)
+    D.text(ctx, r.x + 12, r.y + 45,
         equipped and "使用中" or (owned and "已拥有" or tostring(cost) .. " 零件"),
         15, owned and C.cyan or C.dim)
     return r
