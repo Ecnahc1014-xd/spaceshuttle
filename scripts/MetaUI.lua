@@ -955,19 +955,19 @@ local function DrawShopTabs(ctx, layout)
     local function tab(r, label, active)
         local glow, press = D.controlFx(r, true)
         D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card,
-            active and C.cyanDim or {120, 148, 162, 65}, 6)
-        -- 标签内受光 / 内沉影：激活态更亮，未激活仍保留厚度。
+            active and C.warnDim or {C.dim[1], C.dim[2], C.dim[3], 80}, 6)
+        -- 标签内受光 / 内沉影：激活态更亮，未激活仍保留厚度。（v0.13.53 转暖金）
         D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, math.floor(r.h * 0.44),
-            {255, 255, 255, active and 26 or 14}, 4)
+            {255, 240, 205, active and 28 or 14}, 4)
         D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
             r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, active and 46 or 32}, 4)
-        if active then D.rect(ctx, r.x + 8, r.y + r.h - 3, r.w - 16, 2, C.cyan, 0) end
+        if active then D.rect(ctx, r.x + 8, r.y + r.h - 3, r.w - 16, 2, C.warn, 0) end
         if glow > 0.01 then
             D.stroke(ctx, r.x, r.y, r.w, r.h,
-                {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 200)}, 6, 1.4)
+                {C.warn[1], C.warn[2], C.warn[3], math.floor(glow * 200)}, 6, 1.4)
         end
         D.text(ctx, r.x + r.w * 0.5, r.y + 8 + press * 2, label, 17,
-            active and C.cyan or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            active and C.warn or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     tab(vehicleTab, "车型外观", shopTab == "vehicle")
     tab(trailTab, "拖尾样式", shopTab == "trail")
