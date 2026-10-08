@@ -809,10 +809,10 @@ end
 
 local function GetShopLayout(w)
     local content, close = GetShellLayout(w)
-    -- 分页标签条落在标题与展台之间的 48px 空档里（content.y+4..+38），不挤压下方。
+    -- 顶行：左侧紧凑分页标签 + 右侧当前项名称/序号（两者同行不重叠）。
     return {
         content = content, close = close, titleY = content.y + 8,
-        stage = {x = content.x, y = content.y + 48, w = content.w, h = 244},
+        stage = {x = content.x, y = content.y + 58, w = content.w, h = 234},
         rowY = content.y + 326, rowH = 72, rowStep = 80,
         purchase = {x = content.x + content.w - 182, y = content.y + 498, w = 180, h = 52},
         giftTitleY = content.y + 562, giftRowY = content.y + 590,
@@ -834,13 +834,13 @@ local function GetShopGiftButton(layout, index)
     return r, {x = r.x + r.w - 146, y = r.y + 4, w = 132, h = 48}
 end
 
--- 商店顶部两个分页按钮（车型 / 拖尾）；命中区与绘制同源。
+-- 商店顶部两个紧凑分页按钮（车型 / 拖尾），靠左；右侧留白给当前项名称。
 local function GetShopTabs(layout)
     local gap = 8
-    local bw = (layout.content.w - gap) * 0.5
-    local y = layout.content.y + 4
-    return {x = layout.content.x, y = y, w = bw, h = 34},
-           {x = layout.content.x + bw + gap, y = y, w = bw, h = 34}
+    local bw = 116
+    local y = layout.content.y + 6
+    return {x = layout.content.x, y = y, w = bw, h = 32},
+           {x = layout.content.x + bw + gap, y = y, w = bw, h = 32}
 end
 
 -- 拖尾 2D 预览：用与 3D 同一套样式参数，从右（车尾）向左画一条渐细光带。
@@ -856,26 +856,29 @@ local function DrawTrailPreview(ctx, r, trailKey)
     local twin = style.twin == 1
     local railHalf = baseHalf * 0.32
     local segs = 26
-    local function seg(xa, xb, half, alpha)
-        D.rect(ctx, xa, cy - half, xb - xa, half * 2, {base[1], base[2], base[3], alpha}, 0)
+    -- D.rect 的颜色是 0..255 RGBA 表；样式色是 0..1，需 ×255。
+    local function rgba(f, alpha)
+        return {math.floor(base[1] * f * 255), math.floor(base[2] * f * 255),
+            math.floor(base[3] * f * 255), alpha}
     end
     for i = 1, segs - 1 do
         if (i % dash) == 0 then
             local t0 = (i - 1) / (segs - 1)
             local t1 = i / (segs - 1)
+            -- x0(右=车尾) → x1(左=尾端)，宽度必须取正值。
             local xa = x0 + (x1 - x0) * t0
             local xb = x0 + (x1 - x0) * t1
-            local tm = (t0 + t1) * 0.5
-            local half = (style.tailW + (style.headW - style.tailW) * tm) * baseHalf
-            local f = math.min(1, (style.base + (1 - style.base) * tm) * style.bright)
-            local alpha = math.floor(70 + 165 * f)
+            local rx, rw = math.min(xa, xb), math.abs(xb - xa)
+            -- tm=0 在车尾(x0)、tm=1 在尾端(x1)；t 反过来：车尾最宽最亮（同 3D 头亮尾暗）。
+            local t = 1 - (t0 + t1) * 0.5
+            local half = (style.tailW + (style.headW - style.tailW) * t) * baseHalf
+            local f = math.min(1, (style.base + (1 - style.base) * t) * style.bright)
+            local alpha = math.floor(90 + 165 * f)
             if twin then
-                D.rect(ctx, xa, cy - baseHalf * 1.35 - railHalf, xb - xa, railHalf * 2,
-                    {base[1], base[2], base[3], alpha}, 0)
-                D.rect(ctx, xa, cy + baseHalf * 1.35 - railHalf, xb - xa, railHalf * 2,
-                    {base[1], base[2], base[3], alpha}, 0)
+                D.rect(ctx, rx, cy - baseHalf * 1.35 - railHalf, rw, railHalf * 2, rgba(f, alpha), 0)
+                D.rect(ctx, rx, cy + baseHalf * 1.35 - railHalf, rw, railHalf * 2, rgba(f, alpha), 0)
             else
-                seg(xa, xb, half, alpha)
+                D.rect(ctx, rx, cy - half, rw, half * 2, rgba(f, alpha), 0)
             end
         end
     end
@@ -957,9 +960,10 @@ local function DrawShop(ctx, w, meta)
         local trail = trails[trailIndex]
         local owned = trail.cost == 0 or (meta.trails and meta.trails[trail.key] == true)
         local equipped = meta.selectedTrail == trail.key
-        D.text(ctx, content.x + 4, layout.titleY, trail.name, 32, C.text)
-        D.text(ctx, content.x + content.w - 4, layout.titleY + 7,
-            string.format("%02d / %02d", trailIndex, #trails), 18, C.dim,
+        D.text(ctx, content.x + content.w - 4, layout.titleY + 4, trail.name, 26, C.text,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        D.text(ctx, content.x + content.w - 4, layout.titleY + 34,
+            string.format("%02d / %02d", trailIndex, #trails), 15, C.dim,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
         D.panel(ctx, layout.stage.x, layout.stage.y, layout.stage.w, layout.stage.h,
             C.panel, C.cyanDim, 8)
@@ -980,9 +984,10 @@ local function DrawShop(ctx, w, meta)
         local skin = skins[showroom.index]
         local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
         local equipped = meta.selectedSkin == skin.key
-        D.text(ctx, content.x + 4, layout.titleY, skin.name, 32, C.text)
-        D.text(ctx, content.x + content.w - 4, layout.titleY + 7,
-            string.format("%02d / %02d", showroom.index, #skins), 18, C.dim,
+        D.text(ctx, content.x + content.w - 4, layout.titleY + 4, skin.name, 26, C.text,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        D.text(ctx, content.x + content.w - 4, layout.titleY + 34,
+            string.format("%02d / %02d", showroom.index, #skins), 15, C.dim,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
         DrawVehicleStage(ctx, layout.stage)
         D.text(ctx, content.x + content.w * 0.5, content.y + 282, skin.desc, 18, C.text,

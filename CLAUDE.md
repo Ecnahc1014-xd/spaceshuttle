@@ -3,6 +3,16 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.41（**多种拖尾样式 + 皮肤商店可替换**；承接 0.13.40 质感恢复）：
+  - **用户要求**「以现在为基础设计多种拖尾，加入皮肤商店可以替换」→ 在既有 3D 几何光带基础上做**6 种拖尾样式**，与「车型」并列进皮肤商店购买/装备，两者相互独立。
+  - **数据层（`MetaCatalog`）**：新增 `TRAILS`（classic/comet/neon/dash/twin/ember，价格 0/600/1200/1800/2600/3600，各带 `style` 键）+ `GetTrails/GetTrail/GetTrailStyle`；**样式几何参数单一来源** `TRAIL_STYLE_PARAMS` + `GetTrailStyleParams(style)`（headW/tailW/bright/base/dash/twin/warm），Renderer3D 与 MetaUI 共用一份，禁止各写一套。
+  - **存档（`PlayerData`）**：新增 `trails`（`AsBoolMap`）+ `selectedTrail`；默认 `{classic=true}`/`"classic"`；`HasTrail/GetSelectedTrail/SelectTrail/PurchaseTrail`（与 Skin 同款，购买即装备）；云合并**解锁取并集、装备仅当本机仍为 classic 时接受云端值**（避免覆盖本地选择）。
+  - **渲染（`Renderer3D`）**：`TRAIL_STYLES` 就地改为查 `MetaCatalog.GetTrailStyleParams`；几何构建抽 `EmitTrailQuad` 辅助；样式差异——`dash` 每 2 段画 1 段（断续光点）、`twin` 画左右两条细轨（railW=headW×0.32、偏移 ±headW×1.35，不再画中线）、`warm` 向暖色偏移、`bright/base` 控制明暗与尾端下限。`Renderer3D.Render(game, presentation, skin, trail)` 新增第 4 参；新增只读诊断 `DebugTrailVertexCount()`。
+  - **接线**：`Scene3DBackend` 传 `metaState.selectedTrail`；`client_main` 的 `metaState` 增 `trails/selectedTrail`（`RefreshMeta` 填）、新增 `HandleShopTrail` + `preview_trail`/`buy_trail`/`shop_tab` action。
+  - **商店 UI（`MetaUI`）**：商店改名「皮肤商店」，顶部加**分页标签**（车型外观 / 拖尾样式，靠左紧凑 116×32，右侧留白给当前项名称+序号）；拖尾页含 2D 预览条（与 3D 同参数、右=车尾亮、左=尾端暗）、6 格浏览卡、购买/装备区。`DrawShop` 拆出 `DrawShopTabs/DrawShopCard/DrawShopPurchase` 供两页共用；`HitTestShop` 加标签与拖尾分支；新增 `MetaUI.PreviewTrail/SetShopTab/GetShopTab`。
+  - **验证**：LSP workspace **0 Error**（24 文件 982 诊断）；官方多人 build+预览上传 ✅；数据探针 `probe_traildata2` **ALL PASS**（6 定义唯一、样式参数齐全、未知样式回退 ribbon、默认拥有 classic、购买扣款/自动装备/重复购买被拒、云导出含 trails/selectedTrail）；真渲染 `probe_traile2e` 端到端（真实点击：开商店→切拖尾页→选卡→购买→装备 neon→style 传播）；`probe_trailpoll` 逐样式各发射一次轮询 **6/6 提交几何 maxVerts=48、零 Lua/overlay 错误**；`probe_trailshot` 截图确认两个分页与拖尾预览条（暖色渐宽朝车、双轨两条细轨）。
+  - ⚠️ **教训（AB-191）**：`D.rect`/NanoVG 颜色是 **0..255 RGBA**，而拖尾样式色是 0..1 → 预览直接用 0..1 会画成近黑（实测预览条几乎不可见）；跨模块复用「渲染用 0..1 色」时必须 ×255。
+  - ⚠️ **教训（AB-192）**：从右往左（车尾→尾端）画矩形时 `xb - xa` 为**负宽**，NanoVG 直接不绘制（不是反向填充）；必须 `rx=min(xa,xb), rw=abs(xb-xa)`。同理参数方向要对：`t` 要在车尾取最大宽/最亮（与 3D「头亮尾暗」一致），否则渐细方向反了。
 - 版本: 0.13.40（恢复被过度削弱的暗科技质感与动态；审美仍待用户验收）：
   - 用户追加「还有更多的大贵效果被你删了。。。」：v0.13.39 恢复身份时同时削弱材质、受光和扫光，属于过度减法，不是用户授权。保留 Zpix/像素图标/深海军蓝/细框断线折角与真实六车，不回写实环境、MiSans或全窗半调，不擅自重开五轮。
   - PremiumSurface恢复同色族明显金属明暗、薄暗底座/柔影、顶部受光/底部暗边；按钮局部悬停柔光与浅亮边、3.2秒斜扫光/6秒亮流光，窗口标题舱光场、背景径向照明/顶青光/上下暗角，展台径向受光/同变换椭圆接触影/侧轨亮标与亮弧。MetaUI分区呼吸/空白断线流动重新接回；主CTA只补浅亮折角，不重复扫光。共享uiFx.anim，短按钮按尺寸钳裁剪，文字最后画，禁用/普通面板不假悬停。
@@ -803,6 +813,10 @@
 - ⚠️ **悬停判定要用**设计坐标**，且只对按钮尺寸生效（v0.13.31）**：`Backend.SetPointer` 收的是 `ScreenToUi` 后的设计坐标（与绘制同空间）；`DrawMachinedPanel` 里悬停发光限 `h<=80 且 w>=40`，否则 HUD 横条/大面板会被误点亮。
 
 ## 避雷清单
+
+## 本批次新增避雷（v0.13.41 拖尾样式商店）
+- ⚠️ **AB-191：跨模块复用「渲染用 0..1 颜色」到 NanoVG `D.rect` 时必须 ×255（v0.13.41 实测）**：拖尾样式参数（`TRAIL_STYLE_PARAMS`）里的 base 色是 0..1（供 3D 顶点色/`Color()` 用），MetaUI 的 2D 预览直接把它塞进 `D.rect` 的颜色表 → 期望 0..255，结果画成近黑（截图实测预览条几乎不可见，只采样到背景色）。修法：`rgba(f,alpha)` 把 `base[i]*f*255` 取整。**规则**：任何跨「3D 渲染色（0..1）」与「NanoVG 色（0..255）」边界复用的数值都要显式换算，别指望两边同一量纲。
+- ⚠️ **AB-192：NanoVG 画矩形，`w`/`h` 为负 = 不绘制（v0.13.41 实测）**：2D 预览从右（车尾 x0）往左（尾端 x1）迭代，`xb - xa` 为负 → `D.rect` 什么都不画（不是反向填充）。修法：`rx = math.min(xa,xb); rw = math.abs(xb-xa)`。同时**方向参数要对**——渐细/渐亮的 `t` 必须在车尾取最大值（与 3D「头亮尾暗」同向），否则预览的渐细方向与实机相反。**教训**：任何「反向遍历画渐变条」的 2D 代码，先确认宽度取正 + 明暗端与 3D 一致，再看截图。
 
 ## 本批次新增避雷（v0.13.29 升级卡 UI 自适应）
 - 🔴 **AB-174：数据驱动的文案，绘制端不能假设长度（v0.13.29 用户截图点名）**：升级卡数值条文案来自 `UPGRADE_POOL[].value`，同一字段长度从 `+1 格`(4) 到 `伤害+3 / 弹速+10% / 受创+1`(18 字符/32 字节)，而绘制端固定 16px 单行居中 → 最长两张必然溢出卡片。**通用规则**：凡是**数据驱动**（表/配置/后端下发）的文本，绘制前必须 ①按**语义分隔符**拆分（` / `），②按**像素宽度实测**决定换行/降字号，③**容器高度跟着内容走**。⚠️ 拆分必须按语义分隔符而不是按字符硬切——否则 `弹速+10%` 会被切成 `弹速+1`/`0% ...`，数字被腰斩比溢出更难读。
