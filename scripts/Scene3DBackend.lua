@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.49"
+local BUILD_VERSION = "0.13.50"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -824,8 +824,10 @@ local function DrawPixelText(ctx, x, y, text, size, color, align, outlined)
     local alpha = color[4] or 255
     local wantOutline = outlined
     if wantOutline == nil then wantOutline = size >= 17 end
-    if wantOutline and size >= 12 then
-        -- 深色描边把亮字从任何底色里托出来；alpha 随字色走，避免淡字被描边反客为主。
+    -- v0.13.50：描边色按字色亮度选，避免「黑边黑字」——暗字（青/绿/金底上的 ink 字）
+    -- 若也用近黑描边，会把字糊成一团。亮字用深描边托出，暗字用亮描边（或干脆不描）。
+    local lum = 0.299 * color[1] + 0.587 * color[2] + 0.114 * color[3]
+    if wantOutline and size >= 12 and lum >= 120 then
         nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], math.min(235, alpha)))
         nvgText(ctx, x - 1, y, text, nil)
         nvgText(ctx, x + 1, y, text, nil)

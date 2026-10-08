@@ -223,7 +223,7 @@ function RechargeShop.Draw(ctx, w, meta)
     for i, r in ipairs(L.spends) do
         local def = Shared.GEM_SPENDS[i]
         local affordable = (not meta.offline) and (meta.gems or 0) >= def.cost
-        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, affordable and C.cyanDim or C.widget, 6)
+        D.panel(ctx, r.x, r.y, r.w, r.h, C.card, affordable and C.cyanDim or {C.dim[1], C.dim[2], C.dim[3], 130}, 6)
         D.text(ctx, r.x + 16, r.y + 10, def.name, 18,
             affordable and C.text or C.dim)
         D.text(ctx, r.x + 16, r.y + 36,

@@ -158,7 +158,7 @@ local elapsed = 0
 local waveCooldown = 0
 -- v0.13.26：同波错峰生成状态（剩余架数/下次计时/本波机型与砖块参数）。
 -- ⚠️ 收进一张表：Game.lua 顶层 local 已逼近 Lua 200 上限（AB-154 同族），禁止再加散装顶层 local。
-local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil, lane = 0 }
+local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil, lane = 0, firstDone = false }
 local INTRO_SECONDS = 3.0
 -- v0.13.24：进关准备期（秒）。>0 时玩法冻结：不推进弹珠/敌机/波次，只放行表现层动画。
 local introTimer = 0
@@ -712,6 +712,7 @@ ResetGame = function(startStage)
     pendingSpawn.timer = 0
     pendingSpawn.kind = nil
     pendingSpawn.lane = 0
+    pendingSpawn.firstDone = false
     nextEnemyId = 1
     nextMarbleId = 1
     -- 幸存者成长状态复位
@@ -1064,7 +1065,15 @@ SpawnNextNormalEnemy = function()
         pendingSpawn.timer = 1.0
         return
     end
-    local enemy = CreateEnemy(key, x, y, brickSize, pendingSpawn.hp, pendingSpawn.speed, {
+    -- v0.13.50：每关第一个飞船固定 1 血（用户要求）——开局用低血机给玩家「第一下就碎」的反馈，
+    -- 后续敌机仍按关卡曲线成长。用显式标记而非「场上无敌人」判定：否则首机被打掉后，
+    -- 同波第二架会被误判成「第一个」也拿 1 血。
+    local firstShipHp = pendingSpawn.hp
+    if wave == (stage - 1) * StageCatalog.WAVES_PER_STAGE + 1 and not pendingSpawn.firstDone then
+        firstShipHp = 1
+        pendingSpawn.firstDone = true
+    end
+    local enemy = CreateEnemy(key, x, y, brickSize, firstShipHp, pendingSpawn.speed, {
         swayAmp = 6, swayFreq = 0.22, phase = 0,
     })
     if enemy then
@@ -1147,6 +1156,8 @@ SpawnWave = function(availableSlots)
     pendingSpawn.timer = 0
     -- 起始车道随波次错开，避免每波第一架总从最左出来。
     pendingSpawn.lane = (wave - 1) % 5
+    -- v0.13.50：本关首机标记只在关卡开头有效；换波时复位，避免跨波残留（判定还带 wave 约束，双保险）。
+    pendingSpawn.firstDone = false
     SpawnNextNormalEnemy()
 end
 

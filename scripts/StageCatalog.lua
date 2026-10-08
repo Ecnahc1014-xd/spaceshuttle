@@ -57,7 +57,9 @@ function StageCatalog.BeginStage(stage, seed)
     stage = math.max(1, math.floor(stage))
     local rng = MakeRng(seed)
     local pool = {}
-    for w = 1, StageCatalog.WAVES_PER_STAGE - 1 do pool[#pool + 1] = w end
+    -- v0.13.50：精英波位从 **2–9** 里抽（不再含第 1 波）——保证每关首个飞船一定是普通机，
+    -- 「每关第一个飞船 1 血」才读得通（精英若落在第 1 波，开局就撞精英不合理）。
+    for w = 2, StageCatalog.WAVES_PER_STAGE - 1 do pool[#pool + 1] = w end
     local elites = {}
     for _ = 1, math.min(StageCatalog.ELITE_COUNT, #pool) do
         elites[#elites + 1] = table.remove(pool, rng(1, #pool))

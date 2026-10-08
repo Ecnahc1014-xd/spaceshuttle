@@ -415,6 +415,11 @@ function TalentTree.DrawDetail(ctx, w, meta)
 
     D.panel(ctx, L.x, L.y, L.w, L.h, C.panel, C.cyanDim, 8)
     D.rect(ctx, L.x, L.y, 3, L.h, LaneColor(node), 0)
+    -- v0.13.50：补内受光 / 内沉影 / 顶亮线，与其余面板同一套厚度语言（只加不减）。
+    D.rect(ctx, L.x + 2, L.y + 2, L.w - 4, math.floor(L.h * 0.34), {255, 255, 255, 18}, 6)
+    D.rect(ctx, L.x + 2, L.y + math.floor(L.h * 0.6), L.w - 4,
+        L.h - math.floor(L.h * 0.6) - 2, {0, 0, 0, 42}, 6)
+    D.rect(ctx, L.x + 6, L.y + 1, L.w - 12, 1, {C.dim[1], C.dim[2], C.dim[3], 80}, 0)
     D.text(ctx, L.x + 14, L.y + 10, node.name or "天赋", 19, C.text)
     D.text(ctx, L.x + L.w - 14, L.y + 13,
         string.format("%s · 阶段 %d", TalentCatalog.LANE_NAMES[node.lane] or "", node.stage),

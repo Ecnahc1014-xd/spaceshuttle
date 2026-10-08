@@ -752,7 +752,7 @@ local function DrawCodex(ctx, w, meta)
         local x = content.x + col * (cw + gap)
         local y = y0 + row * (ch + gap)
         local owned = meta.codex and meta.codex[entry.key] == true
-        D.panel(ctx, x, y, cw, ch, C.card, owned and C.cyanDim or C.widget, 6)
+        D.panel(ctx, x, y, cw, ch, C.card, owned and C.cyanDim or {C.dim[1], C.dim[2], C.dim[3], 130}, 6)
         D.rect(ctx, x, y, 3, ch, owned and C.cyan or C.widget, 0)
         -- v0.13.46：补内受光 / 内沉影 / 顶亮线，与商店浏览卡同一套厚度语言（只加不减）。
         D.rect(ctx, x + 2, y + 2, cw - 4, math.floor(ch * 0.42),
@@ -1190,7 +1190,7 @@ local function DrawPass(ctx, w, meta)
     SectionHeader(ctx, content.x + 4, content.y + 172, content.w - 8, "里程碑奖励")
     for i, item in ipairs(meta.passRewards or {}) do
         local r = GetPassRewardRect(content, i)
-        local border = item.claimable and C.cyan or (item.unlocked and C.cyanDim or C.widget)
+        local border = item.claimable and C.cyan or (item.unlocked and C.cyanDim or {C.dim[1], C.dim[2], C.dim[3], 130})
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, border, 7)
         if item.claimable then D.rect(ctx, r.x, r.y + 8, 3, r.h - 16, C.cyan, 0) end
         D.icon(ctx, "premium_energy_core", r.x + 13, r.y + 25, 32,
