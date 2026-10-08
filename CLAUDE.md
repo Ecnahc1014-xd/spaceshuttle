@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: trail-style-mechanics（2026-10-08，六种拖尾精进出真实机制差异；不抢并发展示版本）：
+  - 用户「商店拖尾拉完了，然后需要精进」。根因：六种样式此前**只是同一条光带的数值微调**（宽/亮/断续/双轨），战斗里颜色还按弹种取、商店预览除余烬外全是一条青——正是本项目自己记过的 AB-214「差异化要落在机制不是数值」。
+  - **给样式表加 7 条机制轴（`MetaCatalog.TRAIL_STYLE_PARAMS`，纯数据）**：`taper`（宽度曲线指数）、`bulge`（头端鼓包/实心亮核）、`hue`（沿长度色相游移）、`flow`（断续图案流动速度）、`pulse`（明暗脉动）、`railSpread`/`railTaper`（双轨头端间距与收拢指数）。六种各占不同轴：经典=中性基准；彗星=taper0.55+bulge1.0；霓虹=hue0.60；流光=dash3+flow7；双轨=railSpread1.6+railTaper0.30；余烬=taper1.8+pulse0.38。
+  - **渲染（`Renderer3D`）**：`TrailColor` 加 `phase` 参与 pulse、加 hue 色相游移；几何发射按 taper/bulge 算宽度、按 `(i+flowOffset)%dash` 让断续图案随时间平移、双轨轨距按 `t^railTaper` 收拢。新增**一个顶层 local** `trailPhase_`（按玩法 dt 累加，非 playing 不推进，与 CD 计时同契约）。
+  - **预览（`MetaUI.DrawTrailPreview`）**：改为与 3D **同一套参数与同一套机制轴**（含 `D.anim()` 相位），保证「预览里看到的差异 = 实机差异」；描述文案同步改写。
+  - 验证：机制探针 `probe_trailstyles` **ALL PASS**（6 样式各机制轴字段齐全、五种付费样式各有非中性轴且两两签名不重复、ribbon 保持中性基准、宽度曲线实测 ribbonMid 0.520 vs cometMid 1.061、未知样式回退 ribbon）；真渲染逐样式截屏**实图目视**——经典均匀青/彗星头端鼓包/霓虹尾端品红/流光断续/双轨收拢双轨/余烬暖色宽幅，六者清晰可辨（经典 vs 余烬像素差 56363）；3D 战斗冒烟（开局→多次发射→飞行）Lua/overlay/LoadChunk/空顶点错误 **0**。LSP workspace 0 Error（26 文件 1118 诊断）；官方多人 build 与预览上传成功。
+  - 边界：手机 FPS / 全 DPR / 用户审美仍未验收；Linux 既有 HDR/缺图/无体素致战斗中央 3D 黑场，尾迹可见性未据此验收（样式差异用商店 2D 预览取证）。
+
 - 版本: 0.13.56（**第 1 关「测试模式」询问：可选直入后期关卡并解锁全天赋**）：
   - 用户要求「新玩家开局第一关会询问是否要测试后期关卡？如果选择是，那么变为第二十关强度并解锁所有天赋树。如果选择不则继续游玩」，追加「不需要是新玩家，第一关一直有」——即**每次进入第 1 关都询问**（不做「只问一次」记忆）。
   - **触发点（第 1 关 = 三处入口）**：①选关界面点第 1 关；②第 1 关通关后「再战本关」；③重开（`RestartFromOver` 固定回第 1 关）。前两处由编排层 `client_main` 在开局前插入询问屏（`HandleMetaAction("play_stage")` 与 `HandleStageWinPointerUp` 的 retry 分支）；第 ③ 处沿用「每次进第 1 关」的自然行为（重开=再次进第 1 关），未额外加询问。
@@ -973,6 +981,12 @@
 - ⚠️ **悬停判定要用**设计坐标**，且只对按钮尺寸生效（v0.13.31）**：`Backend.SetPointer` 收的是 `ScreenToUi` 后的设计坐标（与绘制同空间）；`DrawMachinedPanel` 里悬停发光限 `h<=80 且 w>=40`，否则 HUD 横条/大面板会被误点亮。
 
 ## 避雷清单
+
+## 本批次新增避雷（trail-style-mechanics 拖尾样式精进）
+- 🔴 **AB-221：给「同一种东西的多个变体」加差异化时，要加「机制轴」而不是继续调数值（trail-style-mechanics，承接 AB-214）**：六种拖尾原先是同一条光带的宽/亮/断续/双轨数值微调，玩家读到的是「同一张卡的两个强度」。做法：在纯数据表里**加一组正交的机制轴**（本项目：宽度曲线指数 `taper`、头端鼓包 `bulge`、色相游移 `hue`、图案流动 `flow`、明暗脉动 `pulse`、双轨收拢 `railTaper`），每种样式**占不同的轴**，并保留一个「中性基准」变体（本项目 `ribbon`）。**验收探针必须断言「各变体在机制轴上的签名两两不重复」**，否则很容易悄悄退回「更大的数字」。
+- ⚠️ **2D 预览必须与 3D 用「同一套参数 + 同一套机制轴」（trail-style-mechanics）**：预览若只复刻了部分轴（本项目旧预览只读宽/亮/断续/双轨，不读 taper/bulge/hue/pulse），就会出现「预览里六条几乎一样、实机却不同」的误导。做法：预览与渲染共用 `MetaCatalog.GetTrailStyleParams`，逐轴实现同一公式（含共享动画相位 `D.anim()`）。
+- ⚠️ **样式动画相位要按「玩法 dt」累加、非 playing 不推进（trail-style-mechanics）**：流动/脉动用共享相位 `trailPhase_`（在 `SyncVehicleTrails` 里 `+= dt`），**不能**用 `game.elapsed`（暂停/升级/结算期间仍增长，会让尾迹在冻结画面里继续动）。这与「CD 计时只放玩法步」是同一条契约。
+- ⚠️ **「像素取证」是这类纯观感改动的唯一有效验收（trail-style-mechanics）**：LSP/build/错误计数**都证明不了「画得不一样」**。做法：逐样式真渲染截屏 → 实图目视 + 像素差（本项目经典 vs 余烬 56363 像素差）。本环境 `-screenshot-frame=N` 对「启动首帧附近」有效、对深层帧不可靠，取样式差异用**商店 2D 预览**（同一帧内逐样式切换截屏）比等 3D 飞行帧可靠。
 
 ## 本批次新增避雷（v0.13.56 第 1 关测试模式询问）
 - 🔴 **AB-217：新增「元层弹窗」优先走 `MetaUI.RegisterScreen` 插件注册，不要往 `Scene3DBackend` 加状态（v0.13.56）**：`Scene3DBackend.lua` 顶层 local 已 **197/200**（AB-166），新增一个弹窗若要「后端持有 open 标志 + 配对窗口动画 + 命中分发」，至少要 4–5 个 local 槽位 → 极易撞 200 上限导致 `LoadChunk failed` 全屏黑。**正确做法**：写成独立 `ui/Xxx.lua`（纯绘制 + 命中，`D` 依赖注入），`MetaUI.RegisterScreen("name", Draw, HitTest)` 注册 → **自动复用 `metaScreen_` 那一套**（入场/退场弹动 `DrawAnimatedWindow`、`WindowInput` 命中逆变换、开新屏作废旧残影），后端**零改动**。开屏 = `metaState.screen = "name"`（编排层 `OpenMetaScreen`），输入经 `HandleMetaPointerDown/Click` → `Backend.HitTestMetaScreen` 自动分发到你的 HitTest。

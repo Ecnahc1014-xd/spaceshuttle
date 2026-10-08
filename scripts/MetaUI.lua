@@ -961,12 +961,21 @@ local function GetShopTabs(layout)
            {x = layout.content.x + bw + gap, y = y, w = bw, h = 32}
 end
 
--- 拖尾 2D 预览：用与 3D 同一套样式参数，从右（车尾）向左画一条渐细光带。
+-- 拖尾 2D 预览：与 3D 光带**同一套样式参数与同一套机制轴**（taper/bulge/hue/flow/pulse/
+-- 双轨收拢），保证预览里看到的差异就是实机差异。⚠️ D.rect 颜色是 0..255，样式色是 0..1。
 local function DrawTrailPreview(ctx, r, trailKey)
     local C = Colors()
     local style = MetaCatalog.GetTrailStyleParams(MetaCatalog.GetTrailStyle(trailKey))
     local base = {0.30, 0.90, 1.00}
     if style.warm == 1 then base = {1.00, 0.58, 0.18} end
+    local phase = D.anim and D.anim() or 0
+    local taper = style.taper or 1.0
+    local bulge = style.bulge or 0.0
+    local hue = style.hue or 0.0
+    local pulse = style.pulse or 0.0
+    local flow = style.flow or 0.0
+    local railSpread = style.railSpread or 1.35
+    local railTaper = style.railTaper or 1.0
     local cx, cy = r.x + r.w * 0.5, r.y + r.h * 0.5
     local x0, x1 = cx + r.w * 0.42, cx - r.w * 0.42   -- x0=车尾, x1=尾端
     local baseHalf = 13
@@ -974,13 +983,18 @@ local function DrawTrailPreview(ctx, r, trailKey)
     local twin = style.twin == 1
     local railHalf = baseHalf * 0.32
     local segs = 26
-    -- D.rect 的颜色是 0..255 RGBA 表；样式色是 0..1，需 ×255。
-    local function rgba(f, alpha)
-        return {math.floor(base[1] * f * 255), math.floor(base[2] * f * 255),
-            math.floor(base[3] * f * 255), alpha}
+    local flowOffset = flow > 0 and math.floor(phase * flow) or 0
+    local function rgba(f, t, alpha)
+        local rr, gg, bb = base[1] * f, base[2] * f, base[3] * f
+        if hue > 0 then
+            local k = (1 - t) * hue
+            rr, gg, bb = rr + 0.55 * k, gg * (1 - 0.35 * k), bb + 0.35 * k
+        end
+        return {math.min(255, math.floor(rr * 255)), math.min(255, math.floor(gg * 255)),
+            math.min(255, math.floor(bb * 255)), alpha}
     end
     for i = 1, segs - 1 do
-        if (i % dash) == 0 then
+        if ((i + flowOffset) % dash) == 0 then
             local t0 = (i - 1) / (segs - 1)
             local t1 = i / (segs - 1)
             -- x0(右=车尾) → x1(左=尾端)，宽度必须取正值。
@@ -989,14 +1003,20 @@ local function DrawTrailPreview(ctx, r, trailKey)
             local rx, rw = math.min(xa, xb), math.abs(xb - xa)
             -- tm=0 在车尾(x0)、tm=1 在尾端(x1)；t 反过来：车尾最宽最亮（同 3D 头亮尾暗）。
             local t = 1 - (t0 + t1) * 0.5
-            local half = (style.tailW + (style.headW - style.tailW) * t) * baseHalf
-            local f = math.min(1, (style.base + (1 - style.base) * t) * style.bright)
+            local half = (style.tailW + (style.headW - style.tailW) * (t ^ taper)) * baseHalf
+            if bulge > 0 then half = half * (1 + bulge * t * t) end
+            local f = (style.base + (1 - style.base) * t) * style.bright
+            if pulse > 0 then
+                f = f * (1 - pulse + pulse * (0.5 + 0.5 * math.sin(phase * 3.4 + t * 2.2)))
+            end
+            f = math.min(1, f)
             local alpha = math.floor(90 + 165 * f)
             if twin then
-                D.rect(ctx, rx, cy - baseHalf * 1.35 - railHalf, rw, railHalf * 2, rgba(f, alpha), 0)
-                D.rect(ctx, rx, cy + baseHalf * 1.35 - railHalf, rw, railHalf * 2, rgba(f, alpha), 0)
+                local spread = baseHalf * railSpread * (t ^ railTaper)
+                D.rect(ctx, rx, cy - spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
+                D.rect(ctx, rx, cy + spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
             else
-                D.rect(ctx, rx, cy - half, rw, half * 2, rgba(f, alpha), 0)
+                D.rect(ctx, rx, cy - half, rw, half * 2, rgba(f, t, alpha), 0)
             end
         end
     end

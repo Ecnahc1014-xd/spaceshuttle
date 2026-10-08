@@ -89,15 +89,29 @@ local TRAIL_TAIL_LOCAL = 1.75
 -- （Renderer3D 生成 3D 光带、MetaUI 画 2D 预览共用一份），所有样式共用同一条
 -- CustomGeometry + DiffVCol 路径，只改宽度/明暗/分段/双轨，不改规则层。
 local trailStyle_ = "ribbon"
+-- 尾迹样式动画相位（flow 流动 / pulse 脉动共用）：按玩法 dt 累加，暂停不推进。
+local trailPhase_ = 0.0
 
 -- 头亮尾暗的顶点色：t=1 头、t=0 尾。DiffVCol 消费顶点色。
-local function TrailColor(base, t, style)
+-- pulse 是按共享相位的明暗脉动（余烬），用 phase 而不是逐帧随机，保证同屏同步。
+local function TrailColor(base, t, style, phase)
     local f = (style.base + (1 - style.base) * t) * style.bright
+    if (style.pulse or 0) > 0 then
+        f = f * (1 - style.pulse + style.pulse * (0.5 + 0.5 * math.sin(phase * 3.4 + t * 2.2)))
+    end
     local r, g, b = base[1] * f, base[2] * f, base[3] * f
     if style.warm == 1 then
         r = r + 0.35 * t
         g = g + 0.18 * t
         b = b * (1 - 0.45 * t)
+    end
+    -- hue：尾端向品红游移（t 越小越偏），做出霓虹的色相带。
+    local h = style.hue or 0
+    if h > 0 then
+        local k = (1 - t) * h
+        r = r + 0.55 * k
+        b = b + 0.35 * k
+        g = g * (1 - 0.35 * k)
     end
     return Color(math.min(1, r), math.min(1, g), math.min(1, b), 1)
 end
@@ -1254,6 +1268,8 @@ local function SyncVehicleTrails(game, dt)
             or trailActive_.speed or trailActive_.giant then ClearTrailSamples() end
         return
     end
+    -- 样式动画相位：只在玩法推进时累加（暂停/升级/结算冻结，与 CD 计时同契约）。
+    trailPhase_ = trailPhase_ + (dt or 0)
     local tracked = {normal = 0, ice = 0, speed = 0, giant = 0}
     local visible = {}
     local perType = {normal = {}, ice = {}, speed = {}, giant = {}}
@@ -1347,18 +1363,25 @@ local function SyncVehicleTrails(game, dt)
             local verts = {}
             local base = BALL_COLORS[ballType] or BALL_COLORS.normal
             local style = MetaCatalog.GetTrailStyleParams(trailStyle_)
+            local taper = style.taper or 1.0
+            local bulge = style.bulge or 0.0
+            local flow = style.flow or 0.0
+            local railSpread = style.railSpread or 1.35
+            local railTaper = style.railTaper or 1.0
+            -- flow：断续图案随时间沿长度游动（段/秒）。用共享相位，同屏所有车同步。
+            local flowOffset = flow > 0 and math.floor(trailPhase_ * flow) or 0
             for _, track in ipairs(tracks) do
                 local samples = track.points
                 local n = #samples
                 local halfHead = track.radius * WORLD_SCALE * style.headW
                 local halfTail = track.radius * WORLD_SCALE * style.tailW
-                -- 双轨样式：只画左右两条细轨（不再画中线），偏移取头段宽度。
+                -- 双轨样式：只画左右两条细轨（不再画中线），轨距沿长度收拢。
                 local tw = style.twin == 1
                 local railW = halfHead * 0.32          -- 单条轨的半宽
-                local offA, offB = -halfHead * 1.35, halfHead * 1.35
                 for i = 1, n - 1 do
-                    -- 断续样式：每 dash 段只画 1 段（实线时 dash=1，恒真）。
-                    if (i % style.dash) == 0 then
+                    -- 断续样式：每 dash 段只画 1 段（实线时 dash=1，恒真）；
+                    -- flow 让图案随时间平移，读起来像在跑。
+                    if ((i + flowOffset) % style.dash) == 0 then
                         local a = samples[i]
                         local b = samples[i + 1]
                         local sdx, sdy = b.x - a.x, b.y - a.y
@@ -1368,14 +1391,23 @@ local function SyncVehicleTrails(game, dt)
                             -- t：1 = 头（新），0 = 尾（旧）
                             local t0 = (i - 1) / (n - 1)
                             local t1 = i / (n - 1)
-                            local w0 = halfTail + (halfHead - halfTail) * t0
-                            local w1 = halfTail + (halfHead - halfTail) * t1
-                            local c0 = TrailColor(base, t0, style)
-                            local c1 = TrailColor(base, t1, style)
+                            -- taper：宽度按指数曲线插值（<1 头段饱满、>1 尾段急收）。
+                            local w0 = halfTail + (halfHead - halfTail) * (t0 ^ taper)
+                            local w1 = halfTail + (halfHead - halfTail) * (t1 ^ taper)
+                            -- bulge：头段额外加宽，做出「实心亮核」。
+                            if bulge > 0 then
+                                w0 = w0 * (1 + bulge * t0 * t0)
+                                w1 = w1 * (1 + bulge * t1 * t1)
+                            end
+                            local c0 = TrailColor(base, t0, style, trailPhase_)
+                            local c1 = TrailColor(base, t1, style, trailPhase_)
                             local az, bz = a.z + TRAIL_BEHIND_Z, b.z + TRAIL_BEHIND_Z
                             if tw then
-                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, offA, offA, az, bz)
-                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, offB, offB, az, bz)
+                                -- 双轨：轨距头端最宽、沿长度收拢成尖（railTaper<1）。
+                                local spread0 = halfHead * railSpread * (t0 ^ railTaper)
+                                local spread1 = halfHead * railSpread * (t1 ^ railTaper)
+                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, -spread0, -spread1, az, bz)
+                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, spread0, spread1, az, bz)
                             else
                                 EmitTrailQuad(verts, a, b, nx, ny, w0, w1, c0, c1, 0, 0, az, bz)
                             end

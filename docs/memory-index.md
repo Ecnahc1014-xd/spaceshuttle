@@ -11,6 +11,13 @@
 当前版本：0.13.56
 简述：第 1 关加「测试模式」询问——每次进第 1 关（选关 / 再战）都问「是否测试后期关卡」；选「是」解锁全部 42 个天赋节点并直入第 20 关，选「否」正常从第 1 关开始。新增插件式元层屏 `ui/TestModePrompt.lua`，零改后端/规则层；展示版本归并发会话。
 最后巩固：2026-10-08
+## 拖尾样式精进（2026-10-08，trail-style-mechanics 附记）
+- 用户「商店拖尾拉完了，然后需要精进」。根因：六种样式此前只是同一条光带的宽/亮/断续/双轨**数值微调**（本项目自己记过的 AB-214：差异化要落在机制不是数值）。
+- **加 7 条机制轴**（`MetaCatalog.TRAIL_STYLE_PARAMS` 纯数据）：`taper` 宽度曲线指数、`bulge` 头端鼓包亮核、`hue` 沿长度色相游移、`flow` 断续图案流动速度、`pulse` 明暗脉动、`railSpread`/`railTaper` 双轨间距与收拢。六种各占不同轴：经典=中性基准；彗星=taper+bulge；霓虹=hue；流光=dash+flow；双轨=railSpread+railTaper；余烬=taper+pulse。
+- **渲染 `Renderer3D`**：`TrailColor(base,t,style,phase)` 参与 pulse/hue；几何按 taper/bulge 算宽度、`(i+flowOffset)%dash` 让图案流动、双轨按 `t^railTaper` 收拢。新增一个顶层 local `trailPhase_`（玩法 dt 累加，非 playing 不推进）。**预览 `MetaUI.DrawTrailPreview` 改为同一套参数与机制轴**（含 `D.anim()`），保证预览=实机。
+- 验证：`probe_trailstyles` ALL PASS（各轴字段齐全、付费样式签名两两不重复、ribbon 中性、宽度曲线 ribbonMid 0.520 vs cometMid 1.061、未知样式回退）；逐样式真渲染截屏实图目视六者清晰可辨（经典 vs 余烬像素差 56363）；3D 战斗冒烟零 Lua/overlay/LoadChunk/空顶点错误。LSP 0 Error、官方多人 build 与预览上传成功。⚠️ 手机 FPS / 战斗 3D 可见性（Linux 黑场）未验收。
+- 抗体 AB-221（机制轴而非数值）、预览须同轴、动画相位只走玩法 dt、纯观感改动必须像素取证。
+
 ## 第 1 关「测试模式」询问（2026-10-08，v0.13.56）
 - 用户：进第 1 关时问「是否测试后期关卡」；**是**→解锁全部天赋 + 直入第 20 关强度；**否**→正常从第 1 关玩。追加「不需要是新玩家，第一关一直有」→ **每次进第 1 关都问**，不做「只问一次」。
 - 触发点：①选关界面点第 1 关 ②第 1 关 stagewin「再战本关」。实现：新增 `scripts/ui/TestModePrompt.lua`，`MetaUI.RegisterScreen("test_mode", Draw, HitTest)` 插件注册（自动获得窗口弹动 + `WindowInput` 命中逆变换，**零改 `Scene3DBackend`/`Game.lua`**）。`HandleUpdate` 在菜单态执行 `pendingTestStage_` 跳关。

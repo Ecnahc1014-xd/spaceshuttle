@@ -115,17 +115,17 @@ end
 ---@type TrailDef[]
 local TRAILS = {
     { key = "classic", name = "经典尾焰", cost = 0, style = "ribbon",
-      desc = "渐细渐隐的光带 · 默认样式" },
+      desc = "均匀渐细 · 默认样式" },
     { key = "comet",   name = "彗星",     cost = 600, style = "comet",
-      desc = "圆润渐收 · 尾端更亮更短" },
+      desc = "头部鼓包亮核 · 尾部急收" },
     { key = "neon",    name = "霓虹",     cost = 1200, style = "neon",
-      desc = "细长等宽 · 高亮芯线" },
+      desc = "细长等宽 · 尾端转品红" },
     { key = "dash",    name = "流光",     cost = 1800, style = "dash",
-      desc = "断续光点 · 高速闪烁" },
+      desc = "断续光点 · 沿尾迹流动" },
     { key = "twin",    name = "双轨",     cost = 2600, style = "twin",
-      desc = "左右两条平行光轨" },
+      desc = "左右光轨 · 向尾部收拢成尖" },
     { key = "ember",   name = "余烬",     cost = 3600, style = "ember",
-      desc = "宽幅暖色 · 尾部剧烈收束" },
+      desc = "宽幅暖色 · 明灭脉动" },
 }
 
 ---@return TrailDef[]
@@ -154,6 +154,13 @@ end
 --   bright：整体亮度倍率；base：尾部色阶下限（避免尾端纯黑）
 --   dash：每 N 段只画 1 段（1=实线）；twin：1=左右双轨
 --   warm：1=向暖色偏移（余烬）
+-- 机制轴（每种样式至少在一轴上不同，避免退化成同一条光带的数值微调）：
+--   taper：宽度曲线指数（1=线性；<1 头段更饱满；>1 尾段收束更急）
+--   bulge：头端鼓包强度（0=无；头段额外加宽成「实心亮核」）
+--   hue：沿长度色相偏移（0=无；尾端向品红游移，霓虹用）
+--   flow：断续图案流动速度（段/秒；>0 时 dash 段随时间游动＝流光）
+--   pulse：明暗脉动强度（0=无；余火明灭）
+--   railSpread/railTaper：双轨头端间距（×headW）与沿长度收拢指数（双轨用）
 ---@class TrailStyleParams
 ---@field headW number
 ---@field tailW number
@@ -162,15 +169,34 @@ end
 ---@field dash integer
 ---@field twin integer
 ---@field warm integer
+---@field taper number
+---@field bulge number
+---@field hue number
+---@field flow number
+---@field pulse number
+---@field railSpread number
+---@field railTaper number
 
 ---@type table<string, TrailStyleParams>
 local TRAIL_STYLE_PARAMS = {
-    ribbon = {headW = 0.30, tailW = 0.012, bright = 1.00, base = 0.00, dash = 1, twin = 0, warm = 0},
-    comet  = {headW = 0.44, tailW = 0.26,  bright = 1.15, base = 0.35, dash = 1, twin = 0, warm = 0},
-    neon   = {headW = 0.11, tailW = 0.11,  bright = 1.40, base = 0.62, dash = 1, twin = 0, warm = 0},
-    dash   = {headW = 0.26, tailW = 0.05,  bright = 1.10, base = 0.10, dash = 2, twin = 0, warm = 0},
-    twin   = {headW = 0.16, tailW = 0.02,  bright = 1.05, base = 0.05, dash = 1, twin = 1, warm = 0},
-    ember  = {headW = 0.56, tailW = 0.006, bright = 1.20, base = 0.15, dash = 1, twin = 0, warm = 1},
+    -- 经典尾焰：线性渐细，无额外机制（基准）。
+    ribbon = {headW = 0.30, tailW = 0.012, bright = 1.00, base = 0.00, dash = 1, twin = 0, warm = 0,
+              taper = 1.0, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
+    -- 彗星：头段先鼓后收（实心亮核）+ 尾段急收。
+    comet  = {headW = 0.42, tailW = 0.22,  bright = 1.15, base = 0.35, dash = 1, twin = 0, warm = 0,
+              taper = 0.55, bulge = 1.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
+    -- 霓虹：等宽细带 + 沿长度青→品红色相游移 + 高亮。
+    neon   = {headW = 0.115, tailW = 0.115, bright = 1.45, base = 0.62, dash = 1, twin = 0, warm = 0,
+              taper = 1.0, bulge = 0.0, hue = 0.60, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
+    -- 流光：断续 + 图案沿长度流动（看起来在跑）。
+    dash   = {headW = 0.26, tailW = 0.05,  bright = 1.10, base = 0.10, dash = 3, twin = 0, warm = 0,
+              taper = 1.2, bulge = 0.0, hue = 0.0, flow = 7.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
+    -- 双轨：左右两条细轨，轨距头端最宽、沿长度收拢成尖。
+    twin   = {headW = 0.16, tailW = 0.02,  bright = 1.05, base = 0.05, dash = 1, twin = 1, warm = 0,
+              taper = 1.0, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.60, railTaper = 0.30},
+    -- 余烬：暖色 + 明暗脉动（余火明灭）+ 剧烈收束。
+    ember  = {headW = 0.56, tailW = 0.006, bright = 1.20, base = 0.15, dash = 1, twin = 0, warm = 1,
+              taper = 1.8, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.38, railSpread = 1.35, railTaper = 1.0},
 }
 
 ---@param style string
