@@ -1,40 +1,42 @@
 # Build artifacts & runtime state
-.build/
-dist/
-.cli/
-logs/
+/.build/
+/dist/
+/.cli/
+/logs/
 *.log
-logs/.nfs*
-.sce/logs/
-.sce/build/build_steps/__pycache__/
+/logs/.nfs*
+/.sce/logs/
+/.sce/build/build_steps/__pycache__/
 
 # Temp & swap files
-.tmp/
+/.tmp/
 *.crswap
 .DS_Store
 
 # OSS util
-.ossutil_checkpoint/
-ossutil_output/
+/.ossutil_checkpoint/
+/ossutil_output/
 
 # Editor / IDE / agent configs
-.vscode/
-.cursor/
-.codex/
-.gemini/
-.claude/
-.emmylua/
-.installer/
-.maker/
+/.vscode/
+/.cursor/
+/.codex/
+/.gemini/
+/.claude/
+/.emmylua/
+/.installer/
+/.maker/
 
 # Maker engine assets & agent files (provided by ai-dev-kit, not user source)
-engine-docs/
-examples/
-lua-tools/
-schemas/
-skills/
-templates/
-tools/
-urhox-libs/
-AGENTS.md
-CLAUDE.md
+# NOTE: 这些规则必须用前导 "/" 锚定到仓库根目录，否则会误伤项目自有目录
+#       （例如 .agent/skills/ 会被未锚定的 skills/ 一起排除）。
+/engine-docs/
+/examples/
+/lua-tools/
+/schemas/
+/skills/
+/templates/
+/tools/
+/urhox-libs/
+/AGENTS.md
+/CLAUDE.md
