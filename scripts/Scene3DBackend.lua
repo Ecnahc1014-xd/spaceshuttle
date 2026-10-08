@@ -2452,7 +2452,7 @@ local function RenderOverlay(game, presentation, meta)
         RunOverlayStage("world-fx", function()
             ApplyOverlayDesignTransform()
             -- 先固定世界层边界，再震动图形；避免冲击裁剪随位移漏入letterbox。
-            nvgIntersectScissor(vg_, 0, HUD_HEIGHT, DESIGN_W, DESIGN_H - HUD_HEIGHT - DOCK_HEIGHT)
+            nvgIntersectScissor(vg_, 0, HUD_HEIGHT, DESIGN_W, BOTTOM_DOCK_Y - HUD_HEIGHT)
             if presentation.screenShake > 0 then
                 local amplitude = presentation.screenShake * 13
                 nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
