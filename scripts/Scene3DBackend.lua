@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.51"
+local BUILD_VERSION = "0.13.52"
 local GAME_TITLE = "货车大战飞机"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "货车大战飞机"

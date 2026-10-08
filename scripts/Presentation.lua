@@ -63,6 +63,7 @@ local FEEDBACK_MAP = {
     normal_split = {"splitSpark"},
     speed_dash = {"dashSpark"},
     giant_pierce_armed = {"pierceArmed"},
+    giant_pierce_consumed = {"pierceConsumed"},
     giant_area_hit = {"giantBurst"},
     upgrade_picked = {"upgradeConfirm"},
     -- v0.13.15：天赋暴击命中——金色暴击飘字（区别于普通 +分数）。
@@ -135,6 +136,7 @@ local function SpawnFloatText(x, y, text, color, sizeMul, kind)
     f.size = (sizeMul or 1) * 32
     f.kind = kind or "text"
     f.value = nil
+    f.marbleId = nil
     floatTexts[#floatTexts + 1] = f
     return f
 end
@@ -367,7 +369,20 @@ local FEEDBACK_HANDLERS = {
     pierceArmed = function(event)
         screenShake = math.max(screenShake, 0.16)
         SpawnParticles(event.x, event.y, {205, 145, 255}, math.random(2, 4), "spark")
-        SpawnFloatText(event.x, event.y - 22, "可以贯穿", {225, 170, 255}, 0.9)
+        local f = SpawnFloatText(event.x, event.y - 22,
+            "可以贯穿", {225, 170, 255}, 0.9, "giantReady")
+        f.marbleId = event.id
+    end,
+    pierceConsumed = function(event)
+        -- 就绪已被本车消耗，撤掉旧提示；同帧就绪→命中也不能残留到冷却期。
+        for i = #floatTexts, 1, -1 do
+            local f = floatTexts[i]
+            if f.kind == "giantReady" and f.marbleId == event.id then
+                floatTexts[i] = floatTexts[#floatTexts]
+                floatTexts[#floatTexts] = nil
+                floatPool[#floatPool + 1] = f
+            end
+        end
     end,
     giantBurst = function(event)
         screenShake = math.max(screenShake, 0.22)

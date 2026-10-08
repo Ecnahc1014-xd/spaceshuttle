@@ -3,6 +3,12 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.52（**修巨型车冷却未到就提示「可以贯穿」**）：
+  - 用户反馈「cd还没到就跳可以贯穿了！」。旧版只在圆域伤害分支检查 CD，范围消费后尾部立刻 `ArmGiantPiercing`，发出 `giant_pierce_armed`；真实 Presentation 据此生成「可以贯穿」。复现 CD=1 仍出提示、0.25s 后 CD=0.75 仍只走普通伤害，确认是就绪状态/反馈提前，不能用旧 CD 探针通过否认反馈。
+  - 修复：`giantPiercing` 仅代表真正就绪；实例 `giantPiercePending` 保留 CD 中的反弹资格。`ArmGiantPiercing` 在 CD>0 只置 pending、不发就绪；子步 CD 归零后自动武装，不强迫多反弹一次。1 秒 CD、范围/伤害/普通碰撞/逐帧砖去重、冻结与独立实例不变，零新增顶层 local。
+  - 反馈闭环：armed/consumed 事件携带车辆 `id`；就绪字用 `kind=giantReady`+`marbleId`，实际消费立即清掉本车旧提示，另一车提示保留；对象池复用时重置 `marbleId`。同帧 ready→hit→consumed 也不能残留到冷却期。不删既有 UI 质感、其他技能/广告/IAP 规则与更名资源。
+  - 验证：当前生产副本新专项 **36/36、968 断言 PASS**；旧专项按 pending 语义更新 3 处断言后重新运行 **36/36、409 断言 PASS**，两次正式 CLI exit0。涵盖 0.99/1 秒、9 格帧率速度矩阵、CD 中无就绪事件/飘字、到期无额外反弹恢复、同帧旧字清除/异车保留、冻结/回收重开/范围/去重。LSP workspace **0 Error**（24 文件；有既有 Warning/Hint）；官方多人 build 与预览上传成功，BUILD_VERSION/大厅→0.13.52。真实渲染最终两次 exit0：冷却截图 CD≈0.767/ready=0、到期截图 CD=0/ready=1/额外反弹0，已内部目视确认「范围击碎」与「可以贯穿」分时显示；真实过 intro 发射/暂停恢复通过、目标 Lua/overlay/load/空顶点错误0。首轮截图计帧偏差已补测不冒称通过；Linux 既有 HDR/缺图/无体素导致 3D 黑场，不据此验收手机/3D 可见性。
+  - 避雷 **AB-210**：CD 必须同时管「真实结算 + 就绪状态 + 就绪反馈」，待冷却资格与真实就绪分开；消费事件要清同实体旧提示，回归包括同帧 armed→consumed、到期恢复及多实例。
 - 版本: 0.13.51（**游戏更名「货车大战飞机」+ 星系内标字标全部重出**）：
   - **用户要求**「更新游戏名称：货车大战飞机，包括有星系内标图片需要重新生成」→ 对外名与**游戏内字标图**一起换。
   - **改名（6 个文件 + 发布配置，全量替换「击碎，飞机大战」/「击碎飞机」→「货车大战飞机」）**：①`Scene3DBackend.GAME_TITLE`/`GAME_SHORT_TITLE`（回退用 zpix 大 logo 也变 6 字）；②`client_main` 的 `graphics.windowTitle`（窗口标题）；③`lobby_runtime` 加载页标题栏；④`lobby_ui` 的 `title_` 默认值 + 6 处 `title=`；⑤`Game.lua` 顶部注释；⑥`.project/project.json` 的 `taptap_publish.title`（**发布名契约**）。`taptap_publish.description` 的「竖屏飞机大战」→「竖屏弹射对战」（正文无需带旧名，顺手去掉过时词）。

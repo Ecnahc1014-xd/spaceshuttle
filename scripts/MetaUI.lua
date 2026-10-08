@@ -529,14 +529,9 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     -- v0.13.44：入口措辞由「充值」改为「钻石商店」——玩家侧不出现直白的充值字样，
     -- 统一按游戏内商店表述（用户要求）。宽度让给 4 字标题，字号降到 15 保证不挤出按钮。
     local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 12, w = 104, h = 38 }
-    D.panel(ctx, wb.x, wb.y, wb.w, wb.h, C.warn, C.warn, 6)
-    -- 金按钮：顶受光 + 底沉影 + 窄玻璃条，与主按钮同一材质语言。
-    D.rect(ctx, wb.x + 2, wb.y + 2, wb.w - 4, math.floor(wb.h * 0.42),
-        {255, 255, 255, 46}, 4)
-    D.rect(ctx, wb.x + 2, wb.y + math.floor(wb.h * 0.6), wb.w - 4,
-        wb.h - math.floor(wb.h * 0.6) - 2, {0, 0, 0, 62}, 4)
-    D.rect(ctx, wb.x + 3, wb.y + 2, 3, wb.h - 4, {255, 255, 255, 34}, 1)
-    D.rect(ctx, wb.x + 6, wb.y + 3, wb.w - 12, 1, {255, 255, 255, 120}, 0)
+    -- v0.13.53：付费入口用完整按钮工艺 + **常驻暖金辉光**（用户「太冷酷，消失消费欲望」）。
+    -- 此前只用平铺 D.panel，是首页唯一的暖色却被画得最平——现在它是全屏最亮最暖的一点。
+    D.button(ctx, wb, C.warn, 0.62)
     D.icon(ctx, "gem", wb.x + 5, wb.y + 3, 32)
     D.text(ctx, wb.x + 68, wb.y + 11, "钻石商店", 15, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -984,24 +979,26 @@ local function DrawShopCard(ctx, layout, index, activeIndex, name, owned, equipp
     local r = GetShopCarButton(layout, index)
     local active = index == activeIndex
     local glow, press = D.controlFx(r, true)
-    D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card, {120, 148, 162, 65}, 5)
-    -- 浏览卡内受光 / 内沉影 + 左识别标记，选中态加青左标。
+    -- v0.13.53：商店是「收藏/稀有」语义 → 走暖金系，与冷色战斗 UI 区分（提消费欲望）。
+    D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card,
+        active and C.warn or {C.dim[1], C.dim[2], C.dim[3], 90}, 5)
+    -- 浏览卡内受光 / 内沉影 + 左识别标记，选中态加金左标。
     D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, math.floor(r.h * 0.44),
-        {255, 255, 255, active and 24 or 13}, 4)
+        {255, 240, 205, active and 26 or 14}, 4)
     D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
         r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, active and 44 or 30}, 4)
-    D.rect(ctx, r.x + 2, r.y + 1, r.w - 4, 1, {C.dim[1], C.dim[2], C.dim[3], 72}, 0)
+    D.rect(ctx, r.x + 2, r.y + 1, r.w - 4, 1, {C.warn[1], C.warn[2], C.warn[3], 80}, 0)
     D.rect(ctx, r.x + 3, r.y + 8, 3, r.h - 16,
-        active and C.cyan or {120, 148, 162, 120}, 1)
-    if active then D.rect(ctx, r.x + 4, r.y + r.h - 3, r.w - 8, 2, C.cyan, 0) end
+        active and C.warn or {C.dim[1], C.dim[2], C.dim[3], 120}, 1)
+    if active then D.rect(ctx, r.x + 4, r.y + r.h - 3, r.w - 8, 2, C.warn, 0) end
     if glow > 0.01 then
         D.stroke(ctx, r.x, r.y, r.w, r.h,
-            {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 200)}, 5, 1.4)
+            {C.warn[1], C.warn[2], C.warn[3], math.floor(glow * 200)}, 5, 1.4)
     end
     D.text(ctx, r.x + 12, r.y + 12 + press * 2, name, 18, C.text)
     D.text(ctx, r.x + 12, r.y + 45,
         equipped and "使用中" or (owned and "已拥有" or tostring(cost) .. " 零件"),
-        15, owned and C.cyan or C.dim)
+        15, owned and C.warn or C.dim)
     return r
 end
 
@@ -1010,7 +1007,12 @@ local function DrawShopPurchase(ctx, layout, equipped, owned, cost, parts, owned
     local C = Colors()
     local content = layout.content
     local buyY = layout.purchase.y
-    D.panel(ctx, content.x, buyY - 7, content.w, 66, C.rail, C.cyanDim, 6)
+    D.panel(ctx, content.x, buyY - 7, content.w, 66, C.rail, C.warnDim, 6)
+    -- v0.13.53：购买区走暖金（获取/花费语义），与商店卡同一条暖路径。
+    D.rect(ctx, content.x + 2, buyY - 5, content.w - 4, math.floor(66 * 0.42),
+        {255, 240, 205, 20}, 4)
+    D.rect(ctx, content.x + 2, buyY - 7 + math.floor(66 * 0.6), content.w - 4,
+        66 - math.floor(66 * 0.6) - 2, {0, 0, 0, 38}, 4)
     D.icon(ctx, "parts", content.x + 4, buyY + 10, 32, 1)
     D.text(ctx, content.x + 46, buyY + 2, equipped and "当前使用" or (owned and "已拥有" or tostring(cost)),
         28, equipped and C.cyan or C.warn)

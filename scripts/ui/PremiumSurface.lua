@@ -211,13 +211,17 @@ end
 -- 语义色不变；材质与光效先于按钮文字绘制；命中几何不变。
 function Surface.Button(ctx, r, color, glow, phase)
     local C, g = state.C, math.max(0, math.min(1, glow or 0))
+    -- v0.13.53：金色系（付费/稀有）走「贵金属」配方——更亮的受光、更暖的高光、
+    -- 更强的常驻辉光。用户「太冷酷，消失消费欲望」：付费入口必须比冷色控件更暖更亮。
+    local warm = color[1] > 200 and color[2] > 140 and color[3] < 130
     nvgSave(ctx)
-    -- 悬停：加色外辉光。
-    if g > 0.01 then
+    -- 悬停/常驻：加色外辉光（金色底辉光更强，制造「值钱」的光晕）。
+    local baseGlow = warm and math.max(g, 0.42) or g
+    if baseGlow > 0.01 then
         nvgBeginPath(ctx)
         nvgRect(ctx, r.x - 8, r.y - 8, r.w + 16, r.h + 16)
-        nvgFillPaint(ctx, nvgBoxGradient(ctx, r.x, r.y, r.w, r.h, 4, 9,
-            nvgRGBA(color[1], color[2], color[3], math.floor(g * 105)),
+        nvgFillPaint(ctx, nvgBoxGradient(ctx, r.x, r.y, r.w, r.h, 4, warm and 12 or 9,
+            nvgRGBA(color[1], color[2], color[3], math.floor(baseGlow * (warm and 130 or 105))),
             nvgRGBA(color[1], color[2], color[3], 0)))
         nvgFill(ctx)
     end
@@ -231,9 +235,16 @@ function Surface.Button(ctx, r, color, glow, phase)
     -- 金属色面。
     nvgBeginPath(ctx)
     nvgRoundedRect(ctx, r.x, r.y, r.w, r.h, 4)
-    nvgFillPaint(ctx, nvgLinearGradient(ctx, r.x, r.y, r.x + r.w * 0.24, r.y + r.h,
-        nvgRGBA(clamp255(color[1] + 34), clamp255(color[2] + 26), clamp255(color[3] + 28), 255),
-        nvgRGBA(clamp255(color[1] * 0.60), clamp255(color[2] * 0.72), clamp255(color[3] * 0.76), 255)))
+    if warm then
+        -- 贵金属：高光更亮更暖（向白偏暖），暗端保留金色而非压成灰。
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, r.x, r.y, r.x + r.w * 0.24, r.y + r.h,
+            nvgRGBA(255, 232, 168, 255),
+            nvgRGBA(clamp255(color[1] * 0.66), clamp255(color[2] * 0.54), clamp255(color[3] * 0.34), 255)))
+    else
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, r.x, r.y, r.x + r.w * 0.24, r.y + r.h,
+            nvgRGBA(clamp255(color[1] + 34), clamp255(color[2] + 26), clamp255(color[3] + 28), 255),
+            nvgRGBA(clamp255(color[1] * 0.60), clamp255(color[2] * 0.72), clamp255(color[3] * 0.76), 255)))
+    end
     nvgFill(ctx)
     -- 顶部内受光 + 底部内沉影（倒角）。
     nvgBeginPath(ctx)

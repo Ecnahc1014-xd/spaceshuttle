@@ -483,6 +483,7 @@ local function CreateMarble(ballType, words)
         flightTime = 0,
         ignoredBrick = nil,
         giantPiercing = false,
+        giantPiercePending = false, -- 冷却中只保留反弹资格，不代表已经可以贯穿
         giantAreaCooldown = 0,
         words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
     }
@@ -2042,9 +2043,15 @@ local function ArmGiantPiercing(marble)
     if marble.ballType ~= "giant" or not def.pierceAfterBounce or marble.giantPiercing then
         return
     end
+    if (marble.giantAreaCooldown or 0) > 0 then
+        marble.giantPiercePending = true
+        return
+    end
+    marble.giantPiercePending = false
     marble.giantPiercing = true
-    Emit("giant_pierce_armed", {x = marble.x, y = marble.y})
-    print("[Game] giant marble rebound armed circular piercing")
+    -- 只有冷却结束才发布就绪，表现层据此提示「可以贯穿」。
+    Emit("giant_pierce_armed", {id = marble.id, x = marble.x, y = marble.y})
+    print("[Game] giant marble circular piercing ready id=" .. tostring(marble.id))
 end
 
 -- 巨型弹贯穿伤害区：以命中砖块中心为圆心，直径 7 个敌方单元格。
@@ -2157,6 +2164,9 @@ UpdateMarbles = function(dt)
                 local remaining = marble.giantAreaCooldown - subDt
                 -- 消除累计浮点尾数，确保满 1 秒不多等一个子步。
                 marble.giantAreaCooldown = remaining > 1e-9 and remaining or 0
+                if marble.giantAreaCooldown == 0 and marble.giantPiercePending then
+                    ArmGiantPiercing(marble)
+                end
             end
 
             local prevX = marble.x
@@ -2263,7 +2273,7 @@ UpdateMarbles = function(dt)
                     marble.giantAreaCooldown = def.areaCooldown
                     DamageGiantArea(enemy, brick,
                         GetMarbleDamage(marble, def), frameHitBricks)
-                    Emit("giant_pierce_consumed", {x = marble.x, y = marble.y})
+                    Emit("giant_pierce_consumed", {id = marble.id, x = marble.x, y = marble.y})
                     marble.giantPiercing = false
                 else
                     local resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)

@@ -8,9 +8,16 @@
 # 项目记忆索引
 
 项目：货车大战飞机
-当前版本：0.13.51
-简述：游戏更名为「货车大战飞机」（对外名 + 窗口标题 + 大厅 + 发布名 + 首页 4 张像素字标图全部重出，走 0718 管线、7 色母版 120 高）。承接 0.13.50 每关首机 1 血、0.13.49 整体抬高敌怪曲线。
+当前版本：0.13.52
+简述：修巨型车 CD 未到就提示「可以贯穿」：待冷却反弹资格与真实就绪分离，到期自动恢复，消费时清本车旧字，不误清其他车。保持 1 秒范围 CD、普通伤害与同帧去重；承接更名「货车大战飞机」、首机 1 血和敌方难度曲线。
 最后巩固：2026-10-08
+## 巨型车就绪提示与冷却一致（2026-10-08，v0.13.52）
+- 用户「cd还没到就跳可以贯穿了！」。复现旧版真实 area→consumed→armed：CD=1、Presentation 有一条「可以贯穿」；0.25s 后普通碰撞有效、圆域邻格不受伤。旧 36/36 CD 测试没覆盖反馈，还曾接受立即 rearm，不能据此否认用户问题。
+- `Game` 新增实例 `giantPiercePending`：CD 中只保留反弹资格、`giantPiercing=false`，`ArmGiantPiercing` 不发提示；玩法子步归零时自动武装且仅提示一次。1 秒内置 CD、冷却期普通碰撞、范围/伤害/暴击/异常/逐帧砖去重与暂停升级冻结不变，无新增顶层 local。
+- `Presentation` 登记 consumed 反馈；armed/consumed 携带车 id，ready 字记录 kind=giantReady、marbleId。消费时回收本车旧提示，异车与普通飘字保留；池复用重置 id。同帧恢复就绪后马上消费也无错误残字。
+- 正式 runtime 新专项 36/36、968 断言 PASS；旧专项适配 3 处 rearm 断言后新跑 36/36、409 断言 PASS，两次 exit0。9 格 30/60/120Hz×0/100/5000 速度、0.99/1 秒、自动恢复、多车/同帧/冻结/范围等覆盖；当前生产指纹吻合。LSP 0 Error（24 文件，有既有 Warning/Hint），官方多人 build 与预览上传成功，展示版本/大厅 0.13.52。最终两次真渲染 exit0、目标 Lua/overlay/load/空顶点错误0；CD≈0.767 时 ready=0，归零后 ready=1 且额外反弹0；两份实图已内部目视，真实过 intro 发射/暂停冻结恢复通过。首轮截图计帧偏差已补测；Linux 既有 HDR/缺图/无体素 3D 黑场与手机性能不计验收。生产提交 `f31f305`，只含 Game/Presentation/两处版本行。
+- POST-1 执行：状态与用户反馈；POST-2 执行：版本行+本人片段独立提交；POST-3 执行：通用抗体 AB-210（结算/就绪/反馈同源、同车提示消费清理）。随行 persona/preferences 判定跳过：没有新增跨项目用户偏好。保留初始 `VisualCatalog.lua` 修改。
+
 ## 游戏更名 + 字标重出（2026-10-08，v0.13.51）
 - 用户要求「更新游戏名称：货车大战飞机，包括有星系内标图片需要重新生成」→ **改名与字标一起做**（首页大标题是 AI 位图，不是文字渲染，只改字符串会留旧名 logo）。
 - 改名点：`Scene3DBackend.GAME_TITLE`/`GAME_SHORT_TITLE`、`client_main.graphics.windowTitle`、`lobby_runtime` 加载页标题栏、`lobby_ui` 的 `title_` 默认值 + 6 处 `title=`、`Game.lua` 顶部注释、`.project/project.json` 的 `taptap_publish.title`（发布名契约）；description 的「竖屏飞机大战」→「竖屏弹射对战」。旧名全库 grep 零残留。
