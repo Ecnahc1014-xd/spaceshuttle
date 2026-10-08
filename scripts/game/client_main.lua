@@ -23,6 +23,7 @@ local RechargeShop = require "ui.RechargeShop"
 local StageSelect = require "ui.StageSelect"
 local ItemShop = require "ui.ItemShop"
 local TalentTree = require "ui.TalentTree"
+local TestModePrompt = require "ui.TestModePrompt"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
 
@@ -49,6 +50,8 @@ local metaPointerConsumed = false
 local talentScrollArmed = false
 -- v0.13.13：选关界面（无限爬塔）拖拽滚动是否已起手。
 local stageSelectScrollArmed = false
+-- v0.13.56：第 1 关「测试模式」询问确认后，要进入的目标关卡号。
+local pendingTestStage_ = nil
 -- 设计宽度缓存（天赋树命中/滚动用；Init 时由 GetDesignSize 填）。
 local designWidth_ = 540
 local CLOUD_HIGH_SCORE_KEY = "high_score"
@@ -478,6 +481,8 @@ RefreshMeta = function()
     metaState.totalStars = PlayerData.GetTotalStars()
     metaState.talentCount = PlayerData.TalentCount()
     metaState.talentTotal = #TalentCatalog.GetNodes()
+    -- v0.13.56：第 1 关「测试模式」询问是否待决（渲染层据此画提示）。
+    metaState.testMode = (pendingTestStage_ ~= nil)
     metaState.talentMaxStage = TalentCatalog.MAX_STAGE
     metaState.talentStageCount = TalentCatalog.GetUnlockedStageCount(metaState.totalStars)
     -- 是否有「当前可负担且前置满足」的节点（菜单红点）。
@@ -921,11 +926,38 @@ local function HandleMetaAction(action, index)
     elseif action == "play_stage" and index then
         -- 选关界面点某关：解锁校验（StageSelect 命中已过滤，这里兜底），关面板后开该关。
         if PlayerData.IsStageUnlocked(index) then
-            metaState.screen = nil
-            Game.StartStageAt(index)
-            RefreshSnapshots()
-            print("[Main] start stage from select: " .. tostring(index))
+            if index == 1 then
+                -- v0.13.56：进入第 1 关前先询问是否测试后期关卡（每次都问）。
+                OpenMetaScreen("test_mode")
+                print("[Main] stage 1 -> ask test mode")
+            else
+                metaState.screen = nil
+                Game.StartStageAt(index)
+                RefreshSnapshots()
+                print("[Main] start stage from select: " .. tostring(index))
+            end
         end
+    elseif action == "test_mode_yes" then
+        -- v0.13.56：测试模式——解锁全部天赋树节点，直入后期关卡（默认第 20 关强度）。
+        local ids = {}
+        for _, node in ipairs(TalentCatalog.GetNodes()) do ids[#ids + 1] = node.id end
+        PlayerData.EnsureAutoOwnedTalents(ids)
+        metaState.talents = PlayerData.GetTalents()
+        PersistMeta()
+        pendingTestStage_ = TestModePrompt.TARGET_STAGE
+        print(string.format("[Main] test mode ON: unlocked %d talent nodes -> stage %d",
+            #ids, pendingTestStage_))
+        RefreshMeta()
+    elseif action == "test_mode_no" then
+        -- v0.13.56：正常开始——从第 1 关起步，不动天赋树。
+        pendingTestStage_ = 1
+        RefreshMeta()
+        print("[Main] test mode OFF: start stage 1")
+    elseif action == "test_mode_close" then
+        -- 询问屏只能通过「是/否」离开；close 由 ESC 触发时视为「否」。
+        metaState.screen = nil
+        pendingTestStage_ = 1
+        RefreshMeta()
     elseif action == "buy_item" and index then
         -- v0.13.13：花零件买局内道具（永久库存）。库存上限/零件不足都只给 toast。
         local def = StageSelect.ITEM_ORDER[index]
@@ -1323,7 +1355,17 @@ local function HandleStageWinPointerUp(uiX, uiY)
     if armed == "next" then
         Game.NextStage()
     elseif armed == "retry" then
-        Game.RetryStage()
+        -- v0.13.56：第 1 关「再战本关」同样先弹测试模式询问（每次都问）。
+        -- ⚠️ 询问屏是「菜单态」屏，必须先回主菜单再开，否则 HandleUpdate 的
+        --    待决跳关判定（要求 state==menu）永远不成立。
+        if Game.GetSnapshot().stageResult and Game.GetSnapshot().stageResult.stage == 1 then
+            Game.GoToMenu()
+            OpenMetaScreen("test_mode")
+            RefreshSnapshots()
+            print("[Main] stage 1 retry -> ask test mode")
+        else
+            Game.RetryStage()
+        end
     elseif armed == "menu" then
         Game.GoToMenu()
     end
@@ -1369,6 +1411,9 @@ function ClientMain.Start(opts)
     -- v0.13.5：天赋树界面同源注册。
     TalentTree.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("talent", TalentTree.Draw, TalentTree.HitTest)
+    -- v0.13.56：第 1 关「测试模式」询问屏同源注册（复用元层窗口动画与命中分发）。
+    TestModePrompt.Init(MetaUI.GetDeps())
+    MetaUI.RegisterScreen("test_mode", TestModePrompt.Draw, TestModePrompt.HitTest)
 
     PlayerData.Load()
     -- 开局自动拥有初始车的「允许局内出场」节点（幂等；必须在 Load 之后）。
@@ -1483,6 +1528,17 @@ function HandleUpdate(eventType, eventData)
     local dt = math.min(inputDt, 0.05)
     AdService.Update(dt)
     if not GameMode.IsOffline() then NetClient.Update(dt) end
+    -- v0.13.56：第 1 关「测试模式」询问确认后，在菜单态进入目标关。
+    -- 放在玩法更新之前，保证本帧就切到目标关，不闪一帧菜单。
+    if pendingTestStage_ and Game.GetSnapshot().state == "menu" then
+        local target = pendingTestStage_
+        pendingTestStage_ = nil
+        metaState.screen = nil
+        metaState.testMode = false
+        Game.StartStageAt(target)
+        RefreshSnapshots()
+        print("[Main] enter stage " .. tostring(target) .. " after test mode prompt")
+    end
     local hitStop = Presentation.GetSnapshot().hitStop or 0
     local gameDt = dt
     if hitStop > 0 then gameDt = dt * 0.15 end
@@ -1863,8 +1919,13 @@ function HandleKeyDown(eventType, eventData)
     elseif key == KEY_P or key == KEY_ESCAPE then
         -- v0.11.0 商业化：ESC 先关元层面板，再轮到暂停。
         if metaState.screen then
-            metaState.screen = nil
-            RefreshMeta()
+            -- v0.13.56：测试模式询问屏必须显式选择，ESC 等同「否 · 正常开始」。
+            if metaState.screen == "test_mode" then
+                HandleMetaAction("test_mode_close", nil)
+            else
+                metaState.screen = nil
+                RefreshMeta()
+            end
         elseif metaState.supplyOpen then
             metaState.supplyOpen = false
         elseif Game.IsPaused() then

@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.56（**第 1 关「测试模式」询问：可选直入后期关卡并解锁全天赋**）：
+  - 用户要求「新玩家开局第一关会询问是否要测试后期关卡？如果选择是，那么变为第二十关强度并解锁所有天赋树。如果选择不则继续游玩」，追加「不需要是新玩家，第一关一直有」——即**每次进入第 1 关都询问**（不做「只问一次」记忆）。
+  - **触发点（第 1 关 = 三处入口）**：①选关界面点第 1 关；②第 1 关通关后「再战本关」；③重开（`RestartFromOver` 固定回第 1 关）。前两处由编排层 `client_main` 在开局前插入询问屏（`HandleMetaAction("play_stage")` 与 `HandleStageWinPointerUp` 的 retry 分支）；第 ③ 处沿用「每次进第 1 关」的自然行为（重开=再次进第 1 关），未额外加询问。
+  - **实现（零新增后端 local / 零改 Game.lua）**：新增 `scripts/ui/TestModePrompt.lua`（+`.meta`，22 位 uuid `Lf4EtJlBNB0p7dZUCEK5hy`，已验重）——纯绘制/命中模块，靠 `MetaUI.RegisterScreen("test_mode", ...)` **插件式注册**，自动获得元层窗口的入场/退场弹动动画与 `WindowInput` 命中逆变换（**不需要给 `Scene3DBackend` 加任何状态**，避开 AB-166 顶层 local 上限）。屏内两按钮：`test_mode_yes` / `test_mode_no`；**点窗外/ESC 都不关闭**（ESC 等同「否」），保证玩家显式选择。
+  - **「是」的效果**：`PlayerData.EnsureAutoOwnedTalents(全部节点 id)` → 解锁整棵天赋树（42 节点）→ `PersistMeta()` 落盘 + 云同步 → `pendingTestStage_ = TestModePrompt.TARGET_STAGE`（**20**）→ `HandleUpdate` 在菜单态进入该关。**「否」**：`pendingTestStage_ = 1`，不动天赋，从第 1 关开始。目标关号是模块常量 `TestModePrompt.TARGET_STAGE`，改一处即可。
+  - **⚠️ 询问屏是「菜单态」屏**：`HandleUpdate` 的待决跳关判定要求 `state == "menu"`，而「再战本关」时 `Game` 正处于 `stagewin` 态 → **必须先 `Game.GoToMenu()` 再 `OpenMetaScreen("test_mode")`**，否则询问屏显示了却永远不跳关（本次踩到并已修）。
+  - **验证**：官方多人 build + 预览上传 ✅；LSP workspace **0 Error**（26 文件 1118 诊断）；行为探针 `probe_testmode` **ALL PASS**（点第 1 关→停在菜单不直接开局→「是」→`state=playing stage=20 talents=42/42`→回菜单→再点第 1 关→「否」→`stage=1`）；`probe_tmretry` **ALL PASS**（第 1 关 stagewin 点「再战本关」→回菜单并弹询问→「是」→第 20 关 + 全天赋）；两探针 + 常规冒烟 `probe_render` 的 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty` 均 **0**。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：⚠️ **本批未能自证询问屏的实际画面**——本地离屏 `-screenshot-frame=N` 在本环境**不生效**（三张不同帧参数的截图字节完全相同、均为早期菜单帧），只能证明「无渲染错误 + 命中几何正确 + 状态机正确」，**真机观感需 Preview 目视**。手机 FPS / 全 DPR / 用户审美未验收。
 - 版本: 0.13.55（**车辆专属卡改机制维度，与基础卡区分**）：
   - 用户「车辆专属和基础卡差异化做的太差」。根因量化：八张车卡其实是**四条公式各写两遍**——`base_split`/`split` 都只改 `BALL_TUNING.splitBonus`、`base_ice`/`ice` 都改 `iceBonus`、`base_speed`/`speed` 都改 `speedMul`、`base_giant`/`giant` 都改 `giantArea`，专属卡纯粹是「数值更大」（+3% vs +2%、+1.2s vs +0.5s、×1.08 vs ×1.04、+1格 vs +0.5格），零机制差异。
   - **定案：基础卡 = 该车型主属性的「打底数值」（保持简单、常出、可叠高）；专属卡 = 换一个机制维度**（挂到引擎里已存在但卡池未启用的钩子上）。四张专属卡全部 `rarity` 升 `rare`、`weight` 1→0.6：
@@ -965,6 +973,12 @@
 - ⚠️ **悬停判定要用**设计坐标**，且只对按钮尺寸生效（v0.13.31）**：`Backend.SetPointer` 收的是 `ScreenToUi` 后的设计坐标（与绘制同空间）；`DrawMachinedPanel` 里悬停发光限 `h<=80 且 w>=40`，否则 HUD 横条/大面板会被误点亮。
 
 ## 避雷清单
+
+## 本批次新增避雷（v0.13.56 第 1 关测试模式询问）
+- 🔴 **AB-217：新增「元层弹窗」优先走 `MetaUI.RegisterScreen` 插件注册，不要往 `Scene3DBackend` 加状态（v0.13.56）**：`Scene3DBackend.lua` 顶层 local 已 **197/200**（AB-166），新增一个弹窗若要「后端持有 open 标志 + 配对窗口动画 + 命中分发」，至少要 4–5 个 local 槽位 → 极易撞 200 上限导致 `LoadChunk failed` 全屏黑。**正确做法**：写成独立 `ui/Xxx.lua`（纯绘制 + 命中，`D` 依赖注入），`MetaUI.RegisterScreen("name", Draw, HitTest)` 注册 → **自动复用 `metaScreen_` 那一套**（入场/退场弹动 `DrawAnimatedWindow`、`WindowInput` 命中逆变换、开新屏作废旧残影），后端**零改动**。开屏 = `metaState.screen = "name"`（编排层 `OpenMetaScreen`），输入经 `HandleMetaPointerDown/Click` → `Backend.HitTestMetaScreen` 自动分发到你的 HitTest。
+- 🔴 **AB-218：`RegisterScreen` 的 Draw/HitTest 形参注解必须写 `---@param meta MetaState`（非空），否则 LSP 报 `param-type-mismatch` Error（v0.13.56）**：`MetaUI.RegisterScreen(name, drawer, hitTester)` 的形参表把 meta 声明为**非空** `MetaState`；若你的模块写 `---@param meta table|nil` 或 `table?`，注册那一行会报 `expected fun(..., meta: MetaState) but found fun(..., meta: table?)` —— 两个 Error，且**改成 `MetaState|nil` 也一样报**。只能写**非空** `MetaState`（函数体内不要做 `meta and ...` 判空，或判空后仍标注非空）。⚠️ 改完 LSP 有缓存，需 `touch` 文件或重新诊断才刷新。
+- 🔴 **AB-219：新增「元层屏」必须确认它开在**菜单态**——`state ~= menu` 时任何依赖菜单态的待决逻辑都不会生效（v0.13.56 踩到）**：本项目「确认询问 → 下一帧进关」的待决跳关放在 `HandleUpdate` 里判 `state == "menu"`。若在 `stagewin`（胜利结算）态直接 `OpenMetaScreen`，屏能显示、但**永远不跳关**（玩家点了没反应）。修法：**开屏前先 `Game.GoToMenu()`**（回菜单再开询问屏），并在同帧 `RefreshSnapshots()`。⚠️ 通用规则：把「新屏挂在哪个 state 下」先写清楚——凡是「只在菜单态画/只在菜单态判」的屏，从非菜单态进入时都要先回菜单。
+- ⚠️ **AB-220：本地离屏 `-screenshot-frame=N` 在本环境可能完全不生效，不能据此自证画面（v0.13.56 实测）**：本次三张截图（`-screenshot-frame=120/200/420`）**字节数完全相同、均为同一条早期菜单帧**，即截的是「启动首帧附近」而非第 N 帧。后果：**只能证明「无渲染错误 + 命中几何正确 + 状态机正确」，不能证明新屏真的画出来了**。凡「新 UI 屏」的交付，若像素取证/实图均拿不到，**必须在记忆与回复里显式标注「画面未经自证，待 Preview 目视」**，不得把行为探针 PASS 写成画面通过（同 AB-216「渲染无报错 ≠ 画出来了」）。
 
 ## 本批次新增避雷（ui-trace-density-2 NanoVG 命令缓冲溢出）
 - 🔴 **AB-216：NanoVG 逐点绘制会撑爆单帧命令缓冲，导致本帧后续绘制被「静默丢弃」（2026-10-08 实测，本轮最重要）**：半调/点阵若按「每点各起一条 `nvgBeginPath` + `nvgFill`」写，几千条命令后缓冲溢出，**该帧之后的所有绘制消失**——**没有任何报错、没有 `overlay stage failed`、没有 Lua 异常**。本项目实测症状：商店/窗口**只剩背景，卡片与文字全没了**；首页因先画内容后画纹路所以「看起来正常」，迷惑性极强。

@@ -350,3 +350,11 @@
 - [AB-215] [跨项目][用户说纹路不够多时要加的是无关紧要的纹路] 关键词是无关紧要：不承载任何信息的装饰线/网/点，用来提高画面密度，不是加读数、加图标、加对比度。做法：在共享原语里加一组纯绘制 helper（微网格/斜向拉丝/电路刻纹/四角取景折线/断线/点阵），改一处即全屏生效；每个 helper 自带 nvgIntersectScissor 裁剪（否则斜纹会越出宿主几何）、全部低 alpha、按尺寸门槛（小控件不画）。 加纹路要两层：改共享原语（大面板/窗口/按钮/背景/展台）+ 小卡片抽本地助手（本项目 MetaUI.CardTrace 复用 D.grid+D.corner）。纹路只画，绝不参与命中与几何。低 alpha 的逐条/逐点绘制仍是调用次数成本，用尺寸门槛压住。（货车大战飞机/ui-trace-density）
 
 - [AB-216] [跨项目][NanoVG 逐点绘制撑爆单帧命令缓冲会让本帧后续绘制静默消失] 半调/点阵若每点各起 nvgBeginPath+nvgFill，几千条命令后缓冲溢出，该帧之后所有绘制消失——无报错、无 stage failed、无 Lua 异常。症状：商店/窗口只剩背景，卡片与文字全没（先画内容的首页看似正常，迷惑性强）。 修法：一批同色点合并单一路径（1 次 beginPath + N 次 circle + 1 次 fill），并按面积自适应放大步长钳点数。定位法：像素取证（同帧 bright 计数 HEAD 74904 vs 出问题 4372）+ 同帧 HEAD 对照 + 二分文件/函数/参数。纪律：渲染无报错不等于画出来了，加逐点/循环绘制后必须像素取证或实图目视。（货车大战飞机/ui-trace-density-2）
+
+- [AB-217] [跨项目][新增元层弹窗优先用插件式 RegisterScreen，别往大后端加状态] 大文件（本项目 Scene3DBackend 顶层 local 197/200）再塞一个「弹窗 open 标志 + 配对动画 + 命中分发」会撞 Lua 200 local 上限导致 LoadChunk failed 全屏黑。正确做法：写成独立 ui/Xxx.lua（纯绘制+命中、D 依赖注入），MetaUI.RegisterScreen("name", Draw, HitTest) 注册，自动复用 metaScreen_ 那一套（入场/退场 DrawAnimatedWindow 弹动、WindowInput 命中逆变换、开新屏作废旧残影），后端零改动。开屏=metaState.screen="name"，输入经 HandleMetaPointerDown/Click→Backend.HitTestMetaScreen 自动分发。（货车大战飞机/v0.13.56）
+
+- [AB-218] [跨项目][RegisterScreen 的 Draw/HitTest 形参 meta 注解必须非空] MetaUI.RegisterScreen 形参表把 meta 声明为 fun(..., meta: MetaState)（非空）；模块里写 ---@param meta table|nil 或 table? 会让注册那行报 param-type-mismatch Error（两个），改成 MetaState|nil 也一样报。只能写非空 MetaState（函数体内别做 meta and 判空）。改完 LSP 有缓存，需 touch 文件或重新诊断才刷新。（货车大战飞机/v0.13.56）
+
+- [AB-219] [跨项目][新增元层屏要先确认它开在菜单态] 若「待决跳关/后续逻辑」放在 HandleUpdate 里判 state=="menu"，而你在 stagewin 等非菜单态直接 OpenMetaScreen，屏能显示但永远不生效（点了没反应）。修法：开屏前先 Game.GoToMenu() 回菜单，同帧 RefreshSnapshots()。通用规则：把「新屏挂在哪个 state 下」先写清楚；只在菜单态画/判的屏，从非菜单态进入都要先回菜单。（货车大战飞机/v0.13.56）
+
+- [AB-220] [跨项目][本地离屏 -screenshot-frame 可能不生效，不能据此自证画面] 本项目实测三张不同 -screenshot-frame=120/200/420 的截图字节数完全相同、均为同一条早期菜单帧——截的是启动首帧附近而非第 N 帧。后果：只能证明无渲染错误+命中几何正确+状态机正确，不能证明新屏画出来了。凡新 UI 屏若像素取证/实图都拿不到，必须在记忆与回复里显式标注「画面未经自证，待 Preview 目视」，不得把行为探针 PASS 写成画面通过（同 AB-216「渲染无报错 ≠ 画出来了」）。（货车大战飞机/v0.13.56）
