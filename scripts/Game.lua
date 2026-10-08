@@ -2663,6 +2663,9 @@ UpdateEnemies = function(dt)
                     x = enemy.x + width * 0.5,
                     y = enemy.y + height * 0.5,
                     streak = clearStreak,
+                    width = width, height = height,
+                    -- 只描述消灭事实：越线损失过机体的击败不是完整击毁。
+                    fullDestroyed = not enemy.breached,
                 })
             end
         end

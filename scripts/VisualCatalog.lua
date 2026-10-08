@@ -240,4 +240,20 @@ function VisualCatalog.GetVoxelMatIndex(aircraftKey, slot, frozen)
     return 1 + (keyIndex - 1) * 8 + (frozen and 4 or 0) + slotIndex
 end
 
+-- 战斗冲击参数单一来源：技能紫色沿用巨型车，整机击毁使用品牌青与白芯。
+local COMBAT_IMPACT_STYLES = {
+    area = { life = 0.48, shake = 0.22, color = BALL_STYLES.giant.color,
+        rays = 10, expand = 1.0 },
+    clear = { life = 0.62, shake = 0.18, color = {0, 229, 208},
+        rays = 12, expand = 1.18 },
+}
+
+function VisualCatalog.GetCombatImpactStyle(kind)
+    return COMBAT_IMPACT_STYLES[kind]
+end
+
+function VisualCatalog.GetCombatImpactBudget()
+    return 8
+end
+
 return VisualCatalog

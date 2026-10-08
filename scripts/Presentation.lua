@@ -23,6 +23,19 @@ local ejectedBoxes = {}
 local baseImpacts = {}
 local baseBarrierFlash = 0
 local shockRings = {}    -- v0.10.23：击毁砖块的扩散环（少量、点缀）
+---@class CombatImpact
+---@field kind string
+---@field x number
+---@field y number
+---@field radiusX number
+---@field radiusY number
+---@field life number
+---@field maxLife number
+---@field phase number
+---@type CombatImpact[]
+local combatImpacts = {}
+---@type CombatImpact[]
+local impactPool = {}
 local reloadFlash = 0    -- v0.10.24：主球回库补弹的 Dock 轻闪
 local upgradeHintPulse = 0    -- v0.10.24：升级面板空白点击时的提示轻脉冲
 local adStatus = nil          -- v0.10.32：nil / "loading"
@@ -213,6 +226,42 @@ local function SpawnBrickDebris(event, color)
     end
 end
 
+-- 一次实际圆域命中或整机击败只生成一个冲击对象，不逐砖复制；同帧轻震取最大值。
+local function SpawnCombatImpact(kind, event)
+    local style = VisualCatalog.GetCombatImpactStyle(kind)
+    if not style then return end
+    local budget = VisualCatalog.GetCombatImpactBudget()
+    local impact = #combatImpacts >= budget and table.remove(combatImpacts, 1)
+        or table.remove(impactPool)
+    impact = impact or {} --[[@as CombatImpact]]
+    impact.kind = kind
+    impact.x, impact.y = event.x, event.y
+    impact.radiusX = kind == "area" and event.radius or (event.width or 48) * 0.5
+    impact.radiusY = kind == "area" and event.radius or (event.height or 48) * 0.5
+    impact.life, impact.maxLife = style.life, style.life
+    impact.phase = ((event.enemyId or 0) % 12) * math.pi / 6
+    combatImpacts[#combatImpacts + 1] = impact
+    screenShake = math.max(screenShake, style.shake)
+    print(string.format("[Presentation] combat impact %s at %.1f,%.1f radius=%.1f/%.1f active=%d",
+        kind, impact.x, impact.y, impact.radiusX, impact.radiusY, #combatImpacts))
+end
+
+local function ClearCombatImpacts()
+    for _, impact in ipairs(combatImpacts) do impactPool[#impactPool + 1] = impact end
+    combatImpacts = {}
+end
+
+local function UpdateCombatImpacts(dt)
+    for i = #combatImpacts, 1, -1 do
+        local impact = combatImpacts[i]
+        impact.life = impact.life - dt
+        if impact.life <= 0 then
+            table.remove(combatImpacts, i)
+            impactPool[#impactPool + 1] = impact
+        end
+    end
+end
+
 -- WO-14/P2：每个反馈名对应一个只写 Presentation 瞬时状态的处理函数。
 -- HandleEvent 按 FEEDBACK_MAP 分派，新增反馈只需补充映射 + 处理函数。
 local FEEDBACK_HANDLERS = {
@@ -235,6 +284,7 @@ local FEEDBACK_HANDLERS = {
         baseImpacts = {}
         baseBarrierFlash = 0
         shockRings = {}
+        ClearCombatImpacts()
         reloadFlash = 0
         upgradeHintPulse = 0
         adStatus = nil
@@ -307,6 +357,9 @@ local FEEDBACK_HANDLERS = {
     end,
     clearBanner = function(event)
         SpawnFloatText(event.x, event.y, "击破", {120, 255, 160}, 1.2)
+        if event.fullDestroyed == true then
+            SpawnCombatImpact("clear", event)
+        end
     end,
     -- WO-15/P2：防线四位一体（震屏 + 危险带脉冲 + 冲击波 + 警示文字）由 base_hit 单点触发。
     baseShake = function(event)
@@ -385,7 +438,7 @@ local FEEDBACK_HANDLERS = {
         end
     end,
     giantBurst = function(event)
-        screenShake = math.max(screenShake, 0.22)
+        SpawnCombatImpact("area", event)
         SpawnParticles(event.x, event.y, {205, 145, 255},
             math.min(5, 2 + event.hitCount), "spark")
         if math.random() < 0.25 then
@@ -613,6 +666,8 @@ function Presentation.Init()
     baseImpacts = {}
     baseBarrierFlash = 0
     shockRings = {}
+    combatImpacts = {}
+    impactPool = {}
     reloadFlash = 0
     upgradeHintPulse = 0
     adStatus = nil
@@ -649,6 +704,9 @@ function Presentation.Update(dt, gameSnapshot, events)
         HandleEvent(event)
     end
 
+    -- 退菜单立即回收；战斗暂停/升级时只衰减视觉，不推进技能冷却。
+    if gameSnapshot and gameSnapshot.state == "menu" then ClearCombatImpacts() end
+    UpdateCombatImpacts(dt)
     UpdateParticles(dt)
     UpdateFloatTexts(dt)
     UpdateHitFlashes(dt)
@@ -677,6 +735,7 @@ function Presentation.GetSnapshot()
         brickDebris = brickDebris,
         baseImpacts = baseImpacts,
         shockRings = shockRings,
+        combatImpacts = combatImpacts,
         ejectedBoxes = ejectedBoxes,
         baseBarrierFlash = baseBarrierFlash,
         reloadFlash = reloadFlash,

@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.52"
+local BUILD_VERSION = "0.13.54"
 local GAME_TITLE = "货车大战飞机"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "货车大战飞机"
@@ -2455,6 +2455,7 @@ local function RenderOverlay(game, presentation, meta)
             end
             DrawBaseImpactFeedback(vg_, game, presentation)
             DrawShockRings(vg_, game, presentation)
+            uiFx.impact.Draw(vg_, presentation, ProjectGamePoint)
             DrawFloatTexts(vg_, game, presentation)
             DrawWaveBanner(vg_, game, presentation)
         end)
@@ -2511,6 +2512,16 @@ local function RenderOverlay(game, presentation, meta)
             elseif game.state == "stagewin" then DrawStageWin(vg_, game, presentation)
             else DrawPaused(vg_, game, meta, presentation) end
         end, "game")
+    end
+
+    -- 击毁可能在同帧触发升级/胜利；只在窗口空白带画短回声，不穿过正文或按钮。
+    -- 不放开全部旧 world-fx 的模态门控，也不把回声位置当成真实伤害范围。
+    if game.state == "levelup" or game.state == "stagewin" then
+        RunOverlayStage("combat-impact-echo", function()
+            ApplyOverlayDesignTransform()
+            uiFx.impact.Draw(vg_, presentation, ProjectGamePoint,
+                game.state == "levelup" and 270 or 155)
+        end)
     end
 
     if metaScreenLeaving_ and metaScreenLeaving_.meta then
@@ -2613,6 +2624,7 @@ function Backend.Init()
     end
     UpdateScreenMetrics()
     uiFx.surface = require "ui.PremiumSurface"
+    uiFx.impact = require "ui.CombatImpact"
     -- v0.11.0 商业化：把游戏 UI 的令牌与绘制原语注入元层界面，保证两处风格同源。
     MetaUI.Init({
         C = C,
