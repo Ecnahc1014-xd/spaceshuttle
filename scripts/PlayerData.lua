@@ -26,6 +26,8 @@ local DATA_VERSION = 1
 ---@field talents table<string, boolean> 已解锁的天赋节点 id
 ---@field skins table<string, boolean> 已解锁车型，沿用旧涂装存档 key
 ---@field selectedSkin string 当前使用的车型 key
+---@field trails table<string, boolean> 已解锁拖尾样式 key
+---@field selectedTrail string 当前使用的拖尾样式 key
 ---@field shopBought table<string, boolean> 商城一次性商品
 ---@field passClaimed integer 战斗档案已领到的等级
 ---@field firstGiftClaimed boolean 首充新手礼包奖励是否已本地补发
@@ -54,6 +56,8 @@ local function NewState()
         talents = {},
         skins = { default = true },
         selectedSkin = "default",
+        trails = { classic = true },
+        selectedTrail = "classic",
         shopBought = {},
         passClaimed = 0,
         firstGiftClaimed = false,
@@ -174,6 +178,11 @@ function PlayerData.Load()
     state.skins = skins
     local selected = AsStr(d.selectedSkin)
     state.selectedSkin = skins[selected] and selected or "default"
+    local trails = AsBoolMap(d.trails)
+    trails.classic = true
+    state.trails = trails
+    local selectedTrail = AsStr(d.selectedTrail)
+    state.selectedTrail = trails[selectedTrail] and selectedTrail or "classic"
     if state.createdAt == 0 then state.createdAt = os.time() end
 
     PlayerData.RollDaily()
@@ -263,6 +272,12 @@ function PlayerData.ImportFromCloud(text)
     local cloudSelected = AsStr(d.selectedSkin)
     if state.selectedSkin == "default" and state.skins[cloudSelected] then
         state.selectedSkin = cloudSelected
+    end
+    -- 拖尾样式解锁跨设备取并集；装备仍是本地选择，仅当本机还是默认时接受云端选择。
+    for k in pairs(AsBoolMap(d.trails)) do state.trails[k] = true end
+    local cloudSelectedTrail = AsStr(d.selectedTrail)
+    if state.selectedTrail == "classic" and state.trails[cloudSelectedTrail] then
+        state.selectedTrail = cloudSelectedTrail
     end
     for k, v in pairs(cloudStats) do
         local cur = state.stats[k] or 0
@@ -686,6 +701,45 @@ function PlayerData.PurchaseSkin(key, cost)
     state.selectedSkin = key
     PlayerData.Save()
     print("[PlayerData] vehicle purchased " .. key)
+    return true
+end
+
+-- ============================================================================
+-- 拖尾样式（与车型相互独立）
+-- ============================================================================
+
+---@param key string
+---@return boolean
+function PlayerData.HasTrail(key)
+    return state.trails[key] == true
+end
+
+---@return string
+function PlayerData.GetSelectedTrail()
+    return state.selectedTrail
+end
+
+---@param key string
+---@return boolean
+function PlayerData.SelectTrail(key)
+    if not state.trails[key] then return false end
+    state.selectedTrail = key
+    PlayerData.Save()
+    return true
+end
+
+---@param key string
+---@param cost integer
+---@return boolean
+function PlayerData.PurchaseTrail(key, cost)
+    local price = math.floor(cost)
+    if price <= 0 or state.trails[key] or state.parts < price then return false end
+    state.parts = state.parts - price
+    state.totalSpent = state.totalSpent + price
+    state.trails[key] = true
+    state.selectedTrail = key
+    PlayerData.Save()
+    print("[PlayerData] trail purchased " .. key)
     return true
 end
 

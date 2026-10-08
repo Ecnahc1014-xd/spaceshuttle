@@ -290,6 +290,8 @@ local metaState = {
     firstGiftPrice = nil,
     skins = {},
     selectedSkin = "default",
+    trails = {},
+    selectedTrail = "classic",
     giftUsed = {},
     wheelReady = false,
     wheelPrize = 0,
@@ -448,6 +450,13 @@ RefreshMeta = function()
     end
     metaState.skins = skins
     metaState.selectedSkin = PlayerData.GetSelectedSkin()
+
+    local trails = {}
+    for _, trail in ipairs(MetaCatalog.GetTrails()) do
+        if PlayerData.HasTrail(trail.key) then trails[trail.key] = true end
+    end
+    metaState.trails = trails
+    metaState.selectedTrail = PlayerData.GetSelectedTrail()
 
     local giftUsed = {}
     for _, entry in ipairs(MetaCatalog.GetShopEntries()) do
@@ -673,6 +682,25 @@ local function HandleShopSkin(index)
     end
     PersistMeta()
     SetMetaToast("已购买 " .. skin.name)
+end
+
+---@param index integer
+local function HandleShopTrail(index)
+    local trails = MetaCatalog.GetTrails()
+    local trail = trails[index]
+    if not trail then return end
+    if PlayerData.HasTrail(trail.key) then
+        PlayerData.SelectTrail(trail.key)
+        PersistMeta()
+        SetMetaToast("已切换为 " .. trail.name)
+        return
+    end
+    if not PlayerData.PurchaseTrail(trail.key, trail.cost) then
+        SetMetaToast("零件不足，还差 " .. tostring(math.max(0, trail.cost - PlayerData.GetParts())))
+        return
+    end
+    PersistMeta()
+    SetMetaToast("已购买 " .. trail.name)
 end
 
 ---@param index integer
@@ -930,6 +958,12 @@ local function HandleMetaAction(action, index)
         MetaUI.PreviewVehicle(index)
     elseif action == "buy_skin" and index then
         HandleShopSkin(index)
+    elseif action == "shop_tab" then
+        MetaUI.SetShopTab(MetaUI.GetShopTab() == "trail" and "vehicle" or "trail")
+    elseif action == "preview_trail" and index then
+        MetaUI.PreviewTrail(index)
+    elseif action == "buy_trail" and index then
+        HandleShopTrail(index)
     elseif action == "ad_gift" and index then
         HandleAdGift(index)
     elseif action == "wheel_spin" then

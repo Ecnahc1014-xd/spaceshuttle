@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.39"
+local BUILD_VERSION = "0.13.40"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -1474,10 +1474,10 @@ local function DrawMenu(ctx, game, meta)
     nvgSave(ctx)
     nvgTranslate(ctx, 0, press * 2)
     uiFx.surface.Button(ctx, cta, C.cyan, glow, uiFx.anim)
-    -- 悬停反馈只压暗色面并强调短边刻度，不再扩散发光。
+    -- Surface统一绘制扫光和交互受光，主CTA只补折角，避免重复叠扫光。
     if glow > 0.01 then
         DrawCornerBrackets(ctx, cta.x + 2, cta.y + 2, cta.w - 4, cta.h - 4,
-            {C.ink[1], C.ink[2], C.ink[3], math.floor(glow * 160)}, 10, 1)
+            {C.text[1], C.text[2], C.text[3], math.floor(glow * 220)}, 10, 1)
     end
     DrawPixelText(ctx, game.width * 0.5, ctaY + 8, "开始战斗", 31, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -2888,7 +2888,8 @@ function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
     end
     -- v0.12.5：顶端通知条按快照 elapsed 差分计时（菜单/暂停也持续递减）。
     TickSystemBanner(gameSnapshot.elapsed or 0)
-    Renderer3D.Render(gameSnapshot, presentationSnapshot, metaState and metaState.selectedSkin)
+    Renderer3D.Render(gameSnapshot, presentationSnapshot,
+        metaState and metaState.selectedSkin, metaState and metaState.selectedTrail)
 end
 
 function Backend.RenderOverlay(gameSnapshot, presentationSnapshot, metaState)

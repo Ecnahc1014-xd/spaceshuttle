@@ -8,6 +8,9 @@ local VehicleShowcase = require "ui.VehicleShowcase"
 
 local MetaUI = {}
 local showroom = { index = 1, screen = "", key = "default" }
+-- 商店分页：车型 / 拖尾。拖尾有独立的预览下标（与车型下标互不干扰）。
+local shopTab = "vehicle"
+local trailIndex = 1
 
 -- 元层界面状态：由编排层（main.lua）组装，本模块只读。
 ---@class MetaTaskView
@@ -117,6 +120,9 @@ function MetaUI.Update(dt, meta, gameState)
             for i, skin in ipairs(MetaCatalog.GetSkins()) do
                 if skin.key == meta.selectedSkin then showroom.index = i; break end
             end
+            for i, trail in ipairs(MetaCatalog.GetTrails()) do
+                if trail.key == meta.selectedTrail then trailIndex = i; break end
+            end
         end
     end
     local skin = MetaCatalog.GetSkins()[showroom.index] or MetaCatalog.GetSkins()[1]
@@ -130,6 +136,25 @@ function MetaUI.PreviewVehicle(index)
     if not MetaCatalog.GetSkins()[index] then return false end
     showroom.index = index
     return true
+end
+
+---@param index integer
+---@return boolean
+function MetaUI.PreviewTrail(index)
+    if not MetaCatalog.GetTrails()[index] then return false end
+    trailIndex = index
+    return true
+end
+
+-- 商店分页切换（车型 / 拖尾）；切页只改浏览态，不动存档。
+---@param tab string "vehicle" | "trail"
+function MetaUI.SetShopTab(tab)
+    shopTab = (tab == "trail") and "trail" or "vehicle"
+end
+
+---@return string
+function MetaUI.GetShopTab()
+    return shopTab
 end
 
 function MetaUI.Shutdown()
@@ -161,12 +186,24 @@ end
 -- 标题左竖标与断续刻度统一分区语言，正文区域保持干净。
 local function SectionHeader(ctx, x, y, w, label)
     local C = Colors()
-    D.rect(ctx, x, y + 2, 3, 16, C.cyanDim, 1)
+    local phase = D.anim()
+    local pulse = 0.72 + 0.28 * math.sin(phase * math.pi * 0.5)
+    D.rect(ctx, x, y + 2, 3, 16,
+        {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(210 * pulse)}, 1)
     D.text(ctx, x + 9, y, label, 17, C.text)
     local lx = x + 9 + D.measure(ctx, label, 17) + 14
     local remain = math.max(0, x + w - lx)
     if remain >= 20 then
-        D.rule(ctx, lx, y + 10, remain, 8, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 95})
+        D.rule(ctx, lx, y + 10, remain, 8, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 120})
+        -- 流动段只走标题右方空白，不经过文字。
+        local length = math.min(24, remain * 0.25)
+        local scanX = lx + (phase % 6) / 6 * (remain - length)
+        nvgBeginPath(ctx)
+        nvgRect(ctx, scanX, y + 9, length, 2)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, scanX, y, scanX + length, y,
+            nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 0),
+            nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 200)))
+        nvgFill(ctx)
     end
 end
 
@@ -206,11 +243,20 @@ local function Button(ctx, r, label, sub, kind)
         local g = glow
         local hc = (kind == "primary" and C.cyan) or (kind == "ad" and C.ad)
             or (kind == "gold" and C.warn) or (kind == "danger" and C.error) or C.cyan
-        D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4,
-            {hc[1], hc[2], hc[3], math.floor(18 * g)}, 4)
-        D.stroke(ctx, r.x, r.y, r.w, r.h, {hc[1], hc[2], hc[3], math.floor(190 * g)}, 6, 1)
+        if kind ~= "primary" and kind ~= "ad" then
+            nvgBeginPath(ctx)
+            nvgRect(ctx, r.x - 6, r.y - 6, r.w + 12, r.h + 12)
+            nvgFillPaint(ctx, nvgBoxGradient(ctx, r.x, r.y, r.w, r.h, 6, 6,
+                nvgRGBA(hc[1], hc[2], hc[3], math.floor(85 * g)),
+                nvgRGBA(hc[1], hc[2], hc[3], 0)))
+            nvgFill(ctx)
+            D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4,
+                {hc[1], hc[2], hc[3], math.floor(28 * g)}, 4)
+            D.stroke(ctx, r.x, r.y, r.w, r.h,
+                {hc[1], hc[2], hc[3], math.floor(230 * g)}, 6, 1)
+        end
         D.corner(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4,
-            {hc[1], hc[2], hc[3], math.floor(180 * g)}, 7, 1)
+            {C.text[1], C.text[2], C.text[3], math.floor(210 * g)}, 7, 1)
     end
     local cx = r.x + r.w * 0.5
     if sub ~= "" then
@@ -265,7 +311,7 @@ local function Shell(ctx, w, h, title, subtitle)
         ["每日任务"] = "task",
         ["敌机图鉴"] = "codex",
         ["全服排行榜"] = "rank",
-        ["车型商店"] = "shop",
+        ["皮肤商店"] = "shop",
         ["幸运转盘"] = "premium_wheel_medal",
         ["战斗档案"] = "premium_pass_crest",
     }
@@ -763,6 +809,7 @@ end
 
 local function GetShopLayout(w)
     local content, close = GetShellLayout(w)
+    -- 分页标签条落在标题与展台之间的 48px 空档里（content.y+4..+38），不挤压下方。
     return {
         content = content, close = close, titleY = content.y + 8,
         stage = {x = content.x, y = content.y + 48, w = content.w, h = 244},
@@ -787,68 +834,178 @@ local function GetShopGiftButton(layout, index)
     return r, {x = r.x + r.w - 146, y = r.y + 4, w = 132, h = 48}
 end
 
-local function DrawShop(ctx, w, meta)
+-- 商店顶部两个分页按钮（车型 / 拖尾）；命中区与绘制同源。
+local function GetShopTabs(layout)
+    local gap = 8
+    local bw = (layout.content.w - gap) * 0.5
+    local y = layout.content.y + 4
+    return {x = layout.content.x, y = y, w = bw, h = 34},
+           {x = layout.content.x + bw + gap, y = y, w = bw, h = 34}
+end
+
+-- 拖尾 2D 预览：用与 3D 同一套样式参数，从右（车尾）向左画一条渐细光带。
+local function DrawTrailPreview(ctx, r, trailKey)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "车型商店", "实车展示")
-    local layout = GetShopLayout(w)
-    local skins = MetaCatalog.GetSkins()
-    local skin = skins[showroom.index]
-    local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
-    local equipped = meta.selectedSkin == skin.key
-    nvgSave(ctx)
-    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
-    D.text(ctx, content.x + 4, layout.titleY, skin.name, 32, C.text)
-    D.text(ctx, content.x + content.w - 4, layout.titleY + 7,
-        string.format("%02d / %02d", showroom.index, #skins), 18, C.dim,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawVehicleStage(ctx, layout.stage)
-    D.text(ctx, content.x + content.w * 0.5, content.y + 282, skin.desc, 18, C.text,
+    local style = MetaCatalog.GetTrailStyleParams(MetaCatalog.GetTrailStyle(trailKey))
+    local base = {0.30, 0.90, 1.00}
+    if style.warm == 1 then base = {1.00, 0.58, 0.18} end
+    local cx, cy = r.x + r.w * 0.5, r.y + r.h * 0.5
+    local x0, x1 = cx + r.w * 0.42, cx - r.w * 0.42   -- x0=车尾, x1=尾端
+    local baseHalf = 13
+    local dash = style.dash or 1
+    local twin = style.twin == 1
+    local railHalf = baseHalf * 0.32
+    local segs = 26
+    local function seg(xa, xb, half, alpha)
+        D.rect(ctx, xa, cy - half, xb - xa, half * 2, {base[1], base[2], base[3], alpha}, 0)
+    end
+    for i = 1, segs - 1 do
+        if (i % dash) == 0 then
+            local t0 = (i - 1) / (segs - 1)
+            local t1 = i / (segs - 1)
+            local xa = x0 + (x1 - x0) * t0
+            local xb = x0 + (x1 - x0) * t1
+            local tm = (t0 + t1) * 0.5
+            local half = (style.tailW + (style.headW - style.tailW) * tm) * baseHalf
+            local f = math.min(1, (style.base + (1 - style.base) * tm) * style.bright)
+            local alpha = math.floor(70 + 165 * f)
+            if twin then
+                D.rect(ctx, xa, cy - baseHalf * 1.35 - railHalf, xb - xa, railHalf * 2,
+                    {base[1], base[2], base[3], alpha}, 0)
+                D.rect(ctx, xa, cy + baseHalf * 1.35 - railHalf, xb - xa, railHalf * 2,
+                    {base[1], base[2], base[3], alpha}, 0)
+            else
+                seg(xa, xb, half, alpha)
+            end
+        end
+    end
+    D.text(ctx, r.x + r.w * 0.5, r.y + 10, "尾迹预览", 15, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    D.text(ctx, content.x + content.w * 0.5, content.y + 307, "车型外观 · 不改变战斗属性", 15, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    for i, entry in ipairs(skins) do
-        local r = GetShopCarButton(layout, i)
-        local active = i == showroom.index
+end
+
+-- 分页标签（车型 / 拖尾）：绘制与命中同源。
+local function DrawShopTabs(ctx, layout)
+    local C = Colors()
+    local vehicleTab, trailTab = GetShopTabs(layout)
+    local function tab(r, label, active)
         local glow, press = D.controlFx(r, true)
         D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card,
-            {120, 148, 162, 65}, 5)
-        if active then D.rect(ctx, r.x + 4, r.y + r.h - 3, r.w - 8, 2, C.cyan, 0) end
+            active and C.cyanDim or {120, 148, 162, 65}, 6)
+        if active then D.rect(ctx, r.x + 8, r.y + r.h - 3, r.w - 16, 2, C.cyan, 0) end
         if glow > 0.01 then
             D.stroke(ctx, r.x, r.y, r.w, r.h,
-                {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 200)}, 5, 1.4)
+                {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 200)}, 6, 1.4)
         end
-        D.text(ctx, r.x + 10, r.y + 12 + press * 2, entry.name, 18, C.text)
-        local has = entry.cost == 0 or (meta.skins and meta.skins[entry.key] == true)
-        D.text(ctx, r.x + 10, r.y + 45,
-            meta.selectedSkin == entry.key and "使用中" or (has and "已拥有" or tostring(entry.cost) .. " 零件"),
-            15, has and C.cyan or C.dim)
+        D.text(ctx, r.x + r.w * 0.5, r.y + 8 + press * 2, label, 17,
+            active and C.cyan or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
+    tab(vehicleTab, "车型外观", shopTab == "vehicle")
+    tab(trailTab, "拖尾样式", shopTab == "trail")
+end
+
+-- 六格浏览卡（车型/拖尾共用几何）：画一个卡、返回其命中矩形。
+local function DrawShopCard(ctx, layout, index, activeIndex, name, owned, equipped, cost)
+    local C = Colors()
+    local r = GetShopCarButton(layout, index)
+    local active = index == activeIndex
+    local glow, press = D.controlFx(r, true)
+    D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card, {120, 148, 162, 65}, 5)
+    if active then D.rect(ctx, r.x + 4, r.y + r.h - 3, r.w - 8, 2, C.cyan, 0) end
+    if glow > 0.01 then
+        D.stroke(ctx, r.x, r.y, r.w, r.h,
+            {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(glow * 200)}, 5, 1.4)
+    end
+    D.text(ctx, r.x + 10, r.y + 12 + press * 2, name, 18, C.text)
+    D.text(ctx, r.x + 10, r.y + 45,
+        equipped and "使用中" or (owned and "已拥有" or tostring(cost) .. " 零件"),
+        15, owned and C.cyan or C.dim)
+    return r
+end
+
+-- 购买/装备区（车型/拖尾共用）：画价格、余额与按钮。
+local function DrawShopPurchase(ctx, layout, equipped, owned, cost, parts, ownedNote, equipLabel, buyLabel)
+    local C = Colors()
+    local content = layout.content
     local buyY = layout.purchase.y
     D.panel(ctx, content.x, buyY - 7, content.w, 66, C.rail, C.cyanDim, 6)
     D.icon(ctx, "parts", content.x + 4, buyY + 10, 32, 1)
-    D.text(ctx, content.x + 46, buyY + 2, equipped and "当前使用" or (owned and "已拥有" or tostring(skin.cost)),
+    D.text(ctx, content.x + 46, buyY + 2, equipped and "当前使用" or (owned and "已拥有" or tostring(cost)),
         28, equipped and C.cyan or C.warn)
-    local balanceText = owned and "已纳入车型收藏" or string.format("持有 %d 零件", meta.parts or 0)
+    local balanceText = owned and ownedNote or string.format("持有 %d 零件", parts or 0)
     local balanceWidth = layout.purchase.x - content.x - 54
     local balanceSize, balanceFits = D.fit(ctx, balanceText, 15, balanceWidth, 15)
     if not balanceFits then
         -- 货币单位已有零件图标指示，饱和时移除重复单位，完整余额仍保留。
-        balanceText = "持有 " .. tostring(meta.parts or 0)
+        balanceText = "持有 " .. tostring(parts or 0)
         balanceSize = D.fit(ctx, balanceText, 15, balanceWidth, 15)
     end
     D.text(ctx, content.x + 46, buyY + 36, balanceText, balanceSize, C.dim)
-    local kind = (equipped or (not owned and (meta.parts or 0) < skin.cost)) and "disabled" or "primary"
-    local label = equipped and "使用中" or (owned and "装备此车" or ((meta.parts or 0) >= skin.cost and "购买车型" or "零件不足"))
+    local kind = (equipped or (not owned and (parts or 0) < cost)) and "disabled" or "primary"
+    local label = equipped and "使用中" or (owned and equipLabel or ((parts or 0) >= cost and buyLabel or "零件不足"))
     Button(ctx, layout.purchase, label, "", kind)
-    SectionHeader(ctx, content.x + 4, layout.giftTitleY, content.w - 8, "免费补给")
-    for i, gift in ipairs(MetaCatalog.GetShopEntries()) do
-        local r, btn = GetShopGiftButton(layout, i)
-        local used = meta.giftUsed and meta.giftUsed[gift.key] or 0
-        local limit = MetaCatalog.GetAdGiftDailyLimit(gift.key)
-        D.text(ctx, r.x + 4, r.y + 3, gift.name, 18, C.text)
-        D.text(ctx, r.x + 4, r.y + 29, gift.desc, 15, C.dim)
-        Button(ctx, btn, used < limit and "看广告" or "今日已领",
-            used < limit and string.format("%d/%d", used, limit) or "", used < limit and "ad" or "disabled")
+end
+
+local function DrawShop(ctx, w, meta)
+    local C = Colors()
+    local content, close = Shell(ctx, w, 960, "皮肤商店", "外观 · 不改变属性")
+    local layout = GetShopLayout(w)
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
+    DrawShopTabs(ctx, layout)
+    if shopTab == "trail" then
+        local trails = MetaCatalog.GetTrails()
+        local trail = trails[trailIndex]
+        local owned = trail.cost == 0 or (meta.trails and meta.trails[trail.key] == true)
+        local equipped = meta.selectedTrail == trail.key
+        D.text(ctx, content.x + 4, layout.titleY, trail.name, 32, C.text)
+        D.text(ctx, content.x + content.w - 4, layout.titleY + 7,
+            string.format("%02d / %02d", trailIndex, #trails), 18, C.dim,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        D.panel(ctx, layout.stage.x, layout.stage.y, layout.stage.w, layout.stage.h,
+            C.panel, C.cyanDim, 8)
+        DrawTrailPreview(ctx, layout.stage, trail.key)
+        D.text(ctx, content.x + content.w * 0.5, content.y + 282, trail.desc, 18, C.text,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, content.x + content.w * 0.5, content.y + 307, "拖尾样式 · 不改变战斗属性", 15, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        for i, entry in ipairs(trails) do
+            local has = entry.cost == 0 or (meta.trails and meta.trails[entry.key] == true)
+            DrawShopCard(ctx, layout, i, trailIndex, entry.name, has,
+                meta.selectedTrail == entry.key, entry.cost)
+        end
+        DrawShopPurchase(ctx, layout, equipped, owned, trail.cost, meta.parts,
+            "已纳入拖尾收藏", "装备此样式", "购买样式")
+    else
+        local skins = MetaCatalog.GetSkins()
+        local skin = skins[showroom.index]
+        local owned = skin.cost == 0 or (meta.skins and meta.skins[skin.key] == true)
+        local equipped = meta.selectedSkin == skin.key
+        D.text(ctx, content.x + 4, layout.titleY, skin.name, 32, C.text)
+        D.text(ctx, content.x + content.w - 4, layout.titleY + 7,
+            string.format("%02d / %02d", showroom.index, #skins), 18, C.dim,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        DrawVehicleStage(ctx, layout.stage)
+        D.text(ctx, content.x + content.w * 0.5, content.y + 282, skin.desc, 18, C.text,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, content.x + content.w * 0.5, content.y + 307, "车型外观 · 不改变战斗属性", 15, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        for i, entry in ipairs(skins) do
+            local has = entry.cost == 0 or (meta.skins and meta.skins[entry.key] == true)
+            DrawShopCard(ctx, layout, i, showroom.index, entry.name, has,
+                meta.selectedSkin == entry.key, entry.cost)
+        end
+        DrawShopPurchase(ctx, layout, equipped, owned, skin.cost, meta.parts,
+            "已纳入车型收藏", "装备此车", "购买车型")
+        SectionHeader(ctx, content.x + 4, layout.giftTitleY, content.w - 8, "免费补给")
+        for i, gift in ipairs(MetaCatalog.GetShopEntries()) do
+            local r, btn = GetShopGiftButton(layout, i)
+            local used = meta.giftUsed and meta.giftUsed[gift.key] or 0
+            local limit = MetaCatalog.GetAdGiftDailyLimit(gift.key)
+            D.text(ctx, r.x + 4, r.y + 3, gift.name, 18, C.text)
+            D.text(ctx, r.x + 4, r.y + 29, gift.desc, 15, C.dim)
+            Button(ctx, btn, used < limit and "看广告" or "今日已领",
+                used < limit and string.format("%d/%d", used, limit) or "", used < limit and "ad" or "disabled")
+        end
     end
     nvgRestore(ctx)
     return content, close
@@ -860,6 +1017,21 @@ local function HitTestShop(uiX, uiY, w, meta)
     local layout = GetShopLayout(w)
     if Inside(layout.close, uiX, uiY) then return "close", nil end
     if not Inside(layout.content, uiX, uiY) then return nil, nil end
+    local vehicleTab, trailTab = GetShopTabs(layout)
+    if Inside(vehicleTab, uiX, uiY) then return "shop_tab", nil end
+    if Inside(trailTab, uiX, uiY) then return "shop_tab", nil end
+    if shopTab == "trail" then
+        local trails = MetaCatalog.GetTrails()
+        for i in ipairs(trails) do
+            local r = GetShopCarButton(layout, i)
+            if Inside(r, uiX, uiY) then return "preview_trail", i end
+        end
+        local trail = trails[trailIndex]
+        local owned = trail.cost == 0 or (meta.trails and meta.trails[trail.key] == true)
+        if Inside(layout.purchase, uiX, uiY) and meta.selectedTrail ~= trail.key
+            and (owned or (meta.parts or 0) >= trail.cost) then return "buy_trail", trailIndex end
+        return nil, nil
+    end
     local skins = MetaCatalog.GetSkins()
     for i in ipairs(skins) do
         local r = GetShopCarButton(layout, i)

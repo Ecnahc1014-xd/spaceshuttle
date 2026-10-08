@@ -3,6 +3,7 @@
 
 local Renderer3D = {}
 local VehicleGeometry = require "VehicleGeometry"
+local MetaCatalog = require "MetaCatalog"
 
 local selectedSkin_ = "default"
 
@@ -82,8 +83,23 @@ local TRAIL_BEHIND_Z = 0.16           -- 相对车辆锚点再远 0.16m，光带
 -- v0.13.22：光带从**车尾**拖出（用户要求「跟随车尾而不是体积中心」）。
 -- 车辆局部 +X 为车头、半长约 1.8 局部单位；沿 -朝向 后退 = 车尾。
 local TRAIL_TAIL_LOCAL = 1.75
-local TRAIL_HALF_WIDTH_HEAD = 0.30    -- 头段半宽（× 权威半径 × WORLD_SCALE）
-local TRAIL_HALF_WIDTH_TAIL = 0.012   -- 尾段半宽（渐收成一条细线）
+
+-- v0.13.40：拖尾样式（皮肤商店可换）。几何参数由 MetaCatalog 单一定义
+-- （Renderer3D 生成 3D 光带、MetaUI 画 2D 预览共用一份），所有样式共用同一条
+-- CustomGeometry + DiffVCol 路径，只改宽度/明暗/分段/双轨，不改规则层。
+local trailStyle_ = "ribbon"
+
+-- 头亮尾暗的顶点色：t=1 头、t=0 尾。DiffVCol 消费顶点色。
+local function TrailColor(base, t, style)
+    local f = (style.base + (1 - style.base) * t) * style.bright
+    local r, g, b = base[1] * f, base[2] * f, base[3] * f
+    if style.warm == 1 then
+        r = r + 0.35 * t
+        g = g + 0.18 * t
+        b = b * (1 - 0.45 * t)
+    end
+    return Color(math.min(1, r), math.min(1, g), math.min(1, b), 1)
+end
 local PARTICLE_FRONT_Z = -0.95   -- 浮在敌机体素表面（相机在 -Z 侧）与飞散箱之前
 
 
@@ -1181,6 +1197,21 @@ local AIM_LINE_SEGMENTS = 14     -- 沿线排布的软圆点数
 local AIM_LINE_DOT_WORLD = 0.10  -- 起点端点尺寸（世界米），向终点渐小
 local AIM_LINE_COLOR = Color(0.30, 0.90, 1.0, 1)
 
+-- 提交一个四边形段：a→b 之间沿法线 (nx,ny) 张开 w0/w1 半宽，中心各偏移 o0/o1
+-- （o 沿法线方向；双轨样式靠偏移 + 收窄宽度得到两条平行光轨）。
+local function EmitTrailQuad(verts, a, b, nx, ny, w0, w1, c0, c1, o0, o1, az, bz)
+    local p1 = Vector3(a.x + nx * (w0 + o0), a.y + ny * (w0 + o0), az)
+    local p2 = Vector3(a.x + nx * (o0 - w0), a.y + ny * (o0 - w0), az)
+    local p3 = Vector3(b.x + nx * (o1 - w1), b.y + ny * (o1 - w1), bz)
+    local p4 = Vector3(b.x + nx * (o1 + w1), b.y + ny * (o1 + w1), bz)
+    verts[#verts + 1] = {p1, c0}
+    verts[#verts + 1] = {p2, c0}
+    verts[#verts + 1] = {p3, c1}
+    verts[#verts + 1] = {p1, c0}
+    verts[#verts + 1] = {p3, c1}
+    verts[#verts + 1] = {p4, c1}
+end
+
 local function ClearTrailSamples()
     trailSamples_ = {}
     if not trailGeometries_ then return end
@@ -1298,37 +1329,40 @@ local function SyncVehicleTrails(game, dt)
         if active or trailActive_[ballType] then
             local verts = {}
             local base = BALL_COLORS[ballType] or BALL_COLORS.normal
+            local style = MetaCatalog.GetTrailStyleParams(trailStyle_)
             for _, track in ipairs(tracks) do
                 local samples = track.points
                 local n = #samples
-                local halfHead = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_HEAD
-                local halfTail = track.radius * WORLD_SCALE * TRAIL_HALF_WIDTH_TAIL
+                local halfHead = track.radius * WORLD_SCALE * style.headW
+                local halfTail = track.radius * WORLD_SCALE * style.tailW
+                -- 双轨样式：只画左右两条细轨（不再画中线），偏移取头段宽度。
+                local tw = style.twin == 1
+                local railW = halfHead * 0.32          -- 单条轨的半宽
+                local offA, offB = -halfHead * 1.35, halfHead * 1.35
                 for i = 1, n - 1 do
-                    local a = samples[i]
-                    local b = samples[i + 1]
-                    local sdx, sdy = b.x - a.x, b.y - a.y
-                    local len = math.sqrt(sdx * sdx + sdy * sdy)
-                    if len > 0.0005 then
-                        local nx, ny = -sdy / len, sdx / len
-                        -- t：1 = 头（新），0 = 尾（旧）
-                        local t0 = (i - 1) / (n - 1)
-                        local t1 = i / (n - 1)
-                        local w0 = halfTail + (halfHead - halfTail) * t0
-                        local w1 = halfTail + (halfHead - halfTail) * t1
-                        -- 亮度：头亮尾暗（顶点色，DiffVCol 消费）
-                        local c0 = Color(base[1] * t0, base[2] * t0, base[3] * t0, 1)
-                        local c1 = Color(base[1] * t1, base[2] * t1, base[3] * t1, 1)
-                        local az, bz = a.z + TRAIL_BEHIND_Z, b.z + TRAIL_BEHIND_Z
-                        local p1 = Vector3(a.x + nx * w0, a.y + ny * w0, az)
-                        local p2 = Vector3(a.x - nx * w0, a.y - ny * w0, az)
-                        local p3 = Vector3(b.x - nx * w1, b.y - ny * w1, bz)
-                        local p4 = Vector3(b.x + nx * w1, b.y + ny * w1, bz)
-                        verts[#verts + 1] = {p1, c0}
-                        verts[#verts + 1] = {p2, c0}
-                        verts[#verts + 1] = {p3, c1}
-                        verts[#verts + 1] = {p1, c0}
-                        verts[#verts + 1] = {p3, c1}
-                        verts[#verts + 1] = {p4, c1}
+                    -- 断续样式：每 dash 段只画 1 段（实线时 dash=1，恒真）。
+                    if (i % style.dash) == 0 then
+                        local a = samples[i]
+                        local b = samples[i + 1]
+                        local sdx, sdy = b.x - a.x, b.y - a.y
+                        local len = math.sqrt(sdx * sdx + sdy * sdy)
+                        if len > 0.0005 then
+                            local nx, ny = -sdy / len, sdx / len
+                            -- t：1 = 头（新），0 = 尾（旧）
+                            local t0 = (i - 1) / (n - 1)
+                            local t1 = i / (n - 1)
+                            local w0 = halfTail + (halfHead - halfTail) * t0
+                            local w1 = halfTail + (halfHead - halfTail) * t1
+                            local c0 = TrailColor(base, t0, style)
+                            local c1 = TrailColor(base, t1, style)
+                            local az, bz = a.z + TRAIL_BEHIND_Z, b.z + TRAIL_BEHIND_Z
+                            if tw then
+                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, offA, offA, az, bz)
+                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, offB, offB, az, bz)
+                            else
+                                EmitTrailQuad(verts, a, b, nx, ny, w0, w1, c0, c1, 0, 0, az, bz)
+                            end
+                        end
                     end
                 end
             end
@@ -1588,9 +1622,10 @@ local function ClearRunVisuals()
     print("[Renderer3D][perf] new run: previous 3D objects cleared")
 end
 
-function Renderer3D.Render(game, presentation, skin)
+function Renderer3D.Render(game, presentation, skin, trail)
     if not initialized_ then return end
     selectedSkin_ = skin or "default"
+    trailStyle_ = MetaCatalog.GetTrailStyle(trail)
 
     local elapsed = game.elapsed or 0
     if lastRenderElapsed_ and elapsed < lastRenderElapsed_ - 0.0001 then
@@ -1637,6 +1672,20 @@ function Renderer3D.Render(game, presentation, skin)
     SyncDebris(presentation)
     SyncParticles(presentation)
     SyncAimLine(game)
+end
+
+-- 诊断用（只读）：当前拖尾样式的顶点数（几何是否提交）与激活的弹种数。
+function Renderer3D.DebugTrailVertexCount()
+    if not trailGeometries_ then return 0 end
+    local total, enabled = 0, 0
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        local record = trailGeometries_[ballType]
+        if record then
+            total = total + record.geometry:GetNumVertices(0)
+            if record.node.enabled then enabled = enabled + 1 end
+        end
+    end
+    return total, enabled
 end
 
 function Renderer3D.Shutdown()

@@ -101,6 +101,85 @@ function MetaCatalog.GetSkin(key)
 end
 
 -- ============================================================================
+-- 拖尾样式（车辆飞行光带）：与车型相互独立，可分别购买与装备。
+-- style 决定 Renderer3D 如何生成光带几何；所有样式共用同一条已验证可见的
+-- CustomGeometry + DiffVCol 路径，只改变形状/宽度/明暗，不改规则层。
+
+---@class TrailDef
+---@field key string
+---@field name string
+---@field cost integer 0 表示默认拥有
+---@field desc string
+---@field style string 几何样式：ribbon | comet | neon | dash | twin | ember
+
+---@type TrailDef[]
+local TRAILS = {
+    { key = "classic", name = "经典尾焰", cost = 0, style = "ribbon",
+      desc = "渐细渐隐的光带 · 默认样式" },
+    { key = "comet",   name = "彗星",     cost = 600, style = "comet",
+      desc = "圆润渐收 · 尾端更亮更短" },
+    { key = "neon",    name = "霓虹",     cost = 1200, style = "neon",
+      desc = "细长等宽 · 高亮芯线" },
+    { key = "dash",    name = "流光",     cost = 1800, style = "dash",
+      desc = "断续光点 · 高速闪烁" },
+    { key = "twin",    name = "双轨",     cost = 2600, style = "twin",
+      desc = "左右两条平行光轨" },
+    { key = "ember",   name = "余烬",     cost = 3600, style = "ember",
+      desc = "宽幅暖色 · 尾部剧烈收束" },
+}
+
+---@return TrailDef[]
+function MetaCatalog.GetTrails()
+    return TRAILS
+end
+
+---@param key string
+---@return TrailDef|nil
+function MetaCatalog.GetTrail(key)
+    for _, trail in ipairs(TRAILS) do
+        if trail.key == key then return trail end
+    end
+    return nil
+end
+
+---@param key string
+---@return string
+function MetaCatalog.GetTrailStyle(key)
+    local trail = MetaCatalog.GetTrail(key)
+    return trail and trail.style or "ribbon"
+end
+
+-- 拖尾几何参数（纯数据，供 Renderer3D 生成 3D 光带、MetaUI 绘制 2D 预览）：
+--   headW/tailW：头/尾半宽（× 权威半径 × WORLD_SCALE）
+--   bright：整体亮度倍率；base：尾部色阶下限（避免尾端纯黑）
+--   dash：每 N 段只画 1 段（1=实线）；twin：1=左右双轨
+--   warm：1=向暖色偏移（余烬）
+---@class TrailStyleParams
+---@field headW number
+---@field tailW number
+---@field bright number
+---@field base number
+---@field dash integer
+---@field twin integer
+---@field warm integer
+
+---@type table<string, TrailStyleParams>
+local TRAIL_STYLE_PARAMS = {
+    ribbon = {headW = 0.30, tailW = 0.012, bright = 1.00, base = 0.00, dash = 1, twin = 0, warm = 0},
+    comet  = {headW = 0.44, tailW = 0.26,  bright = 1.15, base = 0.35, dash = 1, twin = 0, warm = 0},
+    neon   = {headW = 0.11, tailW = 0.11,  bright = 1.40, base = 0.62, dash = 1, twin = 0, warm = 0},
+    dash   = {headW = 0.26, tailW = 0.05,  bright = 1.10, base = 0.10, dash = 2, twin = 0, warm = 0},
+    twin   = {headW = 0.16, tailW = 0.02,  bright = 1.05, base = 0.05, dash = 1, twin = 1, warm = 0},
+    ember  = {headW = 0.56, tailW = 0.006, bright = 1.20, base = 0.15, dash = 1, twin = 0, warm = 1},
+}
+
+---@param style string
+---@return TrailStyleParams
+function MetaCatalog.GetTrailStyleParams(style)
+    return TRAIL_STYLE_PARAMS[style] or TRAIL_STYLE_PARAMS.ribbon
+end
+
+-- ============================================================================
 -- 商城：车辆车型使用软货币零件；广告礼包为主动观看激励视频后领取。
 
 -- ============================================================================
