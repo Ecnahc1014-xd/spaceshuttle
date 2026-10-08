@@ -1037,7 +1037,7 @@ local function DrawShop(ctx, w, meta)
                 meta.selectedTrail == entry.key, entry.cost)
         end
         DrawShopPurchase(ctx, layout, equipped, owned, trail.cost, meta.parts,
-            "已纳入拖尾收藏", "装备此样式", "购买样式")
+            "已纳入拖尾收藏", "装备此样式", "解锁样式")
     else
         local skins = MetaCatalog.GetSkins()
         local skin = skins[showroom.index]
@@ -1059,7 +1059,7 @@ local function DrawShop(ctx, w, meta)
                 meta.selectedSkin == entry.key, entry.cost)
         end
         DrawShopPurchase(ctx, layout, equipped, owned, skin.cost, meta.parts,
-            "已纳入车型收藏", "装备此车", "购买车型")
+            "已纳入车型收藏", "装备此车", "解锁车型")
         SectionHeader(ctx, content.x + 4, layout.giftTitleY, content.w - 8, "免费补给")
         for i, gift in ipairs(MetaCatalog.GetShopEntries()) do
             local r, btn = GetShopGiftButton(layout, i)
@@ -1119,8 +1119,10 @@ end
 -- 战斗档案（累计击碎方块升级，逐级领取免费零件）
 -- ============================================================================
 
+-- v0.13.45：里程碑行整体下移 22px，为上方新增的分区标题让出位置。
+-- 本函数是绘制与命中（HitTestPass）的共同来源，改这里两处自动同步。
 local function GetPassRewardRect(content, index)
-    return { x = content.x, y = content.y + 174 + (index - 1) * 92,
+    return { x = content.x, y = content.y + 196 + (index - 1) * 92,
         w = content.w, h = 82 }
 end
 
@@ -1163,6 +1165,8 @@ local function DrawPass(ctx, w, meta)
         Button(ctx, ur, label, "精英轨 · 奖励×2", affordable and "gold" or "disabled")
     end
 
+    -- v0.13.45：补分区标题，与主菜单/钻石商店同语言（青色＝免费产出语义）。
+    SectionHeader(ctx, content.x + 4, content.y + 172, content.w - 8, "里程碑奖励")
     for i, item in ipairs(meta.passRewards or {}) do
         local r = GetPassRewardRect(content, i)
         local border = item.claimable and C.cyan or (item.unlocked and C.cyanDim or C.widget)
