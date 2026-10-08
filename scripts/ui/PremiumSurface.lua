@@ -119,6 +119,21 @@ function Surface.Panel(ctx, x, y, w, h, fill, border, radius, emphasis)
     if w >= 90 then
         GlassStrip(ctx, x + 1, y + 2, 3, h - 4, emphasis and 30 or 20)
     end
+    -- ④b 玻璃漆面：上半区一道极淡的斜向高光，让色面从「平涂」变成「有漆面反射」。
+    if w >= 70 and h >= 34 then
+        nvgSave(ctx)
+        nvgIntersectScissor(ctx, x + 1, y + 1, w - 2, h - 2)
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, x, y + 1)
+        nvgLineTo(ctx, x + w * 0.62, y + 1)
+        nvgLineTo(ctx, x + w * 0.34, y + h * 0.52)
+        nvgLineTo(ctx, x, y + h * 0.52)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y, x + w * 0.4, y + h * 0.5,
+            nvgRGBA(255, 255, 255, emphasis and 20 or 12),
+            nvgRGBA(255, 255, 255, 0)))
+        nvgFill(ctx)
+        nvgRestore(ctx)
+    end
     -- ⑤ 描边：强调面板用语义色，普通面板压暗，不抢焦点。
     local edge = emphasis and border or C.dim
     nvgBeginPath(ctx)
@@ -232,6 +247,20 @@ function Surface.Button(ctx, r, color, glow, phase)
         nvgRGBA(0, 0, 0, 0), nvgRGBA(0, 0, 0, 78)))
     nvgFill(ctx)
     GlassStrip(ctx, r.x + 2, r.y + 2, 3, r.h - 4, math.floor(30 + g * 30))
+    -- 玻璃漆面斜高光：按钮的「亮面」来源，与面板同语言。
+    if r.w >= 40 and r.h >= 22 then
+        nvgSave(ctx)
+        nvgIntersectScissor(ctx, r.x + 1, r.y + 1, r.w - 2, r.h - 2)
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, r.x, r.y + 1)
+        nvgLineTo(ctx, r.x + r.w * 0.58, r.y + 1)
+        nvgLineTo(ctx, r.x + r.w * 0.30, r.y + r.h * 0.54)
+        nvgLineTo(ctx, r.x, r.y + r.h * 0.54)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, r.x, r.y, r.x + r.w * 0.4, r.y + r.h * 0.5,
+            nvgRGBA(255, 255, 255, math.floor(26 + g * 26)), nvgRGBA(255, 255, 255, 0)))
+        nvgFill(ctx)
+        nvgRestore(ctx)
+    end
     -- 亮边。
     nvgBeginPath(ctx)
     nvgRoundedRect(ctx, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, 4)
@@ -341,13 +370,18 @@ function Surface.Background(ctx, x, y, w, h, phase)
             nvgRGBA(0, 0, 0, bottom and 150 or 0)))
         nvgFill(ctx)
     end
-    -- 侧轨 + 刻度。
+    -- 侧轨 + 刻度（v0.13.43：加胶囊标记，与规范 §4 的侧栏同构）。
     for _, xx in ipairs({ x + 3, x + w - 9 }) do
         Box(ctx, xx, y + 28, 6, h - 56, C.rail, 2)
         Line(ctx, xx, y + 28, xx + 6, y + 28, C.dim, 120)
         Line(ctx, xx, y + h - 28, xx + 6, y + h - 28, C.dim, 120)
         for yy = y + 42, y + h - 30, 46 do
             Line(ctx, xx + 1, yy, xx + 5, yy, C.cyanDim, 110)
+        end
+        -- 胶囊标记：每 46px 一枚，比刻度更亮，给侧轨「仪器格」的读数感。
+        for yy = y + 60, y + h - 52, 92 do
+            Box(ctx, xx + 1, yy, 4, 11, C.cyanDim, 2, 130)
+            Line(ctx, xx + 1, yy + 15, xx + 5, yy + 15, C.cyanDim, 90)
         end
     end
     nvgRestore(ctx)

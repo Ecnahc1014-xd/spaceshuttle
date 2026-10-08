@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.42"
+local BUILD_VERSION = "0.13.43"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -814,12 +814,25 @@ local function DrawTechPanel(ctx, x, y, width, height, fill, border)
     DrawCornerBrackets(ctx, x + 1, y + 1, width - 2, height - 2, border, math.min(8, width * 0.22), 1)
 end
 
-local function DrawPixelText(ctx, x, y, text, size, color, align)
+-- 文字描边（v0.13.43）：规范 §8 的清晰度做法——四方向偏移同字绘制，
+-- 不是 nvgStrokeText。大字才有必要，小字描边会糊。outlined 省略时按字号自动判定。
+local function DrawPixelText(ctx, x, y, text, size, color, align, outlined)
     UseTechFont(ctx)
     uiFx.surface.UseFont(ctx, size)
     nvgFontSize(ctx, size)
     nvgTextAlign(ctx, align or (NVG_ALIGN_LEFT + NVG_ALIGN_TOP))
-    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    local alpha = color[4] or 255
+    local wantOutline = outlined
+    if wantOutline == nil then wantOutline = size >= 17 end
+    if wantOutline and size >= 12 then
+        -- 深色描边把亮字从任何底色里托出来；alpha 随字色走，避免淡字被描边反客为主。
+        nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], math.min(235, alpha)))
+        nvgText(ctx, x - 1, y, text, nil)
+        nvgText(ctx, x + 1, y, text, nil)
+        nvgText(ctx, x, y - 1, text, nil)
+        nvgText(ctx, x, y + 1, text, nil)
+    end
+    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha))
     nvgText(ctx, x, y, text, nil)
 end
 
