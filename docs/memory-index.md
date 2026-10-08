@@ -8,8 +8,8 @@
 # 项目记忆索引
 
 项目：击碎，飞机大战
-当前版本：0.13.45
-简述：**按 skill 调配其余面板 + 措辞统一（纯加法，不删已有质感）**——用户明确「已有的贵的部分要保留」：战斗档案补青色分区标题「里程碑奖励」（里程碑行 y 174→196 让位，几何共同来源同步）、商店「购买样式/购买车型」改「解锁样式/解锁车型」。不重写既有绘制、不调低任何既有 alpha/层数/渐变，面板多层受光/漆面/描边/背景扫光/展台光场/文字描边全部保留。LSP 0 Error、五个真渲染探针目标错误 0、官方多人 build 与预览上传成功；展示版本 →0.13.45。
+当前版本：0.13.47
+简述：减少关卡同质化——每关进入时随机生成布局（精英波位从 1–9 随机抽 3 个、精英/Boss 机型随机、关卡特性随机：标准/急行推进/密集编队/增援编队），第 10 波恒为 Boss（只随机机型）。承接 0.13.26 出怪梯度（起点 1 架、同波逐架飞出）。正式名「击碎，飞机大战」。
 最后巩固：2026-10-08
 ## 车辆白色轮廓（2026-10-08，vehicle-outline 附记）
 - 用户要求「为车辆加入白色轮廓」。用**翻面外壳**实现：`VehicleGeometry.GetMesh` 把车体全部六段三角面绕整车包围盒中心放大 `OUTLINE_SCALE=1.035` 后翻转绕序（顶点序 a,c,b、法线取反），作为第 7 个 section；默认背面剔除下只剩远侧壳，在车体外缘露出白边。几何随 `meshCache` 缓存，战斗与展台共用。
@@ -181,6 +181,7 @@
 - headless 验证器当前会因自带 shader cache 字节码报 engine error；判断脚本时需关注 `lua_errors=0`、`resource_errors=0` 并结合 GLES 截图
 
 ## 最近变更
+- v0.13.47（**减少关卡同质化：每关随机布局 + 关卡特性**）：用户「减少各关卡之间的同质化，一部分东西我希望局内随机」（并明确「不要问我细节自己做好」）。根因：`ELITE_SLOTS={[3],[6],[8]}` 写死波位 + `GetSpecialKey`/`PickFormation` 确定性取模循环 → 每关都是 3/6/8 精英、机型阵型同一条轮转带。做法：`StageCatalog` 新增 `BeginStage(stage,seed)` + 自持 LCG `MakeRng` + `currentLayout`；每次进关重掷①精英波位（1–9 随机抽 3）②精英/Boss 机型③关卡特性（标准×2/急行 intervalMul0.82/密集 spawnMul0.82/增援 waveAdd+1）④副标题。`Game.ResetGame` 设好 stage 后调 `BeginStage(startStage, os.time())`（选关/下一关/再战/重开四入口都覆盖）；`GetKind` 补 stage 实参；快照加 `s.stageSubtitle`，横幅硬编码文案改读它。硬约束：第 10 波恒 Boss（胜负判定绑定），只随机机型。随机逻辑放独立模块以避开 Game.lua 197/200 顶层 local 上限。验证：多人 build+预览、LSP 0 Error、`probe_layout` 全绿（同种子可复现/12 种子 12 种布局/恒 3 精英/第10波恒 boss/三特性数值生效）、真渲染冒烟零错误且日志实锤同关两次进入布局不同。教训→AB-201。
 - v0.13.27（**修恶性回归：逐架生成的敌机全叠在正中**）：用户报「飞机全都生成在正中」——v0.13.26 改逐架生成时 `SpawnNextNormalEnemy` 每架写死 `x = DW*0.5 - shipW*0.5`，而横向铺开的 `ComputeFormationSlots` 同批被当死代码删了 → 整波叠在一条竖线。修法：`SpawnNextNormalEnemy` 加**确定性横向分道**（5 条车道，`lane = pendingSpawn.lane % 5`，x 按 `shipW` 自适应；`pendingSpawn` 加 `lane` 字段；每波 `lane = (wave-1)%5` 起始错开；ResetGame 归零；车道数用函数内局部量不占顶层 local）。验证：多人 build+预览、LSP 0、真渲染探针零错误、`probe_lane` 唯一 x 位置 5→7 个（20/114/188/316/376/415，不再全居中）、`probe_gap` 1 格间距未破（关1 120.85/关12 14.60）。教训→AB-170：删/换生成路径前先列旧函数负责的每个维度（x 分布/y 错峰/阵型）逐条确认新路径有等价实现。
 - v0.13.26（出怪梯度重做：数量起点 1 架 + 同波逐架飞出 + 波间隔逐关收紧 + 预告写明远方生成）：用户三点要求——①普通波起点「比 2 更低」且「允许不到 12」；②「出怪间隔维度」= 同波内**一架接一架飞出**，关1 间隔最长、逐关收紧，任意两架初始≥1 格；③「出怪下方提示的怪不会立刻抵达屏幕，请写明在远方生成」。改动：`GetNormalCount` 起点 2→1（关1 1/1/2/2/3/3、关7 4/4/5/5/6/6、关15 9/9/10/10/11/11，不触 12）；`GetInterval` **方向反转**（旧版随关卡变长 15.5→25.1s 是反的 → 关1 22s 最长、每关 -0.9s、下限 7s）；新增 `GetSpawnInterval`（2.8s→1.12s）；护航改前 3 关 0。`Game.lua` 加 `pendingSpawn` 状态表 + `SpawnNextNormalEnemy`/`ReleaseEscortVolley`（逐架放出、隔 1 格、满场/无空位则推迟绝不叠放），**删除** `SpawnEliteEscorts`/`ComputeFormationSlots`/`LiftSlotsOffExisting` 死代码；`FleetPositionOccupied` 加 `gap` 参数；Boss 改「有人在位就从更远方生成」。`DrawNextWavePreview` 加「自远方飞入」一行。验证：多人 build+预览、LSP 0 Error、真渲染探针零错误、`probe_gap` 实测生成时刻最小间距关1 120.85/关12 14.60（均≥一格）。⚠️ 运行时抓到 AB-169：加 7 个顶层 local 超 Lua 200 上限 → LoadChunk failed（LSP/build 都查不到）；间隔下限须按最慢机型（×0.66）估算。
 - v0.13.25（尾迹不可见**真根因**：`CustomGeometry:Clear()` 清空材质槽）：用户「特效不可见」。几何已验证提交（54 顶点）、节点已启用 → 探针扩到读材质，一击命中 `enabled=true numVert=54 mat=false`（有顶点无材质）。根因：`Clear()` 连材质槽一起清空，尾迹只在 Init 绑过一次、重建后从不重设；**敌机可见正因为每次 Clear 后都重设 SetMaterial**。修复：Commit 后重绑材质。⚠️ 此前 SetDynamic/CULL_NONE/法线/自发光各层都对，材质在 Clear 时就丢了 → 单层验证看不到。验证：复测 mat=true、零 Lua 错误、LSP 0、前向引用 0、build+预览上传。教训→AB-168。\n

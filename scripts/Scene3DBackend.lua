@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.45"
+local BUILD_VERSION = "0.13.47"
 local GAME_TITLE = "击碎，飞机大战"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "击碎飞机"
@@ -2160,7 +2160,7 @@ local function DrawWaveBanner(ctx, game, presentation)
         DrawPixelText(ctx, game.width * 0.5, 264, string.format("第 %d 关开始", number), 27, C.cyan,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawPixelText(ctx, game.width * 0.5, 306,
-            "十波防线 · 三精英一首领", 16, C.text,
+            game.stageSubtitle or "十波防线 · 三精英一首领", 16, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         nvgRestore(ctx)
         return

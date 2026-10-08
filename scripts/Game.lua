@@ -663,6 +663,9 @@ ResetGame = function(startStage)
     stage = startStage
     stageWave = 1
     wave = (startStage - 1) * StageCatalog.WAVES_PER_STAGE + 1
+    -- v0.13.46：进入关卡时生成本关随机布局（精英波位 / 精英与 Boss 机型 / 关卡特性）。
+    -- 选关、下一关、再战、重开都会重掷——同一关每次进入都可能不同。
+    StageCatalog.BeginStage(startStage, os.time())
     bossDefeated = false
     stageResult = nil
     elapsed = 0
@@ -939,7 +942,7 @@ end
 PlanWave = function(waveNum)
     local currentStage = StageCatalog.GetStage(waveNum)
     local currentStageWave = StageCatalog.GetStageWave(waveNum)
-    local kind = StageCatalog.GetKind(currentStageWave)
+    local kind = StageCatalog.GetKind(currentStage, currentStageWave)
     if kind ~= "normal" then
         local escortPool = GetAvailableTypes(waveNum)
         return {
@@ -3113,6 +3116,7 @@ function Game.GetSnapshot()
     s.stage = stage
     s.stageWave = stageWave
     s.wavesPerStage = StageCatalog.WAVES_PER_STAGE
+    s.stageSubtitle = StageCatalog.GetLayoutSubtitle(stage)
     s.stageResult = stageResult
     -- v0.13.13：关卡无限——永远有下一关；stageTotal 只是「难度封顶参考关数」。
     s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil) or false

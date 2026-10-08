@@ -672,8 +672,10 @@ local function DrawTasks(ctx, w, meta)
     local tasks = meta.tasks or {}
     local rowH, gap = 108, 12
     local y = content.y + 16
-    D.text(ctx, content.x + 4, y, "完成每日任务，领取零件", 16, C.dim)
-    y = y + 32
+    -- v0.13.46：补分区标题（与主菜单/商店/战斗档案同语言），提示行与任务行整体下移让位。
+    SectionHeader(ctx, content.x + 4, content.y + 14, content.w - 8, "今日任务")
+    D.text(ctx, content.x + 4, y + 26, "完成每日任务，领取零件", 16, C.dim)
+    y = y + 54
     for i, task in ipairs(tasks) do
         local r = { x = content.x, y = y + (i - 1) * (rowH + gap), w = content.w, h = rowH }
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, task.claimable and C.warn or C.cyanDim, 6)
@@ -708,7 +710,8 @@ local function HitTestTasks(uiX, uiY, w, meta)
     if Inside(close, uiX, uiY) then return "close", nil end
     local tasks = meta.tasks or {}
     local rowH, gap = 108, 12
-    local y = L.y + 48
+    -- v0.13.46：与 DrawTasks 同步下移 22px（分区标题让位），两处必须一致。
+    local y = L.y + 70
     for i = 1, #tasks do
         local r = { x = L.x, y = y + (i - 1) * (rowH + gap), w = L.w, h = rowH }
         local btn = { x = r.x + r.w - 148, y = r.y + 24, w = 132, h = 60 }
@@ -751,6 +754,12 @@ local function DrawCodex(ctx, w, meta)
         local owned = meta.codex and meta.codex[entry.key] == true
         D.panel(ctx, x, y, cw, ch, C.card, owned and C.cyanDim or C.widget, 6)
         D.rect(ctx, x, y, 3, ch, owned and C.cyan or C.widget, 0)
+        -- v0.13.46：补内受光 / 内沉影 / 顶亮线，与商店浏览卡同一套厚度语言（只加不减）。
+        D.rect(ctx, x + 2, y + 2, cw - 4, math.floor(ch * 0.42),
+            {255, 255, 255, owned and 20 or 12}, 4)
+        D.rect(ctx, x + 2, y + math.floor(ch * 0.62), cw - 4,
+            ch - math.floor(ch * 0.62) - 2, {0, 0, 0, owned and 40 or 28}, 4)
+        D.rect(ctx, x + 4, y + 1, cw - 8, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
         D.text(ctx, x + 14, y + 10, entry.name, 19, owned and C.text or C.dim)
         local aircraft = meta.aircraft and meta.aircraft[entry.key]
         if aircraft then
@@ -823,6 +832,13 @@ local function DrawRank(ctx, w, meta)
         local mine = item.isMe == true
         D.panel(ctx, r.x, r.y, r.w, r.h, mine and C.widget or C.card,
             mine and C.cyan or C.cyanDim, 6)
+        -- v0.13.46：补内受光 / 内沉影 / 顶亮线（列表行厚度，只加不减）。
+        D.rect(ctx, r.x + 2, r.y + 2, r.w - 4, math.floor(r.h * 0.42),
+            {255, 255, 255, mine and 22 or 12}, 4)
+        D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
+            r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, mine and 42 or 30}, 4)
+        D.rect(ctx, r.x + 4, r.y + 1, r.w - 8, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
+        if mine then D.rect(ctx, r.x + 3, r.y + 10, 3, r.h - 20, C.cyan, 1) end
         local medal = C.dim
         if item.rank == 1 then medal = C.warn
         elseif item.rank <= 3 then medal = C.cyan end
@@ -833,6 +849,11 @@ local function DrawRank(ctx, w, meta)
     end
     nvgRestore(ctx)
     D.panel(ctx, content.x, rankFooterY, content.w, 56, C.rail, C.cyanDim, 6)
+    -- v0.13.46：页脚条补内受光 / 内沉影，与列表行同厚度（只加不减）。
+    D.rect(ctx, content.x + 2, rankFooterY + 2, content.w - 4, math.floor(56 * 0.42),
+        {255, 255, 255, 18}, 4)
+    D.rect(ctx, content.x + 2, rankFooterY + math.floor(56 * 0.6), content.w - 4,
+        56 - math.floor(56 * 0.6) - 2, {0, 0, 0, 40}, 4)
     local rankLabel = meta.myRankLoading and "我的排名 · 查询中"
         or (meta.myRank and string.format("我的排名 · 第 %d 名", meta.myRank) or "我的排名 · 暂未上榜")
     D.text(ctx, content.x + 18, rankFooterY + 16, rankLabel, 18, C.cyan)
@@ -1234,6 +1255,8 @@ local function DrawWheel(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "幸运转盘", meta.wheelReady and "今日机会  /  01" or "今日机会已用")
     local spin, cx, cy, radius = GetWheelLayout(w)
+    -- v0.13.46：补分区标题（盘面上方留白充足，不与外环刻度相碰）。
+    SectionHeader(ctx, content.x + 4, content.y + 8, content.w - 8, "转盘奖池")
     local prizes = MetaCatalog.GetWheelPrizes()
     local n = #prizes
     local step = math.pi * 2 / n
@@ -1323,6 +1346,10 @@ local function DrawWheel(ctx, w, meta)
         meta.wheelReady and "每日一次 · 八档零件奖励" or "明日再来", meta.wheelReady and "ad" or "disabled")
     if meta.wheelPrize and meta.wheelPrize > 0 then
         D.panel(ctx, cx - 158, spin.y - 52, 316, 40, C.rail, C.warnDim, 6)
+        -- v0.13.46：中奖条补内受光 / 内沉影（只加不减）。
+        D.rect(ctx, cx - 156, spin.y - 50, 312, math.floor(40 * 0.42), {255, 255, 255, 20}, 4)
+        D.rect(ctx, cx - 156, spin.y - 52 + math.floor(40 * 0.6), 312,
+            40 - math.floor(40 * 0.6) - 2, {0, 0, 0, 40}, 4)
         D.text(ctx, cx, spin.y - 42,
             string.format("今日获得  +%d 零件", meta.wheelPrize), 17, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
