@@ -1479,7 +1479,8 @@ end
 ---@param eventType string
 ---@param eventData UpdateEventData
 function HandleUpdate(eventType, eventData)
-    local dt = math.min(eventData:GetFloat("TimeStep"), 0.05)
+    local inputDt = math.max(0, eventData:GetFloat("TimeStep"))
+    local dt = math.min(inputDt, 0.05)
     AdService.Update(dt)
     if not GameMode.IsOffline() then NetClient.Update(dt) end
     local hitStop = Presentation.GetSnapshot().hitStop or 0
@@ -1497,7 +1498,7 @@ function HandleUpdate(eventType, eventData)
     local adFreeze = adInFlight
         and gameSnapshot ~= nil and gameSnapshot.state == "playing"
     if not adFreeze then
-        Game.Update(gameDt, dt)
+        Game.Update(gameDt, inputDt)
     end
     ClientMain.ValidatePointer()
     local snapshot = Game.GetSnapshot()

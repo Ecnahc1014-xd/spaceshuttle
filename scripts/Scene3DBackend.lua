@@ -448,7 +448,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.54"
+local BUILD_VERSION = "0.13.55"
 local GAME_TITLE = "货车大战飞机"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "货车大战飞机"
@@ -803,7 +803,7 @@ local function DrawFloatTexts(ctx, game, presentation)
         UseTechFont(ctx)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER)
         -- 实际提交四方向深色描边；nvgStrokeColor 不会改变 nvgText 的填充。
-        nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], math.min(220, alpha + 40)))
+        nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], math.min(220, alpha)))
         nvgText(ctx, sx - 1, sy, f.text); nvgText(ctx, sx + 1, sy, f.text)
         nvgText(ctx, sx, sy - 1, f.text); nvgText(ctx, sx, sy + 1, f.text)
         nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], alpha))
@@ -2451,6 +2451,8 @@ local function RenderOverlay(game, presentation, meta)
     if game.state == "playing" then
         RunOverlayStage("world-fx", function()
             ApplyOverlayDesignTransform()
+            -- 先固定世界层边界，再震动图形；避免冲击裁剪随位移漏入letterbox。
+            nvgIntersectScissor(vg_, 0, HUD_HEIGHT, DESIGN_W, DESIGN_H - HUD_HEIGHT - DOCK_HEIGHT)
             if presentation.screenShake > 0 then
                 local amplitude = presentation.screenShake * 13
                 nvgTranslate(vg_, math.sin(game.elapsed * 91) * amplitude,
