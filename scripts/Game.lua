@@ -1280,6 +1280,22 @@ EjectBrick = function(enemy, brick)
     -- v0.13.28：「穿甲弹头」每级额外 +1 经验，低难度也能立刻加速升级。
     GainXp(XP_PER_BRICK + BALL_TUNING.brickXpFlat)
     EmitBrickShatterFx(enemy, brick, x, y, data.score)
+    -- 最后存活格消失即发布完整击毁事实；奖励仍留在 UpdateEnemies，不能因升级提前结算。
+    if not enemy.breached then
+        local fullyDestroyed = true
+        for _, remaining in ipairs(enemy.bricks) do
+            if remaining.alive then fullyDestroyed = false; break end
+        end
+        if fullyDestroyed then
+            local width = enemy.gridW * enemy.brickSize
+            local height = enemy.gridH * enemy.brickSize
+            Emit("enemy_destroyed", {
+                enemyId = enemy.id,
+                x = enemy.x + width * 0.5, y = enemy.y + height * 0.5,
+                width = width, height = height,
+            })
+        end
+    end
     return true
 end
 

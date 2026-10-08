@@ -71,6 +71,7 @@ local FEEDBACK_MAP = {
     brick_hit = {"brickSpark"},
     brick_ejected = {"brickEjected"},
     enemy_cleared = {"clearBanner"},
+    enemy_destroyed = {"clearImpact"},
     base_hit = {"baseShake"},
     marble_launched = {"launchFlash"},
     normal_split = {"splitSpark"},
@@ -357,9 +358,9 @@ local FEEDBACK_HANDLERS = {
     end,
     clearBanner = function(event)
         SpawnFloatText(event.x, event.y, "击破", {120, 255, 160}, 1.2)
-        if event.fullDestroyed == true then
-            SpawnCombatImpact("clear", event)
-        end
+    end,
+    clearImpact = function(event)
+        SpawnCombatImpact("clear", event)
     end,
     -- WO-15/P2：防线四位一体（震屏 + 危险带脉冲 + 冲击波 + 警示文字）由 base_hit 单点触发。
     baseShake = function(event)
