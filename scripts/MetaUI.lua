@@ -178,15 +178,32 @@ local function Inside(r, px, py)
     return px >= r.x and px <= r.x + r.w and py >= r.y and py <= r.y + r.h
 end
 
--- v0.13.54：给菜单/商店的小卡片补「无关紧要的纹路」——极淡网格 + 四角取景折线 + 角落点阵。
--- 全部低 alpha、贴边不穿正文；命中几何不受影响（只画）。
+-- v0.13.54：给菜单/商店的小卡片补「无关紧要的纹路」——双层网格 + 双四角折线 + 角落点阵
+-- + 底边刻度 + 断线。全部低 alpha、贴边不穿正文；命中几何不受影响（只画）。
 local function CardTrace(ctx, r, alpha)
     local C = Colors()
     local a = alpha or 14
     D.grid(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6, 12, a)
+    D.grid(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6, 34, math.max(6, a - 5))
     if r.w >= 84 and r.h >= 40 then
         D.corner(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6,
             {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 30}, 9, 1)
+        D.corner(ctx, r.x + 6, r.y + 6, r.w - 12, r.h - 12,
+            {C.dim[1], C.dim[2], C.dim[3], a + 18}, 6, 1)
+    end
+    if r.w >= 70 and r.h >= 30 then
+        -- 底边长短刻度：给每张卡一条「仪器」读数沿。
+        local count = math.max(6, math.floor((r.w - 20) / 11))
+        local step = (r.w - 20) / count
+        for i = 0, count do
+            local long = (i % 4 == 0)
+            D.rect(ctx, r.x + 10 + i * step, r.y + r.h - 8, 1, long and 4 or 2,
+                {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 34}, 0)
+        end
+    end
+    if r.w >= 60 then
+        D.rule(ctx, r.x + 10, r.y + r.h - 12, math.max(16, r.w * 0.34), 3,
+            {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 20})
     end
     if r.w >= 96 and r.h >= 52 then
         for i = 0, 3 do
@@ -194,6 +211,11 @@ local function CardTrace(ctx, r, alpha)
                 D.rect(ctx, r.x + r.w - 20 + i * 4, r.y + r.h - 14 + j * 4, 1.6, 1.6,
                     {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 26}, 0)
             end
+        end
+        -- 角落取样十字。
+        for _, p in ipairs({ { r.x + 11, r.y + 11 }, { r.x + r.w - 11, r.y + 11 } }) do
+            D.rect(ctx, p[1] - 4, p[2], 9, 1, {C.ghost[1], C.ghost[2], C.ghost[3], a + 40}, 0)
+            D.rect(ctx, p[1], p[2] - 4, 1, 9, {C.ghost[1], C.ghost[2], C.ghost[3], a + 40}, 0)
         end
     end
 end
@@ -411,6 +433,8 @@ function MetaUI.DrawHomeFleet(ctx, w, meta)
     D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
         r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, 42}, 6)
     D.rect(ctx, r.x + 1, r.y + 20, 2, r.h - 40, hot and C.cyan or C.dim, 1)
+    -- v0.13.54：天赋入口大卡补纹路（网格 + 半调 + 四角折线 + 底边刻度）。
+    CardTrace(ctx, r, 12)
     if hot then
         nvgBeginPath(ctx)
         nvgRect(ctx, r.x - 6, r.y + 14, 16, r.h - 28)
@@ -529,6 +553,8 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
         math.floor(L.wallet.h * 0.44), {255, 255, 255, 18}, 4)
     D.rect(ctx, L.wallet.x + 2, L.wallet.y + math.floor(L.wallet.h * 0.6), L.wallet.w - 4,
         L.wallet.h - math.floor(L.wallet.h * 0.6) - 2, {0, 0, 0, 40}, 4)
+    -- v0.13.54：钱包条补纹路（网格 + 底边刻度 + 断线 + 角落取样点）。
+    CardTrace(ctx, L.wallet, 11)
     if walletGlow > 0.01 then
         D.stroke(ctx, L.wallet.x, L.wallet.y, L.wallet.w, L.wallet.h,
             {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(walletGlow * 190)}, 6, 1.5)

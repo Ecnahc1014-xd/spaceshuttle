@@ -1810,6 +1810,21 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     DrawBluePanel(ctx, x, y, cardW, cardH, C.card, C.cyanDim, 6)
     DrawCornerBrackets(ctx, x + 4, y + 4, cardW - 8, cardH - 8, accent, 10, 1.2)
     DrawRect(ctx, x, y, 3, cardH, accent, 0)
+    -- v0.13.54：升级卡补「无关紧要的纹路」——双层网格 + 半调 + 内圈折角 + 底边刻度。
+    DrawMicroGrid(ctx, x + 5, y + 5, cardW - 10, cardH - 10, 14, 11)
+    DrawMicroGrid(ctx, x + 5, y + 5, cardW - 10, cardH - 10, 38, 7)
+    DrawHalftone(ctx, x + 6, y + 6, cardW - 12, cardH - 12, 9, 12)
+    DrawCornerBrackets(ctx, x + 9, y + 9, cardW - 18, cardH - 18,
+        {accent[1], accent[2], accent[3], 96}, 7, 1)
+    for i = 0, 14 do
+        local long = (i % 4 == 0)
+        DrawRect(ctx, x + 12 + i * (cardW - 24) / 14, y + cardH - 9, 1, long and 4 or 2,
+            {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 84}, 0)
+    end
+    DrawDashLine(ctx, x + 12, y + cardH - 14, x + cardW * 0.42, y + cardH - 14,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 74}, 1, 5, 4)
+    DrawCrossMark(ctx, x + 13, y + 13, 3, {C.ghost[1], C.ghost[2], C.ghost[3], 92})
+    DrawCrossMark(ctx, x + cardW - 13, y + 13, 3, {C.ghost[1], C.ghost[2], C.ghost[3], 92})
 
     -- 图标：卡片顶部居中 34px（与局内道具槽同源），下衬暗色圆角底板提升可读性
     local iconKey = UpgradeCardIconKey(choice)

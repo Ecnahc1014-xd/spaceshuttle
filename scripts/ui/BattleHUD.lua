@@ -204,6 +204,8 @@ local function Render(group, ctx)
 end
 
 -- 仪器边壳只有局部受光与短刻度；不在文字背后铺电路/网格。
+local Trace = nil
+
 local function Surface(ctx, x, y, w, h, accent, active)
     local C = D.C
     nvgBeginPath(ctx)
@@ -212,10 +214,55 @@ local function Surface(ctx, x, y, w, h, accent, active)
         nvgRGBA(C.widget[1], C.widget[2], C.widget[3], 255),
         nvgRGBA(C.panel[1], C.panel[2], C.panel[3], 255)))
     nvgFill(ctx)
+    -- v0.13.54：仪器块补「无关紧要的纹路」——微网格 + 半调网点 + 底边刻度（低 alpha，不压读数）。
+    Trace(ctx, x + 3, y + 3, w - 6, h - 6, accent, 11)
     D.stroke(ctx, x + 0.5, y + 0.5, w - 1, h - 1,
         active and Alpha(accent, 190) or Alpha(C.dim, 62), 5, 1)
     Line(ctx, x + 7, y + 1.5, x + w - 7, y + 1.5, Alpha(C.text, 40), 1)
     Line(ctx, x + 7, y + h - 2, x + w - 7, y + h - 2, Alpha(C.ink, 230), 1)
+end
+
+-- 战斗侧纹路组（与 ui/PremiumSurface 同一套母题，此处独立实现避免跨模块依赖）。
+-- 全部低 alpha、裁剪在块内；只画，不参与命中。
+Trace = function(ctx, x, y, w, h, color, alpha)
+    local a = alpha or 11
+    if w < 16 or h < 12 then return end
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, x, y, w, h)
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
+    nvgStrokeWidth(ctx, 1)
+    nvgBeginPath(ctx)
+    for gx = x + 14, x + w - 1, 14 do
+        nvgMoveTo(ctx, gx, y); nvgLineTo(ctx, gx, y + h)
+    end
+    for gy = y + 14, y + h - 1, 14 do
+        nvgMoveTo(ctx, x, gy); nvgLineTo(ctx, x + w, gy)
+    end
+    nvgStroke(ctx)
+    -- 半调网点：隔行错位；**合并单一路径**（逐点各起一条路径会撑爆 NanoVG 单帧命令缓冲，
+    -- 导致本帧后续绘制被静默丢弃——本项目实测踩到，表现为「只剩背景」）。
+    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], a + 4))
+    nvgBeginPath(ctx)
+    local row = 0
+    for gy = y + 5, y + h - 3, 9 do
+        local off = (row % 2 == 0) and 0 or 9
+        for gx = x + 5 + off, x + w - 3, 18 do
+            nvgCircle(ctx, gx, gy, 0.9)
+        end
+        row = row + 1
+    end
+    nvgFill(ctx)
+    nvgRestore(ctx)
+    -- 底边长短刻度：给仪器块一条读数沿。
+    if w >= 60 then
+        local count = math.max(6, math.floor((w - 16) / 12))
+        local step = (w - 16) / count
+        for i = 0, count do
+            local long = (i % 4 == 0)
+            D.rect(ctx, x + 8 + i * step, y + h - 6, 1, long and 3 or 1.5,
+                Alpha(color, a + 30), 0)
+        end
+    end
 end
 
 local function Corner(ctx, x, y, w, h, color)
@@ -330,6 +377,8 @@ function BattleHUD.DrawAmmo(ctx, game, presentation)
     end
     Rect(ctx, 0, 866, 540, 94, C.panel)
     Line(ctx, 0, 866, 540, 866, Alpha(C.dim, 95))
+    -- v0.13.54：弹药舱补纹路（网格 + 半调 + 底边刻度），只画不压读数。
+    Trace(ctx, 2, 868, 536, 90, C.cyanDim, 10)
     -- 左右各一组，中央168宽只留给预告；不再用跨中区长说明与预告抢位置。
     local activeName = game.activeBall and D.slotNames[game.activeBall.ballType]
     Text(ctx, "dock", "title", activeName and (activeName .. " · 待发") or "弹药舱", 12, 866, 160, 23, 15, activeName and C.text or C.dim)
@@ -343,6 +392,8 @@ function BattleHUD.DrawAmmo(ctx, game, presentation)
         local selected = unlocked and game.activeBall and game.activeBall.ballType == kind
         Surface(ctx, x, 892, 64, 64, color, selected == true)
         Corner(ctx, x + 3, 895, 58, 58, Alpha(unlocked and color or C.dim, selected and 200 or 65))
+        -- v0.13.54：弹药槽补纹路（网格 + 半调 + 底边刻度），只画不压图标。
+        Trace(ctx, x + 4, 896, 56, 56, color, 10)
         if selected then
             Rect(ctx, x + 4, 895, 2, 55, color, 1)
             local head = (D.anim() % 2.8) / 2.8
