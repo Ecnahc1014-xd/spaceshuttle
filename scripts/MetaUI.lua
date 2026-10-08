@@ -422,7 +422,7 @@ local function CountClaimableTasks(tasks)
 end
 
 -- 今日福利：全部「免费领取/看广告免费」——tone=free 青、tone=ad 绿（三色语义）。
--- v0.12.7：每日签到并入充值弹层（用户要求），菜单只剩 3 卡（水平居中见 GetMenuBarLayout）。
+-- v0.12.7：每日签到并入钻石商店弹层（用户要求），菜单只剩 3 卡（水平居中见 GetMenuBarLayout）。
 local function GetDailyDefs(meta)
     local taskCount = CountClaimableTasks(meta.tasks)
     return {
@@ -439,7 +439,7 @@ local function GetDailyDefs(meta)
 end
 
 -- 养成收藏：花零件/成长线/付费加速。v0.12.7：用户否决开局首充促销——
--- 菜单不再用金框「新手礼包」顶替图鉴位；首充只在玩家主动打开充值弹层时出现。
+-- 菜单不再用金框「新手礼包」顶替图鉴位；首充只在玩家主动打开钻石商店时出现。
 local function GetGrowDefs(meta)
     local passSub = meta.passClaimable and "有奖励可领"
         or (meta.premiumPass and "双倍奖励" or ("等级 " .. tostring(meta.passLevel or 1)))
@@ -520,13 +520,15 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
         meta.parts or 0, 125, C.text)
     D.rect(ctx, L.wallet.x + 184, L.wallet.y + 12, 1, L.wallet.h - 24,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 110}, 0)
-    -- v0.13.17：钻石用 gem 图标（此前 gem 已加载却从未绘制）；premium_energy_core 留给充值按钮。
+    -- v0.13.17：钻石用 gem 图标（此前 gem 已加载却从未绘制）；premium_energy_core 留给钻石商店入口。
     D.icon(ctx, "gem", L.wallet.x + 194, L.wallet.y + 15, 32)
     D.text(ctx, L.wallet.x + 232, L.wallet.y + 8, "钻石", 15, C.dim)
     DrawWalletValue(ctx, L.wallet.x + 232, L.wallet.y + 29,
         meta.offline and "—" or (meta.gems or 0), 137, C.warn)
 
-    local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 12, w = 96, h = 38 }
+    -- v0.13.44：入口措辞由「充值」改为「钻石商店」——玩家侧不出现直白的充值字样，
+    -- 统一按游戏内商店表述（用户要求）。宽度让给 4 字标题，字号降到 15 保证不挤出按钮。
+    local wb = { x = L.wallet.x + L.wallet.w - 112, y = L.wallet.y + 12, w = 104, h = 38 }
     D.panel(ctx, wb.x, wb.y, wb.w, wb.h, C.warn, C.warn, 6)
     -- 金按钮：顶受光 + 底沉影 + 窄玻璃条，与主按钮同一材质语言。
     D.rect(ctx, wb.x + 2, wb.y + 2, wb.w - 4, math.floor(wb.h * 0.42),
@@ -535,8 +537,8 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
         wb.h - math.floor(wb.h * 0.6) - 2, {0, 0, 0, 62}, 4)
     D.rect(ctx, wb.x + 3, wb.y + 2, 3, wb.h - 4, {255, 255, 255, 34}, 1)
     D.rect(ctx, wb.x + 6, wb.y + 3, wb.w - 12, 1, {255, 255, 255, 120}, 0)
-    D.icon(ctx, "premium_energy_core", wb.x + 6, wb.y + 3, 32)
-    D.text(ctx, wb.x + 64, wb.y + 11, "充值", 16, C.ink,
+    D.icon(ctx, "gem", wb.x + 5, wb.y + 3, 32)
+    D.text(ctx, wb.x + 68, wb.y + 11, "钻石商店", 15, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
 
@@ -1341,7 +1343,7 @@ end
 -- 分发
 -- ============================================================================
 
--- 插件式注册：额外面板（如充值弹层）由编排层注册，避免 meta-ui 反向依赖业务模块。
+-- 插件式注册：额外面板（如钻石商店弹层）由编排层注册，避免 meta-ui 反向依赖业务模块。
 ---@class MetaScreenPlugin
 ---@field draw fun(ctx:any, w:number, meta:MetaState)
 ---@field hit fun(uiX:number, uiY:number, w:number, meta:MetaState):(string|nil, integer|nil)

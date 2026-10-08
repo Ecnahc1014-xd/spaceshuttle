@@ -1,5 +1,5 @@
 -- ui/RechargeShop.lua
--- 充值 / 钻石商店弹层（NanoVG）。
+-- 钻石商店弹层（NanoVG）。玩家侧统一按游戏内商店表述，不出现直白的充值字样。
 --
 -- ⚠️ UI 无污染：本弹层沿用游戏自己的 dark-tech 令牌与 NanoVG 原语，
 --    不引入 urhox-libs/UI 控件树、不改绘制坐标系。
@@ -38,7 +38,7 @@ end
 ---@class RechargeLayout
 ---@field content table
 ---@field close table
----@field signIn table 每日签到行（v0.12.7 从主菜单并入充值弹层，常驻一行）
+---@field signIn table 每日签到行（v0.12.7 从主菜单并入钻石商店弹层，常驻一行）
 ---@field packs table[] 钻石礼包卡
 ---@field spends table[] 钻石兑换卡
 ---@field firstGift table|nil 首充礼包卡（限时窗内未购买时存在）
@@ -96,6 +96,24 @@ end
 -- ============================================================================
 -- 绘制
 -- ============================================================================
+
+-- 分区标题：金色识别竖条 + 向右淡出的断线（与主菜单 SectionHeader 同语言，
+-- 这里用付费/稀有语义的金色系而非青色）。
+---@param ctx any
+---@param x number
+---@param y number
+---@param w number
+---@param label string
+local function SectionHeader(ctx, x, y, w, label)
+    local C = Style()
+    D.rect(ctx, x, y + 2, 3, 16, C.warn, 1)
+    D.text(ctx, x + 9, y, label, 18, C.text)
+    local lx = x + 9 + D.measure(ctx, label, 18) + 14
+    local remain = math.max(0, x + w - lx)
+    if remain >= 20 then
+        D.rule(ctx, lx, y + 10, remain, 8, {C.warnDim[1], C.warnDim[2], C.warnDim[3], 120})
+    end
+end
 
 ---@param ctx any
 ---@param w number
@@ -159,7 +177,7 @@ function RechargeShop.Draw(ctx, w, meta)
         local btn = { x = r.x + r.w - 128, y = r.y + 26, w = 112, h = 26 }
         if price ~= nil then
             D.rect(ctx, btn.x, btn.y, btn.w, btn.h, C.warn, 6)
-            D.text(ctx, btn.x + btn.w * 0.5, btn.y + 4, "¥" .. tostring(price) .. " 立即购买", 15,
+            D.text(ctx, btn.x + btn.w * 0.5, btn.y + 4, "¥" .. tostring(price) .. " 立即获取", 15,
                 C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         else
             D.rect(ctx, btn.x, btn.y, btn.w, btn.h, C.widget, 6)
@@ -169,7 +187,7 @@ function RechargeShop.Draw(ctx, w, meta)
         end
     end
 
-    D.text(ctx, L.content.x + 4, L.packs[1].y - 20, "钻石礼包", 18, C.warn)
+    SectionHeader(ctx, L.content.x + 4, L.packs[1].y - 24, L.content.w, "钻石礼包")
     if meta.offline then
         D.text(ctx, L.content.x + L.content.w, L.packs[1].y - 16, "需联网", 15, C.dim,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
@@ -191,7 +209,7 @@ function RechargeShop.Draw(ctx, w, meta)
         local btn = { x = r.x + r.w - 92, y = r.y + r.h - 44, w = 78, h = 32 }
         if canBuy then
             D.rect(ctx, btn.x, btn.y, btn.w, btn.h, C.warn, 6)
-            D.text(ctx, btn.x + btn.w * 0.5, btn.y + 7, "购买", 16, C.ink,
+            D.text(ctx, btn.x + btn.w * 0.5, btn.y + 7, "获取", 16, C.ink,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         else
             D.rect(ctx, btn.x, btn.y, btn.w, btn.h, C.widget, 6)
@@ -201,7 +219,7 @@ function RechargeShop.Draw(ctx, w, meta)
         end
     end
 
-    D.text(ctx, L.content.x + 4, L.spends[1].y - 34, "钻石兑换", 18, C.warn)
+    SectionHeader(ctx, L.content.x + 4, L.spends[1].y - 38, L.content.w, "钻石兑换")
     for i, r in ipairs(L.spends) do
         local def = Shared.GEM_SPENDS[i]
         local affordable = (not meta.offline) and (meta.gems or 0) >= def.cost
