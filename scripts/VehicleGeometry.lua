@@ -4,6 +4,11 @@ local VehicleGeometry = {}
 
 local SECTION_COUNT = 6
 local PLANAR_RADIUS = 1.84 / 1.12 -- 与 Renderer3D 的 0.98 填充量配合，保留碰撞圆余量。
+-- 第 7 段是白色轮廓壳：车体三角面绕包围盒中心等比放大后翻转绕序，
+-- 默认背面剔除下只剩“远侧壳”，在车体外缘露出一圈白边。
+-- 放大倍率折进 fit，使轮廓（而非车体）恰好占满 PLANAR_RADIUS，整体仍不越碰撞圆。
+local OUTLINE_SECTION = SECTION_COUNT + 1
+local OUTLINE_SCALE = 1.035
 
 local function FaceNormal(a, b, c)
     local ux, uy, uz = b.x - a.x, b.y - a.y, b.z - a.z
@@ -491,44 +496,97 @@ local BUILDERS = {
 -- 只保留最近一个车型的不可变顶点/法线，零引擎资源引用；同车型补弹只提交不重算。
 local meshCache = {key = "", sections = {}, count = 0, fit = 1, radius = 0}
 
-local function GetMesh(key)
-    if meshCache.key == key then return meshCache end
-    local sections = {}
-    for i = 1, SECTION_COUNT do sections[i] = {} end
-    BUILDERS[key](sections[1], sections[2], sections[3], sections[4], sections[5], sections[6])
-    local maxRadius = 0
-    for _, vertices in ipairs(sections) do
-        for _, vertex in ipairs(vertices) do
+-- 整车包围盒中心；轮廓围绕它等比放大，所以轮廓到原点的距离不等于车体半径 × 放大倍率。
+local function BodyCenter(sections)
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    for i = 1, SECTION_COUNT do
+        for _, vertex in ipairs(sections[i]) do
             local p = vertex.position
-            maxRadius = math.max(maxRadius, math.sqrt(p.x * p.x + p.y * p.y))
+            minX, minY, minZ = math.min(minX, p.x), math.min(minY, p.y), math.min(minZ, p.z)
+            maxX, maxY, maxZ = math.max(maxX, p.x), math.max(maxY, p.y), math.max(maxZ, p.z)
         end
     end
+    return Vector3((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
+end
+
+local function PlanarRadius(vertices, center, scale)
+    local radius = 0
+    for _, vertex in ipairs(vertices) do
+        local p = vertex.position
+        if center then p = center + (p - center) * scale end
+        radius = math.max(radius, math.sqrt(p.x * p.x + p.y * p.y))
+    end
+    return radius
+end
+
+-- 轮廓壳由车体全部六段三角面派生：等比放大 → 翻转绕序 → 法线随绕序取反。
+-- 必须覆盖全部六段（含侧围/轮胎/金属/玻璃/灯具），只取车身主漆会让轮胎、
+-- 轮眉、后视镜穿出白边，轮廓就断成一截一截。
+local function BuildOutline(sections, outline, center, scale)
+    for sectionIndex = 1, SECTION_COUNT do
+        local body = sections[sectionIndex]
+        for i = 1, #body, 3 do
+            local a = center + (body[i].position - center) * scale
+            local b = center + (body[i + 1].position - center) * scale
+            local c = center + (body[i + 2].position - center) * scale
+            local normal = FaceNormal(c, b, a)
+            outline[#outline + 1] = {position = a, normal = normal}
+            outline[#outline + 1] = {position = c, normal = normal}
+            outline[#outline + 1] = {position = b, normal = normal}
+        end
+    end
+end
+
+local function GetMesh(key)
+    if meshCache.key == key then return meshCache end
+    ---@type table<integer, {position: Vector3, normal: Vector3}[]>
+    local sections = {}
+    for i = 1, OUTLINE_SECTION do sections[i] = {} end
+    BUILDERS[key](sections[1], sections[2], sections[3], sections[4], sections[5], sections[6])
+    -- 轮廓围绕整车包围盒中心放大，缩放后的半径必须单独量，不能拿车体半径乘倍率。
+    -- 放大是绕包围盒中心做的，所以“离原点的距离”对车体与轮廓并不单调；
+    -- 必须取两者较大值作为碰撞圆约束，否则轮廓会挤掉车体原本的 2% 余量。
+    local center = BodyCenter(sections)
+    local bodyRadius, outlineRadius = 0, 0
+    for i = 1, SECTION_COUNT do
+        bodyRadius = math.max(bodyRadius, PlanarRadius(sections[i]))
+        outlineRadius = math.max(outlineRadius, PlanarRadius(sections[i], center, OUTLINE_SCALE))
+    end
+    local maxRadius = math.max(bodyRadius, outlineRadius)
     local fit = math.min(1, PLANAR_RADIUS / maxRadius)
     local count = 0
-    for _, vertices in ipairs(sections) do
-        for i = 1, #vertices, 3 do
-            local a, b, c = vertices[i].position * fit, vertices[i + 1].position * fit, vertices[i + 2].position * fit
-            vertices[i].position, vertices[i + 1].position, vertices[i + 2].position = a, b, c
+    for i = 1, SECTION_COUNT do
+        local vertices = sections[i]
+        for j = 1, #vertices, 3 do
+            local a, b, c = vertices[j].position * fit, vertices[j + 1].position * fit, vertices[j + 2].position * fit
+            vertices[j].position, vertices[j + 1].position, vertices[j + 2].position = a, b, c
             local normal = FaceNormal(a, b, c)
-            vertices[i].normal, vertices[i + 1].normal, vertices[i + 2].normal = normal, normal, normal
+            vertices[j].normal, vertices[j + 1].normal, vertices[j + 2].normal = normal, normal, normal
         end
         count = count + #vertices
     end
-    meshCache = {key = key, sections = sections, count = count, fit = fit, radius = maxRadius * fit}
-    print(string.format("[VehicleGeometry] key=%s vertices=%d sections=6 fit=%.4f radius=%.4f", key, count, fit, maxRadius * fit))
+    -- 中心随车体一起缩放，轮廓仍围绕缩放后的包围盒中心对称。
+    BuildOutline(sections, sections[OUTLINE_SECTION], center * fit, OUTLINE_SCALE)
+    count = count + #sections[OUTLINE_SECTION]
+    local radius = outlineRadius * fit
+    meshCache = {key = key, sections = sections, count = count, fit = fit, radius = radius}
+    print(string.format("[VehicleGeometry] key=%s vertices=%d sections=%d bodyR=%.4f outlineR=%.4f fit=%.4f",
+        key, count, OUTLINE_SECTION, bodyRadius * fit, radius, fit))
     return meshCache
 end
 
 ---@param geometry CustomGeometry
 ---@param vehicleKey string
----@param materials Material[]
-function VehicleGeometry.Build(geometry, vehicleKey, materials)
+---@param materials Material[] 六段车体材质
+---@param outlineMaterial Material|nil 白色轮廓壳材质；缺省则不绑定，该段不参与绘制
+function VehicleGeometry.Build(geometry, vehicleKey, materials, outlineMaterial)
     local key = BUILDERS[vehicleKey] and vehicleKey or "default"
     local mesh = GetMesh(key)
     geometry:Clear()
-    geometry:SetNumGeometries(SECTION_COUNT)
+    geometry:SetNumGeometries(OUTLINE_SECTION)
     geometry:SetDynamic(false)
-    for sectionIndex = 0, SECTION_COUNT - 1 do
+    for sectionIndex = 0, OUTLINE_SECTION - 1 do
         geometry:BeginGeometry(sectionIndex, TRIANGLE_LIST)
         for _, vertex in ipairs(mesh.sections[sectionIndex + 1]) do
             geometry:DefineVertex(vertex.position)
@@ -538,6 +596,10 @@ function VehicleGeometry.Build(geometry, vehicleKey, materials)
     geometry:Commit()
     for sectionIndex = 0, SECTION_COUNT - 1 do
         geometry:SetMaterial(sectionIndex, materials[sectionIndex + 1])
+    end
+    if outlineMaterial then
+        ---@cast outlineMaterial Material
+        geometry:SetMaterial(SECTION_COUNT, outlineMaterial)
     end
 end
 

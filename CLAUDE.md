@@ -3,6 +3,15 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: vehicle-outline（2026-10-08，六车型白色轮廓；不抢并发展示版本）：
+  - 用户要求「为车辆加入白色轮廓」。做法是**翻面外壳**而不是描边 shader：车体全部六段三角面绕整车包围盒中心等比放大 `OUTLINE_SCALE=1.035` 后**翻转绕序**（顶点序 a,c,b、法线随绕序取反），作为第 7 个 section 绑不透明白色 PBR 材质（`MatEmissiveColor` 0.34/0.36/0.40 兜底深空暗场）。默认背面剔除下只剩远侧壳，正好在车体外缘露出一圈白边。
+  - 单一来源：几何在 `VehicleGeometry.GetMesh` 生成并随 `meshCache` 缓存；战斗 `Renderer3D.GetVehicleOutlineMaterial` 与展台 `VehicleShowcase.state.outlineMaterial` 各自提供白色材质。`VehicleGeometry.Build(geometry, key, materials, outlineMaterial)` 新增第 4 参，缺省不绑定第 7 段（几何仍在、材质为 nil）。
+  - ⚠️ 轮廓必须覆盖**全部六段**（含轮胎/金属/玻璃/灯具），只取车身主漆会让轮胎、轮眉、后视镜穿出白边，轮廓断成一截一截。
+  - ⚠️ 放大绕包围盒中心做，「离原点距离」对车体与轮廓**不单调**：`fit = min(1, PLANAR_RADIUS / max(bodyRadius, outlineRadius))`，两者都要约束，否则轮廓挤掉车体原本 2% 碰撞余量。实测车体 ≤1.5883、轮廓 ≤1.6429 = PLANAR，均不越碰撞圆。
+  - 顶点量：车体 10956–19950 → 含轮廓后 13200–39900（约 2 倍）。每车仍一个 CustomGeometry、7 段。
+  - 验证：几何探针 `probe_outline` 六车 **ALL PASS**（7 段、轮廓=车体放大副本 err<1e-4、法线全反 minDot<-0.99、半径不越 PLANAR、退化三角 0、无材质路径不绑定第 7 段）；展台六车真渲染实图目视白边完整、无空段；战斗隔离冒烟六车依次重建 + 发射 + 暂停/恢复，Lua/overlay/LoadChunk/空顶点错误 **0**。LSP workspace 0 Error（908 Warning/107 Hint）；官方多人 build 与预览上传成功。
+  - 边界：主游戏离屏报告整体 FAIL 仍是本地既有噪音（BloomHDR 编译失败/缺图/无体素），战斗 3D 黑场不据此验收；手机性能与用户审美未通过。
+
 - 版本: 0.13.42（巨型车范围伤害内置 1 秒冷却）：
   - 用户明确要求「巨型车的范围伤害加入内置cd1s」。只在 `Game.lua` 加 `BALL_TYPES.giant.areaCooldown=1.0` 与实例 `giantAreaCooldown=0`；圆域分支检查冷却并先置位，子步按 `subDt` 递减至 0，反弹不重置冷却、不同车互不影响。
   - 冷却期间仍走普通碰撞伤害，保留反弹武装资格，冷却结束后的有效命中可再次释放圆域；原半径、伤害、暴击、挥发异常与逐格去重不变。暂停/升级/广告冻结不消耗玩法冷却，新建/回收补车及重开不继承旧车计时。未新增顶层 local、存档、UI 冷却显示或资源，服务端 IAP/钻石职责和多人配置保持。
@@ -824,6 +833,13 @@
 - ⚠️ **悬停判定要用**设计坐标**，且只对按钮尺寸生效（v0.13.31）**：`Backend.SetPointer` 收的是 `ScreenToUi` 后的设计坐标（与绘制同空间）；`DrawMachinedPanel` 里悬停发光限 `h<=80 且 w>=40`，否则 HUD 横条/大面板会被误点亮。
 
 ## 避雷清单
+
+## 本批次新增避雷（vehicle-outline 白色轮廓）
+- 🔴 **AB-195：做「白色轮廓」用「翻面外壳」而不是描边 shader（vehicle-outline）**：把车体三角面**等比放大后翻转绕序**做成第 7 段（法线随绕序取反），绑不透明白色材质；默认背面剔除下只剩远侧壳，自然在车体外缘露出白边。**不要**去写描边 Technique/改 glsl，也不要用 `SetCullMode(CULL_FRONT)` 单独翻转剔除——前者超出「改几何」的范围，后者会把所有车体材质一起翻掉。放大倍率折进 `fit`，轮廓与车体**取较大半径**共同约束 `PLANAR_RADIUS`。
+- ⚠️ **轮廓必须覆盖车体「全部 section」，不能只取主漆段（vehicle-outline 实测）**：只放大车身会让轮胎、轮眉、后视镜、防滚架穿出白边，轮廓断成一截一截。做法：拼接 section 1..6 一起派生轮廓。
+- ⚠️ **绕包围盒中心放大时，半径不是单调的（vehicle-outline 实测）**：`outlineR ≠ bodyR × scale`（缩放把点拉离/拉近原点取决于它相对中心的位置）。必须**分别量** `bodyRadius` 与 `outlineRadius`，`fit = min(1, PLANAR_RADIUS / max(bodyRadius, outlineRadius))`；只按轮廓算会挤掉车体原本的 2% 碰撞余量（实测 obsidian 车体冲到 1.6736 > 1.6429 上限）。
+- ⚠️ **几何探针要比对「绕序翻转后的顶点顺序」（vehicle-outline 踩到）**：轮廓按 (a,c,b) 输出以翻转绕序，逐索引 `outline[i] == expand(body[i])` 必然失败（首版报 err=1.49）。正确比对：按三角形取 `order = {base+1, base+3, base+2}`。
+- ⚠️ **新增几何 section 后要同步探针的 section 上限（vehicle-outline）**：`probe_vehicle_five`/`refine_*.lua` 里的 `for section=0,5` 是硬编码 6 段，不改会漏检第 7 段材质；改成 `0,6`。
 
 ## 本批次新增避雷（v0.13.41 拖尾样式商店）
 - ⚠️ **AB-191：跨模块复用「渲染用 0..1 颜色」到 NanoVG `D.rect` 时必须 ×255（v0.13.41 实测）**：拖尾样式参数（`TRAIL_STYLE_PARAMS`）里的 base 色是 0..1（供 3D 顶点色/`Color()` 用），MetaUI 的 2D 预览直接把它塞进 `D.rect` 的颜色表 → 期望 0..255，结果画成近黑（截图实测预览条几乎不可见，只采样到背景色）。修法：`rgba(f,alpha)` 把 `base[i]*f*255` 取整。**规则**：任何跨「3D 渲染色（0..1）」与「NanoVG 色（0..255）」边界复用的数值都要显式换算，别指望两边同一量纲。

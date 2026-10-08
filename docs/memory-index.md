@@ -11,6 +11,12 @@
 当前版本：0.13.42
 简述：巨型车圆域范围伤害加入 1 秒内置冷却；每车独立，只有实际触发圆域才启动，反弹不重置，冷却期间仍有普通碰撞伤害。计时跟随玩法子步，暂停/升级/广告冻结不消耗；新车与重开从 0 开始。半径、伤害、车型/拖尾商店与解锁规则不变。LSP 0 Error、官方多人 build 与预览上传成功；范围冷却专项验证在本轮变更记录中单列。
 最后巩固：2026-10-08
+## 车辆白色轮廓（2026-10-08，vehicle-outline 附记）
+- 用户要求「为车辆加入白色轮廓」。用**翻面外壳**实现：`VehicleGeometry.GetMesh` 把车体全部六段三角面绕整车包围盒中心放大 `OUTLINE_SCALE=1.035` 后翻转绕序（顶点序 a,c,b、法线取反），作为第 7 个 section；默认背面剔除下只剩远侧壳，在车体外缘露出白边。几何随 `meshCache` 缓存，战斗与展台共用。
+- 材质由两边各自提供：战斗 `Renderer3D.GetVehicleOutlineMaterial`（`vehicleOutlineMaterial_` 跨弹种共享、Shutdown 复位）、展台 `VehicleShowcase.state.outlineMaterial`（登记进 `state.materials` 随展台释放）。`VehicleGeometry.Build` 新增第 4 参 `outlineMaterial`，缺省不绑定第 7 段。
+- ⚠️ 轮廓必须覆盖**全部六段**（含轮胎/金属/玻璃/灯具），只取主漆段会让轮胎/轮眉/后视镜穿出白边。⚠️ 绕中心放大时半径**不单调**，`fit` 必须取 `max(bodyRadius, outlineRadius)` 约束，否则轮廓挤掉车体 2% 碰撞余量（实测 obsidian 车体冲到 1.6736）。实测车体 ≤1.5883、轮廓 =1.6429 = PLANAR。
+- 顶点量约翻倍（10956–19950 → 13200–39900），每车仍一个 CustomGeometry、7 段。验证：`probe_outline` 六车 ALL PASS（放大副本 err<1e-4、法线全反 minDot<-0.99、半径不越 PLANAR、退化三角 0）；展台六车实图白边完整；战斗冒烟六车重建+发射+暂停/恢复，Lua/overlay/LoadChunk/空顶点错误 0。LSP 0 Error、官方多人 build 与预览上传成功。主游戏离屏 FAIL 仍是本地既有噪音，手机性能与审美未验收。
+
 ## 巨型车范围冷却（2026-10-08，v0.13.42）
 - 用户指定「巨型车的范围伤害加入内置cd1s」；`BALL_TYPES.giant.areaCooldown=1.0` 与实例 `giantAreaCooldown` 实现，实际圆域前置冷却，子步递减至 0。保留反弹武装，冷却期命中走普通碰撞，不以反弹或换敌机刷新冷却。
 - 规则仍在 `Game.lua`，由联网/离线共同的客户端编排消费；服务端 IAP/钻石职责与配置不改。没有新增顶层 local、UI 冷却显示、存档或图片。展示版本与大厅同步 0.13.42。

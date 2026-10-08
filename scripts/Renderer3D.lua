@@ -30,6 +30,7 @@ local crateTexture_ = nil
 local crateMaterial_ = nil
 local vehicleMaterialSets_ = {}
 local materialCache_ = {}
+local vehicleOutlineMaterial_ = nil -- 车辆白色轮廓壳，跨弹种/车型共享
 local enemyMeshes_ = {}
 local vehicleRecords_ = {}
 local debrisNodes_ = {}
@@ -875,8 +876,24 @@ local function GetVehicleMaterials(ballType)
     return cached
 end
 
+local function GetVehicleOutlineMaterial()
+    -- 轮廓壳第 7 段：几何是车体的翻转副本，默认背面剔除下只剩远侧壳，因此用不透明纯白即可，
+    -- 不需要描边 shader；MatEmissiveColor 保证深空暗场里白边依然可辨。
+    if vehicleOutlineMaterial_ then return vehicleOutlineMaterial_ end
+    local material = Material:new()
+    material:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
+    material:SetShaderParameter("MatDiffColor", Variant(Color(0.94, 0.96, 1.0, 1.0)))
+    material:SetShaderParameter("Metallic", Variant(0.0))
+    material:SetShaderParameter("Roughness", Variant(0.55))
+    material:SetShaderParameter("MatEmissiveColor", Variant(Color(0.34, 0.36, 0.40, 1.0)))
+    vehicleOutlineMaterial_ = material
+    return material
+end
+
 local function RebuildVehicleGeometry(geometry, ballType)
-    VehicleGeometry.Build(geometry, selectedSkin_, GetVehicleMaterials(ballType))
+    VehicleGeometry.Build(geometry, selectedSkin_, GetVehicleMaterials(ballType),
+        GetVehicleOutlineMaterial())
 end
 
 local function MoveAngleToward(current, target, maxStep)
@@ -1743,6 +1760,7 @@ function Renderer3D.Shutdown()
     consumedEjectIds_ = {}
     materialCache_ = {}
     vehicleMaterialSets_ = {}
+    vehicleOutlineMaterial_ = nil
     scene_ = nil
     modelBox_ = nil
     voxelMaterial_ = nil

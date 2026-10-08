@@ -19,6 +19,7 @@ local KEYS = {default = true, arctic = true, crimson = true, jade = true, obsidi
 ---@field surface RenderSurface|nil
 ---@field viewport Viewport|nil
 ---@field materials Material[]
+---@field outlineMaterial Material|nil
 ---@field center Vector3
 ---@field corners Vector3[]
 ---@field image integer
@@ -40,7 +41,7 @@ local KEYS = {default = true, arctic = true, crimson = true, jade = true, obsidi
 ---@field flipY boolean
 local state = {
     scene = nil, vehicle = nil, geometry = nil, cameraNode = nil, camera = nil,
-    texture = nil, surface = nil, viewport = nil, materials = {},
+    texture = nil, surface = nil, viewport = nil, materials = {}, outlineMaterial = nil,
     center = Vector3(0, 0, 0), corners = {}, image = 0, imageContext = nil,
     ready = false, failed = false, error = "", key = "default", visible = false,
     dirty = true, timer = 0, phase = 0, yaw = 0, updates = 0, builds = 0,
@@ -69,6 +70,7 @@ local function ReleaseResources()
         pcall(function() material:Dispose() end)
     end
     state.materials = {}
+    state.outlineMaterial = nil -- 轮廓材质也在上面的数组里，已随之释放
     state.ready = false
 end
 
@@ -175,7 +177,7 @@ end
 
 local function BuildVehicle(key)
     state.vehicle.enabled = false
-    VehicleGeometry.Build(state.geometry, key, state.materials)
+    VehicleGeometry.Build(state.geometry, key, state.materials, state.outlineMaterial)
     state.vertices = 0
     state.sectionVertices = {}
     for section = 0, state.geometry:GetNumGeometries() - 1 do
@@ -214,6 +216,8 @@ function VehicleShowcase.Init()
         local glass = CreateMaterial(alpha, {0.16, 0.07, 0.13}, 0.05, 0.08, 0.68)
         glass:SetRenderOrder(180)
         CreateMaterial(opaque, {1, 0.18, 0.035}, 0.05, 0.20, 1, {3.2, 0.576, 0.112})
+        -- 第 7 段白色轮廓壳；CreateMaterial 已把材质登记进 state.materials，随展台一并释放。
+        state.outlineMaterial = CreateMaterial(opaque, {0.94, 0.96, 1.0}, 0.0, 0.55, 1, {0.34, 0.36, 0.40})
 
         local scene = Scene()
         state.scene = scene -- Scene 强持有；Viewport 对 Scene 的引用不承担保活。
