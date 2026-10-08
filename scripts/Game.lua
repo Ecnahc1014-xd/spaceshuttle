@@ -18,8 +18,7 @@ local SLING_X = 270
 local SLING_Y = 850
 local MAX_PULL = 150
 local DANGER_Y = 900
--- v0.13.48：前期我方强度收敛——基地生命 100→80（关1 越线每行仅 1 伤，100 血使前几关几乎不可败）。
-local BASE_HP = 80
+local BASE_HP = 100
 
 -- 幸存者化参数
 local BRICK_BASE_DAMAGE = 0.5      -- 每行方块越过目标线时的基础伤害，逐行向上取整（每行实际扣 1）
@@ -60,9 +59,7 @@ local BALL_TYPES = {
         -- 避免后期滚雪球失控；`speedBoostFloor` 是衰减下限（再快也至少按这个倍率涨）。
         speedBoostFloor = 1.012,
         speedSoftCap = 1400,       -- 达到此速度时加速倍率降到下限
-        -- v0.13.48：前期我方强度收敛——320→480，加速车的「速度分档增伤」爬得更慢，
-        -- 关1 不再几次反弹就 2~3 伤（初速 660 时仍是 1 伤，约 1140 才 +1）。
-        damageStep = 480,
+        damageStep = 320,
         -- v0.13.22：**去掉伤害封顶**（原 maxDamage=2）——伤害按速度分档无限增长。
         redirectThrottle = 0.45,    -- 自动追击的节流（秒），削弱其持续黏着
         redirectMinSpeed = 120,     -- WO-05/P4：低于此速度不触发追击，消除低速抖动

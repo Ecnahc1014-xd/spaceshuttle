@@ -146,21 +146,24 @@ function StageCatalog.GetNormalCount(stage, stageWave)
     return math.min(StageCatalog.MAX_FLEET, 1 + stageRamp + waveRamp + add)
 end
 
--- 精英护航低密度成长：前 3 关无护航，第 4 关起每三关加一架，最多 3 架。
+-- 精英护航成长：v0.13.49 整体抬高——关1 起就有 1 架护航，每两关 +1，关5 起封顶 3 架。
 function StageCatalog.GetEscortCount(stage)
-    return math.min(3, math.floor(GetStageProgress(stage) / 3))
+    return math.min(3, 1 + math.floor(GetStageProgress(stage) / 2))
 end
 
 -- 每过三关，普通敌人每块 +1 血；精英 / Boss 另有固定护甲。
+-- v0.13.49：整体抬高敌怪曲线——基础 1→2 且斜率 1/3 关 → 1/2 关
+-- （关1 由 1 血升到 2 血，关15 由 5 血升到 9 血），匹配玩家侧（加速车无限成长）的强度。
 function StageCatalog.GetBrickHp(stage, kind)
-    local base = 1 + math.floor((stage - 1) / 3)
+    local base = 2 + math.floor((stage - 1) / 2)
     if kind == "elite" then return base + 1 end
     if kind == "boss" then return base + 2 end
     return base
 end
 
+-- v0.13.49：整体抬高——基准速度 28→34、每关 +1.5→+1.8（关1 首波 28→34、关13 起 46→55.6）。
 function StageCatalog.GetBaseSpeed(stage, stageWave)
-    return 28 + (stageWave - 1) * 4 + math.min(stage - 1, 12) * 1.5
+    return 34 + (stageWave - 1) * 4 + math.min(stage - 1, 12) * 1.8
 end
 
 -- v0.13.26：波间隔改为**逐关收紧**（旧版随关卡变长 15.5→25.1s，方向反了）。
@@ -185,13 +188,13 @@ function StageCatalog.GetSpawnInterval(stage)
 end
 
 function StageCatalog.GetBossSummonLimit(stage)
-    -- Boss 召唤从 1 架起步，每 4 关增加 1 架，后期封顶 4 架。
-    return math.min(4, 1 + math.floor(GetStageProgress(stage) / 4))
+    -- v0.13.49：整体抬高——关1 起 2 架、每 3 关 +1，后期封顶 5 架（原 1 起、每 4 关 +1、封顶 4）。
+    return math.min(5, 2 + math.floor(GetStageProgress(stage) / 3))
 end
 
 function StageCatalog.GetBossSummonInterval(stage)
-    -- 召唤间隔缓慢收紧：12 秒起步，关 15 起封顶 8.5 秒。
-    return math.max(8, 12 - GetStageProgress(stage) * 0.25)
+    -- v0.13.49：召唤更密——10 秒起步、每关 -0.3s，后期封顶 6 秒（原 12 秒起、封顶 8.5 秒）。
+    return math.max(6, 10 - GetStageProgress(stage) * 0.3)
 end
 
 return StageCatalog
