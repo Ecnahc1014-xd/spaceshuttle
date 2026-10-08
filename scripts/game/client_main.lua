@@ -27,6 +27,8 @@ local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
 
 local ClientMain = {}
+-- 业务手势与后端视觉使用同一主指针；0 是合法 TouchID。
+ClientMain._pointer = { source = "", touchId = -1, state = "", epoch = 0, focused = true }
 
 -- 钻石商品价格缓存：sku -> 元（来自 Shop.getProducts()，离线/未开通时为空）
 ---@type table<string, number>
@@ -191,6 +193,55 @@ local function LoadPlayerDataFromCloud()
     end)
 end
 
+-- 取消而非模拟松手：失焦/广告/模态不能误发射，也不能保留旧按压。
+function ClientMain.CancelInput()
+    ClientMain._pointer.source = ""
+    ClientMain._pointer.touchId = -1
+    Game.CancelPointer()
+    RenderBackend.ClearPointer()
+    if talentScrollArmed then TalentTree.ScrollEnd() end
+    if stageSelectScrollArmed then StageSelect.ScrollEnd() end
+    talentScrollArmed = false
+    stageSelectScrollArmed = false
+    metaPointerConsumed = false
+    reviveArmed, doubleArmed, restartArmed, menuArmed = false, false, false, false
+    stageWinArmed = nil
+end
+
+function ClientMain.ValidatePointer()
+    if ClientMain._pointer.source == "" then return end
+    local snapshot = Game.GetSnapshot()
+    if not ClientMain._pointer.focused or AdService.IsInFlight()
+        or snapshot.state ~= ClientMain._pointer.state
+        or snapshot.pointerEpoch ~= ClientMain._pointer.epoch then
+        ClientMain.CancelInput()
+    end
+end
+
+---@param source string
+---@param touchId integer|nil
+---@return boolean
+function ClientMain.ClaimPointer(source, touchId)
+    ClientMain.ValidatePointer()
+    if not ClientMain._pointer.focused or AdService.IsInFlight()
+        or ClientMain._pointer.source ~= "" then return false end
+    local snapshot = Game.GetSnapshot()
+    ClientMain._pointer.source = source
+    ClientMain._pointer.touchId = touchId or -1
+    ClientMain._pointer.state = snapshot.state
+    ClientMain._pointer.epoch = snapshot.pointerEpoch
+    return true
+end
+
+---@param source string
+---@param touchId integer|nil
+---@return boolean
+function ClientMain.OwnsPointer(source, touchId)
+    ClientMain.ValidatePointer()
+    return ClientMain._pointer.source == source
+        and (source == "mouse" or ClientMain._pointer.touchId == touchId)
+end
+
 -- v0.11.0 商业化：所有激励视频统一走 AdService，保证一次性完成与防重复发奖。
 ---@param onReward fun()
 local function ShowAd(onReward)
@@ -199,6 +250,7 @@ local function ShowAd(onReward)
         Presentation.SetAdToast(msg)
         RefreshSnapshots()
     end
+    ClientMain.CancelInput()
     Presentation.SetAdStatus("loading")
     AdService.Show({
         onReward = function()
@@ -1299,6 +1351,8 @@ function ClientMain.Start(opts)
     input.mouseVisible = true
 
     if not RenderBackend.Init() then return false end
+    ClientMain._pointer.focused = true
+    ClientMain.CancelInput()
 
     -- v0.12.5：平台通知换皮（v0.12.7：付费轨自动曝光已删，无需状态复位）。
     installSystemNotificationHandler()
@@ -1393,7 +1447,8 @@ function ClientMain.Start(opts)
 end
 
 function ClientMain.Stop()
-    RenderBackend.ClearPointer()
+    ClientMain.CancelInput()
+    ClientMain._pointer.focused = false
     UnsubscribeFromEvent("InputFocus")
     started_ = false
     pcall(SysNotif.UnregisterHandler)
@@ -1433,11 +1488,18 @@ function HandleUpdate(eventType, eventData)
     -- v0.12.5：激励视频在途时冻结玩法推进（浏览器 embed 覆盖时游戏循环仍在跑，
     -- 广告回来敌人已压到防线）。表现层照常衰减，快照不变 = 画面静止。
     -- 结算/升级/暂停态的广告本就不推进玩法，无需重复处理。
-    local adFreeze = AdService.IsInFlight()
+    ClientMain.ValidatePointer()
+    local adInFlight = AdService.IsInFlight()
+    if adInFlight and (ClientMain._pointer.source ~= "" or Game.GetSnapshot().timeScale == 2
+        or Game.GetSnapshot().holdSpeedPending or Game.GetSnapshot().aiming) then
+        ClientMain.CancelInput()
+    end
+    local adFreeze = adInFlight
         and gameSnapshot ~= nil and gameSnapshot.state == "playing"
     if not adFreeze then
-        Game.Update(gameDt)
+        Game.Update(gameDt, dt)
     end
+    ClientMain.ValidatePointer()
     local snapshot = Game.GetSnapshot()
     Presentation.Update(dt, snapshot, Game.DrainEvents())
     gameSnapshot = snapshot
@@ -1507,9 +1569,8 @@ end
 ---@param eventType string
 ---@param eventData InputFocusEventData
 function HandleInputFocus(eventType, eventData)
-    if not eventData:GetBool("Focus") or eventData:GetBool("Minimized") then
-        RenderBackend.ClearPointer()
-    end
+    ClientMain._pointer.focused = eventData:GetBool("Focus") and not eventData:GetBool("Minimized")
+    if not ClientMain._pointer.focused then ClientMain.CancelInput() end
 end
 
 -- v0.12.5：顶端通知条优先消费点击（任意状态都在最上层）。
@@ -1529,6 +1590,7 @@ function HandleMouseDown(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    if not ClientMain.ClaimPointer("mouse") then return end
     local pointerX, pointerY = RenderBackend.ScreenToUi(screenX, screenY)
     RenderBackend.SetPointer(pointerX, pointerY)
     RenderBackend.SetPointerPressed(true)
@@ -1581,6 +1643,9 @@ end
 
 function HandleMouseUp(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
+    if not ClientMain.OwnsPointer("mouse") then return end
+    ClientMain._pointer.source = ""
+    Game.CancelHoldSpeed()
     -- 所有业务提前返回前释放左键按压；其他鼠标按钮不影响它。
     RenderBackend.SetPointerPressed(false)
     if talentScrollArmed then
@@ -1627,11 +1692,15 @@ function HandleMouseUp(eventType, eventData)
 end
 
 function HandleMouseMove(eventType, eventData)
+    ClientMain.ValidatePointer()
+    if not ClientMain._pointer.focused or AdService.IsInFlight()
+        or ClientMain._pointer.source == "touch" then return end
     -- v0.13.30c：先喂指针位置给后端（悬停发光用），任何模态下都要更新——
     -- 悬停是「全局交互反馈」，不该被拖拽/模态分支提前 return 掉。
     local sx, sy = GetScreenCoordinates(eventData)
     local hx, hy = RenderBackend.ScreenToUi(sx, sy)
     RenderBackend.SetPointer(hx, hy)
+    if not ClientMain.OwnsPointer("mouse") then return end
     -- v0.13.8：天赋树拖拽滚动优先于一切（元层面板打开时 IsMetaCapturing 会拦下后续）。
     if talentScrollArmed then
         local _, uiY = RenderBackend.ScreenToUi(sx, sy)
@@ -1652,8 +1721,13 @@ end
 function HandleTouchBegin(eventType, eventData)
     local screenX, screenY = GetScreenCoordinates(eventData)
     if not RenderBackend.IsInsideGameCanvas(screenX, screenY) then return end
+    local touchId = eventData:GetInt("TouchID")
+    if not ClientMain.ClaimPointer("touch", touchId) then return end
     local pointerX, pointerY = RenderBackend.ScreenToUi(screenX, screenY)
-    RenderBackend.BeginTouchPointer(eventData:GetInt("TouchID"), pointerX, pointerY)
+    if not RenderBackend.BeginTouchPointer(touchId, pointerX, pointerY) then
+        ClientMain.CancelInput()
+        return
+    end
     -- v0.12.5：顶部通知条永远最先吃触摸。
     if TryBannerAt(screenX, screenY) then
         metaPointerConsumed = true
@@ -1701,7 +1775,8 @@ function HandleTouchBegin(eventType, eventData)
 end
 
 function HandleTouchMove(eventType, eventData)
-    -- 只移动主触点的视觉反馈；业务输入仍沿用原有处理路径。
+    if not ClientMain.OwnsPointer("touch", eventData:GetInt("TouchID")) then return end
+    -- 只移动业务主触点，非主指也不能改变滚动或玩法输入。
     local tsx, tsy = GetScreenCoordinates(eventData)
     local thx, thy = RenderBackend.ScreenToUi(tsx, tsy)
     RenderBackend.MoveTouchPointer(eventData:GetInt("TouchID"), thx, thy)
@@ -1722,6 +1797,9 @@ function HandleTouchMove(eventType, eventData)
 end
 
 function HandleTouchEnd(eventType, eventData)
+    if not ClientMain.OwnsPointer("touch", eventData:GetInt("TouchID")) then return end
+    ClientMain._pointer.source = ""
+    Game.CancelHoldSpeed()
     -- 仅主触点结束时清反馈，画布外或第二根手指的抬起不能取消主指按压。
     RenderBackend.EndTouchPointer(eventData:GetInt("TouchID"))
     if talentScrollArmed then
@@ -1768,6 +1846,7 @@ function HandleTouchEnd(eventType, eventData)
 end
 
 function HandleKeyDown(eventType, eventData)
+    if not ClientMain._pointer.focused or AdService.IsInFlight() then return end
     local key = eventData:GetInt("Key")
     if key == KEY_SPACE or key == KEY_RETURN then
         if Game.IsGameOver() then

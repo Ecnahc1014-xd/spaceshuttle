@@ -6,6 +6,8 @@ local StageCatalog = require "StageCatalog"
 local TalentCatalog = require "TalentCatalog"
 
 local Game = {}
+-- 空手长按只缩放战斗模拟，不改变表现时钟；收表避免增加主块 local 槽位。
+Game._holdSpeed = { down = false, active = false, time = 0, threshold = 0.35, epoch = 0 }
 
 local DW = 540
 local DH = 960
@@ -661,9 +663,33 @@ function Game.SetTalentProvider(provider)
     talentProvider = provider
 end
 
+-- 只取消倍速，不移动待发车；真实发射必须保留拉弓后的出生点。
+function Game.CancelHoldSpeed()
+    if Game._holdSpeed.active then print("[Game] hold speed -> 1x") end
+    Game._holdSpeed.down = false
+    Game._holdSpeed.active = false
+    Game._holdSpeed.time = 0
+    Game._holdSpeed.epoch = Game._holdSpeed.epoch + 1
+end
+
+function Game.CancelPointer()
+    Game.CancelHoldSpeed()
+    aiming = false
+    startArmed = false
+    if activeBall then
+        activeBall.x = SLING_X
+        activeBall.y = SLING_Y
+    end
+end
+
+function Game.CanHoldSpeed()
+    return gameState == "playing" and introTimer <= 0 and not aiming and activeBall == nil
+end
+
 -- startStage：选关界面挑选的关卡（v0.13.4）。默认 1；wave 换算为全局累计波号，
 -- 使每日任务「抵达第 N 波」在后期关卡仍按真实进度计量。
 ResetGame = function(startStage)
+    Game.CancelPointer()
     startStage = math.max(1, math.floor(tonumber(startStage) or 1))
     -- v0.13.5：每次开局重新拉取天赋解锁集合，派生加成在本局生效。
     if talentProvider then Game.SetTalents(talentProvider()) end
@@ -1449,6 +1475,7 @@ GainXp = function(amount)
             activeBall.y = SLING_Y
         end
         gameState = "levelup"
+        Game.CancelHoldSpeed()
         RollUpgradeChoices({})
         Emit("level_up", {level = playerLevel})
         print("[Game] level up -> " .. playerLevel .. ", waiting for upgrade pick")
@@ -2149,6 +2176,7 @@ local function LaunchMarble(dx, dy, power)
     if not activeBall then return end
     local length = math.sqrt(dx * dx + dy * dy)
     if length < 1 then return end
+    Game.CancelHoldSpeed()
 
     local def = BALL_TYPES[activeBall.ballType]
     -- WO-08/P7：power 为归一化蓄力 (0..1)，映射到 [powerMin, powerMax] 初速比例。
@@ -2199,7 +2227,10 @@ UpdateMarbles = function(dt)
         local def = BALL_TYPES[marble.ballType]
         -- v0.10.28：按本帧位移自适应子步进，高速弹不再打穿薄格。
         local move = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy) * dt
-        local steps = math.max(6, math.min(16, math.ceil(move / math.max(4, marble.radius * 0.32))))
+        -- 倍速最多把客户端0.05秒模拟扩为0.1秒，碰撞预算同步翻倍。
+        -- 不重复整个规则帧：同车同砖去重与越线按行聚合仍只结算一次。
+        local stepScale = math.max(1, math.ceil(dt / 0.05 - 1e-9))
+        local steps = math.max(6 * stepScale, math.min(16 * stepScale, math.ceil(move / math.max(4, marble.radius * 0.32))))
         local subDt = dt / steps
         local frameHitBricks = {}
         marble.flightTime = (marble.flightTime or 0) + dt
@@ -2697,6 +2728,7 @@ UpdateEnemies = function(dt)
         if baseHp <= 0 then
             baseHp = 0
             gameState = "gameover"
+            Game.CancelHoldSpeed()
             aiming = false
             startArmed = false
             if score > highScore then highScore = score end
@@ -2800,6 +2832,7 @@ UpdateWaveLogic = function(dt)
                 table.remove(veggies, i)
             end
             gameState = "stagewin"
+            Game.CancelHoldSpeed()
             Emit("stage_cleared", {
                 stage = stage, wave = wave,
                 stars = stageResult.stars, rating = stageResult.rating,
@@ -2862,21 +2895,39 @@ function Game.Init(config)
         .. " highScore=" .. tostring(highScore))
 end
 
-function Game.Update(dt)
+---@param dt number 规则时间（已叠加顿帧）
+---@param inputDt number|nil 原始输入时间；不传时使用 dt
+function Game.Update(dt, inputDt)
     elapsed = elapsed + dt
     if gameState ~= "playing" then
+        if Game._holdSpeed.down or Game._holdSpeed.active then Game.CancelHoldSpeed() end
         -- 非战斗态只保留时钟，供暂停/升级/菜单表现动画使用。
         return
     end
 
     -- v0.13.24：进关准备期内冻结玩法（只推进计时器），动画放行给表现层。
     if introTimer > 0 then
+        if Game._holdSpeed.down or Game._holdSpeed.active then Game.CancelHoldSpeed() end
         introTimer = math.max(0, introTimer - dt)
         if introTimer > 0 then return end
         SpawnWave()
         waveCooldown = StageCatalog.GetInterval(stage, stageWave)
     end
 
+    if Game._holdSpeed.down and not Game._holdSpeed.active then
+        if not Game.CanHoldSpeed() then
+            Game.CancelHoldSpeed()
+        else
+            Game._holdSpeed.time = Game._holdSpeed.time + math.max(0, inputDt or dt)
+            if Game._holdSpeed.time + 1e-9 >= Game._holdSpeed.threshold then
+                Game._holdSpeed.active = true
+                print("[Game] empty-hand hold -> 2x")
+            end
+        end
+    end
+    -- elapsed、准备动画只推进原始规则时间；其余战斗计时统一使用模拟时间。
+    -- 已开启后不因补车退出，只由松手、真实发射或生命周期取消。
+    dt = dt * (Game._holdSpeed.active and 2 or 1)
     UpdateAiming()
     partsBoostTime = math.max(0, partsBoostTime - dt)
     UpdateMarbles(dt)
@@ -2917,8 +2968,15 @@ function Game.PointerDown(px, py)
     end
     if gameState ~= "playing" then return end
 
-    -- 只有待发车辆时才能起手拖拽；空仓时车辆会自然回落补弹，无需召回。
-    if not activeBall then return end
+    -- 空手起手只武装长按；补车后本次手势不会自动转为拉弓或发射。
+    if not activeBall then
+        if Game.CanHoldSpeed() then
+            Game._holdSpeed.down = true
+            Game._holdSpeed.time = 0
+        end
+        return
+    end
+    if introTimer > 0 then return end
 
     -- 全屏任意位置起手：记录按下点，拉弓量按相对位移计算，
     -- 车辆只在弹弓点附近移动，手指不再遮挡车辆。
@@ -2937,6 +2995,8 @@ function Game.PointerMove(px, py)
 end
 
 function Game.PointerUp(px, py)
+    -- 空手手势没有 aiming，也必须在任何早退之前恢复原速。
+    Game.CancelHoldSpeed()
     -- v0.10.24：菜单在松手确认时才开局。结算页按钮由编排层分发。
     if gameState == "menu" then
         if startArmed then
@@ -3013,6 +3073,7 @@ end
 function Game.ReviveFromAd()
     if gameState ~= "gameover" or reviveUsed then return false end
     reviveUsed = true
+    Game.CancelPointer()
     baseHp = REVIVE_HP
     aiming = false
     startArmed = false
@@ -3114,6 +3175,7 @@ end
 
 function Game.Pause()
     if gameState == "playing" then
+        Game.CancelPointer()
         -- v0.10.24：暂停时取消进行中的拖拽并让待发车归位，
         -- 避免恢复瞬间带着旧蓄力/残留 aiming 状态。
         aiming = false
@@ -3142,6 +3204,7 @@ end
 function Game.GoToMenu()
     if gameState == "playing" or gameState == "paused" or gameState == "gameover"
         or gameState == "stagewin" then
+        Game.CancelPointer()
         gameState = "menu"
         Emit("game_reset")
         print("[Game] returned to menu")
@@ -3217,6 +3280,10 @@ function Game.GetSnapshot()
     s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil) or false
     s.stageTotal = StageCatalog.STAGE_SOFT_CAP
     s.elapsed = elapsed
+    s.timeScale = gameState == "playing" and Game._holdSpeed.active and 2 or 1
+    s.canHoldSpeed = Game.CanHoldSpeed()
+    s.holdSpeedPending = Game._holdSpeed.down and not Game._holdSpeed.active
+    s.pointerEpoch = Game._holdSpeed.epoch
     s.playerLevel = playerLevel
     s.xp = xp
     s.xpToNext = xpToNext

@@ -199,7 +199,7 @@ function CombatImpact.DrawSparks(ctx, presentation, project)
                         local ux, uy = dx / length, dy / length
                         local reach = math.min(13, 3 + length * 2.0) * life
                         local half = math.min(1.6, p.size * 0.42) * life
-                        nvgMoveTo(ctx, x + ux * 1.5, y + uy * 1.5)
+                        nvgMoveTo(ctx, x + ux * 1.5 * life, y + uy * 1.5 * life)
                         nvgLineTo(ctx, x - ux * reach - uy * half, y - uy * reach + ux * half)
                         nvgLineTo(ctx, x - ux * reach + uy * half, y - uy * reach - ux * half)
                         nvgClosePath(ctx)
@@ -218,16 +218,23 @@ end
 -- 接上已存在但未绘制的普通命中闪光；只读存活机体，不触发材质/网格重建。
 function CombatImpact.DrawHits(ctx, game, presentation, project)
     local flashes = presentation.hitFlashes or {}
-    local drawn = 0
+    local drawn, checked = 0, 0
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, 92, 540, 774)
     for key, remaining in pairs(flashes) do
+        checked = checked + 1
+        if checked > 48 then break end
         if remaining > 0 and drawn < 24 then
             local id, col, row = key:match("^(%d+):(%d+):(%d+)$")
             local enemyId, c, r = tonumber(id), tonumber(col), tonumber(row)
             if enemyId and c and r then
                 for _, enemy in ipairs(game.veggies or {}) do
                     if enemy.id == enemyId then
+                        local live = false
+                        for _, brick in ipairs(enemy.bricks or {}) do
+                            if brick.col == c and brick.row == r and brick.alive then live = true; break end
+                        end
+                        if not live then break end
                         local x, y = project(enemy.x + (c - 0.5) * enemy.brickSize,
                             enemy.y + (r - 0.5) * enemy.brickSize)
                         local flash = math.max(0, math.min(1, remaining / 0.12))

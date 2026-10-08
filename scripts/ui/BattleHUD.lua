@@ -333,7 +333,9 @@ function BattleHUD.DrawAmmo(ctx, game, presentation)
     -- 左右各一组，中央168宽只留给预告；不再用跨中区长说明与预告抢位置。
     local activeName = game.activeBall and D.slotNames[game.activeBall.ballType]
     Text(ctx, "dock", "title", activeName and (activeName .. " · 待发") or "弹药舱", 12, 866, 160, 23, 15, activeName and C.text or C.dim)
-    Text(ctx, "dock", "hint", game.activeBall and "拖拽发射" or "等待回收", 384, 866, 144, 23, 15, C.dim, "right")
+    local hint = game.timeScale == 2 and "2倍速 · 松手恢复"
+        or (game.activeBall and "拖拽发射" or (game.canHoldSpeed and "长按2倍速" or "等待回收"))
+    Text(ctx, "dock", "hint", hint, 384, 866, 144, 23, 15, game.timeScale == 2 and C.cyan or C.dim, "right")
     for i, kind in ipairs(D.slotTypes) do
         local x = (i <= 2 and 10 or 396) + ((i - 1) % 2) * 70
         local color = D.slotColors[kind]
