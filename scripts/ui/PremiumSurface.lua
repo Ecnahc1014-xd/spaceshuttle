@@ -51,6 +51,123 @@ local function Screws(ctx, x, y, w, h, inset)
     end
 end
 
+-- ===== v0.13.54 装饰纹路组：无关紧要、只做密度与「工程感」，一律低 alpha 且不穿正文 =====
+
+-- 微网格底纹：极淡方格，只用于够大的面板/区域。
+local function MicroGrid(ctx, x, y, w, h, step, color, alpha)
+    if step < 6 or w < step * 2 or h < step * 2 then return end
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, x, y, w, h)
+    nvgBeginPath(ctx)
+    for gx = x + step, x + w - 1, step do
+        nvgMoveTo(ctx, gx, y)
+        nvgLineTo(ctx, gx, y + h)
+    end
+    for gy = y + step, y + h - 1, step do
+        nvgMoveTo(ctx, x, gy)
+        nvgLineTo(ctx, x + w, gy)
+    end
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha or 14))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+    nvgRestore(ctx)
+end
+
+-- 稀疏电路刻纹：三条 L 形走线 + 端点焊盘，贴面板边缘，不穿正文。
+local function CircuitTrace(ctx, x, y, w, h, color, alpha)
+    local a = alpha or 28
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, x, y, w, h)
+    nvgStrokeWidth(ctx, 1)
+    local runs = {
+        { x + w * 0.05, y + h * 0.13, w * 0.15, h * 0.15 },
+        { x + w * 0.74, y + h * 0.09, w * 0.16, h * 0.20 },
+        { x + w * 0.06, y + h * 0.84, w * 0.19, -h * 0.13 },
+    }
+    for i = 1, #runs do
+        local rx, ry, dx, dy = runs[i][1], runs[i][2], runs[i][3], runs[i][4]
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, rx, ry)
+        nvgLineTo(ctx, rx + dx, ry)
+        nvgLineTo(ctx, rx + dx, ry + dy)
+        nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
+        nvgStroke(ctx)
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, rx, ry, 1.5)
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], a + 34))
+        nvgFill(ctx)
+    end
+    nvgRestore(ctx)
+end
+
+-- 四角折线括号：给面板一圈「取景框」，比描边更有工艺味。
+local function CornerBrackets(ctx, x, y, w, h, len, color, alpha)
+    if w < 48 or h < 32 then return end
+    local a = alpha or 120
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
+    nvgStrokeWidth(ctx, 1)
+    for _, c in ipairs({ { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }) do
+        local cx = c[1] < 0 and x + 2.5 or x + w - 2.5
+        local cy = c[2] < 0 and y + 2.5 or y + h - 2.5
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, cx + c[1] * len, cy)
+        nvgLineTo(ctx, cx, cy)
+        nvgLineTo(ctx, cx, cy + c[2] * len)
+        nvgStroke(ctx)
+    end
+end
+
+-- 断线：沿 x 排一段虚线，用于分区/标题下沿的「仪表」节奏。
+local function DashRule(ctx, x, y, w, color, alpha, dash, gap)
+    dash, gap = dash or 6, gap or 5
+    local a = alpha or 60
+    nvgBeginPath(ctx)
+    local xx = x
+    while xx < x + w - 1 do
+        local seg = math.min(dash, x + w - xx)
+        nvgMoveTo(ctx, xx, y)
+        nvgLineTo(ctx, xx + seg, y)
+        xx = xx + dash + gap
+    end
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+end
+
+-- 斜向细纹：整块区域的「机加工拉丝」，裁剪在区域内。
+local function DiagonalHatch(ctx, x, y, w, h, gap, color, alpha)
+    gap = gap or 11
+    if w < gap * 2 or h < gap * 2 then return end
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, x, y, w, h)
+    nvgBeginPath(ctx)
+    for d = -h, w, gap do
+        nvgMoveTo(ctx, x + d, y + h)
+        nvgLineTo(ctx, x + d + h, y)
+    end
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha or 9))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+    nvgRestore(ctx)
+end
+
+-- 点阵：小圆网格，只用于窄条/角落，避免大面积逐点绘制。
+local function DotMatrix(ctx, x, y, w, h, step, color, alpha)
+    step = step or 14
+    if w < step or h < step then return end
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, x, y, w, h)
+    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha or 30))
+    for gx = x + step * 0.5, x + w - 1, step do
+        for gy = y + step * 0.5, y + h - 1, step do
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, gx, gy, 0.9)
+            nvgFill(ctx)
+        end
+    end
+    nvgRestore(ctx)
+end
+
 -- 顶边长短刻度：给宽面板一条可读的「仪器」顶沿。
 local function TopTicks(ctx, x, y, w, color, alpha)
     local seg = 16
@@ -115,6 +232,13 @@ function Surface.Panel(ctx, x, y, w, h, fill, border, radius, emphasis)
     nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y + h * 0.55, x, y + h,
         nvgRGBA(0, 0, 0, 0), nvgRGBA(0, 0, 0, emphasis and 54 or 40)))
     nvgFill(ctx)
+    -- ③b 装饰纹路（v0.13.54）：微网格 + 斜向拉丝，给大面板「舱板」密度。
+    if big then
+        MicroGrid(ctx, x + 2, y + 2, w - 4, h - 4, 18, C.cyanDim, emphasis and 16 or 11)
+        if w >= 190 and h >= 96 then
+            DiagonalHatch(ctx, x + 2, y + 2, w - 4, h - 4, 13, C.text, 7)
+        end
+    end
     -- ④ 左缘玻璃高光窄条（只在够宽的面板上）。
     if w >= 90 then
         GlassStrip(ctx, x + 1, y + 2, 3, h - 4, emphasis and 30 or 20)
@@ -154,6 +278,17 @@ function Surface.Panel(ctx, x, y, w, h, fill, border, radius, emphasis)
             x + w - r - 3, y + 2.5, C.dim, 95)
     end
     if big then
+        -- ⑦ 装饰纹路（v0.13.54）：四角取景折线 + 顶部断线 + 角落点阵 + 边缘电路刻纹。
+        CornerBrackets(ctx, x, y, w, h, 12, C.dim, emphasis and 130 or 95)
+        if w >= 150 then
+            DashRule(ctx, x + r + 6, y + h - 6, w - 2 * r - 12, C.cyanDim, 46, 7, 6)
+        end
+        if w >= 110 and h >= 70 then
+            DotMatrix(ctx, x + 5, y + h - 26, 34, 20, 9, C.cyanDim, 46)
+        end
+        if w >= 170 and h >= 80 then
+            CircuitTrace(ctx, x, y, w, h, C.cyanDim, emphasis and 34 or 24)
+        end
         Screws(ctx, x, y, w, h, 9)
     end
     nvgRestore(ctx)
@@ -190,6 +325,15 @@ function Surface.Window(ctx, x, y, w, h, titleH)
     Box(ctx, x + 2, y + 14, 3, th - 28, C.cyan, 1)
     Line(ctx, x + 14, y + th, x + w * 0.5 - 18, y + th, C.cyanDim, 190)
     Line(ctx, x + w * 0.5 + 18, y + th, x + w - 14, y + th, C.cyanDim, 190)
+    -- 装饰纹路（v0.13.54）：标题舱底部断线 + 右上点阵 + 内容区极淡斜纹 + 四角取景线。
+    DashRule(ctx, x + 16, y + th + 4, w - 32, C.cyanDim, 40, 5, 6)
+    if w >= 150 then
+        DotMatrix(ctx, x + w - 40, y + 10, 30, th - 16, 9, C.cyanDim, 44)
+    end
+    if w >= 180 and h >= 160 then
+        DiagonalHatch(ctx, x + 4, y + th + 4, w - 8, h - th - 8, 15, C.text, 6)
+    end
+    CornerBrackets(ctx, x + 2, y + 2, w - 4, h - 4, 13, C.cyanDim, 105)
     -- 内容区内顶暗，避免正文贴在亮带上。
     nvgBeginPath(ctx)
     nvgRect(ctx, x + 2, y + th + 1, w - 4, 14)
@@ -271,6 +415,10 @@ function Surface.Button(ctx, r, color, glow, phase)
             nvgRGBA(255, 255, 255, math.floor(26 + g * 26)), nvgRGBA(255, 255, 255, 0)))
         nvgFill(ctx)
         nvgRestore(ctx)
+    end
+    -- 装饰纹路（v0.13.54）：极淡斜向拉丝，只在大按钮上，给「机加工」密度。
+    if r.w >= 110 and r.h >= 40 then
+        DiagonalHatch(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4, 12, C.ink, 12)
     end
     -- 亮边。
     nvgBeginPath(ctx)
@@ -355,6 +503,11 @@ function Surface.Background(ctx, x, y, w, h, phase)
         nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 44),
         nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 0)))
     nvgFill(ctx)
+    -- 装饰纹路（v0.13.54）：全屏极淡网格 + 斜向拉丝，让背景不再是一块平色。
+    MicroGrid(ctx, x, y, w, h, 30, C.cyanDim, 10)
+    DiagonalHatch(ctx, x, y, w, h * 0.62, 22, C.text, 5)
+    DotMatrix(ctx, x + 18, y + 150, 44, 120, 12, C.cyanDim, 30)
+    DotMatrix(ctx, x + w - 62, y + h - 270, 44, 120, 12, C.cyanDim, 30)
     -- 慢速斜向高光扫过（7s 一轮，确定性），给静态底一点「在运行」的感觉。
     if phase then
         local sweep = (phase % 7) / 7
@@ -438,6 +591,9 @@ function Surface.Stage(ctx, r, phase)
         nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 26),
         nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 0)))
     nvgFill(ctx)
+    -- 装饰纹路（v0.13.54）：展台地面细网格 + 角落点阵，让「机库地板」有刻度感。
+    MicroGrid(ctx, r.x + 4, cy, r.w - 8, r.y + r.h - cy - 4, 22, C.cyanDim, 12)
+    DotMatrix(ctx, r.x + 12, r.y + 14, r.w - 24, 22, 10, C.cyanDim, 34)
     local top, bottom = r.y + 46, r.y + r.h - 29
     for _, side in ipairs({ -1, 1 }) do
         local xx = side == -1 and r.x + 8 or r.x + r.w - 8

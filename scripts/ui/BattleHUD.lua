@@ -75,11 +75,117 @@ local function Text(ctx, group, id, text, x, y, w, h, size, color, align)
     label:SetFontColor(color)
 end
 
-local function Bar(ctx, group, id, x, y, w, h, value, color)
+local function Mix(color, target, amount, alpha)
+    return { math.floor(color[1] + (target[1] - color[1]) * amount),
+        math.floor(color[2] + (target[2] - color[2]) * amount),
+        math.floor(color[3] + (target[3] - color[3]) * amount), alpha or 255 }
+end
+
+-- 组件保留值/布局/生命周期；仅替换绘制，不动全局主题与宿主上下文。
+---@class BattleInstrumentBar : ProgressBar
+---@field trailValue_ number
+---@field phase_ number
+---@field segments_ number
+---@field emphasis_ boolean
+local InstrumentBar = UI.ProgressBar:Extend("BattleInstrumentBar")
+
+function InstrumentBar:Init(props)
+    UI.ProgressBar.Init(self, props)
+    self.trailValue_, self.phase_, self.segments_, self.emphasis_ = 0, 0, 8, true
+end
+
+function InstrumentBar:Render(ctx)
+    local l = self:GetAbsoluteLayout()
+    if l.w <= 0 or l.h <= 0 then return end
+    local C = D.C
+    local color = self.props.fillColor --[[@as RGBAColor]]
+    local value = math.max(0, math.min(1, self:GetPercent() / 100))
+    local trail = math.max(value, math.min(1, self.trailValue_))
+    local radius = math.min(2, l.h * 0.5)
+    nvgSave(ctx)
+    -- 同色局部灯槽与暗底座形成悬浮厚度，空条仍保留可辨认的轨道。
+    if value > 0 then
+        nvgBeginPath(ctx)
+        nvgRoundedRect(ctx, l.x - 2, l.y - 3, l.w + 4, l.h + 6, radius + 2)
+        nvgFillPaint(ctx, nvgBoxGradient(ctx, l.x, l.y, value * l.w, l.h, radius, 4,
+            nvgRGBA(color[1], color[2], color[3], self.emphasis_ and 68 or 32),
+            nvgRGBA(color[1], color[2], color[3], 0)))
+        nvgFill(ctx)
+    end
+    Rect(ctx, l.x - 2, l.y, l.w + 4, l.h + 3, Alpha(C.ink, 220), radius + 1)
+    -- 浅钢蓝边座 + 内凹暗槽；占用原条外缘1.5px，不扩大HUD或命中。
+    Rect(ctx, l.x - 1.5, l.y - 1.5, l.w + 3, l.h + 3, Alpha(C.dim, 135), radius + 1)
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, l.x, l.y, l.w, l.h, radius)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, l.x, l.y, l.x, l.y + l.h,
+        nvgRGBA(C.ink[1], C.ink[2], C.ink[3], 255),
+        nvgRGBA(C.widget[1], C.widget[2], C.widget[3], 255)))
+    nvgFill(ctx)
+    Line(ctx, l.x + 2, l.y - 1, l.x + l.w - 2, l.y - 1, Alpha(C.text, 65), 0.7)
+    nvgIntersectScissor(ctx, l.x, l.y, l.w, l.h)
+    -- 刚损失的金段仍用0.32秒保持/原追平速度，先画后叠真实耐久。
+    if trail > value + 0.002 then
+        nvgBeginPath(ctx)
+        nvgRect(ctx, l.x + value * l.w, l.y, (trail - value) * l.w, l.h)
+        local light = Mix(C.warn, C.text, 0.22, 180)
+        local dark = Mix(C.warn, C.ink, 0.25, 180)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, l.x, l.y, l.x, l.y + l.h,
+            nvgRGBA(light[1], light[2], light[3], 180), nvgRGBA(dark[1], dark[2], dark[3], 180)))
+        nvgFill(ctx)
+    end
+    local filled = value * l.w
+    if filled > 0 then
+        local r = math.min(radius, filled * 0.5)
+        local top, bottom = Mix(color, C.text, 0.30), Mix(color, C.ink, 0.32)
+        nvgBeginPath(ctx)
+        nvgRoundedRectVarying(ctx, l.x, l.y, filled, l.h, r,
+            value == 1 and r or 0, value == 1 and r or 0, r)
+        nvgFillPaint(ctx, nvgLinearGradient(ctx, l.x, l.y, l.x, l.y + l.h,
+            nvgRGBA(top[1], top[2], top[3], 255), nvgRGBA(bottom[1], bottom[2], bottom[3], 255)))
+        nvgFill(ctx)
+        nvgSave(ctx)
+        -- 所有高光裁进实际填充，低值不假满、空条无流光；避开两端圆角。
+        nvgIntersectScissor(ctx, l.x + math.min(1, filled * 0.25), l.y + 0.6,
+            math.max(0, filled - 2), math.max(0, l.h - 1.2))
+        Line(ctx, l.x, l.y + 1, l.x + filled, l.y + 1, Alpha(C.text, 130), 0.8)
+        if self.emphasis_ and filled > 4 then
+            -- 半幅漆面与移动窄光芯叠层，灯槽不穿过数值文字。
+            nvgBeginPath(ctx)
+            nvgRect(ctx, l.x, l.y, filled, l.h * 0.5)
+            nvgFillPaint(ctx, nvgLinearGradient(ctx, l.x, l.y, l.x + filled, l.y + l.h,
+                nvgRGBA(C.text[1], C.text[2], C.text[3], 70),
+                nvgRGBA(C.text[1], C.text[2], C.text[3], 0)))
+            nvgFill(ctx)
+            local scan = l.x - 12 + (self.phase_ % 3.6) / 3.6 * (l.w + 24)
+            nvgBeginPath(ctx)
+            nvgRect(ctx, scan, l.y, 12, l.h)
+            nvgFillPaint(ctx, nvgLinearGradient(ctx, scan, l.y, scan + 12, l.y,
+                nvgRGBA(C.text[1], C.text[2], C.text[3], 0),
+                nvgRGBA(C.text[1], C.text[2], C.text[3], 65)))
+            nvgFill(ctx)
+            Line(ctx, scan + 11, l.y + 0.5, scan + 11, l.y + l.h - 0.5,
+                Alpha(C.text, 100), 0.9)
+        end
+        nvgRestore(ctx)
+    end
+    -- 刻度不改变连续值；暗细缝同时穿过真实填充与滞后段。
+    for i = 1, self.segments_ - 1 do
+        local x = l.x + l.w * i / self.segments_
+        Line(ctx, x, l.y + 1, x - 1.2, l.y + l.h - 1, Alpha(C.ink, 105), 0.8)
+    end
+    if filled > 0 then
+        local capW = math.min(1.4, filled)
+        Rect(ctx, l.x + filled - capW, l.y + 0.7, capW, l.h - 1.4,
+            Alpha(self.emphasis_ and C.text or color, self.emphasis_ and 230 or 160), 0)
+    end
+    nvgRestore(ctx)
+end
+
+local function Bar(ctx, group, id, x, y, w, h, value, color, trail, segments, emphasis)
     local key = group .. ":" .. id
-    local bar = bars[key]
+    local bar = bars[key] --[[@as BattleInstrumentBar?]]
     if not bar then
-        bar = UI.ProgressBar { width = w, height = h, value = 0, max = 1,
+        bar = InstrumentBar { width = w, height = h, value = 0, max = 1,
             showLabel = false, borderWidth = 0, borderRadius = 2,
             pointerEvents = "none", fillColor = color }
         Root(group):AddChild(bar)
@@ -88,6 +194,8 @@ local function Bar(ctx, group, id, x, y, w, h, value, color)
     bar.absoluteLayout = { x = x, y = y, w = w, h = h }
     bar:SetStyle({ fillColor = color })
     bar:SetValue(math.max(0, math.min(1, value)))
+    bar.trailValue_, bar.phase_ = trail or 0, D.anim()
+    bar.segments_, bar.emphasis_ = segments or 8, emphasis ~= false
 end
 
 local function Render(group, ctx)
@@ -193,15 +301,12 @@ function BattleHUD.DrawHud(ctx, game, presentation, pauseRect)
     Text(ctx, "hud", "hp-label", "基地耐久", 392, 5, 100, 20, 15, dim)
     Text(ctx, "hud", "hp", tostring(math.floor(game.baseHp or 0)) .. " / " .. tostring(math.floor(game.maxBaseHp or 100)),
         392, 26, 98, 25, 21, state.hp > 0.35 and C.text or C.error)
-    Bar(ctx, "hud", "hp", 392, 55, 128, 8, state.hp, hpColor)
+    Bar(ctx, "hud", "hp", 392, 55, 128, 8, state.hp, hpColor, state.hpTrail, 10)
     Text(ctx, "hud", "parts-label", "零件", 392, 67, 32, 18, 15, C.warn)
     Text(ctx, "hud", "parts", tostring(math.floor(game.runParts or 0)), 426, 67, 94, 18, 15, C.warn, "right")
     Text(ctx, "hud", "boost", (game.partsBoostTime or 0) > 0 and "×2" or "", 492, 40, 28, 14, 15, C.ad, "right")
     Render("hud", ctx)
-    -- 掉血段在真实生命条尾端短暂保留，绝不改生命读数。
-    if state.hpTrail > state.hp + 0.002 then
-        Rect(ctx, 392 + state.hp * 128, 55, (state.hpTrail - state.hp) * 128, 8, Alpha(C.warn, 180), 0)
-    end
+    -- 掉血滞后由耐久组件内分层绘制，避免覆盖槽体、高光与刻度。
     if state.hp <= 0.35 then
         Line(ctx, 383, 85, 531, 85, Alpha(C.error, 100 + 90 * (0.5 + 0.5 * math.sin(phase * 6))), 2)
     end
@@ -345,7 +450,13 @@ function BattleHUD.DrawBoss(ctx, game, boss)
     Text(ctx, "boss", "title", "首领阶段", 162, 103, 110, 23, 16, C.text)
     Text(ctx, "boss", "phase", tostring(phase) .. " / 3", 286, 103, 90, 23, 16, accent, "right")
     for i = 1, 3 do
-        Rect(ctx, 162 + (i - 1) * 73, 132, 66, 5, i <= phase and accent or Alpha(C.dim, 50), 1)
+        local reached = i <= phase
+        Bar(ctx, "boss", "segment" .. i, 162 + (i - 1) * 73, 132, 66, 5,
+            reached and 1 or 0, accent, nil, 4, i == phase)
+        if i < 3 then
+            Line(ctx, 230 + (i - 1) * 73, 134.5, 233 + (i - 1) * 73, 134.5,
+                Alpha(reached and accent or C.dim, 100), 1)
+        end
     end
     Text(ctx, "boss", "status", phase == 2 and "虚弱中 · 伤害 ×1.5" or "击碎装甲推进阶段",
         162, 142, 214, 20, 15, phase == 2 and C.warn or C.dim, "center")

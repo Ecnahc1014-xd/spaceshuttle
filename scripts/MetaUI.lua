@@ -178,6 +178,26 @@ local function Inside(r, px, py)
     return px >= r.x and px <= r.x + r.w and py >= r.y and py <= r.y + r.h
 end
 
+-- v0.13.54：给菜单/商店的小卡片补「无关紧要的纹路」——极淡网格 + 四角取景折线 + 角落点阵。
+-- 全部低 alpha、贴边不穿正文；命中几何不受影响（只画）。
+local function CardTrace(ctx, r, alpha)
+    local C = Colors()
+    local a = alpha or 14
+    D.grid(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6, 12, a)
+    if r.w >= 84 and r.h >= 40 then
+        D.corner(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6,
+            {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 30}, 9, 1)
+    end
+    if r.w >= 96 and r.h >= 52 then
+        for i = 0, 3 do
+            for j = 0, 1 do
+                D.rect(ctx, r.x + r.w - 20 + i * 4, r.y + r.h - 14 + j * 4, 1.6, 1.6,
+                    {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 26}, 0)
+            end
+        end
+    end
+end
+
 ---@param ctx any
 ---@param x number
 ---@param y number
@@ -556,6 +576,8 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
             D.rect(ctx, rr.x + 2, rr.y + 1, rr.w - 4, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
             D.corner(ctx, rr.x + 2, rr.y + 2, rr.w - 4, rr.h - 4,
                 {C.dim[1], C.dim[2], C.dim[3], 105}, 6, 1)
+            -- v0.13.54：卡面补极淡网格纹路（无关紧要，只做密度）。
+            CardTrace(ctx, rr, 11)
             if glow > 0.01 then
                 D.rect(ctx, rr.x + 3, rr.y + 3, rr.w - 6, rr.h - 6,
                     {accent[1], accent[2], accent[3], math.floor(30 * glow)}, 4)
@@ -680,6 +702,8 @@ local function DrawTasks(ctx, w, meta)
             r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, 36}, 4)
         D.rect(ctx, r.x + 3, r.y + 12, 3, r.h - 24,
             task.claimable and C.warn or {120, 148, 162, 110}, 1)
+        -- v0.13.54：任务行补极淡纹路（网格 + 四角折线）。
+        CardTrace(ctx, r, 10)
         D.text(ctx, r.x + 16, r.y + 12, task.name, 18, C.text)
         D.text(ctx, r.x + 16, r.y + 40,
             string.format("进度 %d / %d", task.progress, task.target), 15, C.dim)
@@ -755,6 +779,8 @@ local function DrawCodex(ctx, w, meta)
         D.rect(ctx, x + 2, y + math.floor(ch * 0.62), cw - 4,
             ch - math.floor(ch * 0.62) - 2, {0, 0, 0, owned and 40 or 28}, 4)
         D.rect(ctx, x + 4, y + 1, cw - 8, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
+        -- v0.13.54：图鉴卡补极淡纹路（网格 + 四角折线）。
+        CardTrace(ctx, { x = x, y = y, w = cw, h = ch }, owned and 13 or 9)
         D.text(ctx, x + 14, y + 10, entry.name, 19, owned and C.text or C.dim)
         local aircraft = meta.aircraft and meta.aircraft[entry.key]
         if aircraft then
@@ -833,6 +859,8 @@ local function DrawRank(ctx, w, meta)
         D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
             r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, mine and 42 or 30}, 4)
         D.rect(ctx, r.x + 4, r.y + 1, r.w - 8, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
+        -- v0.13.54：排行行补极淡纹路（网格 + 四角折线）。
+        CardTrace(ctx, r, mine and 12 or 9)
         if mine then D.rect(ctx, r.x + 3, r.y + 10, 3, r.h - 20, C.cyan, 1) end
         local medal = C.dim
         if item.rank == 1 then medal = C.warn
@@ -849,6 +877,8 @@ local function DrawRank(ctx, w, meta)
         {255, 255, 255, 18}, 4)
     D.rect(ctx, content.x + 2, rankFooterY + math.floor(56 * 0.6), content.w - 4,
         56 - math.floor(56 * 0.6) - 2, {0, 0, 0, 40}, 4)
+    -- v0.13.54：页脚条补极淡纹路。
+    CardTrace(ctx, { x = content.x, y = rankFooterY, w = content.w, h = 56 }, 10)
     local rankLabel = meta.myRankLoading and "我的排名 · 查询中"
         or (meta.myRank and string.format("我的排名 · 第 %d 名", meta.myRank) or "我的排名 · 暂未上榜")
     D.text(ctx, content.x + 18, rankFooterY + 16, rankLabel, 18, C.cyan)
@@ -962,6 +992,8 @@ local function DrawShopTabs(ctx, layout)
         D.rect(ctx, r.x + 2, r.y + math.floor(r.h * 0.6), r.w - 4,
             r.h - math.floor(r.h * 0.6) - 2, {0, 0, 0, active and 46 or 32}, 4)
         if active then D.rect(ctx, r.x + 8, r.y + r.h - 3, r.w - 16, 2, C.warn, 0) end
+        -- v0.13.54：分页标签补极淡网格纹路。
+        CardTrace(ctx, r, active and 13 or 9)
         if glow > 0.01 then
             D.stroke(ctx, r.x, r.y, r.w, r.h,
                 {C.warn[1], C.warn[2], C.warn[3], math.floor(glow * 200)}, 6, 1.4)
@@ -990,6 +1022,8 @@ local function DrawShopCard(ctx, layout, index, activeIndex, name, owned, equipp
     D.rect(ctx, r.x + 2, r.y + 1, r.w - 4, 1, {C.warn[1], C.warn[2], C.warn[3], 80}, 0)
     D.rect(ctx, r.x + 3, r.y + 8, 3, r.h - 16,
         active and C.warn or {C.dim[1], C.dim[2], C.dim[3], 120}, 1)
+    -- v0.13.54：浏览卡补极淡纹路（网格 + 四角折线），与其余面板同密度语言。
+    CardTrace(ctx, r, active and 14 or 10)
     if active then D.rect(ctx, r.x + 4, r.y + r.h - 3, r.w - 8, 2, C.warn, 0) end
     if glow > 0.01 then
         D.stroke(ctx, r.x, r.y, r.w, r.h,
@@ -1013,6 +1047,8 @@ local function DrawShopPurchase(ctx, layout, equipped, owned, cost, parts, owned
         {255, 240, 205, 20}, 4)
     D.rect(ctx, content.x + 2, buyY - 7 + math.floor(66 * 0.6), content.w - 4,
         66 - math.floor(66 * 0.6) - 2, {0, 0, 0, 38}, 4)
+    -- v0.13.54：购买区补极淡纹路。
+    CardTrace(ctx, { x = content.x, y = buyY - 7, w = content.w, h = 66 }, 11)
     D.icon(ctx, "parts", content.x + 4, buyY + 10, 32, 1)
     D.text(ctx, content.x + 46, buyY + 2, equipped and "当前使用" or (owned and "已拥有" or tostring(cost)),
         28, equipped and C.cyan or C.warn)
@@ -1290,6 +1326,23 @@ local function DrawWheel(ctx, w, meta)
         nvgStrokeColor(ctx, nvgRGBA(tc[1], tc[2], tc[3], i % 3 == 0 and 200 or 120))
         nvgStrokeWidth(ctx, i % 3 == 0 and 1.4 or 0.8)
         nvgStroke(ctx)
+    end
+    -- v0.13.54：盘面外圈补「无关紧要的纹路」——虚线环 + 点阵环，纯装饰不承载读数。
+    nvgBeginPath(ctx)
+    for i = 0, 47 do
+        local a0 = math.pi * 2 * i / 48
+        local a1 = a0 + math.pi * 2 / 48 * 0.5
+        nvgArc(ctx, cx, cy, ring + 15, a0, a1, NVG_CW)
+    end
+    nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 70))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+    nvgFillColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 55))
+    for i = 0, 35 do
+        local a = math.pi * 2 * i / 36
+        nvgBeginPath(ctx)
+        nvgCircle(ctx, cx + math.cos(a) * (ring + 21), cy + math.sin(a) * (ring + 21), 1)
+        nvgFill(ctx)
     end
 
     nvgSave(ctx)

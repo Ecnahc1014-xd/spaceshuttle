@@ -3,6 +3,7 @@
 -- 世界模式使用宿主投影；模态模式只在空白带显示紧凑回声，不冒充真实伤害范围。
 local VisualCatalog = require "VisualCatalog"
 local CombatImpact = {}
+local SPARK_COLORS = {{255, 209, 120}, {170, 120, 255}, {100, 233, 232}, {180, 230, 255}, {255, 128, 120}}
 
 local function StrokeEllipse(ctx, x, y, rx, ry, color, alpha, width)
     nvgBeginPath(ctx)
@@ -43,8 +44,40 @@ local function DrawBurst(ctx, impact, cx, cy, rx, ry)
         nvgFill(ctx)
     end
     StrokeEllipse(ctx, cx, cy, rx * expansion, ry * expansion, color, alpha, 3.2)
+    StrokeEllipse(ctx, cx, cy, rx * expansion, ry * expansion, color, math.floor(alpha * 0.24), 9)
     StrokeEllipse(ctx, cx, cy, rx * expansion * 0.83, ry * expansion * 0.83,
         {240, 248, 252}, math.floor(alpha * 0.82), 1.3)
+    -- 色边/白热核心/碎弧分层；慢一拍的断弧强调冲击传播，不加伤害或震幅。
+    nvgBeginPath(ctx)
+    for i = 1, 6 do
+        local start = impact.phase + i * math.pi / 3 + progress * 0.22
+        local sweep = impact.kind == "clear" and 0.36 or 0.66
+        local rim = expansion * (impact.kind == "clear" and 1.08 or 1.03)
+        for step = 0, 5 do
+            local angle = start + sweep * step / 5
+            local x, y = cx + math.cos(angle) * rx * rim, cy + math.sin(angle) * ry * rim
+            if step == 0 then nvgMoveTo(ctx, x, y) else nvgLineTo(ctx, x, y) end
+        end
+    end
+    nvgStrokeColor(ctx, nvgRGBA(240, 248, 252, math.floor(alpha * 0.74)))
+    nvgStrokeWidth(ctx, 2.1)
+    nvgStroke(ctx)
+
+    -- 尖头动能楔与窄亮芯，长短错开；同路径合批，避免逐光刺节点。
+    nvgBeginPath(ctx)
+    for i = 1, style.rays do
+        local angle = impact.phase + i * math.pi * 2 / style.rays
+        local ux, uy = math.cos(angle), math.sin(angle)
+        local reach = expansion * (i % 2 == 0 and 1.26 or 1.03)
+        local inner = math.max(0.12, reach - 0.40 * (1 - progress))
+        local half = (0.025 + 0.018 * (i % 2)) * (1 - progress)
+        nvgMoveTo(ctx, cx + (ux * inner - uy * half) * rx, cy + (uy * inner + ux * half) * ry)
+        nvgLineTo(ctx, cx + ux * rx * reach, cy + uy * ry * reach)
+        nvgLineTo(ctx, cx + (ux * inner + uy * half) * rx, cy + (uy * inner - ux * half) * ry)
+        nvgClosePath(ctx)
+    end
+    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], math.floor(alpha * 0.78)))
+    nvgFill(ctx)
 
     -- 固定数量的短光刺一次批量提交；朝向仅由事件身份派生，不在每帧掷随机。
     nvgBeginPath(ctx)
@@ -110,6 +143,106 @@ function CombatImpact.Draw(ctx, presentation, project, echoY)
             end
             DrawBurst(ctx, impact, cx, cy, rx, ry)
             drawn = drawn + 1
+        end
+    end
+    nvgRestore(ctx)
+    return drawn
+end
+
+-- 旧击碎/发射环复用原状态与TTL，只升级为两轴投影、色边与白芯。
+function CombatImpact.DrawRings(ctx, presentation, project)
+    local rings = presentation.shockRings or {}
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, 92, 540, 774)
+    local drawn = 0
+    for i = #rings, math.max(1, #rings - 23), -1 do
+        local ring = rings[i]
+        if ring.life > 0 and ring.maxLife > 0 then
+            local t = math.max(0, math.min(1, 1 - ring.life / ring.maxLife))
+            local radius = ring.r0 + (ring.r1 - ring.r0) * t
+            local x, y = project(ring.x, ring.y)
+            local ex = project(ring.x + radius, ring.y)
+            local _, ey = project(ring.x, ring.y + radius)
+            local rx, ry = math.abs(ex - x), math.abs(ey - y)
+            local a = math.floor(180 * (1 - t))
+            local color = {ring.r, ring.g, ring.b}
+            StrokeEllipse(ctx, x, y, rx, ry, color, math.floor(a * 0.28), 6)
+            StrokeEllipse(ctx, x, y, rx, ry, color, a, 2.5)
+            StrokeEllipse(ctx, x, y, rx * 0.82, ry * 0.82, {240, 248, 252}, math.floor(a * 0.78), 1)
+            drawn = drawn + 1
+        end
+    end
+    nvgRestore(ctx)
+    return drawn
+end
+
+-- 高频粒子的动能亮芯：原3D软粒子不删；五色合批、24条预算、不新建视觉对象。
+function CombatImpact.DrawSparks(ctx, presentation, project)
+    local particles = presentation.particles or {}
+    local drawn = 0
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, 92, 540, 774)
+    for group, color in ipairs(SPARK_COLORS) do
+        nvgBeginPath(ctx)
+        for i = #particles, math.max(1, #particles - 47), -1 do
+            local p = particles[i]
+            if p.kind == "spark" and p.life > 0 and p.maxLife > 0 then
+                local bucket = p.b > p.r + 30 and (p.r > p.g + 20 and 2 or 4)
+                    or (p.g > p.r + 35 and 3 or (p.r > p.g + 70 and 5 or 1))
+                if bucket == group and drawn < 24 then
+                    local life = math.max(0, math.min(1, p.life / p.maxLife))
+                    local x, y = project(p.x, p.y)
+                    local bx, by = project(p.x - p.vx * 0.018, p.y - p.vy * 0.018)
+                    local dx, dy = x - bx, y - by
+                    local length = math.sqrt(dx * dx + dy * dy)
+                    if length > 0.01 and y > 92 and y < 866 and x > 0 and x < 540 then
+                        local ux, uy = dx / length, dy / length
+                        local reach = math.min(13, 3 + length * 2.0) * life
+                        local half = math.min(1.6, p.size * 0.42) * life
+                        nvgMoveTo(ctx, x + ux * 1.5, y + uy * 1.5)
+                        nvgLineTo(ctx, x - ux * reach - uy * half, y - uy * reach + ux * half)
+                        nvgLineTo(ctx, x - ux * reach + uy * half, y - uy * reach - ux * half)
+                        nvgClosePath(ctx)
+                        drawn = drawn + 1
+                    end
+                end
+            end
+        end
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], 195))
+        nvgFill(ctx)
+    end
+    nvgRestore(ctx)
+    return drawn
+end
+
+-- 接上已存在但未绘制的普通命中闪光；只读存活机体，不触发材质/网格重建。
+function CombatImpact.DrawHits(ctx, game, presentation, project)
+    local flashes = presentation.hitFlashes or {}
+    local drawn = 0
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, 92, 540, 774)
+    for key, remaining in pairs(flashes) do
+        if remaining > 0 and drawn < 24 then
+            local id, col, row = key:match("^(%d+):(%d+):(%d+)$")
+            local enemyId, c, r = tonumber(id), tonumber(col), tonumber(row)
+            if enemyId and c and r then
+                for _, enemy in ipairs(game.veggies or {}) do
+                    if enemy.id == enemyId then
+                        local x, y = project(enemy.x + (c - 0.5) * enemy.brickSize,
+                            enemy.y + (r - 0.5) * enemy.brickSize)
+                        local flash = math.max(0, math.min(1, remaining / 0.12))
+                        local reach = 3 + 7 * flash
+                        nvgBeginPath(ctx)
+                        nvgMoveTo(ctx, x - reach, y); nvgLineTo(ctx, x + reach, y)
+                        nvgMoveTo(ctx, x, y - reach * 0.7); nvgLineTo(ctx, x, y + reach * 0.7)
+                        nvgStrokeColor(ctx, nvgRGBA(240, 248, 252, math.floor(205 * flash)))
+                        nvgStrokeWidth(ctx, 0.7 + flash)
+                        nvgStroke(ctx)
+                        drawn = drawn + 1
+                        break
+                    end
+                end
+            end
         end
     end
     nvgRestore(ctx)

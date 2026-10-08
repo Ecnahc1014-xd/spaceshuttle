@@ -741,6 +741,12 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
         nvgStrokeColor(ctx, nvgRGBA(C.error[1], C.error[2], C.error[3], alpha))
         nvgStrokeWidth(ctx, 4 + 7 * flash)
         nvgStroke(ctx)
+        -- 接触瞬间白热细芯压在原红线内，保留紫/红双线坐标与既有重震。
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, 0, dangerScreenY); nvgLineTo(ctx, game.width, dangerScreenY)
+        nvgStrokeColor(ctx, nvgRGBA(240, 248, 252, math.floor(alpha * math.min(1, flash * 2))))
+        nvgStrokeWidth(ctx, 1.2)
+        nvgStroke(ctx)
     end
 
     for _, impact in ipairs(presentation.baseImpacts or {}) do
@@ -748,41 +754,38 @@ local function DrawBaseImpactFeedback(ctx, game, presentation)
         local progress = 1 - impact.life / impact.maxLife
         local alpha = math.floor(255 * (1 - progress))
         nvgBeginPath(ctx)
-        nvgCircle(ctx, screenX, screenY, impact.radius * math.abs(projectionScaleX_))
+        nvgEllipse(ctx, screenX, screenY, impact.radius * math.abs(projectionScaleX_),
+            impact.radius * math.abs(projectionScaleY_))
         nvgStrokeColor(ctx, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], alpha))
         nvgStrokeWidth(ctx, 5 * (1 - progress) + 1)
         nvgStroke(ctx)
+        nvgBeginPath(ctx)
+        nvgEllipse(ctx, screenX, screenY, impact.radius * 0.84 * math.abs(projectionScaleX_),
+            impact.radius * 0.84 * math.abs(projectionScaleY_))
+        nvgStrokeColor(ctx, nvgRGBA(240, 248, 252, math.floor(alpha * 0.68)))
+        nvgStrokeWidth(ctx, 1.3)
+        nvgStroke(ctx)
+        nvgBeginPath(ctx)
         for spoke = 1, 8 do
             local angle = impact.spin + spoke * math.pi * 0.25
             local inner = impact.radius * 0.45
             local outer = impact.radius * 1.15
-            nvgBeginPath(ctx)
             nvgMoveTo(ctx,
                 screenX + math.cos(angle) * inner * projectionScaleX_,
                 screenY + math.sin(angle) * inner * projectionScaleY_)
             nvgLineTo(ctx,
                 screenX + math.cos(angle) * outer * projectionScaleX_,
                 screenY + math.sin(angle) * outer * projectionScaleY_)
-            nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], math.floor(alpha * 0.8)))
-            nvgStrokeWidth(ctx, 2)
-            nvgStroke(ctx)
         end
+        nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], math.floor(alpha * 0.8)))
+        nvgStrokeWidth(ctx, 2)
+        nvgStroke(ctx)
     end
 end
 
 -- v0.10.23：击毁扩散环（少量点缀），从 r0 扩到 r1 并淡出。
 local function DrawShockRings(ctx, game, presentation)
-    for _, ring in ipairs(presentation.shockRings or {}) do
-        local sx, sy = ProjectGamePoint(ring.x, ring.y)
-        local progress = 1 - ring.life / ring.maxLife
-        local radius = ring.r0 + (ring.r1 - ring.r0) * progress
-        local alpha = math.floor(180 * (1 - progress))
-        nvgBeginPath(ctx)
-        nvgCircle(ctx, sx, sy, radius * math.abs(projectionScaleX_))
-        nvgStrokeColor(ctx, nvgRGBA(ring.r, ring.g, ring.b, alpha))
-        nvgStrokeWidth(ctx, 2.5)
-        nvgStroke(ctx)
-    end
+    uiFx.impact.DrawRings(ctx, presentation, ProjectGamePoint)
 end
 
 -- v0.10.23：飘字（+分数/防线扣血/技能提示）。此前 floatTexts 只有旧 2D 后端
@@ -799,10 +802,10 @@ local function DrawFloatTexts(ctx, game, presentation)
         nvgFontSize(ctx, size)
         UseTechFont(ctx)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER)
-        -- 深色描边保证亮字在亮色敌机/烟团上也可读。
-        nvgStrokeWidth(ctx, 3)
-        nvgStrokeColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], math.min(220, alpha + 40)))
-        nvgText(ctx, sx, sy, f.text)
+        -- 实际提交四方向深色描边；nvgStrokeColor 不会改变 nvgText 的填充。
+        nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], math.min(220, alpha + 40)))
+        nvgText(ctx, sx - 1, sy, f.text); nvgText(ctx, sx + 1, sy, f.text)
+        nvgText(ctx, sx, sy - 1, f.text); nvgText(ctx, sx, sy + 1, f.text)
         nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], alpha))
         nvgText(ctx, sx, sy, f.text)
     end
@@ -2455,6 +2458,8 @@ local function RenderOverlay(game, presentation, meta)
             end
             DrawBaseImpactFeedback(vg_, game, presentation)
             DrawShockRings(vg_, game, presentation)
+            uiFx.impact.DrawHits(vg_, game, presentation, ProjectGamePoint)
+            uiFx.impact.DrawSparks(vg_, presentation, ProjectGamePoint)
             uiFx.impact.Draw(vg_, presentation, ProjectGamePoint)
             DrawFloatTexts(vg_, game, presentation)
             DrawWaveBanner(vg_, game, presentation)

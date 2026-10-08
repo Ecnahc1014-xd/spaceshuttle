@@ -136,6 +136,16 @@ local BALL_TUNING = {
     -- v0.13.28 通用卡重做：穿甲弹头每击碎一块的额外经验（+1/级）。
     brickXpFlat = 0,
     xpMul = 1.0,
+    -- v0.13.55 车型「专属卡」机制维度（与基础卡区分）：
+    --   基础卡只给该车主属性的打底数值，专属卡改机制、不是更大的数字。
+    -- 分裂：单次分裂产出的弹珠数（基础 2 颗；裂变核每级 +1）。
+    splitCount = 2,
+    -- 冰冻：对「冻结中」敌机的受击伤害加成（0..0.9，霜裂涂层每级 +0.3）。
+    iceShatter = 0,
+    -- 加速：每次飞行的穿透次数（动能穿刺每级 +1），穿透时不反弹、连续吃块。
+    speedPierce = 0,
+    -- 巨型：范围击碎的暴击率（0..0.45，冲击波每级 +0.15），暴击伤害 ×2。
+    giantCritChance = 0,
 }
 
 local gameState = "menu"
@@ -267,22 +277,24 @@ local UPGRADE_POOL = {
           BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1
           BALL_TUNING.brickXpFlat = BALL_TUNING.brickXpFlat + 1
       end },
-    { id = "giant", name = "重型化", desc = "巨型车贯穿范围 +1 格",
-      detail = "巨型车爆炸范围 +1 格。",
-      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 格", ballType = "giant",
-      apply = function(stacks) BALL_TUNING.giantArea = BALL_TUNING.giantArea + 1.0 end },
-    { id = "split", name = "裂变核", desc = "分裂车分裂概率 +3%",
-      detail = "分裂小车概率 +3%。",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+3% 概率", ballType = "normal",
-      apply = function(stacks) BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.03 end },
-    { id = "speed", name = "疾速引擎", desc = "加速车加速度 +8%",
-      detail = "加速车加速更快。",
-      weight = 1, rarity = "common", maxStacks = 6, tradeoff = false, value = "+8% 加速度", ballType = "speed",
-      apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.08 end },
-    { id = "ice", name = "深寒涂层", desc = "冰冻时长 +1.2 秒",
-      detail = "冰冻时间 +1.2 秒。",
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+1.2 秒", ballType = "ice",
-      apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 1.2 end },
+    -- v0.13.55 车型「专属卡」= 改机制；对应的「基础卡」（base_*，见下方）只给主属性打底数值。
+    -- 旧版专属卡与基础卡都只改同一个 BALL_TUNING 字段、只是数字更大 → 四条公式各写两遍。
+    { id = "giant", name = "冲击波", desc = "范围击碎 15% 概率造成双倍伤害",
+      detail = "范围击碎 15% 概率双倍伤害。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "+15% 范围暴击", ballType = "giant",
+      apply = function(stacks) BALL_TUNING.giantCritChance = BALL_TUNING.giantCritChance + 0.15 end },
+    { id = "split", name = "裂变核", desc = "分裂时额外产出 1 颗小弹",
+      detail = "每次分裂多产 1 颗小弹。",
+      weight = 0.6, rarity = "rare", maxStacks = 2, tradeoff = false, value = "+1 分裂数", ballType = "normal",
+      apply = function(stacks) BALL_TUNING.splitCount = BALL_TUNING.splitCount + 1 end },
+    { id = "speed", name = "动能穿刺", desc = "飞行中可穿透 1 块不反弹",
+      detail = "飞行中穿透 1 块继续飞。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "穿透 +1 块", ballType = "speed",
+      apply = function(stacks) BALL_TUNING.speedPierce = BALL_TUNING.speedPierce + 1 end },
+    { id = "ice", name = "霜裂涂层", desc = "冻结中的敌机受击伤害 +30%",
+      detail = "冻结中的敌机受击 +30%。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "+30% 碎冰伤害", ballType = "ice",
+      apply = function(stacks) BALL_TUNING.iceShatter = BALL_TUNING.iceShatter + 0.30 end },
     -- v0.13.28：改为「生命上限 +12 且立即回 12」——低难度不掉血时也有**永久**收益（不再是空过一轮）。
     { id = "repair", name = "前线维修", desc = "生命上限 +12，并立即回复 12",
       detail = "生命上限永久 +12，立刻回 12 点。",
@@ -351,6 +363,7 @@ local UPGRADE_POOL = {
       requiresCard = "ammo",
       apply = function(stacks) IncreaseAmmo() end },
     -- v0.13.5 基础天赋池重构：四车各补一张「基础数值」卡（不依赖解锁卡，车解锁即可抽）。
+    -- v0.13.55：基础卡 = 该车主属性的**打底数值**（常出、可叠高），机制差异交给上面的专属卡。
     { id = "base_split", name = "分裂增幅", desc = "分裂车分裂概率 +2%",
       detail = "分裂小车概率 +2%。",
       weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+2% 概率",
@@ -485,6 +498,8 @@ local function CreateMarble(ballType, words)
         giantPiercing = false,
         giantPiercePending = false, -- 冷却中只保留反弹资格，不代表已经可以贯穿
         giantAreaCooldown = 0,
+        -- v0.13.55 动能穿刺：本弹剩余穿透次数（每次穿透不反弹、直接吃下块）。
+        pierceLeft = BALL_TUNING.speedPierce,
         words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
     }
     -- P11：注入词条（来自升级或 Boss 授予），逐个调用 apply() 改写 marble 行为。
@@ -739,6 +754,11 @@ ResetGame = function(startStage)
     BALL_TUNING.iceBonus = 0
     BALL_TUNING.lineDamageBonus = 0
     BALL_TUNING.xpMul = 1.0
+    -- v0.13.55 专属卡机制字段复位（必须在 LoadBalls 之前——它读 splitCount 等）。
+    BALL_TUNING.splitCount = 2
+    BALL_TUNING.iceShatter = 0
+    BALL_TUNING.speedPierce = 0
+    BALL_TUNING.giantCritChance = 0
     -- v0.13.5：叠加天赋树的车线路数值增强（加法先、乘法后，量级可控）。
     for _, acc in pairs(talentBallStats) do
         if acc.stat == "splitBonus" then
@@ -1314,6 +1334,10 @@ local function DamageBrick(enemy, brick, damage)
     if brick.ejected or not brick.alive then return end
     if enemy.isBoss and enemy.vulnerable then
         damage = (damage or 1) * 1.5
+    end
+    -- v0.13.55「霜裂涂层」：冻结中的敌机受击更痛（脆化碎冰）。
+    if enemy.frozen and enemy.frozen > 0 and BALL_TUNING.iceShatter > 0 then
+        damage = (damage or 1) * (1 + BALL_TUNING.iceShatter)
     end
     brick.hp = brick.hp - (damage or 1)
     if brick.hp <= 0 then
@@ -1938,16 +1962,21 @@ local function TrySplitNormal(marble, originBrick, pendingMarbles)
     local def = BALL_TYPES.normal
     if Random() >= def.splitChance + BALL_TUNING.splitBonus then return end
 
-    -- WO-06/P4：分裂弹继承母弹速度向量，沿 ±splitSpread 扩散，避免高速重叠。
-    table.insert(pendingMarbles,
-        CreateSplitMarble(marble, -def.splitSpread, originBrick))
-    table.insert(pendingMarbles,
-        CreateSplitMarble(marble, def.splitSpread, originBrick))
+    -- v0.13.55「裂变核」：分裂数量由 splitCount 决定（基础 2 颗，专属卡每级 +1）。
+    -- 以母弹速度方向为中心，在 ±splitSpread 扇区内均匀铺开，避免高速重叠。
+    local count = math.max(2, math.floor(BALL_TUNING.splitCount or 2))
+    local spread = def.splitSpread or 18
+    for i = 1, count do
+        local angle = -spread + (2 * spread) * (i - 1) / math.max(1, count - 1)
+        table.insert(pendingMarbles,
+            CreateSplitMarble(marble, angle, originBrick))
+    end
     Emit("normal_split", {
         x = marble.x, y = marble.y,
         generation = marble.generation + 1,
+        count = count,
     })
-    print("[Game] normal marble split, generation=" .. (marble.generation + 1))
+    print("[Game] normal marble split, generation=" .. (marble.generation + 1) .. " count=" .. count)
 end
 
 local function FindNearestBrick(originEnemy, originBrick, originX, originY)
@@ -2096,7 +2125,13 @@ local function DamageGiantArea(originEnemy, originBrick, damage, frameHitBricks)
                     local dy = y - centerY
                     if dx * dx + dy * dy <= radiusSq then
                         frameHitBricks[brick] = true
-                        DamageBrick(enemy, brick, damage)
+                        -- v0.13.55「冲击波」：范围击碎按概率暴击（双倍伤害），复用暴击飘字。
+                        local cellDamage = damage
+                        if BALL_TUNING.giantCritChance > 0 and Random() < BALL_TUNING.giantCritChance then
+                            cellDamage = damage * 2
+                            Emit("crit_hit", { x = x, y = y, damage = cellDamage })
+                        end
+                        DamageBrick(enemy, brick, cellDamage)
                         hitCount = hitCount + 1
                     end
                 end
@@ -2292,14 +2327,34 @@ UpdateMarbles = function(dt)
                     Emit("giant_pierce_consumed", {id = marble.id, x = marble.x, y = marble.y})
                     marble.giantPiercing = false
                 else
-                    local resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
-                    if not resolved then
-                        marble.x = prevX
-                        marble.y = prevY
-                        resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
+                    -- v0.13.55「动能穿刺」：加速车带穿透次数时不反弹，直接吃下这一块并继续飞行。
+                    -- 位置沿速度方向前推约 0.75 格，避免下一帧仍卡在同一砖内重复结算。
+                    local pierced = false
+                    if marble.ballType == "speed" and (marble.pierceLeft or 0) > 0 then
+                        marble.pierceLeft = marble.pierceLeft - 1
+                        marble.ignoredBrick = brick
+                        frameHitBricks[brick] = true
+                        DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
+                        local vlen = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
+                        if vlen > 0.001 then
+                            local push = enemy.brickSize * 0.75
+                            marble.x = marble.x + marble.vx / vlen * push
+                            marble.y = marble.y + marble.vy / vlen * push
+                        end
+                        pierced = true
+                        Emit("speed_pierce", { id = marble.id, x = marble.x, y = marble.y,
+                            remaining = marble.pierceLeft })
                     end
-                    frameHitBricks[brick] = true
-                    DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
+                    if not pierced then
+                        local resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
+                        if not resolved then
+                            marble.x = prevX
+                            marble.y = prevY
+                            resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
+                        end
+                        frameHitBricks[brick] = true
+                        DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
+                    end
                 end
 
                 if marble.ballType == "speed" then

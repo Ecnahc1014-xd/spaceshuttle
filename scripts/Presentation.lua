@@ -76,6 +76,8 @@ local FEEDBACK_MAP = {
     marble_launched = {"launchFlash"},
     normal_split = {"splitSpark"},
     speed_dash = {"dashSpark"},
+    -- v0.13.55「动能穿刺」：加速车穿透一块时的瞬时反馈。
+    speed_pierce = {"pierceSpark"},
     giant_pierce_armed = {"pierceArmed"},
     giant_pierce_consumed = {"pierceConsumed"},
     giant_area_hit = {"giantBurst"},
@@ -419,6 +421,10 @@ local FEEDBACK_HANDLERS = {
         SpawnParticles(event.targetX, event.targetY, {255, 210, 80}, 1, "spark")
         SpawnFloatText(event.x, event.y - 18,
             "追击", {255, 170, 80}, 0.8)
+    end,
+    -- v0.13.55「动能穿刺」：加速车穿块——橙色火花轻推，与「追击」同色系但更短促。
+    pierceSpark = function(event)
+        SpawnParticles(event.x, event.y, {255, 190, 110}, math.random(2, 3), "spark")
     end,
     pierceArmed = function(event)
         screenShake = math.max(screenShake, 0.16)

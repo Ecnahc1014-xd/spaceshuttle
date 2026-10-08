@@ -8,9 +8,15 @@
 # 项目记忆索引
 
 项目：货车大战飞机
-当前版本：0.13.54
-简述：范围攻击紫色冲击波、整机完整击毁青白爆裂与轻震；模态空白带回声避免同帧升级/胜利漏绘。原 1 秒 CD、就绪提示、伤害与奖励不变，保留并发 UI 53。
+当前版本：0.13.55
+简述：车辆专属卡从「更大的数字」改为「换机制维度」（分裂数量/冻结增伤/穿透/范围暴击），与基础卡彻底区分；展示版本归并发会话。
 最后巩固：2026-10-08
+## 车辆专属卡 vs 基础卡差异化（2026-10-08，v0.13.55）
+- 用户「车辆专属和基础卡差异化做的太差」。根因：八张车卡=**四条公式各写两遍**（`base_X` 与 `X` 都改同一个 `BALL_TUNING` 字段，专属卡只是数值更大）。定案：**基础卡=主属性打底数值**（保持简单、常出、可叠高），**专属卡=换机制维度**（挂到引擎已有但卡池未用的钩子）。
+- 四张专属卡（全升 `rare`、`weight` 1→0.6）：`split` 裂变核→分裂数量 +1 颗（`splitCount` 2→3→4）；`ice` 霜裂涂层→冻结中敌机受击 +30%/级（`iceShatter`）；`speed` 动能穿刺→加速车每次飞行穿透 +1 块不反弹（`speedPierce`）；`giant` 冲击波→范围击碎 15%/级 概率双倍伤害（`giantCritChance`）。
+- 实现全在 `Game.lua`、**零新增顶层 local**（只加 `BALL_TUNING` 字段）：`CreateMarble` 加 `pierceLeft`；`TrySplitNormal` 按 `splitCount` 在 ±splitSpread 扇区均分生成 N 颗；`DamageBrick` 冻结时 `×(1+iceShatter)`；碰撞分支 speed 车 `pierceLeft>0` 不反弹、沿速度前推 0.75 格、`ignoredBrick`+`Emit(speed_pierce)`；`DamageGiantArea` 逐格掷暴击×2（复用 `crit_hit` 金色飘字）；`ResetGame` 在 `LoadBalls` **之前**复位四字段。`Presentation` 只加 `speed_pierce→pierceSpark`（橙色火花）。
+- 门控不变：专属卡仍需 `ballCard` 天赋节点（`kind~="base"` 且带 `ballType`），基础卡只需车解锁——差异化只在效果维度。验证：规则探针 `probe_card_diff` **10/10、61 断言、0 Lua 错误**（含「专属卡不改任何打底数值字段」硬断言）；真渲染冒烟注入四机制→真实发射→战斗帧 exit0、目标 Lua/overlay/LoadChunk/空顶点错误 0；LSP 两文件 0 Error；官方多人 build+预览上传 ✅。
+- POST-1/2/3 均执行；抗体 AB-214（差异化落机制不落数值）。随行 persona/preferences 跳过（无新增跨项目偏好）。
 ## 范围攻击与完整击毁反馈（2026-10-08，v0.13.54）
 - `Game.EjectBrick` 最后存活格消失且未越线时即发 `enemy_destroyed`（中心/宽高），`Presentation` 独立消费；原 `enemy_cleared` 奖励时序/击破字不变、不重播新冲击。独立审查抓到最后砖XP同帧升级导致旧清机事件延迟，已拆事实与奖励，未提前结算。8对象预算/对象池，范围寿命0.48s/整机0.62s，max轻震0.22/0.18，无新顿帧，退菜单/复位清理。
 - `ui/CombatImpact` 纯宿主绘图（双环/白芯/短光刺，清机另加碎光），投影两轴分别取值；新模块避开Backend200 local上限，无图/字体/context/RT。升级 y270、胜利 y155 的遮罩后回声不穿正文/按钮，不放开其他旧 world-fx。

@@ -3,6 +3,19 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.55（**车辆专属卡改机制维度，与基础卡区分**）：
+  - 用户「车辆专属和基础卡差异化做的太差」。根因量化：八张车卡其实是**四条公式各写两遍**——`base_split`/`split` 都只改 `BALL_TUNING.splitBonus`、`base_ice`/`ice` 都改 `iceBonus`、`base_speed`/`speed` 都改 `speedMul`、`base_giant`/`giant` 都改 `giantArea`，专属卡纯粹是「数值更大」（+3% vs +2%、+1.2s vs +0.5s、×1.08 vs ×1.04、+1格 vs +0.5格），零机制差异。
+  - **定案：基础卡 = 该车型主属性的「打底数值」（保持简单、常出、可叠高）；专属卡 = 换一个机制维度**（挂到引擎里已存在但卡池未启用的钩子上）。四张专属卡全部 `rarity` 升 `rare`、`weight` 1→0.6：
+    - `split` 裂变核 → **分裂数量 +1 颗**（`BALL_TUNING.splitCount` 2→3→4，`maxStacks` 2）
+    - `ice` 霜裂涂层 → **冻结中的敌机受击伤害 +30%/级**（`BALL_TUNING.iceShatter` 0..0.9）
+    - `speed` 动能穿刺 → **加速车每次飞行穿透 +1 块不反弹**（`BALL_TUNING.speedPierce`）
+    - `giant` 冲击波 → **范围击碎 15%/级 概率双倍伤害**（`BALL_TUNING.giantCritChance` 0..0.45）
+  - 实现点（全在 `Game.lua`，零新增顶层 local——只加 `BALL_TUNING` 表字段）：`CreateMarble` 加 `pierceLeft = BALL_TUNING.speedPierce`；`TrySplitNormal` 按 `splitCount` 在 ±splitSpread 扇区内均匀生成 N 颗；`DamageBrick` 在 `enemy.frozen>0` 时 `damage *= (1+iceShatter)`；碰撞分支在 speed 车 `pierceLeft>0` 时**不反弹**、沿速度前推 0.75 格、`ignoredBrick` + `pierceLeft--` + `Emit("speed_pierce")`；`DamageGiantArea` 逐格按 `giantCritChance` 掷暴击（×2，复用 `crit_hit` 金色飘字）。`ResetGame` 在 `LoadBalls` **之前**复位四个字段。
+  - `Presentation.lua` 只加两处：`FEEDBACK_MAP` 增 `speed_pierce = {"pierceSpark"}` + `pierceSpark` handler（橙色火花，与「追击」同色系更短促）。
+  - **门控不变**：专属卡仍需 `ballCard` 天赋节点（`kind ~= "base"` 且带 `ballType`），基础卡只需车解锁——差异化只在「效果维度」，不动解锁链。
+  - 验证：隔离规则探针 `probe_card_diff` **10/10 PASS、61 断言、0 Lua 错误**（专属卡不动四个打底字段 / 基础卡仍持有打底字段 / splitCount 驱动分裂数量 / iceShatter 只对冻结敌机生效 / speedPierce 穿透不反弹 vs 无穿透照常反弹 / giantCritChance 双倍+发 crit_hit vs 0 不暴击 / ResetGame 复位 / 门控仍拦专属卡）；真渲染冒烟（注入四机制→真实发射→战斗帧）exit0、目标 Lua/overlay/LoadChunk/空顶点错误 **0**。LSP `Game.lua`/`Presentation.lua` 0 Error。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - ⚠️ **避雷 AB-214**：**「专属卡 vs 基础卡」的差异化必须落在「机制」而不是「数值」上**——只要两张卡改同一个 `BALL_TUNING` 字段，无论数字差多少，玩家读到的都是「同一张卡的两个强度」，等于把一条公式写两遍。做法：基础卡保留主属性打底值，专属卡**换一个字段/换一个作用对象**（本项目：分裂概率→分裂数量、冰冻时长→冻结增伤、加速度→穿透、范围半径→范围暴击）。**验收探针必须显式断言「专属卡不改任何打底数值字段」**，否则很容易悄悄退回「更大的数字」。
+  - 边界：手机 FPS / 全 DPR / 真实联网支付 / 用户审美仍未验收；Linux 既有 HDR/缺图/无体素致战斗中央 3D 黑场，不计通过。
 - 版本: 0.13.54（**范围攻击与完整击毁反馈**）：
   - 用户「范围攻击增加特效和轻度震屏！整架飞机一个块不剩击败时也要」。范围采用紫色双环/白芯/短径向光刺，整机完整击毁采用青白环/离散碎光；保留旧粒子与飘字，不增加伤害或顿帧。
   - `Game.EjectBrick` 在最后存活格消失时发布 `enemy_destroyed`（中心/宽高），只在机体未越线时发；`Presentation` 独立消费产生整机冲击。`enemy_cleared` 仍在原 `UpdateEnemies` 奖励链发布，只保留旧「击破」字，不重复冲击。部分破坏、越线/逃脱/胜利清退不触发新全毁反馈；部分越线后 Boss 击败仍按原规则通关。最后砖经验同帧触发升级也先发击毁事实，不提前结算奖励。
