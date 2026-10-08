@@ -1,5 +1,5 @@
 -- Game.lua
--- 击碎，飞机大战核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
+-- 货车大战飞机核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
 
 local AircraftData = require "AircraftPixelData"
 local StageCatalog = require "StageCatalog"

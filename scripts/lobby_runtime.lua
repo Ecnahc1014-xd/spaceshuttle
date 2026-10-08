@@ -134,9 +134,9 @@ return function(ctx)
                         children = {
                             UI.Panel { width = 4, height = 22, borderRadius = 2,
                                 backgroundColor = COL.cyan },
-                            UI.Label { text = "击碎，飞机大战", fontSize = 18,
+                            UI.Label { text = "货车大战飞机", fontSize = 18,
                                 fontColor = COL.cyan },
-                            UI.Label { text = "v0.13.50", fontSize = 13,
+                            UI.Label { text = "v0.13.51", fontSize = 13,
                                 fontColor = COL.dim, marginLeft = "auto" },
                         },
                     },

@@ -448,10 +448,10 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.50"
-local GAME_TITLE = "击碎，飞机大战"
+local BUILD_VERSION = "0.13.51"
+local GAME_TITLE = "货车大战飞机"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
-local GAME_SHORT_TITLE = "击碎飞机"
+local GAME_SHORT_TITLE = "货车大战飞机"
 
 local function WorldFromGame(x, y)
     return Vector3((x - DESIGN_W * 0.5) * 0.018,
@@ -1304,12 +1304,12 @@ end
 -- 主页轮播：进菜单随机起点，每 5 秒切换下一张，NEAREST 1× 显示。
 -- ⚠️ 可选资源：缺图只回退整串 zpix 大字，绝不进 Init 成功条件。
 -- ============================================================================
--- 母版 = 显示尺寸（各字标按内容等比裁到 120 高，宽 207–264 不等），1× 最近邻。
+-- 母版 = 显示尺寸（各字标按内容等比裁到 120 高，宽 201–294 不等），1× 最近邻。
 local LOGO_PATHS = {
-    { path = "image/ui_logo_a_20260929162106.png", w = 207 },
-    { path = "image/ui_logo_b_20260929162106.png", w = 235 },
-    { path = "image/ui_logo_c_20260929162106.png", w = 244 },
-    { path = "image/ui_logo_d_20260929162106.png", w = 264 },
+    { path = "image/ui_logo_truck_a_20261008175431.png", w = 294 },
+    { path = "image/ui_logo_truck_b_20261008175431.png", w = 268 },
+    { path = "image/ui_logo_truck_c_20261008175431.png", w = 201 },
+    { path = "image/ui_logo_truck_d_20261008175431.png", w = 232 },
 }
 local LOGO_H = 120
 local LOGO_SWITCH_SECONDS = 5
@@ -1439,7 +1439,7 @@ end
 
 -- v0.12.7：像素大 logo。⚠️ zpix 位图字体逐字（单码位）绘制在超大字号会退化成
 -- 空框（v0.12.6 逐字排版真机只有两个空心矩形），改回「整串一次绘制 + 硬偏移阴影」，
--- 与既有 36px「击碎飞机」同一条已验证可渲染的路径，只是加大字号。
+-- 与既有 36px「货车大战飞机」同一条已验证可渲染的路径，只是加大字号。
 local function DrawPixelLogo(ctx, cx, topY, title, size, bodyColor, shadowColor)
     -- 阴影层（右下偏移暗青）
     DrawPixelText(ctx, cx + size * 0.045, topY + size * 0.045, title, size,
@@ -1476,7 +1476,10 @@ local function DrawMenu(ctx, game, meta)
             0, logo.img, 1))
         nvgFill(ctx)
     else
-        DrawPixelLogo(ctx, game.width * 0.5, 32, GAME_SHORT_TITLE, 104, C.cyan)
+        -- 回退：字数随标题变化，按可用宽度反推字号，避免 6 字标题溢出画布。
+        local n = math.max(1, utf8.len(GAME_SHORT_TITLE) or 1)
+        local fbSize = math.min(104, (game.width - 56) / n)
+        DrawPixelLogo(ctx, game.width * 0.5, 32, GAME_SHORT_TITLE, fbSize, C.cyan)
     end
     DrawPixelText(ctx, game.width * 0.5, 164, "拖拽发射重卡 · 逐块撕碎敌机编队", 17, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)

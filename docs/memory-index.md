@@ -7,10 +7,17 @@
 
 # 项目记忆索引
 
-项目：击碎，飞机大战
-当前版本：0.13.50
-简述：每关第一个飞船固定 1 血（低血首机给开局反馈），精英波位池收窄为 2–9 波（开局不撞精英）。承接 0.13.49 整体抬高敌怪曲线（血量/速度/护航/召唤四轴）。正式名「击碎，飞机大战」。
+项目：货车大战飞机
+当前版本：0.13.51
+简述：游戏更名为「货车大战飞机」（对外名 + 窗口标题 + 大厅 + 发布名 + 首页 4 张像素字标图全部重出，走 0718 管线、7 色母版 120 高）。承接 0.13.50 每关首机 1 血、0.13.49 整体抬高敌怪曲线。
 最后巩固：2026-10-08
+## 游戏更名 + 字标重出（2026-10-08，v0.13.51）
+- 用户要求「更新游戏名称：货车大战飞机，包括有星系内标图片需要重新生成」→ **改名与字标一起做**（首页大标题是 AI 位图，不是文字渲染，只改字符串会留旧名 logo）。
+- 改名点：`Scene3DBackend.GAME_TITLE`/`GAME_SHORT_TITLE`、`client_main.graphics.windowTitle`、`lobby_runtime` 加载页标题栏、`lobby_ui` 的 `title_` 默认值 + 6 处 `title=`、`Game.lua` 顶部注释、`.project/project.json` 的 `taptap_publish.title`（发布名契约）；description 的「竖屏飞机大战」→「竖屏弹射对战」。旧名全库 grep 零残留。
+- 字标重出：nanobanana 出 4 张透明底草案（**必须 `transparent:true`**）→ 按内容 bbox 裁切 → 缩到 120 高 → alpha 二值化 128 → 量化到项目 7 色 → 4 张全部 7 色、宽 294/268/201/232。新文件 `ui_logo_truck_[abcd]_20261008175431.png` + 各自 `.meta`（99 个 uuid 无重复），旧 4 张与全部草案已删。
+- `LOGO_PATHS` 换新路径并逐图更新 `w`；顺手把 `DrawMenu` 的 zpix 回退字号由写死 104 改为按 `utf8.len` 反推（6 字写死 104 会溢出画布）。
+- 验证：官方多人 build + 预览上传成功；LSP 0 Error（24 文件 1028 诊断）；`probe_logo` 日志 `pixel logo titles loaded=4/4` + 截图实图确认新字标清晰；`probe_render` 战斗冒烟 exit0、`overlay stage failed` 0 次、零 Lua/LoadChunk 错误。BUILD_VERSION/大厅 →0.13.51。
+- ⚠️ 抗体：AB-205（更名=名+图两件事）、AB-206（字标草案必须透明底，生成后量 alpha0）、AB-207（字标是完整成品、宽度逐图记；回退字号按字数反推）。
 ## 车辆白色轮廓（2026-10-08，vehicle-outline 附记）
 - 用户要求「为车辆加入白色轮廓」。用**翻面外壳**实现：`VehicleGeometry.GetMesh` 把车体全部六段三角面绕整车包围盒中心放大 `OUTLINE_SCALE=1.035` 后翻转绕序（顶点序 a,c,b、法线取反），作为第 7 个 section；默认背面剔除下只剩远侧壳，在车体外缘露出白边。几何随 `meshCache` 缓存，战斗与展台共用。
 - 材质由两边各自提供：战斗 `Renderer3D.GetVehicleOutlineMaterial`（`vehicleOutlineMaterial_` 跨弹种共享、Shutdown 复位）、展台 `VehicleShowcase.state.outlineMaterial`（登记进 `state.materials` 随展台释放）。`VehicleGeometry.Build` 新增第 4 参 `outlineMaterial`，缺省不绑定第 7 段。

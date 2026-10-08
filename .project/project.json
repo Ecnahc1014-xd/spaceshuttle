@@ -7,8 +7,8 @@
   "entry": "main.lua",
   "version": "1.0.1",
   "taptap_publish": {
-    "title": "击碎，飞机大战",
-    "description": "竖屏飞机大战：拖拽发射重卡撞击像素敌机，逐块击碎、波次推进、三选一强化。",
+    "title": "货车大战飞机",
+    "description": "竖屏弹射对战：拖拽发射重卡撞击像素敌机，逐块击碎、波次推进、三选一强化。",
     "category": "arcade",
     "screen_orientation": "portrait",
     "collection_type": "sce",

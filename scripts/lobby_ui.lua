@@ -166,7 +166,7 @@ local TechBackground = Panel:Extend("LobbyTechBackground")
 
 function TechBackground:Init(props)
     props = visualProps(props, -1000)
-    self.title_ = props.title or "击碎，飞机大战"
+    self.title_ = props.title or "货车大战飞机"
     self.line1_ = props.line1 or ""
     self.line2_ = props.line2 or ""
     self.progress_ = props.progress or nil
@@ -295,7 +295,7 @@ local autoMatched = false
 
 local function buildMain()
     skinBackground(LobbyUI.main.background, TechBackground {
-        title = "击碎，飞机大战",
+        title = "货车大战飞机",
         line1 = "正在加载服务器",
         line2 = "5 秒之后自动加入这个单机模式",
     })
@@ -327,7 +327,7 @@ local function buildMain()
     -- 连续失败时把副标题换成明确状态，玩家不会以为"卡住了"
     if matchFailed then
         skinBackground(LobbyUI.main.background, TechBackground {
-            title = "击碎，飞机大战",
+            title = "货车大战飞机",
             line1 = "连接失败",
             line2 = "点「开始游戏」重试",
         })
@@ -387,7 +387,7 @@ end
 local function buildQuickMatchWaiting()
     local elapsed = (LobbyState.matchmaking and LobbyState.matchmaking.elapsed) or 0
     skinBackground(LobbyUI.quick_match_waiting.background, TechBackground {
-        title = "击碎，飞机大战",
+        title = "货车大战飞机",
         line1 = "正在加载服务器",
         line2 = "5 秒之后自动加入这个单机模式",
         progress = math.min(1, elapsed / 5),
@@ -407,7 +407,7 @@ end
 local function buildConnecting()
     local progress = (LobbyState.connecting and LobbyState.connecting.progress) or 0
     skinBackground(LobbyUI.connecting.background, TechBackground {
-        title = "击碎，飞机大战",
+        title = "货车大战飞机",
         line1 = "正在进入战场",
         line2 = "",
         progress = progress,
@@ -416,7 +416,7 @@ end
 
 local function buildRoomList()
     skinBackground(LobbyUI.room_list.background, TechBackground {
-        title = "击碎，飞机大战",
+        title = "货车大战飞机",
         line1 = "正在加载服务器",
         line2 = "5 秒之后自动加入这个单机模式",
     })
@@ -424,7 +424,7 @@ end
 
 local function buildRoomWaiting()
     skinBackground(LobbyUI.room_waiting.background, TechBackground {
-        title = "击碎，飞机大战",
+        title = "货车大战飞机",
         line1 = "正在进入战场",
         line2 = "",
     })

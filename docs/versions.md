@@ -3,6 +3,8 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| v0.13.51 | 2026-10-08 | **游戏更名「货车大战飞机」+ 游戏内字标图全部重出**（用户「更新游戏名称：货车大战飞机，包括有星系内标图片需要重新生成」）。①改名（全量替换旧名，grep 零残留）：`Scene3DBackend.GAME_TITLE`/`GAME_SHORT_TITLE`、`client_main.graphics.windowTitle`、`lobby_runtime` 加载页标题栏、`lobby_ui` 的 `title_` 默认值+6 处 `title=`、`Game.lua` 注释、`.project/project.json` 的 `taptap_publish.title`（发布名契约）；description「竖屏飞机大战」→「竖屏弹射对战」。②字标重出（走 0718-pixelimage-aigc 管线）：nanobanana 出 4 张**透明底**草案（第一轮误生成白底不透明，量 `alpha0ratio=0` 后重生成）→ bbox 裁切 → 缩 120 高 → alpha 二值化 128 → 量化项目 7 色 → 4 张全部 7 色、宽 294/268/201/232；新文件 `ui_logo_truck_{a..d}_20261008175431.png` + 各自 22hex uuid `.meta`（全库 99 uuid 无重复），旧 4 张与全部草案删除。③`LOGO_PATHS` 换新路径并**逐图更新 w**（字标是完整成品、宽度差 1.46 倍，统一宽度会拉伸）；顺手把 `DrawMenu` 的 zpix 回退字号由写死 104 改为按 `utf8.len` 反推 `min(104,(width-56)/n)`（6 字写死会溢出画布）。验证：官方多人 build+预览上传 ✅；LSP workspace 0 Error（24 文件 1028 诊断）；`probe_logo` 日志 `pixel logo titles loaded=4/4` + 截图实图确认新字标清晰；`probe_render` 战斗冒烟 exit0、`overlay stage failed` 0 次、零 Lua/LoadChunk 错误。BUILD_VERSION/大厅 →0.13.51。教训→AB-205/206/207。 |
+
 | 版本 | 日期 | 内容 |
 |---|---|---|
 | v0.13.50 | 2026-10-08 | **每关第一个飞船固定 1 血**（用户「每关第一个飞船必须是 1 血」）。①`Game.SpawnNextNormalEnemy`：本关第一波的第一架强制 `hp=1`（其余按关卡曲线成长），用 `pendingSpawn` 新增的 **`firstDone` 标记**判定，而非「场上无敌机」（否则首机在下一架出场前被打掉时，同波第二架会被误判成「第一个」也拿 1 血）；判定带 `wave == (stage-1)*WAVES_PER_STAGE+1` 双保险，`ResetGame` 与每波开波都复位。②`StageCatalog.BeginStage`：精英波位池 **1–9 收窄为 2–9**——保证每关首个飞船一定是普通机（否则精英可能落第 1 波、开局就撞精英）。验证：LSP workspace 0 Error（24 文件）、探针 `probe_first`（关1/5/12 首机 HP 均 1、第二架 2/4/7=各关曲线值；精英波位扫 180 组 0 次落第 1 波）、真渲染冒烟零 Lua/overlay/VertexBuffer 错误、官方多人 build+预览上传。BUILD_VERSION/大厅→0.13.50。教训→AB-204。 |

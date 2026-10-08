@@ -1295,7 +1295,7 @@ function ClientMain.Start(opts)
         GameMode.SetOffline(opts.offline == true)
     end
 
-    graphics.windowTitle = "击碎，飞机大战"
+    graphics.windowTitle = "货车大战飞机"
     input.mouseVisible = true
 
     if not RenderBackend.Init() then return false end
