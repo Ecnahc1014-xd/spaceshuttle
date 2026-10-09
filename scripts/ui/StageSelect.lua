@@ -203,43 +203,123 @@ local function CircleStroke(ctx, cx, cy, r, color, width)
     nvgStroke(ctx)
 end
 
--- 蜿蜒路径：把关卡圆心作为控制点串成平滑曲线（Catmull-Rom 近似 → 贝塞尔）。
----@param L StageSelectLayout
-local function PathPoints(L)
-    ---@type table
-    local pts = {}
-    for stage = 1, L.maxStage do
-        local cx, cy = NodeCenter(L, stage)
-        pts[#pts + 1] = { x = cx, y = cy }
+-- ============================================================================
+-- 星图原语（v0.13.59 风格重做：六边形关卡芯片 + 星座连线 + 星空）
+-- ============================================================================
+
+-- 正六边形路径（尖角朝上下）。绘制与命中共用同一形状，保证「看着能点=点得到」。
+---@param ctx any
+---@param cx number
+---@param cy number
+---@param r number
+local function HexPath(ctx, cx, cy, r)
+    nvgBeginPath(ctx)
+    for i = 0, 5 do
+        local a = math.pi / 3 * i - math.pi / 2
+        local x, y = cx + math.cos(a) * r, cy + math.sin(a) * r
+        if i == 0 then nvgMoveTo(ctx, x, y) else nvgLineTo(ctx, x, y) end
     end
-    return pts
+    nvgClosePath(ctx)
 end
 
 ---@param ctx any
----@param pts table
+---@param cx number
+---@param cy number
+---@param r number
+---@param color integer[]
+local function HexFill(ctx, cx, cy, r, color)
+    HexPath(ctx, cx, cy, r)
+    nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    nvgFill(ctx)
+end
+
+---@param ctx any
+---@param cx number
+---@param cy number
+---@param r number
 ---@param color integer[]
 ---@param width number
-local function StrokePath(ctx, pts, color, width)
-    if #pts < 2 then return end
-    nvgBeginPath(ctx)
-    nvgMoveTo(ctx, pts[1].x, pts[1].y)
-    for i = 1, #pts - 1 do
-        local p0 = pts[math.max(1, i - 1)]
-        local p1 = pts[i]
-        local p2 = pts[i + 1]
-        local p3 = pts[math.min(#pts, i + 2)]
-        -- Catmull-Rom → 三次贝塞尔控制点
-        local c1x = p1.x + (p2.x - p0.x) / 6
-        local c1y = p1.y + (p2.y - p0.y) / 6
-        local c2x = p2.x - (p3.x - p1.x) / 6
-        local c2y = p2.y - (p3.y - p1.y) / 6
-        nvgBezierTo(ctx, c1x, c1y, c2x, c2y, p2.x, p2.y)
-    end
+local function HexStroke(ctx, cx, cy, r, color, width)
+    HexPath(ctx, cx, cy, r)
     nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
     nvgStrokeWidth(ctx, width)
-    nvgLineCap(ctx, NVG_ROUND)
-    nvgLineJoin(ctx, NVG_ROUND)
     nvgStroke(ctx)
+end
+
+-- 确定性星空（无随机状态；滚动时整体视差，营造「航行」感）。合并成单一路径避免命令缓冲溢出（AB-216）。
+---@param ctx any
+---@param area table {x,y,w,h}
+local function DrawStarfield(ctx, area)
+    local C = Style()
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, area.x, area.y, area.w, area.h)
+    nvgBeginPath(ctx)
+    for i = 0, 96 do
+        local sx = area.x + ((i * 137 + 43) % math.max(1, math.floor(area.w)))
+        local baseY = area.y + ((i * 89 + 17) % math.max(1, math.floor(area.h)))
+        local sy = area.y + ((baseY - area.y + scrollY_ * 0.35) % math.max(1, math.floor(area.h)))
+        nvgCircle(ctx, sx, sy, (i % 11 == 0) and 1.5 or 0.9)
+    end
+    nvgFillColor(ctx, nvgRGBA(C.text[1], C.text[2], C.text[3], 60))
+    nvgFill(ctx)
+    -- 少量亮星
+    nvgBeginPath(ctx)
+    for i = 0, 11 do
+        local sx = area.x + ((i * 271 + 97) % math.max(1, math.floor(area.w)))
+        local sy = area.y + ((i * 173 + 61 - scrollY_ * 0.35) % math.max(1, math.floor(area.h)))
+        nvgCircle(ctx, sx, sy, 1.8)
+    end
+    nvgFillColor(ctx, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 90))
+    nvgFill(ctx)
+    nvgRestore(ctx)
+end
+
+-- 关卡芯片的水平半宽（命中与连线让位共用）。
+local function NodeHalfW()
+    return NODE_R * 0.87
+end
+
+-- 沿两节点的连线方向各内缩 `pad`，得到不压住芯片的线段端点。
+---@param ax number
+---@param ay number
+---@param bx number
+---@param by number
+---@param pad number
+---@return number x1
+---@return number y1
+---@return number x2
+---@return number y2
+local function LinkGaps(ax, ay, bx, by, pad)
+    local dx, dy = bx - ax, by - ay
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len < 1 then return ax, ay, bx, by end
+    local ux, uy = dx / len, dy / len
+    return ax + ux * pad, ay + uy * pad, bx - ux * pad, by - uy * pad
+end
+
+-- 两节点间的星座连线：外发光 + 主线 + 芯线（三层做出「有能量」的观感）。
+---@param ctx any
+---@param ax number
+---@param ay number
+---@param bx number
+---@param by number
+---@param color integer[]
+---@param lit boolean
+local function DrawLink(ctx, ax, ay, bx, by, color, lit)
+    local C = Style()
+    local pad = NodeHalfW() * 0.98
+    local x1, y1, x2, y2 = LinkGaps(ax, ay, bx, by, pad)
+    local glowA = lit and 70 or 26
+    local mainA = lit and 200 or 70
+    nvgBeginPath(ctx); nvgMoveTo(ctx, x1, y1); nvgLineTo(ctx, x2, y2)
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], glowA))
+    nvgStrokeWidth(ctx, lit and 7 or 5); nvgLineCap(ctx, NVG_ROUND); nvgStroke(ctx)
+    nvgBeginPath(ctx); nvgMoveTo(ctx, x1, y1); nvgLineTo(ctx, x2, y2)
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], mainA))
+    nvgStrokeWidth(ctx, lit and 2.4 or 1.6); nvgStroke(ctx)
+    nvgBeginPath(ctx); nvgMoveTo(ctx, x1, y1); nvgLineTo(ctx, x2, y2)
+    nvgStrokeColor(ctx, nvgRGBA(C.text[1], C.text[2], C.text[3], lit and 90 or 28))
+    nvgStrokeWidth(ctx, 0.9); nvgStroke(ctx)
 end
 
 -- ============================================================================
@@ -284,47 +364,78 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
     local C = Style()
     local r = NODE_R
 
-    -- 落影（贴地感，像可点的实体钮）
-    Circle(ctx, cx, cy + 5, r * 0.94, { 0, 0, 0, 90 })
-
-    -- 外圈：已解锁=亮色厚环（有星=金、无星=青），未解锁=暗
-    local ring = unlocked and (stars > 0 and C.warn or C.cyan) or C.widget
-    local body = unlocked and { 34, 52, 78, 255 } or { 18, 26, 40, 255 }
-    Circle(ctx, cx, cy, r, ring)
-    Circle(ctx, cx, cy, r - 6, body)
-    -- 顶部高光（果冻质感）
-    Circle(ctx, cx - r * 0.22, cy - r * 0.28, r * 0.40,
-        { 255, 255, 255, unlocked and 40 or 14 })
-
-    if unlocked then
-        -- v0.13.24：关卡数字改用 AI 像素贴图（DigitFont），按状态叠色；
-        -- 缺图时回退到 zpix 字体（保持旧观感，绝不因缺图空白）。
-        local label = tostring(stage)
-        local size = (#label >= 3) and 30 or 42
-        local digitColor = current and C.cyan or C.text
-        local drawn = DigitFont.DrawNumber(ctx, stage, cx, cy - size * 0.62, size, digitColor)
-        if not drawn then
-            D.text(ctx, cx, cy - size * 0.60, label, size, digitColor,
+    if not unlocked then
+        -- 未解锁：暗色六边形 + 程序化小锁 + 压暗关号（贴图叠色表达，不写文字）。
+        HexFill(ctx, cx, cy, r, { 16, 22, 34, 255 })
+        HexStroke(ctx, cx, cy, r, { C.dim[1], C.dim[2], C.dim[3], 95 }, 1.4)
+        D.rect(ctx, cx - 9, cy - 13, 18, 12, { 120, 138, 160, 235 }, 5)
+        D.rect(ctx, cx - 5.5, cy - 9.5, 11, 8, { 16, 22, 34, 255 }, 4)
+        D.rect(ctx, cx - 12, cy - 1, 24, 17, { 74, 88, 108, 235 }, 3)
+        if not DigitFont.DrawNumber(ctx, stage, cx, cy - r + 20, 14, C.dim) then
+            D.text(ctx, cx, cy - r + 22, tostring(stage), 13, C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
-        -- 三颗星画在**圆钮下方外侧**（参考图里星在节点下方，不在圆内）
-        local gap = 16
-        local sy = cy + r + 12
-        for i = 1, 3 do
-            local on = i <= stars
-            local sx = cx + (i - 2) * gap
-            Circle(ctx, sx, sy, 6, on and C.warn or { 70, 86, 104, 255 })
-            if on then Circle(ctx, sx, sy, 2.6, C.ink) end
-        end
-    else
-        -- 未解锁：锁形 + 压暗关号
-        D.rect(ctx, cx - 9, cy - 20, 18, 13, { 150, 170, 190, 255 }, 6)
-        D.rect(ctx, cx - 5.5, cy - 16.5, 11, 9, body, 4)
-        D.rect(ctx, cx - 12, cy - 8, 24, 18, { 96, 112, 132, 255 }, 3)
-        -- 未解锁：数字同样用贴图，叠色压暗（用户要求「通过精灵图明暗表达」）。
-        if not DigitFont.DrawNumber(ctx, stage, cx, cy + r - 22, 16, C.dim) then
-            D.text(ctx, cx, cy + r - 20, tostring(stage), 15, C.dim,
-                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        return
+    end
+
+    -- 已解锁：亮色六边形芯片（有星=金 / 无星=青，与「稀有/主操作」语义一致）。
+    local accent = stars > 0 and C.warn or C.cyan
+    -- 外发光（宽描边低 alpha，不填充以免糊住底图）
+    HexStroke(ctx, cx, cy, r + 3.5, { accent[1], accent[2], accent[3], 60 }, 7)
+    -- 底盘 + 内环（厚度）
+    HexFill(ctx, cx, cy, r, { 26, 40, 62, 255 })
+    HexStroke(ctx, cx, cy, r - 5, { accent[1], accent[2], accent[3], 105 }, 1)
+    -- 当前关：整片亮色实心底（深字），是全屏最亮的焦点
+    if current then HexFill(ctx, cx, cy, r - 8, accent) end
+    -- 主环
+    HexStroke(ctx, cx, cy, r, accent, current and 3 or 2.2)
+    -- 顶面受光（沿上左/上右两条边画一道亮线，做出「斜切金属」感）
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, cx - r * 0.5, cy - r * 0.866)
+    nvgLineTo(ctx, cx, cy - r)
+    nvgLineTo(ctx, cx + r * 0.5, cy - r * 0.866)
+    nvgStrokeColor(ctx, nvgRGBA(255, 255, 255, current and 120 or 70))
+    nvgStrokeWidth(ctx, 1.2)
+    nvgStroke(ctx)
+
+    -- 关号（贴图；缺图回退 zpix）。当前关深字、其余亮字。
+    local label = tostring(stage)
+    local size = (#label >= 3) and 28 or 38
+    local digitColor = current and C.ink or C.text
+    if not DigitFont.DrawNumber(ctx, stage, cx, cy - size * 0.60, size, digitColor) then
+        D.text(ctx, cx, cy - size * 0.58, label, size, digitColor,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
+    -- 当前关：随共享相位脉冲一圈（低频动态，非随机）。
+    if current then
+        local phase = (D.anim and D.anim() or 0)
+        local pulse = 0.5 + 0.5 * math.sin(phase * math.pi * 0.8)
+        HexStroke(ctx, cx, cy, r + 6 + pulse * 3,
+            { accent[1], accent[2], accent[3], math.floor(120 * (1 - pulse)) }, 2)
+    end
+
+    -- 三星：画在芯片**下方外侧**，用菱形（与六边形/科技语言一致），实心=已得。
+    local gap = 15
+    local sy = cy + r + 13
+    for i = 1, 3 do
+        local on = i <= stars
+        local sx = cx + (i - 2) * gap
+        if on then
+            nvgBeginPath(ctx)
+            nvgMoveTo(ctx, sx, sy - 5.5); nvgLineTo(ctx, sx + 5.5, sy)
+            nvgLineTo(ctx, sx, sy + 5.5); nvgLineTo(ctx, sx - 5.5, sy)
+            nvgClosePath(ctx)
+            nvgFillColor(ctx, nvgRGBA(C.warn[1], C.warn[2], C.warn[3], 255))
+            nvgFill(ctx)
+        else
+            nvgBeginPath(ctx)
+            nvgMoveTo(ctx, sx, sy - 5.5); nvgLineTo(ctx, sx + 5.5, sy)
+            nvgLineTo(ctx, sx, sy + 5.5); nvgLineTo(ctx, sx - 5.5, sy)
+            nvgClosePath(ctx)
+            nvgStrokeColor(ctx, nvgRGBA(96, 112, 132, 200))
+            nvgStrokeWidth(ctx, 1.2)
+            nvgStroke(ctx)
         end
     end
 end
@@ -402,75 +513,74 @@ function StageSelect.Draw(ctx, w, meta)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, L.content.x, L.content.y, L.content.w, L.content.h)
 
-    -- 内容区内的仪器边框：四角折线 + 顶/底刻度带 + 极淡网格，让选关与其余面板同语言
-    -- （只画，不进命中；改动只在绘制层）。
+    -- 星空底（滚动视差），作为整片星图的基座。
+    DrawStarfield(ctx, L.content)
+
+    -- 仪器边框：四角折线 + 极淡网格 + 顶/底刻度带（与其余面板同语言，只画不进命中）。
     D.corner(ctx, L.content.x + 4, L.content.y + 4, L.content.w - 8, L.content.h - 8,
         {C.dim[1], C.dim[2], C.dim[3], 120}, 12, 1)
     D.grid(ctx, L.content.x + 6, L.content.y + 6, L.content.w - 12, L.content.h - 12,
-        26, 9)
+        34, 7)
     D.rule(ctx, L.content.x + 12, L.content.y + 6, L.content.w - 24, 10,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
     D.rule(ctx, L.content.x + 12, L.content.y + L.content.h - 6, L.content.w - 24, 10,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
 
-    -- 未来关（未解锁）：在路径延长线上画**幽灵节点**，补满内容区、让爬塔可见更长。
-    -- 它们是纯装饰（不参与命中），用极低 alpha，避免与「当前最新关」抢焦点。
-    local ghostVisible = false
+    -- 星座连线：相邻关之间一段；已解锁段亮青、未解锁段暗。
+    for stage = 1, maxStage - 1 do
+        local ax, ay = NodeCenter(L, stage)
+        local bx, by = NodeCenter(L, stage + 1)
+        DrawLink(ctx, ax, ay, bx, by, C.cyan, true)
+    end
+    -- 从当前最新关继续往前，延伸出通往「未来关」的暗线（纯装饰，不参与命中）。
+    local px, py = NodeCenter(L, maxStage)
+    for k = 1, 5 do
+        local nx = L.towerX + StageSway(maxStage + k)
+        local ny = NodeYAt(L, maxStage + k)
+        DrawLink(ctx, px, py, nx, ny, C.cyanDim, false)
+        px, py = nx, ny
+    end
+
+    -- 流动能量点：沿整条航线（已解锁段 + 延伸段）按共享相位前进（确定性，非随机）。
+    do
+        local phase = (D.anim and D.anim() or 0)
+        local fpts = {}
+        for stage = 1, maxStage + 5 do
+            fpts[#fpts + 1] = { x = L.towerX + StageSway(stage), y = NodeYAt(L, stage) }
+        end
+        local nseg = #fpts - 1
+        if nseg >= 1 then
+            for d = 0, 3 do
+                local t = ((phase * 0.4) + d * 0.25) % 1
+                local seg = math.min(nseg, math.floor(t * nseg) + 1)
+                local lt = t * nseg - (seg - 1)
+                local p1, p2 = fpts[seg], fpts[seg + 1]
+                if p1 and p2 then
+                    local fx = p1.x + (p2.x - p1.x) * lt
+                    local fy = p1.y + (p2.y - p1.y) * lt
+                    Circle(ctx, fx, fy, 6.4, { C.cyan[1], C.cyan[2], C.cyan[3], 60 })
+                    Circle(ctx, fx, fy, 3.0, { C.text[1], C.text[2], C.text[3], 200 })
+                end
+            end
+        end
+    end
+
+    -- 未来关幽灵六边形：补满内容区、让「航线还很长」可见（极低 alpha，不参与命中）。
     for stage = maxStage + 1, maxStage + 6 do
+        local cx = L.towerX + StageSway(stage)
         local cy = NodeYAt(L, stage)
         if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
-            ghostVisible = true
-            break
-        end
-    end
-    if ghostVisible then
-        local gpts = {}
-        for stage = 1, maxStage + 6 do
-            gpts[#gpts + 1] = { x = L.towerX + StageSway(stage), y = NodeYAt(L, stage) }
-        end
-        StrokePath(ctx, gpts, { 8, 14, 26, 110 }, 34)
-        StrokePath(ctx, gpts, { 30, 62, 78, 80 }, 24)
-        for stage = maxStage + 1, maxStage + 6 do
-            local cx = L.towerX + StageSway(stage)
-            local cy = NodeYAt(L, stage)
-            if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
-                CircleStroke(ctx, cx, cy, NODE_R - 6, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 42 }, 1.6)
-                Circle(ctx, cx, cy, NODE_R - 9, { 14, 22, 34, 110 })
-                CircleStroke(ctx, cx, cy, 13, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 34 }, 1.6)
-            end
+            HexFill(ctx, cx, cy, NODE_R, { 14, 22, 34, 110 })
+            HexStroke(ctx, cx, cy, NODE_R, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 40 }, 1.4)
         end
     end
 
-    local pts = PathPoints(L)
-    if #pts >= 2 then
-        -- 蜿蜒路径：外层深色宽描边（路肩）+ 中层路面 + 内层亮色高光，
-        -- 三层叠出"一条有厚度的路"，而不是一根细线（参考图的关键观感）。
-        StrokePath(ctx, pts, { 8, 14, 26, 255 }, 40)
-        StrokePath(ctx, pts, { 30, 62, 78, 255 }, 30)
-        StrokePath(ctx, pts, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 150 }, 8)
-        -- 流动光点：沿路径按共享动画相位前进，给静态地图「在运行」的感觉（确定性，非随机）。
-        local phase = (D.anim and D.anim() or 0)
-        for d = 0, 3 do
-            local t = ((phase * 0.35) + d * 0.25) % 1
-            local seg = math.min(#pts - 1, math.floor(t * (#pts - 1)) + 1)
-            local lt = t * (#pts - 1) - (seg - 1)
-            local p1, p2 = pts[seg], pts[seg + 1]
-            if p1 and p2 then
-                local fx = p1.x + (p2.x - p1.x) * lt
-                local fy = p1.y + (p2.y - p1.y) * lt
-                Circle(ctx, fx, fy, 3.4, { C.cyan[1], C.cyan[2], C.cyan[3], 200 })
-                Circle(ctx, fx, fy, 6.4, { C.cyan[1], C.cyan[2], C.cyan[3], 70 })
-            end
-        end
-    end
-
-    -- 关卡节点（从高到低画，避免重叠时低关压住高关）
+    -- 关卡芯片（从高到低画，避免重叠时低关压住高关）
     for stage = maxStage, 1, -1 do
         local cx, cy = NodeCenter(L, stage)
         if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
-            local unlocked = stage <= maxStage
             local stars = (meta.stageStars and meta.stageStars[stage]) or 0
-            DrawStageNode(ctx, cx, cy, stage, unlocked, stars, stage == maxStage)
+            DrawStageNode(ctx, cx, cy, stage, true, stars, stage == maxStage)
         end
     end
 
@@ -537,14 +647,15 @@ function StageSelect.HitTest(uiX, uiY, w, meta)
         if Inside(L.itemRows[i], uiX, uiY) then return "buy_item", i end
     end
 
-    -- 关卡节点：圆形命中（略放大便于点按）
-    local hitR = NODE_R + 8
+    -- 关卡芯片：六边形命中（与绘制同形，保证「看着能点=点得到」）。
+    -- 六边形（尖角朝上下）用三个约束判定：|dy| ≤ r，以及两条斜边 ±(dy·0.5 + |dx|·0.866) ≤ r。
+    local hr = NODE_R + 3
     for stage = maxStage, 1, -1 do
         local cy = L.nodeY[stage]
         if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
             local cx = L.towerX + StageSway(stage)
-            local dx, dy = uiX - cx, uiY - cy
-            if dx * dx + dy * dy <= hitR * hitR then
+            local dx, dy = math.abs(uiX - cx), math.abs(uiY - cy)
+            if dy <= hr and (dy * 0.5 + dx * 0.866) <= hr then
                 return "play_stage", stage
             end
         end
