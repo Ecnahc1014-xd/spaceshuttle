@@ -1,7 +1,27 @@
 -- Scene3DBackend.lua
 -- 3D 场景后端：固定 540x960 设计坐标，使用正交相机呈现体素敌人与运输车。
 
-local Renderer3D = require "Renderer3D"
+-- Renderer3D 是本模块最大的依赖（约 84KB）。**必须 pcall 降级**：若它因任何原因
+-- 加载失败（最典型的是打包/预下载漏掉该文件 → `Module not found: Renderer3D`），
+-- 裸 require 会让整个 Scene3DBackend 加载失败 → client_main → main.Start 连锁崩溃
+-- → **整屏黑屏，连 2D UI 都没有**。降级为 no-op 后，3D 层不画、但菜单/HUD/所有
+-- NanoVG UI 仍可用，玩家至少能看到界面而不是黑屏。
+-- ⚠️ 用 IIFE 包裹以免新增顶层 local（本文件顶层 local 已达 197/200，AB-166）。
+local Renderer3D = (function()
+    local ok, mod = pcall(require, "Renderer3D")
+    if ok and type(mod) == "table" then return mod end
+    print("[Scene3DBackend] WARN: Renderer3D unavailable, running 2D-only fallback: "
+        .. tostring(mod))
+    local noop = function() end
+    return {
+        Init = function() return false end,
+        Shutdown = noop, Render = noop, Update = noop,
+        GetVehicleAnchor = function() return nil end,
+        GetVehicleAnchorWorld = function() return nil end,
+        DebugTrailVertexCount = function() return 0 end,
+        _unavailable = true,
+    }
+end)()
 local SkyUtils = require "urhox-libs.Rendering.SkyUtils"
 local VisualCatalog = require "VisualCatalog"
 local TalentCatalog = require "TalentCatalog"
@@ -2782,9 +2802,15 @@ function Backend.Init()
     end
 
     if not Renderer3D.Init(scene_, voxelWorld_) then
-        print("[Scene3DBackend] ERROR: Renderer3D initialization failed")
-        CleanupFailedInit()
-        return false
+        if Renderer3D._unavailable then
+            -- 3D 层缺席不阻断启动：菜单/HUD/所有 NanoVG UI 仍可用，
+            -- 比「整屏黑屏」对玩家好得多（见文件头 pcall 降级说明）。
+            print("[Scene3DBackend] WARN: 3D renderer unavailable, starting in 2D-only mode")
+        else
+            print("[Scene3DBackend] ERROR: Renderer3D initialization failed")
+            CleanupFailedInit()
+            return false
+        end
     end
     -- 传函数值而非函数名：不受「处理器定义在哪个文件」影响。
     SubscribeToEvent(vg_, "NanoVGRender", HandleBackendNanoVGRender)

@@ -1228,13 +1228,15 @@ local AIM_LINE_SEGMENTS = 14     -- 沿线排布的软圆点数
 local AIM_LINE_DOT_WORLD = 0.10  -- 起点端点尺寸（世界米），向终点渐小
 local AIM_LINE_COLOR = Color(0.30, 0.90, 1.0, 1)
 
--- 提交一个四边形段：a→b 之间沿法线 (nx,ny) 张开 w0/w1 半宽，中心各偏移 o0/o1
--- （o 沿法线方向；双轨样式靠偏移 + 收窄宽度得到两条平行光轨）。
-local function EmitTrailQuad(verts, a, b, nx, ny, w0, w1, c0, c1, o0, o1, az, bz)
-    local p1 = Vector3(a.x + nx * (w0 + o0), a.y + ny * (w0 + o0), az)
-    local p2 = Vector3(a.x + nx * (o0 - w0), a.y + ny * (o0 - w0), az)
-    local p3 = Vector3(b.x + nx * (o1 - w1), b.y + ny * (o1 - w1), bz)
-    local p4 = Vector3(b.x + nx * (o1 + w1), b.y + ny * (o1 + w1), bz)
+-- 提交一个四边形段：a→b 之间沿**三维法线** (ndx,ndy,ndz) 张开 w0/w1 半宽，
+-- 中心各偏移 o0/o1（o 沿法线方向；双轨样式靠偏移 + 收窄宽度得到两条平行光轨）。
+-- ⚠️ 法线带 z 分量是「截面扭转」的关键——把横截面绕切线转出平面，才是真三维螺旋
+-- （只改平面内的 (nx,ny) 只会让光带在同一个平面里歪斜，看着仍是平的）。
+local function EmitTrailQuad(verts, a, b, ndx, ndy, ndz, w0, w1, c0, c1, o0, o1, az, bz)
+    local p1 = Vector3(a.x + ndx * (w0 + o0), a.y + ndy * (w0 + o0), az + ndz * (w0 + o0))
+    local p2 = Vector3(a.x + ndx * (o0 - w0), a.y + ndy * (o0 - w0), az + ndz * (o0 - w0))
+    local p3 = Vector3(b.x + ndx * (o1 - w1), b.y + ndy * (o1 - w1), bz + ndz * (o1 - w1))
+    local p4 = Vector3(b.x + ndx * (o1 + w1), b.y + ndy * (o1 + w1), bz + ndz * (o1 + w1))
     verts[#verts + 1] = {p1, c0}
     verts[#verts + 1] = {p2, c0}
     verts[#verts + 1] = {p3, c1}
@@ -1368,6 +1370,25 @@ local function SyncVehicleTrails(game, dt)
             local flow = style.flow or 0.0
             local railSpread = style.railSpread or 1.35
             local railTaper = style.railTaper or 1.0
+            -- 立体/层叠轴：外层柔光、内层亮芯、截面扭转、沿途光珠、头端爆闪。
+            local glow = style.glow or 0.0
+            local core = style.core or 0.0
+            local twist = style.twist or 0.0
+            local bead = style.bead or 0
+            local beadR = style.beadR or 0.0
+            local head = style.head or 0.0
+            -- 三层各自一档明暗：外层柔光最暗、主体中、芯最亮（叠起来才「厚」）。
+            local function layerColor(t, mul)
+                local c = TrailColor(base, t, style, trailPhase_)
+                return Color(math.min(1, c.r * mul), math.min(1, c.g * mul),
+                    math.min(1, c.b * mul), 1)
+            end
+            -- 截面法线：从平面法线 (nx,ny,0) 绕切线转出 angle → 得到带 z 分量的三维法线。
+            -- 这才是「螺旋」：截面转出玩法平面，光带在空间里盘绕而不是在平面里歪。
+            local function TwistedNormal(nx, ny, angle)
+                local ca, sa = math.cos(angle), math.sin(angle)
+                return nx * ca, ny * ca, sa
+            end
             -- flow：断续图案随时间沿长度游动（段/秒）。用共享相位，同屏所有车同步。
             local flowOffset = flow > 0 and math.floor(trailPhase_ * flow) or 0
             for _, track in ipairs(tracks) do
@@ -1399,17 +1420,68 @@ local function SyncVehicleTrails(game, dt)
                                 w0 = w0 * (1 + bulge * t0 * t0)
                                 w1 = w1 * (1 + bulge * t1 * t1)
                             end
+                            local az, bz = a.z + TRAIL_BEHIND_Z, b.z + TRAIL_BEHIND_Z
+                            -- 扭转角：沿弧长线性增长（twist 弧度/采样点）。
+                            local ang0, ang1 = twist * (i - 1), twist * i
+                            local r0x, r0y, r0z = TwistedNormal(nx, ny, ang0)
+                            local r1x, r1y, r1z = TwistedNormal(nx, ny, ang1)
+                            -- 外层柔光：宽而暗，垫在主体下面（同一中线、更大半宽）。
+                            if glow > 1.0 then
+                                local g0, g1 = layerColor(t0, 0.34), layerColor(t1, 0.34)
+                                if tw then
+                                    local s0 = halfHead * railSpread * (t0 ^ railTaper)
+                                    local s1 = halfHead * railSpread * (t1 ^ railTaper)
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * glow, railW * glow,
+                                        g0, g1, -s0, -s1, az, bz)
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * glow, railW * glow,
+                                        g0, g1, s0, s1, az, bz)
+                                else
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0 * glow, w1 * glow,
+                                        g0, g1, 0, 0, az, bz)
+                                end
+                            end
+                            -- 主体 + 高亮芯（芯更窄更亮，叠在主体中央）。
                             local c0 = TrailColor(base, t0, style, trailPhase_)
                             local c1 = TrailColor(base, t1, style, trailPhase_)
-                            local az, bz = a.z + TRAIL_BEHIND_Z, b.z + TRAIL_BEHIND_Z
+                            local k0 = layerColor(t0, core > 0 and (1.0 + core * 0.35) or 1.0)
+                            local k1 = layerColor(t1, core > 0 and (1.0 + core * 0.35) or 1.0)
                             if tw then
-                                -- 双轨：轨距头端最宽、沿长度收拢成尖（railTaper<1）。
+                                -- 双轨：轨距头端最宽、沿长度收拢成尖（railTaper<1）；
+                                -- 两条轨沿同一扭转法线错开 → 在空间里编成一股辫。
                                 local spread0 = halfHead * railSpread * (t0 ^ railTaper)
                                 local spread1 = halfHead * railSpread * (t1 ^ railTaper)
-                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, -spread0, -spread1, az, bz)
-                                EmitTrailQuad(verts, a, b, nx, ny, railW, railW, c0, c1, spread0, spread1, az, bz)
+                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW, railW, c0, c1, -spread0, -spread1, az, bz)
+                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW, railW, c0, c1, spread0, spread1, az, bz)
+                                if core > 0 then
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * 0.42, railW * 0.42,
+                                        k0, k1, -spread0, -spread1, az, bz)
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * 0.42, railW * 0.42,
+                                        k0, k1, spread0, spread1, az, bz)
+                                end
                             else
-                                EmitTrailQuad(verts, a, b, nx, ny, w0, w1, c0, c1, 0, 0, az, bz)
+                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0, w1, c0, c1, 0, 0, az, bz)
+                                if core > 0 then
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0 * 0.40, w1 * 0.40,
+                                        k0, k1, 0, 0, az, bz)
+                                end
+                            end
+                            -- 沿途光珠：每隔 bead 个采样点，在主体上嵌一颗短而亮的珠（球状闪光）。
+                            if bead > 0 and (i % bead) == 0 then
+                                local br = halfHead * beadR
+                                local t = (t0 + t1) * 0.5
+                                local bc = layerColor(t, 1.0 + 0.9 * t)
+                                local hx, hy, hz = (a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (az + bz) * 0.5
+                                local tx, ty = sdx / len, sdy / len
+                                -- 用切向与法向各铺一格 → 一颗「十字星」状的立体光珠。
+                                local pa = {x = hx - tx * br, y = hy - ty * br, z = hz}
+                                local pb = {x = hx + tx * br, y = hy + ty * br, z = hz}
+                                EmitTrailQuad(verts, pa, pb, r0x, r0y, r0z, br, br, bc, bc, 0, 0, hz, hz)
+                            end
+                            -- 头端爆闪：只在最靠头的一段叠一条宽亮短光。
+                            if head > 0 and i >= n - 2 then
+                                local hc = layerColor(1.0, 1.0 + head)
+                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0 * (1 + head), w1 * (1 + head),
+                                    hc, hc, 0, 0, az, bz)
                             end
                         end
                     end

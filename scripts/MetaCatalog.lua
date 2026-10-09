@@ -161,6 +161,13 @@ end
 --   flow：断续图案流动速度（段/秒；>0 时 dash 段随时间游动＝流光）
 --   pulse：明暗脉动强度（0=无；余火明灭）
 --   railSpread/railTaper：双轨头端间距（×headW）与沿长度收拢指数（双轨用）
+-- 立体与层叠轴（把「一条平面光带」升级成「有厚度、有光晕、有颗粒的实体」）：
+--   glow：外层柔光宽度倍率（0=无；>0 时在主体外再画一层宽而暗的柔光）
+--   core：高亮芯亮度倍率（0=无；>0 时在主体内再画一条更窄更亮的芯线）
+--   twist：截面绕切线的扭转（弧度/采样点；0=平带，>0=真实三维螺旋）
+--   bead：光珠间隔（采样点数；0=无，>0 时沿途每隔 N 点嵌一颗光珠）
+--   beadR：光珠半径（×headW）
+--   head：头端爆闪强度（0=无；头端额外叠一段宽亮短光）
 ---@class TrailStyleParams
 ---@field headW number
 ---@field tailW number
@@ -176,27 +183,39 @@ end
 ---@field pulse number
 ---@field railSpread number
 ---@field railTaper number
+---@field glow number
+---@field core number
+---@field twist number
+---@field bead integer
+---@field beadR number
+---@field head number
 
 ---@type table<string, TrailStyleParams>
 local TRAIL_STYLE_PARAMS = {
-    -- 经典尾焰：线性渐细，无额外机制（基准）。
+    -- 经典尾焰：三层叠（柔光 + 主体 + 亮芯），线性渐细。
     ribbon = {headW = 0.30, tailW = 0.012, bright = 1.00, base = 0.00, dash = 1, twin = 0, warm = 0,
-              taper = 1.0, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
-    -- 彗星：头段先鼓后收（实心亮核）+ 尾段急收。
+              taper = 1.0, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
+              glow = 2.30, core = 1.50, twist = 0.0, bead = 0, beadR = 0.0, head = 0.0},
+    -- 彗星：实心亮核 + 头端爆闪 + 沿途光珠（冰蓝彗尾）。
     comet  = {headW = 0.42, tailW = 0.22,  bright = 1.15, base = 0.35, dash = 1, twin = 0, warm = 0,
-              taper = 0.55, bulge = 1.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
-    -- 霓虹：等宽细带 + 沿长度青→品红色相游移 + 高亮。
+              taper = 0.55, bulge = 1.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
+              glow = 2.00, core = 2.40, twist = 0.0, bead = 2, beadR = 0.62, head = 0.90},
+    -- 霓虹：细芯 + 沿长度青→品红 + **截面绕切线扭转**（真三维螺旋）。
     neon   = {headW = 0.115, tailW = 0.115, bright = 1.45, base = 0.62, dash = 1, twin = 0, warm = 0,
-              taper = 1.0, bulge = 0.0, hue = 0.60, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
-    -- 流光：断续 + 图案沿长度流动（看起来在跑）。
+              taper = 1.0, bulge = 0.0, hue = 0.60, flow = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
+              glow = 1.90, core = 2.80, twist = 0.42, bead = 0, beadR = 0.0, head = 0.35},
+    -- 流光：断续 + 图案流动 + 轻微扭转（跑动的螺旋光点）。
     dash   = {headW = 0.26, tailW = 0.05,  bright = 1.10, base = 0.10, dash = 3, twin = 0, warm = 0,
-              taper = 1.2, bulge = 0.0, hue = 0.0, flow = 7.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0},
-    -- 双轨：左右两条细轨，轨距头端最宽、沿长度收拢成尖。
+              taper = 1.2, bulge = 0.0, hue = 0.0, flow = 7.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
+              glow = 1.70, core = 1.80, twist = 0.22, bead = 0, beadR = 0.0, head = 0.0},
+    -- 双轨：两条轨距收拢 + 各自扭转（**编成辫**）。
     twin   = {headW = 0.16, tailW = 0.02,  bright = 1.05, base = 0.05, dash = 1, twin = 1, warm = 0,
-              taper = 1.0, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.60, railTaper = 0.30},
-    -- 余烬：暖色 + 明暗脉动（余火明灭）+ 剧烈收束。
+              taper = 1.0, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.0, railSpread = 1.60, railTaper = 0.30,
+              glow = 1.60, core = 2.20, twist = 0.55, bead = 0, beadR = 0.0, head = 0.0},
+    -- 余烬：宽柔光 + 明灭脉动 + 沿途余火颗粒 + 头端爆闪。
     ember  = {headW = 0.56, tailW = 0.006, bright = 1.20, base = 0.15, dash = 1, twin = 0, warm = 1,
-              taper = 1.8, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.38, railSpread = 1.35, railTaper = 1.0},
+              taper = 1.8, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.38, railSpread = 1.35, railTaper = 1.0,
+              glow = 2.80, core = 1.70, twist = 0.16, bead = 3, beadR = 0.50, head = 0.60},
 }
 
 ---@param style string

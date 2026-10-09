@@ -51,6 +51,7 @@ local BALL_TYPES = {
     normal = {
         radius = 20, speed = 560, damage = 1,
         splitChance = 0.05, splitAngle = 18, splitSpread = 18,
+        maxConcurrent = 20,       -- 待发 + 飞行 + 本帧待加入的分裂车总上限；库存队列不占名额
         bounceElasticity = 1.0,    -- WO-05/P4：反弹弹性，1.0 为标准
     },
     speed = {
@@ -170,7 +171,7 @@ local elapsed = 0
 local waveCooldown = 0
 -- v0.13.26：同波错峰生成状态（剩余架数/下次计时/本波机型与砖块参数）。
 -- ⚠️ 收进一张表：Game.lua 顶层 local 已逼近 Lua 200 上限（AB-154 同族），禁止再加散装顶层 local。
-local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil, lane = 0, firstDone = false }
+local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil, lane = 0, spawned = 0 }
 local INTRO_SECONDS = 3.0
 -- v0.13.24：进关准备期（秒）。>0 时玩法冻结：不推进弹珠/敌机/波次，只放行表现层动画。
 local introTimer = 0
@@ -202,8 +203,9 @@ local partsSettled = false         -- 当前战斗阶段零件是否已入库
 local partsDoubled = false         -- 本局是否已用广告翻倍（每局一次）
 local lastSettledParts = 0         -- 最近一次结算实际入库数
 local settledParts = 0             -- 已按基础倍率入库的累计零件（复活后只补增量）
-local settledBricks = 0            -- 已计入跨局统计的击碎数
-local runCounted = false           -- 本局完成次数只计一次
+-- 结算账本（v0.14.x 存钱罐）：bricks=已计入跨局统计的击碎数；runCounted=本局是否已计完成；
+-- gear=本局累计「齿轮」（200 块 / 100 齿轮，精英机每块按 2 倍计）；gearSettled=已入库齿轮（复活后只补增量）。
+local settleBook = { bricks = 0, runCounted = false, gear = 0, gearSettled = 0 }
 local upgradeRerollFreeUsed = false -- 每局 1 次免费重抽
 local heldUpgradeId = nil          -- 本局保留到下一次升级的候选卡 id（最多一张）
 local PANEL_CARD_COUNT = 3         -- 常规候选数（v0.12.5 精简：面板不再有解锁第 4 张）
@@ -481,6 +483,24 @@ local function GetWaveParams(waveNum)
         StageCatalog.GetBrickHp(currentStage, "normal")
 end
 
+-- 只按存活实例计算名额，不持有跨帧计数器；同帧预生成也立即占预算。
+-- 库存队列只有车型键，尚未生成车辆，不计入同时存在数量。
+---@param pendingMarbles table[]|nil
+---@return integer
+function Game._NormalMarbleSlots(pendingMarbles)
+    local count = 0
+    if activeBall and activeBall.alive and activeBall.ballType == "normal" then
+        count = count + 1
+    end
+    for _, marble in ipairs(marbles) do
+        if marble.alive and marble.ballType == "normal" then count = count + 1 end
+    end
+    for _, marble in ipairs(pendingMarbles or {}) do
+        if marble.alive and marble.ballType == "normal" then count = count + 1 end
+    end
+    return math.max(0, BALL_TYPES.normal.maxConcurrent - count)
+end
+
 local function CreateMarble(ballType, words)
     local def = BALL_TYPES[ballType]
     local marble = {
@@ -723,8 +743,10 @@ ResetGame = function(startStage)
     partsDoubled = false
     lastSettledParts = 0
     settledParts = 0
-    settledBricks = 0
-    runCounted = false
+    settleBook.bricks = 0
+    settleBook.runCounted = false
+    settleBook.gear = 0
+    settleBook.gearSettled = 0
     runAircraft = {}
     baseShield = 0
     -- v0.13.13：开局自动拉取局外道具库存（覆盖选关/下一关/再战/重开全部入口）。
@@ -754,7 +776,7 @@ ResetGame = function(startStage)
     pendingSpawn.timer = 0
     pendingSpawn.kind = nil
     pendingSpawn.lane = 0
-    pendingSpawn.firstDone = false
+    pendingSpawn.spawned = 0
     nextEnemyId = 1
     nextMarbleId = 1
     -- 幸存者成长状态复位
@@ -1112,18 +1134,20 @@ SpawnNextNormalEnemy = function()
         pendingSpawn.timer = 1.0
         return
     end
-    -- v0.13.50：每关第一个飞船固定 1 血（用户要求）——开局用低血机给玩家「第一下就碎」的反馈，
-    -- 后续敌机仍按关卡曲线成长。用显式标记而非「场上无敌人」判定：否则首机被打掉后，
-    -- 同波第二架会被误判成「第一个」也拿 1 血。
+    -- v0.13.51：本关内按**出场序号**给普通敌机血量封顶（第1架≤1血、第2架≤3血、第3架≤5血…），
+    -- 让关卡前段由弱到强平滑递进；只封顶不抬升（曲线更低时保持曲线值）。
+    -- ⚠️ 用 `pendingSpawn.spawned`（本关已放出计数）而不是「场上无敌机」——否则首机被打掉后，
+    -- 同波第二架会被误判成第一个（AB-204）。本关第一波开波时复位。
     local firstShipHp = pendingSpawn.hp
-    if wave == (stage - 1) * StageCatalog.WAVES_PER_STAGE + 1 and not pendingSpawn.firstDone then
-        firstShipHp = 1
-        pendingSpawn.firstDone = true
+    if wave == (stage - 1) * StageCatalog.WAVES_PER_STAGE + 1 then
+        local cap = StageCatalog.GetFirstShipHpCap(pendingSpawn.spawned + 1)
+        if firstShipHp > cap then firstShipHp = cap end
     end
     local enemy = CreateEnemy(key, x, y, brickSize, firstShipHp, pendingSpawn.speed, {
         swayAmp = 6, swayFreq = 0.22, phase = 0,
     })
     if enemy then
+        pendingSpawn.spawned = pendingSpawn.spawned + 1
         enemy.formation = "stream"
         veggies[#veggies + 1] = enemy
         pendingSpawn.remaining = pendingSpawn.remaining - 1
@@ -1203,8 +1227,9 @@ SpawnWave = function(availableSlots)
     pendingSpawn.timer = 0
     -- 起始车道随波次错开，避免每波第一架总从最左出来。
     pendingSpawn.lane = (wave - 1) % 5
-    -- v0.13.50：本关首机标记只在关卡开头有效；换波时复位，避免跨波残留（判定还带 wave 约束，双保险）。
-    pendingSpawn.firstDone = false
+    -- v0.13.51：出场序号计数随每波开波复位——它只在本关第一波生效（血量封顶判定带 wave 约束），
+    -- 复位保证第一波从「第 1 架」重新计数。
+    pendingSpawn.spawned = 0
     SpawnNextNormalEnemy()
 end
 
@@ -1321,6 +1346,8 @@ EjectBrick = function(enemy, brick)
     brick.ejected = true
     score = score + data.score
     bricksBroken = bricksBroken + 1
+    -- v0.14.x 存钱罐：每击碎 1 块累积 1 点进度；精英机每块按 2 倍计（=> 精英 100 齿轮 / 100 块）。
+    settleBook.gear = settleBook.gear + (enemy.isElite and 2 or 1)
     -- v0.13.28：「装甲强化」的零件产出倍率在产出点统一结算（击碎/清机/过波/结算同源）。
     partsEarned = partsEarned + PARTS_PER_BRICK * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
     -- v0.13.28：「穿甲弹头」每级额外 +1 经验，低难度也能立刻加速升级。
@@ -1776,7 +1803,7 @@ function Game.PauseReload()
     -- v0.13.19：兜底用初始车类型（加速车），不再写死分裂车。
     local nextType = ballQueue[1] or (activeBall and activeBall.ballType) or STARTING_BALL_TYPE
     table.insert(ballQueue, 1, nextType)
-    if not activeBall then
+    if not activeBall and (nextType ~= "normal" or Game._NormalMarbleSlots() > 0) then
         activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
     end
     Emit("marble_reloaded", {ballType = nextType})
@@ -1990,11 +2017,14 @@ local function TrySplitNormal(marble, originBrick, pendingMarbles)
     if Random() >= def.splitChance + BALL_TUNING.splitBonus then return end
 
     -- v0.13.55「裂变核」：分裂数量由 splitCount 决定（基础 2 颗，专属卡每级 +1）。
-    -- 以母弹速度方向为中心，在 ±splitSpread 扇区内均匀铺开，避免高速重叠。
-    local count = math.max(2, math.floor(BALL_TUNING.splitCount or 2))
+    -- 预算同时扣除母弹、待发车和本帧待加入的子弹；不足时只生成剩余名额。
+    local count = math.min(math.max(2, math.floor(BALL_TUNING.splitCount or 2)),
+        Game._NormalMarbleSlots(pendingMarbles))
+    if count <= 0 then return end
+    -- 以母弹速度方向为中心铺开；只剩一个名额时居中，避免恒向左偏。
     local spread = def.splitSpread or 18
     for i = 1, count do
-        local angle = -spread + (2 * spread) * (i - 1) / math.max(1, count - 1)
+        local angle = count == 1 and 0 or -spread + (2 * spread) * (i - 1) / (count - 1)
         table.insert(pendingMarbles,
             CreateSplitMarble(marble, angle, originBrick))
     end
@@ -2202,6 +2232,8 @@ end
 
 local function QueueNextBall()
     if #ballQueue > 0 then
+        -- 满额时保持队首与库存，等已有分裂车回收后再装填，不绕过同屏上限。
+        if ballQueue[1] == "normal" and Game._NormalMarbleSlots() <= 0 then return end
         activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
     end
 end
@@ -3125,12 +3157,15 @@ end
 -- 跨局统计只认增量；复活后再次死亡不重复计「完成一局」与旧砖块。
 -- 胜利结算（stagewin）同样入库零件与统计。
 function Game.TakeSettlementStats()
-    if (gameState ~= "gameover" and gameState ~= "stagewin") or partsSettled then return 0, false end
-    local delta = math.max(0, bricksBroken - settledBricks)
-    settledBricks = bricksBroken
-    local firstFinish = not runCounted
-    runCounted = true
-    return delta, firstFinish
+    if (gameState ~= "gameover" and gameState ~= "stagewin") or partsSettled then return 0, false, 0 end
+    local delta = math.max(0, bricksBroken - settleBook.bricks)
+    settleBook.bricks = bricksBroken
+    local firstFinish = not settleBook.runCounted
+    settleBook.runCounted = true
+    -- v0.14.x 存钱罐：只回传本局新增齿轮（复活后再次结算不重复计旧值）。
+    local gearDelta = math.max(0, settleBook.gear - settleBook.gearSettled)
+    settleBook.gearSettled = settleBook.gear
+    return delta, firstFinish, gearDelta
 end
 
 ---@param multiplier integer
@@ -3291,6 +3326,8 @@ function Game.GetSnapshot()
     s.upgradePicks = upgradePicks
     s.clearStreak = clearStreak
     s.bricksBroken = bricksBroken
+    -- v0.14.x 存钱罐：本局累计齿轮（200 块/100 齿轮，精英机每块 2 倍）；只读标量。
+    s.gear = settleBook.gear
     s.concurrentCount = #veggies    -- WO-12/P6：当前同屏编队数（HUD 指标）
     -- 当前关卡格子尺寸（14/15/16）：权威值，供表现层按「格」偏移，波间隙无敌机时也可用。
     s.brickSize = GetBrickSize(wave)

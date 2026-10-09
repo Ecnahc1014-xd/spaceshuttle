@@ -11,6 +11,18 @@
 当前版本：0.13.56
 简述：第 1 关加「测试模式」询问——每次进第 1 关（选关 / 再战）都问「是否测试后期关卡」；选「是」解锁全部 42 个天赋节点并直入第 20 关，选「否」正常从第 1 关开始。新增插件式元层屏 `ui/TestModePrompt.lua`，零改后端/规则层；展示版本归并发会话。
 最后巩固：2026-10-08
+## 前期出怪放慢 + 按出场序号封顶血量（2026-10-09，spawn-ramp-hp-cap 附记）
+- 用户「前期的连续生成飞机间隔时长放三倍，到最后三波是现在的情况，中间平滑过渡。第一个飞机最多一血，第二个最多3血，第三个最多五血这样顺延」。
+- **间隔**：`StageCatalog.GetSpawnInterval` 保留原曲线（关1 2.8s → 关13 起 1.12s）作为「最后三关目标值」，只乘 `ramp`——关1–5 ×3.0、关6 ×2.5→关9 ×1.0 线性、关10+ ×1.0。实测关1 2.80→8.40s，关9/13/15 不变。
+- **血量封顶**：新增 `StageCatalog.GetFirstShipHpCap(n)=2n−1`；`Game.SpawnNextNormalEnemy` 用 `min(pendingSpawn.hp, cap)`——**只封顶不抬升**。判定用 `pendingSpawn.spawned`（本关已放出计数，非「场上无敌机」）+ `wave==本关第一波` 约束；`ResetGame`/每波开波都复位。精英/Boss 不参与。实测关1=1,2,3,2,2,2 / 关15=1,3,5,7,9,9。
+- 零新增顶层 local（把 v0.13.50 的 `pendingSpawn.firstDone` 就地改成 `spawned`）。LSP 26 文件 0 Error；官方多人 build ✅（dist 1.0.1 含本改动）。展示版本归并发会话（未动 BUILD_VERSION，当前 0.13.55）。
+- 抗体 AB-222（目标值当作曲线端点，不改整条公式）、AB-223（封顶用 min 不用 =）、AB-224（计数复位点与判定作用域一致）、AB-225（build 通过 ≠ 手感对）。⚠️ 平衡手感待 Preview 实机。
+
+## 分裂车同时最多 20（2026-10-09，split-concurrent-cap 附记）
+- 用户「分裂车同时最多存在20个」。限制真实生成而非渲染隐藏：存活待发 + 飞行 + 同帧 pending 分裂子车最多 20，库存车型键不计。
+- `Game._NormalMarbleSlots` / `BALL_TYPES.normal.maxConcurrent` 同源预算；分裂不足名额截生成数，0 不发成功事件，单子车居中，保留递归与 splitCount 2/3/4。常规装填/暂停补弹满额保队首，不删场上车、不丢库存；回收后自动装填。
+- 独立静态审查未发现问题，LSP 26 文件 0 Error；本地 Runtime **51/51、1803 断言 PASS、exit0**，覆盖边界、同帧多母弹、递归、库存保全、真实发射、重开与 1x/2x。首轮探针转移时同对象双计误报，仅修探针，日志保留不计通过。官方 build 返回 `PLATFORM_OPERATION_FORBIDDEN`，预览未更新。POST-1 执行（persona 不新增），POST-2 代码独立提交 `c9f3413`（只含本人 Game 五处），POST-3 判定跳过（小调整无新增跨项目信息）。展示版本不改，保留并发存钱罐/首机曲线/拖尾；手机与 3D 可见性未验收。
+
 ## 拖尾样式精进（2026-10-08，trail-style-mechanics 附记）
 - 用户「商店拖尾拉完了，然后需要精进」。根因：六种样式此前只是同一条光带的宽/亮/断续/双轨**数值微调**（本项目自己记过的 AB-214：差异化要落在机制不是数值）。
 - **加 7 条机制轴**（`MetaCatalog.TRAIL_STYLE_PARAMS` 纯数据）：`taper` 宽度曲线指数、`bulge` 头端鼓包亮核、`hue` 沿长度色相游移、`flow` 断续图案流动速度、`pulse` 明暗脉动、`railSpread`/`railTaper` 双轨间距与收拢。六种各占不同轴：经典=中性基准；彗星=taper+bulge；霓虹=hue；流光=dash+flow；双轨=railSpread+railTaper；余烬=taper+pulse。

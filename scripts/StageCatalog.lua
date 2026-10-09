@@ -179,14 +179,28 @@ function StageCatalog.GetInterval(stage, stageWave)
 end
 
 -- v0.13.26：同波内敌机不再同帧齐出，改为一架接一架飞入。
--- 关1 间隔最长（2.8s），每关 -0.14s，第 13 关起封顶 1.12s。
--- 下限由调用方（Game）按「下落速度 × 1 格 + 余量」动态抬高，保证任意两架初始至少隔 1 格。
--- v0.13.46：本关若掷到「密集编队」特性，出怪间隔 ×0.82。
+-- v0.13.51：**前期出怪明显放慢**——关1–5 间隔 ×3，第 6 关起线性平滑收敛，**最后三关回到原曲线**。
+-- 原曲线（关1 2.8s → 关13 起 1.12s）作为「最后三关」的目标值，前段乘倍率。
 function StageCatalog.GetSpawnInterval(stage)
     local base = math.max(1.1, 2.8 - GetStageProgress(stage) * 0.14)
+    -- ramp: 关1–5 恒 3.0；关6 2.5 → 关9 1.0（线性）；关10+ 恒 1.0（最后三关＝原曲线）
+    local ramp
+    if stage <= 5 then ramp = 3.0
+    elseif stage <= 9 then ramp = 3.0 - (stage - 5) * 0.5
+    else ramp = 1.0 end
+    base = base * ramp
     local mod = ActiveModifier(stage)
     if mod and mod.spawnMul then base = base * mod.spawnMul end
     return base
+end
+
+-- v0.13.51：本关内按「出场序号」给敌机血量**封顶**——第 1 架 ≤1 血、第 2 架 ≤3 血、
+-- 第 3 架 ≤5 血……（上限 = 2×序号-1），让关卡前段由弱到强平滑递进。
+-- 只**封顶**不抬升：关卡曲线（GetBrickHp）高于上限时压到上限；后期曲线低于上限时保持不变。
+-- 精英/Boss 走各自曲线，不参与本表。
+function StageCatalog.GetFirstShipHpCap(spawnIndex)
+    spawnIndex = math.max(1, math.floor(spawnIndex or 1))
+    return 2 * spawnIndex - 1
 end
 
 function StageCatalog.GetBossSummonLimit(stage)

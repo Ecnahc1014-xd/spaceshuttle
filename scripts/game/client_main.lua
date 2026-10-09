@@ -548,6 +548,9 @@ RefreshMeta = function()
     end
     metaState.passRewards = rewards
     metaState.passClaimable = metaState.passLevel > claimed
+    -- v0.14.x 存钱罐：档案领满 6 级后切换到「存钱罐式」。
+    metaState.piggyMode = PlayerData.IsPiggyMode()
+    metaState.piggyGear = PlayerData.GetGear()
     metaState.offline = GameMode.IsOffline()
     metaState.gems = GameMode.IsOffline() and metaState.gems or NetClient.GetGems()
 end
@@ -1001,6 +1004,14 @@ local function HandleMetaAction(action, index)
         if reward > 0 then
             PersistMeta()
             SetMetaToast(string.format("战斗档案 +%d 零件", reward))
+        end
+    elseif action == "claim_gear" then
+        local gears = PlayerData.ClaimGear()
+        if gears > 0 then
+            PersistMeta()
+            SetMetaToast(string.format("存钱罐 +%d 齿轮", gears))
+        else
+            SetMetaToast("存钱罐还是空的")
         end
     elseif action == "buy_premium_pass" then
         if GameMode.IsOffline() then
@@ -1590,9 +1601,10 @@ function HandleUpdate(eventType, eventData)
     -- v0.11.0 商业化：结算页一出现就按 ×1 把本局零件入库（幂等，同帧只结算一次）。
     -- v0.13.4：胜利结算（stagewin）同样入库，并记录该关星级 + 解锁下一关。
     if (snapshot.state == "gameover" or snapshot.state == "stagewin") and not snapshot.partsSettled then
-        local newBricks, firstFinish = Game.TakeSettlementStats()
+        local newBricks, firstFinish, newGear = Game.TakeSettlementStats()
         local granted = Game.SettleParts(1)
         if granted > 0 then PlayerData.AddParts(granted) end
+        if newGear > 0 then PlayerData.AddGear(newGear) end
         if newBricks > 0 then
             PlayerData.AddDailyProgress("break_bricks", newBricks)
             PlayerData.AddStat("bricksTotal", newBricks)

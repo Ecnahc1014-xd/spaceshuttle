@@ -47,6 +47,8 @@ local trailIndex = 1
 ---@field passClaimable boolean
 ---@field premiumPass boolean 付费档案轨（服务端权威标志）
 ---@field premiumPassCost integer 解锁付费轨所需钻石
+---@field piggyMode boolean 战斗档案是否已进入「存钱罐式」（满级后）
+---@field piggyGear integer 存钱罐已累积的齿轮数
 ---@field firstGiftAvailable boolean 首充礼包是否在限时窗内且未购买
 ---@field firstGiftSeconds number 首充限时窗剩余秒数
 ---@field firstGiftPrice number|nil 首充礼包平台价格（nil=未开通）
@@ -485,8 +487,9 @@ end
 -- 养成收藏：花零件/成长线/付费加速。v0.12.7：用户否决开局首充促销——
 -- 菜单不再用金框「新手礼包」顶替图鉴位；首充只在玩家主动打开钻石商店时出现。
 local function GetGrowDefs(meta)
-    local passSub = meta.passClaimable and "有奖励可领"
-        or (meta.premiumPass and "双倍奖励" or ("等级 " .. tostring(meta.passLevel or 1)))
+    local passSub = meta.piggyMode and string.format("存钱罐 %d 齿轮", meta.piggyGear or 0)
+        or (meta.passClaimable and "有奖励可领"
+        or (meta.premiumPass and "双倍奖励" or ("等级 " .. tostring(meta.passLevel or 1))))
     return {
         { action = "open_shop", icon = "shop", label = "车型商店",
           sub = "零件换新车", hot = false, tone = "free" },
@@ -976,6 +979,13 @@ local function DrawTrailPreview(ctx, r, trailKey)
     local flow = style.flow or 0.0
     local railSpread = style.railSpread or 1.35
     local railTaper = style.railTaper or 1.0
+    -- 立体/层叠轴（与 3D 同一套）：外层柔光、内层亮芯、截面扭转、光珠、头端爆闪。
+    local glow = style.glow or 0.0
+    local core = style.core or 0.0
+    local twist = style.twist or 0.0
+    local bead = style.bead or 0
+    local beadR = style.beadR or 0.0
+    local head = style.head or 0.0
     local cx, cy = r.x + r.w * 0.5, r.y + r.h * 0.5
     local x0, x1 = cx + r.w * 0.42, cx - r.w * 0.42   -- x0=车尾, x1=尾端
     local baseHalf = 13
@@ -984,8 +994,11 @@ local function DrawTrailPreview(ctx, r, trailKey)
     local railHalf = baseHalf * 0.32
     local segs = 26
     local flowOffset = flow > 0 and math.floor(phase * flow) or 0
-    local function rgba(f, t, alpha)
-        local rr, gg, bb = base[1] * f, base[2] * f, base[3] * f
+    -- mul：层明暗倍率（外层柔光暗、主体中、芯亮）；twist 在 2D 里体现为中线偏移
+    -- （用 sin 把截面转出画面平面的效果「投影」回来），与 3D 的 z 扭转同相。
+    local function rgba(f, t, alpha, mul)
+        mul = mul or 1
+        local rr, gg, bb = base[1] * f * mul, base[2] * f * mul, base[3] * f * mul
         if hue > 0 then
             local k = (1 - t) * hue
             rr, gg, bb = rr + 0.55 * k, gg * (1 - 0.35 * k), bb + 0.35 * k
@@ -1010,13 +1023,49 @@ local function DrawTrailPreview(ctx, r, trailKey)
                 f = f * (1 - pulse + pulse * (0.5 + 0.5 * math.sin(phase * 3.4 + t * 2.2)))
             end
             f = math.min(1, f)
+            -- 扭转在 2D 预览里的投影：截面转出画面 → 中线随弧长上下摆。
+            local wob = twist * 6.0 * math.sin(twist * (i - 1) * 3.0 + phase * 0.8)
+            local yc = cy + wob
+            -- ① 外层柔光：宽而暗，垫在主体下。
+            if glow > 1.0 then
+                local gA = math.floor(60 + 70 * f)
+                if twin then
+                    local spread = baseHalf * railSpread * (t ^ railTaper)
+                    D.rect(ctx, rx, yc - spread - railHalf * glow, rw, railHalf * glow * 2, rgba(f, t, gA, 0.42), 0)
+                    D.rect(ctx, rx, yc + spread - railHalf * glow, rw, railHalf * glow * 2, rgba(f, t, gA, 0.42), 0)
+                else
+                    D.rect(ctx, rx, yc - half * glow, rw, half * glow * 2, rgba(f, t, gA, 0.42), 0)
+                end
+            end
+            -- ② 主体 + ③ 高亮芯。
             local alpha = math.floor(90 + 165 * f)
             if twin then
                 local spread = baseHalf * railSpread * (t ^ railTaper)
-                D.rect(ctx, rx, cy - spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
-                D.rect(ctx, rx, cy + spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
+                D.rect(ctx, rx, yc - spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
+                D.rect(ctx, rx, yc + spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
+                if core > 0 then
+                    D.rect(ctx, rx, yc - spread - railHalf * 0.42, rw, railHalf * 0.84,
+                        rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
+                    D.rect(ctx, rx, yc + spread - railHalf * 0.42, rw, railHalf * 0.84,
+                        rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
+                end
             else
-                D.rect(ctx, rx, cy - half, rw, half * 2, rgba(f, t, alpha), 0)
+                D.rect(ctx, rx, yc - half, rw, half * 2, rgba(f, t, alpha), 0)
+                if core > 0 then
+                    D.rect(ctx, rx, yc - half * 0.40, rw, half * 0.80,
+                        rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
+                end
+            end
+            -- ④ 沿途光珠：每隔 bead 段在主体上点一颗亮珠。
+            if bead > 0 and (i % bead) == 0 then
+                local br = half * beadR * 1.6
+                D.rect(ctx, rx + rw * 0.5 - br, yc - br, br * 2, br * 2,
+                    rgba(f, t, 240, 1.0 + 0.9 * t), 1)
+            end
+            -- ⑤ 头端爆闪：最靠头的一段叠一条宽亮短光。
+            if head > 0 and i >= segs - 2 then
+                D.rect(ctx, rx, yc - half * (1 + head), rw, half * (1 + head) * 2,
+                    rgba(1.0, 1.0, 255, 1.0 + head), 0)
             end
         end
     end
@@ -1238,9 +1287,35 @@ end
 local function DrawPass(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "战斗档案",
-        meta.premiumPass and "双轨奖励" or "精英档案")
+        meta.piggyMode and "存钱罐" or (meta.premiumPass and "双轨奖励" or "精英档案"))
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
+
+    -- v0.14.x 存钱罐式：档案领满 6 级后改为无限积累、随时领取的存钱罐。
+    if meta.piggyMode then
+        local gear = meta.piggyGear or 0
+        local hero = {x=content.x, y=content.y+2, w=content.w, h=190}
+        D.panel(ctx, hero.x, hero.y, hero.w, hero.h, C.rail,
+            meta.premiumPass and C.warnDim or C.cyanDim, 8)
+        D.icon(ctx, "premium_pass_crest", hero.x + 14, hero.y + 12, 32)
+        D.text(ctx, hero.x + 56, hero.y + 10, "战斗存钱罐", 13, C.cyanDim)
+        D.text(ctx, hero.x + 56, hero.y + 29,
+            string.format("%d", gear), 34, C.text)
+        D.text(ctx, hero.x + 56, hero.y + 72, "齿轮", 15, C.dim)
+        D.text(ctx, hero.x + hero.w - 16, hero.y + 12, "可领取", 12, C.dim,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        D.text(ctx, hero.x + hero.w - 16, hero.y + 31,
+            "+" .. tostring(gear), 23, C.warn, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        D.text(ctx, hero.x + 16, hero.y + 100,
+            "每击碎 200 块存 100 齿轮 · 精英积累 ×2", 13, C.dim)
+        D.text(ctx, hero.x + 16, hero.y + 120,
+            "随时领取 · 无限积累", 13, C.dim)
+        local cr = { x = hero.x + 16, y = hero.y + 144, w = hero.w - 32, h = 38 }
+        local label = gear > 0 and string.format("领取 %d 齿轮", gear) or "存钱罐空空"
+        Button(ctx, cr, label, "折算零件", gear > 0 and "primary" or "disabled")
+        nvgRestore(ctx)
+        return content, close
+    end
 
     local hero = {x=content.x, y=content.y+2, w=content.w, h=160}
     D.panel(ctx, hero.x, hero.y, hero.w, hero.h, C.rail,
@@ -1301,6 +1376,13 @@ local function HitTestPass(uiX, uiY, w, meta)
     local content, close = GetShellLayout(w)
     if Inside(close, uiX, uiY) then return "close", nil end
     if not Inside(content, uiX, uiY) then return nil, nil end
+    -- v0.14.x 存钱罐式：命中唯一的「领取」按钮（几何与 DrawPass 的 cr 同源）。
+    if meta.piggyMode then
+        local heroY = content.y + 2
+        local cr = { x = content.x + 16, y = heroY + 144, w = content.w - 32, h = 38 }
+        if (meta.piggyGear or 0) > 0 and Inside(cr, uiX, uiY) then return "claim_gear", nil end
+        return nil, nil
+    end
     if not meta.premiumPass then
         local ur = GetPassUnlockRect(content)
         if Inside(ur, uiX, uiY)

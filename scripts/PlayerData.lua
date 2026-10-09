@@ -30,6 +30,8 @@ local DATA_VERSION = 1
 ---@field selectedTrail string 当前使用的拖尾样式 key
 ---@field shopBought table<string, boolean> 商城一次性商品
 ---@field passClaimed integer 战斗档案已领到的等级
+---@field piggyBank integer 存钱罐已累积未领取的齿轮数
+---@field piggyClaimed boolean 是否已领取过存钱罐（首次领取前不解锁存钱罐式）
 ---@field firstGiftClaimed boolean 首充新手礼包奖励是否已本地补发
 ---@field createdAt integer 首次运行时间戳（首充限时窗基准）
 ---@field purchasedPartsClaimed integer 已补领的钻石兑换零件累计额
@@ -60,6 +62,8 @@ local function NewState()
         selectedTrail = "classic",
         shopBought = {},
         passClaimed = 0,
+        piggyBank = 0,
+        piggyClaimed = false,
         firstGiftClaimed = false,
         createdAt = 0,
         purchasedPartsClaimed = 0,
@@ -168,6 +172,8 @@ function PlayerData.Load()
     state.talents      = AsBoolMap(d.talents)
     state.shopBought   = AsBoolMap(d.shopBought)
     state.passClaimed  = math.max(0, AsInt(d.passClaimed))
+    state.piggyBank    = math.max(0, AsInt(d.piggyBank))
+    state.piggyClaimed = d.piggyClaimed == true
     state.firstGiftClaimed = d.firstGiftClaimed == true
     state.createdAt = math.max(0, AsInt(d.createdAt))
     state.purchasedPartsClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
@@ -253,6 +259,9 @@ function PlayerData.ImportFromCloud(text)
         state.signInStreak = math.max(state.signInStreak, math.max(0, AsInt(d.signInStreak)))
     end
     state.passClaimed = math.max(state.passClaimed, math.max(0, AsInt(d.passClaimed)))
+    -- 存钱罐跨设备取更大累积值；领取标志取并集（任一台领过即保留）。
+    state.piggyBank = math.max(state.piggyBank, math.max(0, AsInt(d.piggyBank)))
+    if d.piggyClaimed == true then state.piggyClaimed = true end
     if d.firstGiftClaimed == true then state.firstGiftClaimed = true end
     local cloudCreated = math.max(0, AsInt(d.createdAt))
     -- 首次运行时间取两台设备中更早的那个（限时窗基准）。
@@ -772,6 +781,46 @@ end
 
 function PlayerData.GetPassClaimed()
     return state.passClaimed
+end
+
+-- ============================================================================
+-- 存钱罐（战斗档案满级后解锁）：击碎方块累积「齿轮」，随时领取、无限积累。
+-- 领取即把全部齿轮 1:1 折成「零件」入库（齿轮是存钱罐的计数单位，不是独立货币）。
+-- ============================================================================
+
+-- 是否已进入存钱罐式：档案领满 6 级后解锁；一旦解锁过就保持（领取后不退回等级式）。
+---@return boolean
+function PlayerData.IsPiggyMode()
+    return state.piggyClaimed or state.passClaimed >= 6
+end
+
+---@return integer
+function PlayerData.GetGear()
+    return state.piggyBank
+end
+
+-- 结算时由编排层注入本局新增齿轮（含精英 2 倍）；无限累积、不设上限。
+---@param amount integer
+---@return integer
+function PlayerData.AddGear(amount)
+    local n = math.floor(amount)
+    if n <= 0 then return state.piggyBank end
+    state.piggyBank = state.piggyBank + n
+    state.piggyClaimed = true
+    PlayerData.Save()
+    return state.piggyBank
+end
+
+-- 随时领取：一次性把存钱罐清空并折算成零件，返回本次领取的齿轮数（0 表示空罐）。
+---@return integer granted
+function PlayerData.ClaimGear()
+    local n = state.piggyBank
+    if n <= 0 then return 0 end
+    state.piggyBank = 0
+    state.piggyClaimed = true
+    PlayerData.AddParts(n)  -- 内部会 Save()
+    print("[PlayerData] piggy claimed gears=" .. n)
+    return n
 end
 
 -- 首充新手礼包：限时窗剩余秒数（<=0 表示窗口已关）。
