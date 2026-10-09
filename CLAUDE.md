@@ -3,6 +3,11 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: darktech-skill-feedback（2026-10-09，用本项目独有做法反哺 dark-tech skill；纯文档、不改游戏代码/展示版本）：
+  - 用户要求「用本游戏所有的独有东西对 darktech skill 进行反哺」，并追加「旧的实验室/培养舱项目的部分也要保留」——即**只做加法**，旧 `elements.md`（培养舱项目）一字不动。
+  - **新增 `references/architecture.md`（507 行）**：本项目最独特的资产是**工程架构**，不是视觉母题。13 个界面共用一套 raw NanoVG 工艺跑 50+ 版本，沉淀出：①共享表面原语单模块（`ui/PremiumSurface` 的 Panel/Window/Button/Background/Stage，改一处全屏生效）；②依赖注入（`Init(deps)`，前端不 require 后端、不自定义颜色）；③**绘制与命中同源**（每屏一组不画图的几何函数，绘制与命中都从它取）；④**窗口动效 = 绘制缩放 + 命中逆变换共用同一函数**（`WindowMotion`/`WindowInput`，入场 0.32s 弹性 0.91→1.03→1.0、退场 0.18s）；⑤交互反馈三段式（指针全局喂入 + 控件显式登记 `GetControlFx(rect,enabled)` + 平滑缓动）；⑥单一动画相位源；⑦**屏幕插件注册** `RegisterScreen`（后端零改动接入新屏）；⑧**Lua 顶层 local 200 上限**（本项目后端 197/200，超限 `LoadChunk failed` 全屏黑、LSP/build 都不查）；⑨贴图模块（两色母版 + `nvgImagePatternTinted` 乘法染色 + 懒加载 + 缺图回退）；⑩验收纪律（渲染无报错 ≠ 画出来了）。
+  - **追加章节（全部加法）**：`tokens.md` 补商业化语义色（看广告绿/免费青/付费金 + 暖金付费入口 + 文字描边按亮度选色）；`nanovg.md` 补批量绘制性能契约（合并单一路径 + 面积自适应步长 + 全屏底纹层数克制，来自 AB-216 命令缓冲溢出）；`elements.md` 新增 **§14 商业化/弹射对战界面元素**（三色语义/变现闭环三段式/分区标题/自适应卡片/战斗 HUD/程序化展台/蜿蜒关卡地图/过渡动画/像素数字与艺术字，标注为「第二来源项目」，与旧培养舱项目并存）；`atmosphere.md`/`pipeline.md` 各补一段本项目落地实例；`SKILL.md` 接入 architecture.md 指引 + 验收清单补 3 条。
+  - 提交 `6506f40`（只暂存 `.agent/skills/dark-tech-game-editor-ui/`，不碰并发会话的 scripts/ 改动）。纯文档，无需 build/预览。旧内容经 `git diff` 核对为**纯新增**（6 文件 +319/-2，-2 是 `elements.md` 两处替换行，无内容删除）。
 - 附记: arttext-buttons（2026-10-09，按钮/选项卡标题改 AI 艺术字 + 选关界面统一化；不改展示版本）：
   - 用户「我还想要更贵更贵。是不是可以大量使用艺术字生成…生成按钮/选项卡的标题。还要有更多更贵的改造」，随后追加「另外我想要更酷炫更统一的选关界面UI」（附现有选关截图）。两次需求一并做。
   - **艺术字素材（走 `0718-pixelimage-aigc` 管线）**：`batch_generate_images`(nanobanana, **transparent:true**, 1376×768) 出 8 个标题草案 → 手写后处理（**内容 bbox 裁切 → 按目标显示高度等比缩 → alpha 二值化 128 → 压成「白芯 + 近黑轮廓」两色**）→ `assets/image/ui_tt_{startbattle,daily,collect,vehicle,trail,resume,menu,stage}.png` + `.meta`（22hex uuid，全库验重）。**母版高度 = 运行时显示高度**（startbattle 38 / daily·collect 24 / vehicle·trail 19 / resume 26 / menu 22 / stage 28），**1× 最近邻**，宽度随字数浮动逐图记宽。
