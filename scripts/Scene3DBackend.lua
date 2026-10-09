@@ -28,6 +28,7 @@ local TalentCatalog = require "TalentCatalog"
 local MetaUI = require "MetaUI"
 local StageIntro = require "ui.StageIntro"
 local StageTransition = require "ui.StageTransition"
+local ArtText = require "ui.ArtText"
 
 local Backend = {}
 
@@ -1551,9 +1552,21 @@ local function DrawMenu(ctx, game, meta)
         DrawCornerBrackets(ctx, cta.x + 2, cta.y + 2, cta.w - 4, cta.h - 4,
             {C.text[1], C.text[2], C.text[3], math.floor(glow * 220)}, 10, 1)
     end
-    DrawPixelText(ctx, game.width * 0.5, ctaY + 8, "开始战斗", 31, C.ink,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, ctaY + 45, "选择关卡", 14, C.ink,
+    -- v0.13.58：CTA 主标题改用 AI 像素艺术字。⚠️ 青底上**不能用深色 tint**——
+    -- 双色母版的「白芯+近黑轮廓」乘深色后两级都塌成黑，整块读成黑疙瘩（实测）。
+    -- 正确做法：在标题后垫一块**暗色铭牌**，艺术字用亮青 tint，既保留青色按钮语义、
+    -- 又让艺术字的两级明暗完整显出来。无图时回退 zpix 深字。
+    if ArtText.Has("startbattle") then
+        local aw, ah = ArtText.Width("startbattle"), ArtText.Height("startbattle")
+        local px, py = game.width * 0.5 - aw * 0.5 - 16, ctaY + 4
+        DrawRect(ctx, px, py, aw + 32, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 140}, 7)
+        DrawStroke(ctx, px, py, aw + 32, ah + 8, {C.cyan[1], C.cyan[2], C.cyan[3], 90}, 7, 1)
+        ArtText.Draw(ctx, "startbattle", game.width * 0.5, ctaY + 8, C.cyan)
+    else
+        DrawPixelText(ctx, game.width * 0.5, ctaY + 8, "开始战斗", 31, C.ink,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+    DrawPixelText(ctx, game.width * 0.5, ctaY + 52, "选择关卡", 13, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
     DrawPixelText(ctx, game.width * 0.5, 932,
@@ -2204,8 +2217,19 @@ local function DrawPaused(ctx, game, meta, presentation)
     nvgClosePath(ctx)
     nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], 255))
     nvgFill(ctx)
-    DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.60, layout.resume.y + 13,
-        "继续战斗", 19, C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- v0.13.58：继续战斗改用艺术字。同 CTA——青底不能用深 tint（会塌成黑块），
+    -- 垫暗色铭牌 + 亮青字；无图回退 zpix 深字。
+    if ArtText.Has("resume") then
+        local aw, ah = ArtText.Width("resume"), ArtText.Height("resume")
+        local pcx = layout.resume.x + layout.resume.w * 0.60
+        DrawRect(ctx, pcx - aw * 0.5 - 12, layout.resume.y + (layout.resume.h - ah) * 0.5 - 4,
+            aw + 24, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 140}, 6)
+        ArtText.DrawCentered(ctx, "resume",
+            { x = pcx - aw * 0.5, y = layout.resume.y, w = aw, h = layout.resume.h }, C.cyan, 0)
+    else
+        DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.60, layout.resume.y + 13,
+            "继续战斗", 19, C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
     local menuGlow, menuPress = Backend.GetControlFx(layout.menu, true)
     nvgSave(ctx)
     nvgTranslate(ctx, 0, menuPress * 2)
@@ -2215,9 +2239,17 @@ local function DrawPaused(ctx, game, meta, presentation)
         DrawStroke(ctx, layout.menu.x, layout.menu.y, layout.menu.w, layout.menu.h,
             {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(menuGlow * 200)}, 8, 1.5)
     end
-    DrawIcon(ctx, "home", layout.menu.x + 56, layout.menu.y + 12, 24, 1)
-    DrawPixelText(ctx, layout.menu.x + layout.menu.w * 0.5 + 14, layout.menu.y + 12,
-        "返回主菜单", 17, C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawIcon(ctx, "home", layout.menu.x + 40, layout.menu.y + 14, 22, 1)
+    -- v0.13.58：返回主菜单改用艺术字（深底亮字 → tint C.text）；排在 home 图标**右侧**，
+    -- 用剩余宽度，无图回退 zpix。
+    if ArtText.Has("menu") then
+        local aw, ah = ArtText.Width("menu"), ArtText.Height("menu")
+        local mx = layout.menu.x + 74 + aw * 0.5
+        ArtText.Draw(ctx, "menu", mx, layout.menu.y + (layout.menu.h - ah) * 0.5, C.text)
+    else
+        DrawPixelText(ctx, layout.menu.x + layout.menu.w * 0.5 + 14, layout.menu.y + 12,
+            "返回主菜单", 17, C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
     nvgRestore(ctx)
 
     local toast = presentation and presentation.adToast

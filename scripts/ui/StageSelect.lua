@@ -15,6 +15,7 @@ local StageCatalog = require "StageCatalog"
 local ItemShop = require "ui.ItemShop"
 local PlayerData = require "PlayerData"
 local DigitFont = require "ui.DigitFont"
+local ArtText = require "ui.ArtText"
 
 local StageSelect = {}
 
@@ -120,7 +121,17 @@ local function GetLayout(w, maxStage)
     return {
         content = content, close = close, towerX = towerX, nodeY = nodeY,
         itemRows = itemRows, contentH = contentH, maxStage = maxStage,
+        botPad = botPad, centerOffset = centerOffset,
     }
+end
+
+-- 任意关号的圆心 y（含滚动与居中偏移）——供「未来关幽灵节点」这类 stage > maxStage 的绘制用。
+---@param L StageSelectLayout
+---@param stage integer
+---@return number
+local function NodeYAt(L, stage)
+    return L.content.y + L.content.h - L.botPad - (stage - 1) * ROW_STEP
+        + scrollY_ - L.centerOffset
 end
 
 ---@return number 滚动上限（0 表示内容不高于可视区）
@@ -129,7 +140,8 @@ local function MaxScroll(L)
 end
 
 local function ClampScroll(L)
-    scrollY_ = math.max(-MaxScroll(L), math.min(0, scrollY_))
+    -- 塔从下往上延伸：更高关要靠正偏移移入可视区，不能套普通列表的负偏移范围。
+    scrollY_ = math.max(0, math.min(MaxScroll(L), scrollY_))
 end
 
 -- 某关的横向偏移：**大振幅确定性正弦**（写死在代码里，非随机）。
@@ -369,7 +381,10 @@ function StageSelect.Draw(ctx, w, meta)
     D.backdrop(ctx, 0, 0, w, 960)
     D.shell(ctx, 18, 108, w - 36, 780, 48)
     D.rect(ctx, 18, 156, 3, 22, C.cyan, 0)
-    D.text(ctx, 34, 118, "选择关卡", 22, C.text)
+    -- v0.13.58：面板主标题改用 AI 像素艺术字（深底亮字 → tint C.text）；无图回退 zpix。
+    if not ArtText.Draw(ctx, "stage", 34 + ArtText.Width("stage") * 0.5, 116, C.text) then
+        D.text(ctx, 34, 118, "选择关卡", 22, C.text)
+    end
     local totalStars = 0
     for stage = 1, maxStage do
         totalStars = totalStars + ((meta.stageStars and meta.stageStars[stage]) or 0)
@@ -387,6 +402,45 @@ function StageSelect.Draw(ctx, w, meta)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, L.content.x, L.content.y, L.content.w, L.content.h)
 
+    -- 内容区内的仪器边框：四角折线 + 顶/底刻度带 + 极淡网格，让选关与其余面板同语言
+    -- （只画，不进命中；改动只在绘制层）。
+    D.corner(ctx, L.content.x + 4, L.content.y + 4, L.content.w - 8, L.content.h - 8,
+        {C.dim[1], C.dim[2], C.dim[3], 120}, 12, 1)
+    D.grid(ctx, L.content.x + 6, L.content.y + 6, L.content.w - 12, L.content.h - 12,
+        26, 9)
+    D.rule(ctx, L.content.x + 12, L.content.y + 6, L.content.w - 24, 10,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
+    D.rule(ctx, L.content.x + 12, L.content.y + L.content.h - 6, L.content.w - 24, 10,
+        {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
+
+    -- 未来关（未解锁）：在路径延长线上画**幽灵节点**，补满内容区、让爬塔可见更长。
+    -- 它们是纯装饰（不参与命中），用极低 alpha，避免与「当前最新关」抢焦点。
+    local ghostVisible = false
+    for stage = maxStage + 1, maxStage + 6 do
+        local cy = NodeYAt(L, stage)
+        if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
+            ghostVisible = true
+            break
+        end
+    end
+    if ghostVisible then
+        local gpts = {}
+        for stage = 1, maxStage + 6 do
+            gpts[#gpts + 1] = { x = L.towerX + StageSway(stage), y = NodeYAt(L, stage) }
+        end
+        StrokePath(ctx, gpts, { 8, 14, 26, 110 }, 34)
+        StrokePath(ctx, gpts, { 30, 62, 78, 80 }, 24)
+        for stage = maxStage + 1, maxStage + 6 do
+            local cx = L.towerX + StageSway(stage)
+            local cy = NodeYAt(L, stage)
+            if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
+                CircleStroke(ctx, cx, cy, NODE_R - 6, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 42 }, 1.6)
+                Circle(ctx, cx, cy, NODE_R - 9, { 14, 22, 34, 110 })
+                CircleStroke(ctx, cx, cy, 13, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 34 }, 1.6)
+            end
+        end
+    end
+
     local pts = PathPoints(L)
     if #pts >= 2 then
         -- 蜿蜒路径：外层深色宽描边（路肩）+ 中层路面 + 内层亮色高光，
@@ -394,6 +448,20 @@ function StageSelect.Draw(ctx, w, meta)
         StrokePath(ctx, pts, { 8, 14, 26, 255 }, 40)
         StrokePath(ctx, pts, { 30, 62, 78, 255 }, 30)
         StrokePath(ctx, pts, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 150 }, 8)
+        -- 流动光点：沿路径按共享动画相位前进，给静态地图「在运行」的感觉（确定性，非随机）。
+        local phase = (D.anim and D.anim() or 0)
+        for d = 0, 3 do
+            local t = ((phase * 0.35) + d * 0.25) % 1
+            local seg = math.min(#pts - 1, math.floor(t * (#pts - 1)) + 1)
+            local lt = t * (#pts - 1) - (seg - 1)
+            local p1, p2 = pts[seg], pts[seg + 1]
+            if p1 and p2 then
+                local fx = p1.x + (p2.x - p1.x) * lt
+                local fy = p1.y + (p2.y - p1.y) * lt
+                Circle(ctx, fx, fy, 3.4, { C.cyan[1], C.cyan[2], C.cyan[3], 200 })
+                Circle(ctx, fx, fy, 6.4, { C.cyan[1], C.cyan[2], C.cyan[3], 70 })
+            end
+        end
     end
 
     -- 关卡节点（从高到低画，避免重叠时低关压住高关）
@@ -407,7 +475,7 @@ function StageSelect.Draw(ctx, w, meta)
     end
 
     -- 右侧装饰插图（确定性挑选）
-    local seed = math.floor(-scrollY_ / 110)
+    local seed = math.floor(scrollY_ / 110)
     for k = 0, 4 do
         local idx = (seed + k) % #DECOR + 1
         local dy = L.content.y + 60 + k * 150

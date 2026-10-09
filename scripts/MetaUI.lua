@@ -5,6 +5,7 @@
 
 local MetaCatalog = require "MetaCatalog"
 local VehicleShowcase = require "ui.VehicleShowcase"
+local ArtText = require "ui.ArtText"
 
 local MetaUI = {}
 local showroom = { index = 1, screen = "", key = "default" }
@@ -220,8 +221,9 @@ end
 ---@param y number
 ---@param w number
 ---@param label string
+---@param artKey string|nil 有对应艺术字时用图，否则用 zpix 文本
 -- 标题左竖标与断续刻度统一分区语言，正文区域保持干净。
-local function SectionHeader(ctx, x, y, w, label)
+local function SectionHeader(ctx, x, y, w, label, artKey)
     local C = Colors()
     local phase = D.anim()
     local pulse = 0.72 + 0.28 * math.sin(phase * math.pi * 0.5)
@@ -234,8 +236,18 @@ local function SectionHeader(ctx, x, y, w, label)
     nvgFill(ctx)
     D.rect(ctx, x, y + 2, 3, 16,
         {C.cyan[1], C.cyan[2], C.cyan[3], math.floor(225 * pulse)}, 1)
-    D.text(ctx, x + 9, y, label, 17, C.text)
-    local lx = x + 9 + D.measure(ctx, label, 17) + 14
+    -- v0.13.58：分区标题优先用 AI 像素艺术字（深底亮字 → tint C.text）；
+    -- 无图回退 zpix 文本，并用**同一 measure 分支**算右侧断线起点（两者宽度一致）。
+    local titleW
+    if artKey and ArtText.Has(artKey) then
+        local ah = ArtText.Height(artKey)
+        ArtText.Draw(ctx, artKey, x + 9 + ArtText.Width(artKey) * 0.5, y + (16 - ah) * 0.5 + 1, C.text)
+        titleW = ArtText.Width(artKey)
+    else
+        D.text(ctx, x + 9, y, label, 17, C.text)
+        titleW = D.measure(ctx, label, 17)
+    end
+    local lx = x + 9 + titleW + 14
     local remain = math.max(0, x + w - lx)
     if remain >= 20 then
         D.rule(ctx, lx, y + 10, remain, 8, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 130})
@@ -580,11 +592,11 @@ function MetaUI.DrawMenuBar(ctx, w, meta)
     nvgRestore(ctx)
 
     local rows = {
-        { label = "今日福利", rects = L.daily, defs = GetDailyDefs(meta) },
-        { label = "养成收藏", rects = L.grow, defs = GetGrowDefs(meta) },
+        { label = "今日福利", art = "daily", rects = L.daily, defs = GetDailyDefs(meta) },
+        { label = "养成收藏", art = "collect", rects = L.grow, defs = GetGrowDefs(meta) },
     }
     for _, rowDef in ipairs(rows) do
-        SectionHeader(ctx, 18, rowDef.rects[1].y - 27, 504, rowDef.label)
+        SectionHeader(ctx, 18, rowDef.rects[1].y - 27, 504, rowDef.label, rowDef.art)
         for i, def in ipairs(rowDef.defs) do
             local rr = rowDef.rects[i]
             local accent = def.tone == "ad" and C.ad or C.cyan
@@ -1074,7 +1086,7 @@ end
 local function DrawShopTabs(ctx, layout)
     local C = Colors()
     local vehicleTab, trailTab = GetShopTabs(layout)
-    local function tab(r, label, active)
+    local function tab(r, label, artKey, active)
         local glow, press = D.controlFx(r, true)
         D.panel(ctx, r.x, r.y, r.w, r.h, active and C.rail or C.card,
             active and C.warnDim or {C.dim[1], C.dim[2], C.dim[3], 80}, 6)
@@ -1090,11 +1102,17 @@ local function DrawShopTabs(ctx, layout)
             D.stroke(ctx, r.x, r.y, r.w, r.h,
                 {C.warn[1], C.warn[2], C.warn[3], math.floor(glow * 200)}, 6, 1.4)
         end
-        D.text(ctx, r.x + r.w * 0.5, r.y + 8 + press * 2, label, 17,
-            active and C.warn or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        -- v0.13.58：标签文案改用 AI 像素艺术字（深底亮字 → tint 金/暗）；
+        -- 无图回退 zpix 文本，位置/字号保持原样。
+        local tint = active and C.warn or C.dim
+        if not (artKey and ArtText.Has(artKey)
+            and ArtText.DrawCentered(ctx, artKey, r, tint, press * 2 + 1)) then
+            D.text(ctx, r.x + r.w * 0.5, r.y + 8 + press * 2, label, 17,
+                tint, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
     end
-    tab(vehicleTab, "车型外观", shopTab == "vehicle")
-    tab(trailTab, "拖尾样式", shopTab == "trail")
+    tab(vehicleTab, "车型外观", "vehicle", shopTab == "vehicle")
+    tab(trailTab, "拖尾样式", "trail", shopTab == "trail")
 end
 
 -- 六格浏览卡（车型/拖尾共用几何）：画一个卡、返回其命中矩形。
