@@ -12,6 +12,16 @@
 简述：第 1 关加「测试模式」询问——每次进第 1 关（选关 / 再战）都问「是否测试后期关卡」；选「是」解锁全部 42 个天赋节点并直入第 20 关，选「否」正常从第 1 关开始。新增插件式元层屏 `ui/TestModePrompt.lua`，零改后端/规则层；展示版本归并发会话。
 最后巩固：2026-10-09
 
+## 按钮/选项卡艺术字 + 选关统一化（2026-10-09，arttext-buttons 附记）
+- 用户「我还想要更贵更贵…大量使用艺术字生成按钮/选项卡的标题」+「另外我想要更酷炫更统一的选关界面UI」（附截图）。
+- **艺术字素材（0718 管线）**：nanobanana `transparent:true` 出 8 个标题 → bbox 裁切 → 按目标显示高度缩 → alpha 二值化 → 压成**两色「白芯 + 近黑轮廓」** → `ui_tt_{startbattle,daily,collect,vehicle,trail,resume,menu,stage}.png` + `.meta`。**母版高 = 显示高**，1× 最近邻，逐图记宽。
+- **新模块 `ui/ArtText.lua`**：懒加载（首绘才 `nvgCreateImage(ctx,…,NEAREST)`）；`Has/Width/Height/Draw/DrawCentered`；**全部可选资源 + zpix 回退**。零新增 Scene3DBackend 顶层 local（AB-166）。
+- 🔴 **AB-238（最坑）**：两色艺术字用 `nvgImagePatternTinted` 乘法染色时，**tint 越接近黑越会塌成黑疙瘩**（用户「异常变色？！」）。亮底按钮要深字时，**别深 tint**，改「垫暗色铭牌 + 亮 tint 艺术字」。
+- 接入点：CTA「开始战斗」、暂停「继续战斗/返回主菜单」（带铭牌/图标右侧）、`SectionHeader`（今日福利/养成收藏）、商店分页标签（车型外观/拖尾样式）、选关标题「选择关卡」。全部保留 zpix 回退。
+- **选关统一化（只改绘制层）**：内容区补仪器边框（四角折线+网格+刻度带）；**未来关幽灵节点**（路径延长线 6 个占位，极低 alpha、不参与命中）补满内容区；**流动光点**沿路径按 `D.anim()` 相位前进。
+- ⚠️ **AB-237**：`NodeCenter(L, stage)` 只对 1..maxStage 有效，幽灵节点越界取到 nil → `attempt to compare number with nil` → 选关白屏（LSP/build 都发现不了）。修法：新增 `NodeYAt(L, stage)` 按同一公式算任意关号 y，真实布局不动。
+- 验证：LSP 0 Error；真渲染 home/stage_select/shop/pause 四屏 exit0、零 overlay/Lua 错误；实图目视 CTA/分区标题/商店标签/暂停按钮/选关均正确。官方多人 build + 预览上传 ✅（`[ArtText] pixel titles loaded=8/8`）。展示版本归并发会话。
+
 ## 选关滚动修复与 XHR 核验边界（2026-10-09，stage-scroll-fix 附记）
 - 用户报 XHR 响应处理 `{}` 159 次与「关卡列表拖不动」，两项分别核验。
 - 只修 `ui/StageSelect.lua`：倒置塔布局加 `scrollY_`，合法滚动范围应为 `[0,MaxScroll]`，旧负范围把定位与拖动钳回 0；装饰 seed 同步正号。第 20 关默认 Y=-1706→234，视口 164..872。代码提交 `0838fc8`，不改展示版本。
