@@ -90,11 +90,16 @@ local function GetLayout(w, maxStage)
     local botPad = NODE_R + 30
     local topPad = NODE_R + 30
     local contentH = topPad + botPad + (maxStage - 1) * ROW_STEP
+    -- ⚠️ 关卡数少时内容矮于可视区：贴底会让上方留一大片空白（"没适配"观感）。
+    -- 此时把整座塔**垂直居中**，让路径落在视觉中心。
+    local freeSpace = content.h - contentH
+    local centerOffset = freeSpace > 0 and freeSpace * 0.5 or 0
 
     ---@type table<integer, number>
     local nodeY = {}
     for stage = 1, maxStage do
-        nodeY[stage] = content.y + content.h - botPad - (stage - 1) * ROW_STEP + scrollY_
+        nodeY[stage] = content.y + content.h - botPad - (stage - 1) * ROW_STEP
+            + scrollY_ - centerOffset
     end
 
     -- 左侧道具行：靠左边缘竖排（与路径不重叠：路径振幅 SWAY_AMP + NODE_R）。
@@ -148,12 +153,11 @@ end
 ---@param maxStage integer
 function StageSelect.FocusLatest(w, maxStage)
     lastMaxStage_ = math.max(1, maxStage or 1)
+    scrollY_ = 0
     local L = GetLayout(w, lastMaxStage_)
     -- 让最新关落在可视区底部偏上，露出下方路径的"来路"。
-    local base = L.content.y + L.content.h - (NODE_R + 30)
-        - (lastMaxStage_ - 1) * ROW_STEP
     local target = L.content.y + L.content.h - NODE_R - 110
-    scrollY_ = target - base
+    scrollY_ = target - L.nodeY[lastMaxStage_]
     ClampScroll(L)
 end
 

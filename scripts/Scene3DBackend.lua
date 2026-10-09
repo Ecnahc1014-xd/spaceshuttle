@@ -27,6 +27,7 @@ local VisualCatalog = require "VisualCatalog"
 local TalentCatalog = require "TalentCatalog"
 local MetaUI = require "MetaUI"
 local StageIntro = require "ui.StageIntro"
+local StageTransition = require "ui.StageTransition"
 
 local Backend = {}
 
@@ -623,17 +624,17 @@ local function DrawDashLine(ctx, x1, y1, x2, y2, color, width, dash, gap)
     local drawn = 0.0
     local d = dash or 4
     local g = gap or 4
-    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
-    nvgStrokeWidth(ctx, width or 1)
+    nvgBeginPath(ctx)
     while drawn < len do
         local stop = drawn + d
         if stop > len then stop = len end
-        nvgBeginPath(ctx)
         nvgMoveTo(ctx, x1 + ux * drawn, y1 + uy * drawn)
         nvgLineTo(ctx, x1 + ux * stop, y1 + uy * stop)
-        nvgStroke(ctx)
         drawn = stop + g
     end
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+    nvgStrokeWidth(ctx, width or 1)
+    nvgStroke(ctx)
 end
 
 -- 十字标注点：取样点 / 定位点 / 激活标记
@@ -642,32 +643,61 @@ local function DrawCrossMark(ctx, x, y, size, color)
     DrawLine(ctx, x, y - size, x, y + size, color, 1)
 end
 
--- 环形刻度：圆形主体外圈，每 3 段加长
+-- 环形刻度：圆形主体外圈，每 3 段加长。长短两档各合并成 1 条路径（原来是逐段
+-- 各起一条路径 + 描边，O(n) 命令数）。
 local function DrawTickRing(ctx, cx, cy, r, startDeg, endDeg, stepDeg, color)
     local steps = math.floor((endDeg - startDeg) / stepDeg)
-    for idx = 0, steps do
-        local rad = math.rad(startDeg + idx * stepDeg)
-        local long = (idx % 3 == 0)
-        local inner = r - (long and 7 or 3)
-        local ox, oy = math.cos(rad), math.sin(rad)
-        DrawLine(ctx, cx + ox * inner, cy + oy * inner, cx + ox * r, cy + oy * r,
-            color, long and 1.3 or 0.7)
+    if steps < 4 then return end
+    for pass = 0, 1 do
+        nvgBeginPath(ctx)
+        local any = false
+        for idx = 0, steps do
+            local long = (idx % 3 == 0)
+            if (pass == 0) == long then
+                any = true
+                local rad = math.rad(startDeg + idx * stepDeg)
+                local inner = r - (long and 7 or 3)
+                local ox, oy = math.cos(rad), math.sin(rad)
+                nvgMoveTo(ctx, cx + ox * inner, cy + oy * inner)
+                nvgLineTo(ctx, cx + ox * r, cy + oy * r)
+            end
+        end
+        if any then
+            nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], color[4] or 255))
+            nvgStrokeWidth(ctx, pass == 0 and 1.3 or 0.7)
+            nvgStroke(ctx)
+        end
     end
 end
 
--- 半调网点阵：背景/面板底纹（逐点绘制，step 不要小于 7）
+-- 半调网点阵：背景/面板底纹。
+-- ⚠️ 必须**合并单一路径**（一次 beginPath + 多个 circle + 一次 fill）：逐点各起一条
+-- 路径会撑爆 NanoVG 单帧命令缓冲，导致本帧后续绘制被静默丢弃（本项目实测踩到，
+-- 表现为「只剩背景、卡片与文字全没了」且零报错，见 AB-216）。同时按面积自适应
+-- 放大步长并钳总点数——这是全屏/大卡片底纹，「动画变卡」的主要来源之一。
 local function DrawHalftone(ctx, x, y, w, h, step, alpha)
-    local s = (step or 8) * 2
+    step = step or 8
+    if w < 8 or h < 8 then return end
+    local budget = 600
+    if (w / step) * (h / step) > budget then
+        step = math.max(step, math.sqrt(w * h / budget))
+    end
+    if step < 7 then step = 7 end
+    if w < step or h < step then return end
+    local s = step * 2
     nvgSave(ctx)
     nvgIntersectScissor(ctx, x, y, w, h)
     nvgFillColor(ctx, nvgRGBA(C.halftone[1], C.halftone[2], C.halftone[3], alpha or 16))
-    for gy = y, y + h, s do
-        for gx = x, x + w, s do
-            nvgBeginPath(ctx)
+    nvgBeginPath(ctx)
+    local row = 0
+    for gy = y + step * 0.5, y + h - 1, step do
+        local off = (row % 2 == 0) and 0 or step
+        for gx = x + step * 0.5 + off, x + w - 1, s do
             nvgCircle(ctx, gx, gy, 0.9)
-            nvgFill(ctx)
         end
+        row = row + 1
     end
+    nvgFill(ctx)
     nvgRestore(ctx)
 end
 
@@ -1238,8 +1268,9 @@ local function DrawPullHint(ctx, game)
     nvgFillPaint(ctx, nvgImagePattern(ctx, handX, handY, handW, handH, 0, handImage_, 1))
     nvgFill(ctx)
 
-    -- 文案也限制在Dock上方，保持预告标题完整。
-    DrawPixelText(ctx, slingX, math.min(BOTTOM_DOCK_Y - 24, bottomY + handH - 8), "向下拖拽 松手发射",
+    -- 文案放在整段动画**上方**：既不与手势图重叠，也远离下方扣血红线（旧版贴在
+    -- 手势底部，会同时压住手和红线，读起来像两行糊在一起）。
+    DrawPixelText(ctx, slingX, topY - 24, "向下拖拽 松手发射",
         15, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     nvgRestore(ctx)
@@ -2162,14 +2193,18 @@ local function DrawPaused(ctx, game, meta, presentation)
     end
 
     DrawRect(ctx, layout.resume.x, layout.resume.y, layout.resume.w, layout.resume.h, C.cyan, 8)
+    -- 播放三角放在左半区居中，文字整体右移让出三角（旧版文字 x 加了 14 又居中，
+    -- 结果「继续战斗」压住三角尖端）。
+    local triCx = layout.resume.x + layout.resume.w * 0.30
+    local triCy = layout.resume.y + layout.resume.h * 0.5
     nvgBeginPath(ctx)
-    nvgMoveTo(ctx, layout.resume.x + 58, layout.resume.y + 14)
-    nvgLineTo(ctx, layout.resume.x + 58, layout.resume.y + 34)
-    nvgLineTo(ctx, layout.resume.x + 74, layout.resume.y + 24)
+    nvgMoveTo(ctx, triCx - 8, triCy - 10)
+    nvgLineTo(ctx, triCx - 8, triCy + 10)
+    nvgLineTo(ctx, triCx + 8, triCy)
     nvgClosePath(ctx)
     nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], 255))
     nvgFill(ctx)
-    DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.5 + 14, layout.resume.y + 12,
+    DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.60, layout.resume.y + 13,
         "继续战斗", 19, C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     local menuGlow, menuPress = Backend.GetControlFx(layout.menu, true)
     nvgSave(ctx)
@@ -2535,8 +2570,9 @@ local function RenderOverlay(game, presentation, meta)
         RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
     end
 
-    local currentWindow = game.state == "gameover" or game.state == "levelup"
-        or game.state == "paused" or game.state == "stagewin"
+    local currentWindow = (game.state == "gameover" or game.state == "levelup"
+        or game.state == "paused" or game.state == "stagewin")
+        and StageTransition.WindowVisible(game)
     if uiGameLeaving_ and uiGameLeaving_.visual and not currentWindow then
         local old = uiGameLeaving_
         DrawAnimatedWindow("game-window-out", uiGameLeaveAt_, true, function()
@@ -2554,6 +2590,16 @@ local function RenderOverlay(game, presentation, meta)
             elseif game.state == "stagewin" then DrawStageWin(vg_, game, presentation)
             else DrawPaused(vg_, game, meta, presentation) end
         end, "game")
+    end
+
+    -- v0.13.57：关卡结束 → 结算窗口的过渡动画。画在结算窗之上（过渡期间结算窗
+    -- 尚未弹出），星级越高越华丽；结束后自身淡出，玩家可点击跳过。
+    if game.state == "stagewin" and StageTransition.IsActive(game) then
+        RunOverlayStage("stage-transition", function()
+            ApplyOverlayDesignTransform()
+            nvgGlobalAlpha(vg_, 1.0)
+            StageTransition.Draw(vg_, game)
+        end)
     end
 
     -- 击毁可能在同帧触发升级/胜利；只在窗口空白带画短回声，不穿过正文或按钮。
@@ -3013,6 +3059,8 @@ end
 
 -- v0.13.4：胜利结算页命中（再战本关 / 下一关 / 回主菜单）。几何与 DrawStageWin 同源。
 function Backend.HitTestStageWinButton(uiX, uiY, game)
+    -- 过渡动画期间结算窗尚未显示，任何按钮都不可点（点击由编排层用于「跳过」）。
+    if not StageTransition.WindowVisible(game) then return nil end
     uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
     local retry, nextBtn, menu = GetStageWinButtonLayout(game or {})
     local function inside(btn)

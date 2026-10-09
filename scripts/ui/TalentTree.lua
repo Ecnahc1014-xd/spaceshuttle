@@ -66,6 +66,9 @@ local LANE_STAGE_OFFSETS = { general_b = 0.5, ice = 0.5, giant = 0.5 }
 ---@field close table
 ---@field laneX table<integer, number> 每条线路的中心 x
 ---@field colW number
+---@field ruleY number 规则说明基线 y
+---@field headerY number 线路名表头基线 y
+---@field headerBandY number 表头带顶部 y
 ---@field topPad number
 ---@field botPad number
 ---@field contentH number 全部内容高度（用于滚动上限）
@@ -75,9 +78,13 @@ local LANE_STAGE_OFFSETS = { general_b = 0.5, ice = 0.5, giant = 0.5 }
 local function GetLayout(w)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
-    -- 顶部标题栏 48 + 表头一行（线路名）；内容区在其下。
-    local headerY = y + 56
-    local content = { x = x + 14, y = headerY + 30, w = sw - 28, h = sh - 72 - 30 }
+    -- 头部三段：标题栏(48) → 规则说明一行 → 线路名表头带；内容区在表头带之下。
+    -- ⚠️ 规则说明与线路名各占独立一行，禁止叠在一起（旧版规则文案压在标题栏下沿、
+    --    又与线路名贴脸，读起来像两行字糊在一块）。
+    local ruleY = y + 52
+    local headerY = y + 78          -- 线路名基线（表头带内）
+    local headerBandY = y + 66      -- 表头带顶部
+    local content = { x = x + 14, y = y + 96, w = sw - 28, h = sh - 96 - 8 }
     -- 浮窗展开时，内容可视区底部上收，避免被浮窗遮住（几何与命中同源）。
     if selectedId_ then
         content.h = math.max(160, content.h - DETAIL_RESERVE)
@@ -106,7 +113,8 @@ local function GetLayout(w)
     local contentH = topPad + botPad
         + (TalentCatalog.MAX_STAGE - 1) * ROW_STEP
     return {
-        content = content, close = close, laneX = laneX, colW = colW, headerY = headerY,
+        content = content, close = close, laneX = laneX, colW = colW,
+        ruleY = ruleY, headerY = headerY, headerBandY = headerBandY,
         topPad = topPad, botPad = botPad, contentH = contentH,
         scrollbarTrack = scrollbarTrack, scrollbarHit = scrollbarHit,
     }
@@ -270,7 +278,8 @@ function TalentTree.Draw(ctx, w, meta)
         string.format("零件 %d    ★ %d", parts, stars), 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     -- v0.13.16：血量加成是**所有卡通用**的规则 → 全局说明一次，不在每个节点里重复。
-    D.text(ctx, 34, 146, TalentCatalog.HP_RULE_TEXT or "", 13, C.cyanDim,
+    -- ⚠️ 单独占一行，与下方线路名表头带留出间隔（旧版与线路名贴脸、糊成两行字）。
+    D.text(ctx, 34, L.ruleY, TalentCatalog.HP_RULE_TEXT or "", 13, C.cyanDim,
         NVG_ALIGN_LEFT + NVG_ALIGN_TOP)
     -- 关闭按钮
     D.panel(ctx, L.close.x, L.close.y, L.close.w, L.close.h, C.card, C.cyanDim, 6)
@@ -312,6 +321,8 @@ function TalentTree.Draw(ctx, w, meta)
                 local col = LaneColor(node)
                 local fill, width
                 if isOwned then
+                    -- 已解锁：保留**线路色**（亮环）+ 深底，六列各自可辨；
+                    -- 旧版统一染青，导致已解锁后整棵树丢掉了线路身份（读起来一片青）。
                     fill, width = C.widget, 3
                 elseif canBuy then
                     fill, width = C.card, 2.4
@@ -325,6 +336,14 @@ function TalentTree.Draw(ctx, w, meta)
                     col = { laneCol[1] * 0.42, laneCol[2] * 0.42, laneCol[3] * 0.42, 255 }
                 end
                 RingCard(ctx, cx, cy, CARD_R, col, fill, width)
+                -- 已解锁再叠一层内亮环，强化「已点亮」的质感（只加不减）。
+                if isOwned then
+                    nvgBeginPath(ctx)
+                    nvgCircle(ctx, cx, cy, CARD_R - 4)
+                    nvgStrokeColor(ctx, nvgRGBA(col[1], col[2], col[3], 120))
+                    nvgStrokeWidth(ctx, 1.4)
+                    nvgStroke(ctx)
+                end
                 local iconAlpha = isOwned and 1.0 or (prereqMet and 0.75 or 0.3)
                 if not DrawNodeIcon(ctx, cx, cy, node.icon, 30, iconAlpha) then
                     -- 缺图回退：画节点名首字
@@ -373,7 +392,9 @@ function TalentTree.Draw(ctx, w, meta)
     -- ④ 右侧固定滚动条，滑块位置反映当前爬塔进度
     DrawScrollbar(ctx, L)
 
-    -- ⑤ 顶部固定表头（裁剪区外，不随内容滚动）：仅线路名
+    -- ⑤ 顶部固定表头带（裁剪区外，不随内容滚动）：线路名 + 底边断线，做成独立一条「栏头」。
+    D.rect(ctx, L.content.x, L.headerBandY, L.content.w, 24, {C.rail[1], C.rail[2], C.rail[3], 150}, 4)
+    D.rect(ctx, L.content.x, L.headerBandY, L.content.w, 1, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 0)
     for li, lane in ipairs(lanes) do
         local laneCol = (LANE_COLORS[lane]) or C.cyan
         D.text(ctx, L.laneX[li], L.headerY, TalentCatalog.LANE_NAMES[lane] or lane, 13,

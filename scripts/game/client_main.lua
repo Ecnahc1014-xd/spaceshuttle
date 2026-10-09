@@ -24,6 +24,7 @@ local StageSelect = require "ui.StageSelect"
 local ItemShop = require "ui.ItemShop"
 local TalentTree = require "ui.TalentTree"
 local TestModePrompt = require "ui.TestModePrompt"
+local StageTransition = require "ui.StageTransition"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
 
@@ -1353,6 +1354,11 @@ end
 
 -- v0.13.4：胜利结算页（stagewin）松手确认。Down 只武装命中的按钮，Up 时才真正跳关/重开/回菜单。
 local function HandleStageWinPointerDown(uiX, uiY)
+    -- v0.13.57：过渡动画期间任意点击 = 跳过过渡，立即显示结算窗（不误触按钮）。
+    if StageTransition.IsActive(Game.GetSnapshot()) then
+        StageTransition.Skip()
+        return true
+    end
     local hit = RenderBackend.HitTestStageWinButton(uiX, uiY, Game.GetSnapshot())
     stageWinArmed = hit
     return hit ~= nil

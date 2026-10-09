@@ -180,22 +180,21 @@ local function Inside(r, px, py)
     return px >= r.x and px <= r.x + r.w and py >= r.y and py <= r.y + r.h
 end
 
--- v0.13.54：给菜单/商店的小卡片补「无关紧要的纹路」——双层网格 + 双四角折线 + 角落点阵
--- + 底边刻度 + 断线。全部低 alpha、贴边不穿正文；命中几何不受影响（只画）。
+-- v0.13.54：给菜单/商店的小卡片补「无关紧要的纹路」——网格 + 四角折线 + 底边刻度
+-- + 断线 + 角落取样点。全部低 alpha、贴边不穿正文；命中几何不受影响（只画）。
+-- ⚠️ v0.13.57 削减：卡片是**每帧逐张重绘**的，原来双层网格 + 双四角 + 逐点刻度/点阵
+-- 在一屏十几张卡上叠成上百条绘制命令，是「界面动画变卡」的来源之一。现各保留一层。
 local function CardTrace(ctx, r, alpha)
     local C = Colors()
     local a = alpha or 14
-    D.grid(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6, 12, a)
-    D.grid(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6, 34, math.max(6, a - 5))
+    D.grid(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6, 14, a)
     if r.w >= 84 and r.h >= 40 then
         D.corner(ctx, r.x + 3, r.y + 3, r.w - 6, r.h - 6,
             {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 30}, 9, 1)
-        D.corner(ctx, r.x + 6, r.y + 6, r.w - 12, r.h - 12,
-            {C.dim[1], C.dim[2], C.dim[3], a + 18}, 6, 1)
     end
     if r.w >= 70 and r.h >= 30 then
         -- 底边长短刻度：给每张卡一条「仪器」读数沿。
-        local count = math.max(6, math.floor((r.w - 20) / 11))
+        local count = math.max(5, math.floor((r.w - 20) / 16))
         local step = (r.w - 20) / count
         for i = 0, count do
             local long = (i % 4 == 0)
@@ -208,12 +207,6 @@ local function CardTrace(ctx, r, alpha)
             {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 20})
     end
     if r.w >= 96 and r.h >= 52 then
-        for i = 0, 3 do
-            for j = 0, 1 do
-                D.rect(ctx, r.x + r.w - 20 + i * 4, r.y + r.h - 14 + j * 4, 1.6, 1.6,
-                    {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], a + 26}, 0)
-            end
-        end
         -- 角落取样十字。
         for _, p in ipairs({ { r.x + 11, r.y + 11 }, { r.x + r.w - 11, r.y + 11 } }) do
             D.rect(ctx, p[1] - 4, p[2], 9, 1, {C.ghost[1], C.ghost[2], C.ghost[3], a + 40}, 0)
@@ -1447,17 +1440,27 @@ local function DrawWheel(ctx, w, meta)
     nvgStrokeColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 200))
     nvgStrokeWidth(ctx, 1)
     nvgStroke(ctx)
-    for i = 0, 23 do
-        local a = math.pi * 2 * i / 24 - math.pi * 0.5
-        local inner = ring + (i % 3 == 0 and 2 or 5)
-        local outer = ring + 10
+    -- 环形刻度：长短两档各合并成一条路径（逐段各起路径是 O(n) 命令数）。
+    for pass = 0, 1 do
         nvgBeginPath(ctx)
-        nvgMoveTo(ctx, cx + math.cos(a) * inner, cy + math.sin(a) * inner)
-        nvgLineTo(ctx, cx + math.cos(a) * outer, cy + math.sin(a) * outer)
-        local tc = i % 3 == 0 and C.warn or C.cyanDim
-        nvgStrokeColor(ctx, nvgRGBA(tc[1], tc[2], tc[3], i % 3 == 0 and 200 or 120))
-        nvgStrokeWidth(ctx, i % 3 == 0 and 1.4 or 0.8)
-        nvgStroke(ctx)
+        local any = false
+        for i = 0, 23 do
+            local long = (i % 3 == 0)
+            if (pass == 0) == long then
+                any = true
+                local a = math.pi * 2 * i / 24 - math.pi * 0.5
+                local inner = ring + (long and 2 or 5)
+                local outer = ring + 10
+                nvgMoveTo(ctx, cx + math.cos(a) * inner, cy + math.sin(a) * inner)
+                nvgLineTo(ctx, cx + math.cos(a) * outer, cy + math.sin(a) * outer)
+            end
+        end
+        if any then
+            local tc = pass == 0 and C.warn or C.cyanDim
+            nvgStrokeColor(ctx, nvgRGBA(tc[1], tc[2], tc[3], pass == 0 and 200 or 120))
+            nvgStrokeWidth(ctx, pass == 0 and 1.4 or 0.8)
+            nvgStroke(ctx)
+        end
     end
     -- v0.13.54：盘面外圈补「无关紧要的纹路」——虚线环 + 点阵环，纯装饰不承载读数。
     nvgBeginPath(ctx)
@@ -1470,12 +1473,13 @@ local function DrawWheel(ctx, w, meta)
     nvgStrokeWidth(ctx, 1)
     nvgStroke(ctx)
     nvgFillColor(ctx, nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 55))
+    -- 点阵环：合并成单一路径（逐点各起路径会撑爆单帧命令缓冲，见 AB-216）。
+    nvgBeginPath(ctx)
     for i = 0, 35 do
         local a = math.pi * 2 * i / 36
-        nvgBeginPath(ctx)
         nvgCircle(ctx, cx + math.cos(a) * (ring + 21), cy + math.sin(a) * (ring + 21), 1)
-        nvgFill(ctx)
     end
+    nvgFill(ctx)
 
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)

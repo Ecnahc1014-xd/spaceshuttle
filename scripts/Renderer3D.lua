@@ -1414,7 +1414,9 @@ local function SyncVehicleTrails(game, dt)
                 for i = 1, n do
                     -- 断续样式：每 dash 段只画 1 段（实线时 dash=1，恒真）；
                     -- flow 让图案随时间平移，读起来像在跑。
-                    if ((i + flowOffset) % style.dash) == 0 then
+                    -- ⚠️ 头段（i==n，接车尾那段）**永远画**：否则断续图案会让光带前沿
+                    -- 停在离车 1~2 段处（用户报「尾焰起点跟不上车」的真因）。
+                    if i == n or ((i + flowOffset) % style.dash) == 0 then
                         local a = samples[i]
                         local b = (i < n) and samples[i + 1] or tailPt
                         local sdx, sdy = b.x - a.x, b.y - a.y
@@ -1824,6 +1826,40 @@ function Renderer3D.DebugTrailVertexCount()
         end
     end
     return total, enabled
+end
+
+-- 诊断用（只读）：当前帧每个弹种光带的前沿间隙——
+--   headGap：前沿顶点到该弹种车辆当前车尾(track.head)的最小距离（应≈0，即光带贴车）。
+function Renderer3D.DebugTrailHeadGap()
+    local out = {}
+    for _, ballType in ipairs(TRAIL_TYPES) do
+        local record = trailGeometries_[ballType]
+        if record and record.node.enabled then
+            local n = record.geometry:GetNumVertices(0)
+            if n > 0 then
+                local heads = {}
+                for _, track in pairs(trailSamples_) do
+                    if track.ballType == ballType then
+                        -- track 的实时车尾位置存在 x/y/z（.head 只在发射循环的 perType 条目上）。
+                        heads[#heads + 1] = {x = track.x, y = track.y, z = track.z}
+                    end
+                end
+                local minGap = math.huge
+                for vi = 0, n - 1 do
+                    local v = record.geometry:GetVertex(0, vi)
+                    if v and v.position then
+                        for _, h in ipairs(heads) do
+                            local dx, dy = v.position.x - h.x, v.position.y - h.y
+                            local d = math.sqrt(dx * dx + dy * dy)
+                            if d < minGap then minGap = d end
+                        end
+                    end
+                end
+                if minGap < math.huge then out[ballType] = {verts = n, headGap = minGap} end
+            end
+        end
+    end
+    return out
 end
 
 function Renderer3D.Shutdown()

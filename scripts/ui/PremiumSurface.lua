@@ -25,6 +25,56 @@ local function Line(ctx, x1, y1, x2, y2, color, alpha)
     nvgStroke(ctx)
 end
 
+-- ⚠️ 性能契约（v0.13.57）：**同色的一批线必须合并成单一路径**。
+-- `Line()` 每调用一次就是「beginPath+moveTo+lineTo+stroke」4 条 NanoVG 命令；
+-- 一条 24 段的刻度带若逐段调 `Line` 就是 ~100 条命令，全屏几十处叠加会直接
+-- 把每帧命令数推到十万级 → 界面动画明显变卡（用户反馈「界面动画变卡」）。
+-- 下面三个批量助手各自只发 **1 条 path + 1 次 stroke**（命令数从 O(n) 降到 O(1)）。
+-- 批量刻度：一次路径画完整条长短刻度带。
+local function TicksBatch(ctx, x, y, w, count, longH, shortH, color, alpha)
+    count = count or 16
+    local step = w / count
+    if step < 4 then return end
+    nvgBeginPath(ctx)
+    for i = 0, count do
+        local xx = x + i * step
+        nvgMoveTo(ctx, xx, y)
+        nvgLineTo(ctx, xx, y + ((i % 4 == 0) and (longH or 6) or (shortH or 3)))
+    end
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha or 110))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+end
+
+-- 批量十字：一次路径画多个十字取样点（同色）。
+local function CrossBatch(ctx, pts, size, color, alpha)
+    if not pts or #pts == 0 then return end
+    nvgBeginPath(ctx)
+    for i = 1, #pts do
+        local p = pts[i]
+        nvgMoveTo(ctx, p[1] - size, p[2]); nvgLineTo(ctx, p[1] + size, p[2])
+        nvgMoveTo(ctx, p[1], p[2] - size); nvgLineTo(ctx, p[1], p[2] + size)
+    end
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha or 90))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+end
+
+-- 批量竖线（网格用）：一次路径画完整片方格。
+local function GridBatch(ctx, x, y, w, h, step, color, alpha)
+    if step < 6 then return end
+    nvgBeginPath(ctx)
+    for gx = x + step, x + w - 1, step do
+        nvgMoveTo(ctx, gx, y); nvgLineTo(ctx, gx, y + h)
+    end
+    for gy = y + step, y + h - 1, step do
+        nvgMoveTo(ctx, x, gy); nvgLineTo(ctx, x + w, gy)
+    end
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha or 14))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
+end
+
 -- 窄条玻璃高光：只在竖直窄带上模拟反光，不铺满平面（tokens.md highlight 用法）。
 local function GlassStrip(ctx, x, y, w, h, alpha)
     nvgBeginPath(ctx)
@@ -209,43 +259,47 @@ local function ScanBand(ctx, x, y, w, h, phase, color)
     Line(ctx, x + 6, bandY + 6, x + w - 6, bandY + 6, color, 14)
 end
 
--- 十字取样点（规范 §3 Cross）：4 个角落的定位标记。
+-- 十字取样点（规范 §3 Cross）：定位标记。**单次调用只发 1 条路径**（见文件头性能契约）。
 local function Cross(ctx, cx, cy, size, color, alpha)
-    local a = alpha or 90
-    Line(ctx, cx - size, cy, cx + size, cy, color, a)
-    Line(ctx, cx, cy - size, cx, cy + size, color, a)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, cx - size, cy); nvgLineTo(ctx, cx + size, cy)
+    nvgMoveTo(ctx, cx, cy - size); nvgLineTo(ctx, cx, cy + size)
+    nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], alpha or 90))
+    nvgStrokeWidth(ctx, 1)
+    nvgStroke(ctx)
 end
 
 -- 环形刻度（规范 §3 TickRing）：每 3 段加长，给圆形主体一圈仪表。
+-- ⚠️ 长短两档各合并成 1 条路径（原来逐段 nvgBeginPath+Stroke 是 O(n) 命令）。
 local function TickRing(ctx, cx, cy, r, startDeg, endDeg, stepDeg, color, alpha)
     local steps = math.floor((endDeg - startDeg) / stepDeg)
     if steps < 4 then return end
     local a = alpha or 120
-    for i = 0, steps do
-        local rad = math.rad(startDeg + i * stepDeg)
-        local long = (i % 3 == 0)
-        local inner = r - (long and 7 or 3)
-        local ox, oy = math.cos(rad), math.sin(rad)
+    for pass = 0, 1 do
         nvgBeginPath(ctx)
-        nvgMoveTo(ctx, cx + ox * inner, cy + oy * inner)
-        nvgLineTo(ctx, cx + ox * r, cy + oy * r)
-        nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
-        nvgStrokeWidth(ctx, long and 1.3 or 0.7)
-        nvgStroke(ctx)
+        local any = false
+        for i = 0, steps do
+            local long = (i % 3 == 0)
+            if (pass == 0) == long then
+                any = true
+                local rad = math.rad(startDeg + i * stepDeg)
+                local inner = r - (long and 7 or 3)
+                local ox, oy = math.cos(rad), math.sin(rad)
+                nvgMoveTo(ctx, cx + ox * inner, cy + oy * inner)
+                nvgLineTo(ctx, cx + ox * r, cy + oy * r)
+            end
+        end
+        if any then
+            nvgStrokeColor(ctx, nvgRGBA(color[1], color[2], color[3], a))
+            nvgStrokeWidth(ctx, pass == 0 and 1.3 or 0.7)
+            nvgStroke(ctx)
+        end
     end
 end
 
--- 长短交替刻度带（规范 §3 Ticks）：给条带一条「仪器」读数沿。
+-- 长短交替刻度带（规范 §3 Ticks）：单条路径画完整条（性能契约）。
 local function Ticks(ctx, x, y, w, count, longH, shortH, color, alpha)
-    count = count or 16
-    local step = w / count
-    if step < 4 then return end
-    local a = alpha or 110
-    for i = 0, count do
-        local long = (i % 4 == 0)
-        Line(ctx, x + i * step, y, x + i * step, y + (long and (longH or 6) or (shortH or 3)),
-            color, a)
-    end
+    TicksBatch(ctx, x, y, w, count, longH, shortH, color, alpha)
 end
 
 -- 顶边长短刻度：给宽面板一条可读的「仪器」顶沿。
@@ -312,15 +366,13 @@ function Surface.Panel(ctx, x, y, w, h, fill, border, radius, emphasis, phase)
     nvgFillPaint(ctx, nvgLinearGradient(ctx, x, y + h * 0.55, x, y + h,
         nvgRGBA(0, 0, 0, 0), nvgRGBA(0, 0, 0, emphasis and 54 or 40)))
     nvgFill(ctx)
-    -- ③b 装饰纹路（v0.13.54）：微网格 + 斜向拉丝 + 半调网点，给大面板「舱板」密度。
+    -- ③b 装饰纹路（v0.13.54）：微网格 + 半调网点，给大面板「舱板」密度。
+    -- ⚠️ v0.13.57 削减：去掉第二层粗网格、半调步长 8→12（点数约降 55%）。
     if big then
         MicroGrid(ctx, x + 2, y + 2, w - 4, h - 4, 18, C.cyanDim, emphasis and 16 or 11)
-        Halftone(ctx, x + 3, y + 3, w - 6, h - 6, 8, C.cyanDim, emphasis and 20 or 14)
+        Halftone(ctx, x + 3, y + 3, w - 6, h - 6, 12, C.cyanDim, emphasis and 20 or 14)
         if w >= 190 and h >= 96 then
             DiagonalHatch(ctx, x + 2, y + 2, w - 4, h - 4, 13, C.text, 7)
-        end
-        if w >= 160 and h >= 70 then
-            MicroGrid(ctx, x + 2, y + 2, w - 4, h - 4, 46, C.text, 9)
         end
     end
     -- ④ 左缘玻璃高光窄条（只在够宽的面板上）。
@@ -376,8 +428,7 @@ function Surface.Panel(ctx, x, y, w, h, fill, border, radius, emphasis, phase)
         end
         if w >= 170 and h >= 80 then
             CircuitTrace(ctx, x, y, w, h, C.cyanDim, emphasis and 34 or 24)
-            Cross(ctx, x + 13, y + 13, 4, C.ghost, 80)
-            Cross(ctx, x + w - 13, y + h - 13, 4, C.ghost, 80)
+            CrossBatch(ctx, { { x + 13, y + 13 }, { x + w - 13, y + h - 13 } }, 4, C.ghost, 80)
         end
         if w >= 200 and h >= 90 then
             ScanBand(ctx, x + 6, y + 8, w - 12, h - 16, phase, C.cyanDim)
@@ -426,13 +477,12 @@ function Surface.Window(ctx, x, y, w, h, titleH)
     end
     if w >= 180 and h >= 160 then
         DiagonalHatch(ctx, x + 4, y + th + 4, w - 8, h - th - 8, 15, C.text, 6)
-        Halftone(ctx, x + 4, y + th + 4, w - 8, h - th - 8, 10, C.cyanDim, 10)
+        Halftone(ctx, x + 4, y + th + 4, w - 8, h - th - 8, 14, C.cyanDim, 10)
         Ticks(ctx, x + 12, y + h - 12, w - 24, 28, 5, 2, C.cyanDim, 70)
     end
     CornerBrackets(ctx, x + 2, y + 2, w - 4, h - 4, 13, C.cyanDim, 105)
     CornerBrackets(ctx, x + 6, y + 6, w - 12, h - 12, 8, C.dim, 78)
-    Cross(ctx, x + 16, y + th + 16, 4, C.ghost, 74)
-    Cross(ctx, x + w - 16, y + h - 16, 4, C.ghost, 74)
+    CrossBatch(ctx, { { x + 16, y + th + 16 }, { x + w - 16, y + h - 16 } }, 4, C.ghost, 74)
     -- 内容区内顶暗，避免正文贴在亮带上。
     nvgBeginPath(ctx)
     nvgRect(ctx, x + 2, y + th + 1, w - 4, 14)
@@ -520,11 +570,10 @@ function Surface.Button(ctx, r, color, glow, phase)
         DiagonalHatch(ctx, r.x + 2, r.y + 2, r.w - 4, r.h - 4, 12, C.ink, 12)
     end
     if r.w >= 96 and r.h >= 34 then
-        Ticks(ctx, r.x + 10, r.y + r.h - 8, r.w - 20, 20, 4, 2, C.ink, 66)
+        TicksBatch(ctx, r.x + 10, r.y + r.h - 8, r.w - 20, 20, 4, 2, C.ink, 66)
     end
     if r.w >= 130 and r.h >= 44 then
-        Cross(ctx, r.x + 9, r.y + 9, 3, C.ink, 70)
-        Cross(ctx, r.x + r.w - 9, r.y + 9, 3, C.ink, 70)
+        CrossBatch(ctx, { { r.x + 9, r.y + 9 }, { r.x + r.w - 9, r.y + 9 } }, 3, C.ink, 70)
     end
     -- 亮边。
     nvgBeginPath(ctx)
@@ -610,18 +659,20 @@ function Surface.Background(ctx, x, y, w, h, phase)
         nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 0)))
     nvgFill(ctx)
     -- 装饰纹路（v0.13.54）：全屏极淡网格 + 斜纹 + 半调网点 + 点阵，让背景不再是一块平色。
+    -- ⚠️ v0.13.57 削减：背景是**每帧重绘的全屏层**，原来 2 网格 + 2 斜纹 + 半调 + 3 点阵
+    -- 的命令数在全屏面积上被放大数十倍，是「界面动画变卡」的最大单一来源。现只保留
+    -- 一层网格 + 一层斜纹 + 一层半调（点数由 Halftone 内部按面积自适应钳制）。
     MicroGrid(ctx, x, y, w, h, 30, C.cyanDim, 10)
-    MicroGrid(ctx, x, y, w, h, 90, C.text, 7)
     DiagonalHatch(ctx, x, y, w, h * 0.62, 22, C.text, 5)
-    DiagonalHatch(ctx, x, y + h * 0.45, w, h * 0.55, 34, C.cyanDim, 6)
-    Halftone(ctx, x, y, w, h, 9, C.cyanDim, 12)
-    DotMatrix(ctx, x + 18, y + 150, 44, 120, 12, C.cyanDim, 30)
-    DotMatrix(ctx, x + w - 62, y + h - 270, 44, 120, 12, C.cyanDim, 30)
-    DotMatrix(ctx, x + w * 0.5 - 60, y + h * 0.42, 120, 90, 13, C.cyanDim, 22)
-    for i = 0, 3 do
-        Cross(ctx, x + 26 + i * (w - 52) / 3, y + 96, 4, C.ghost, 62)
-        Cross(ctx, x + 26 + i * (w - 52) / 3, y + h - 96, 4, C.ghost, 62)
-    end
+    Halftone(ctx, x, y, w, h, 14, C.cyanDim, 12)
+    DotMatrix(ctx, x + 18, y + 150, 44, 120, 14, C.cyanDim, 26)
+    DotMatrix(ctx, x + w - 62, y + h - 270, 44, 120, 14, C.cyanDim, 26)
+    CrossBatch(ctx, {
+        { x + 26, y + 96 }, { x + 26 + (w - 52) / 3, y + 96 },
+        { x + 26 + (w - 52) * 2 / 3, y + 96 }, { x + w - 26, y + 96 },
+        { x + 26, y + h - 96 }, { x + 26 + (w - 52) / 3, y + h - 96 },
+        { x + 26 + (w - 52) * 2 / 3, y + h - 96 }, { x + w - 26, y + h - 96 },
+    }, 4, C.ghost, 62)
     -- 慢速斜向高光扫过（7s 一轮，确定性），给静态底一点「在运行」的感觉。
     if phase then
         local sweep = (phase % 7) / 7
@@ -705,19 +756,17 @@ function Surface.Stage(ctx, r, phase)
         nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 26),
         nvgRGBA(C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 0)))
     nvgFill(ctx)
-    -- 装饰纹路（v0.13.54）：展台地面细网格 + 角落点阵 + 半调 + 环形刻度，让「机库地板」有刻度感。
+    -- 装饰纹路（v0.13.54）：展台地面网格 + 角落点阵 + 半调 + 环形刻度，让「机库地板」有刻度感。
+    -- ⚠️ v0.13.57 削减：去掉第二层网格与 2 处点阵、半调步长放宽、4 个十字合并为 1 条路径。
     MicroGrid(ctx, r.x + 4, cy, r.w - 8, r.y + r.h - cy - 4, 22, C.cyanDim, 12)
-    MicroGrid(ctx, r.x + 4, cy, r.w - 8, r.y + r.h - cy - 4, 66, C.text, 8)
-    Halftone(ctx, r.x + 4, r.y + 8, r.w - 8, r.h - 16, 9, C.cyanDim, 12)
-    DotMatrix(ctx, r.x + 12, r.y + 14, r.w - 24, 22, 10, C.cyanDim, 34)
-    DotMatrix(ctx, r.x + 10, cy + 8, 40, 54, 11, C.cyanDim, 26)
-    DotMatrix(ctx, r.x + r.w - 50, cy + 8, 40, 54, 11, C.cyanDim, 26)
-    Ticks(ctx, r.x + 16, r.y + r.h - 10, r.w - 32, 20, 5, 2, C.cyanDim, 78)
+    Halftone(ctx, r.x + 4, r.y + 8, r.w - 8, r.h - 16, 14, C.cyanDim, 12)
+    DotMatrix(ctx, r.x + 12, r.y + 14, r.w - 24, 22, 11, C.cyanDim, 30)
+    TicksBatch(ctx, r.x + 16, r.y + r.h - 10, r.w - 32, 20, 5, 2, C.cyanDim, 78)
     TickRing(ctx, cx, cy, r.w * 0.30, -20, 200, 12, C.cyanDim, 78)
-    Cross(ctx, r.x + 20, r.y + 20, 4, C.ghost, 80)
-    Cross(ctx, r.x + r.w - 20, r.y + 20, 4, C.ghost, 80)
-    Cross(ctx, r.x + 20, r.y + r.h - 20, 4, C.ghost, 80)
-    Cross(ctx, r.x + r.w - 20, r.y + r.h - 20, 4, C.ghost, 80)
+    CrossBatch(ctx, {
+        { r.x + 20, r.y + 20 }, { r.x + r.w - 20, r.y + 20 },
+        { r.x + 20, r.y + r.h - 20 }, { r.x + r.w - 20, r.y + r.h - 20 },
+    }, 4, C.ghost, 80)
     local top, bottom = r.y + 46, r.y + r.h - 29
     for _, side in ipairs({ -1, 1 }) do
         local xx = side == -1 and r.x + 8 or r.x + r.w - 8

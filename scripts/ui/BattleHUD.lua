@@ -253,15 +253,17 @@ Trace = function(ctx, x, y, w, h, color, alpha)
     end
     nvgFill(ctx)
     nvgRestore(ctx)
-    -- 底边长短刻度：给仪器块一条读数沿。
+    -- 底边长短刻度：给仪器块一条读数沿（合并成单一路径，避免逐刻度各起一条路径）。
     if w >= 60 then
-        local count = math.max(6, math.floor((w - 16) / 12))
+        local count = math.max(5, math.floor((w - 16) / 16))
         local step = (w - 16) / count
+        nvgBeginPath(ctx)
         for i = 0, count do
             local long = (i % 4 == 0)
-            D.rect(ctx, x + 8 + i * step, y + h - 6, 1, long and 3 or 1.5,
-                Alpha(color, a + 30), 0)
+            nvgRect(ctx, x + 8 + i * step, y + h - 6, 1, long and 3 or 1.5)
         end
+        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], a + 30))
+        nvgFill(ctx)
     end
 end
 

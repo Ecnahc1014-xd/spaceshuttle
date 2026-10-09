@@ -165,8 +165,8 @@ local wave = 1
 local stage = 1
 local stageWave = 1
 local bossDefeated = false
----@type {stage:integer, stars:integer, rating:string, bonusScore:integer, bonusParts:integer}|nil
-local stageResult = nil   -- stagewin 态展示与存档用（星级/评级）
+---@type {stage:integer, stars:integer, rating:string, bonusScore:integer, bonusParts:integer, animAt:integer}|nil
+local stageResult = nil   -- stagewin 态展示与存档用（星级/评级/过渡起始时刻）
 local elapsed = 0
 local waveCooldown = 0
 -- v0.13.26：同波错峰生成状态（剩余架数/下次计时/本波机型与砖块参数）。
@@ -2827,6 +2827,9 @@ local function ComputeStageResult()
         rating = rating,
         bonusScore = 200 * stars,
         bonusParts = 50 * stars,
+        -- v0.13.57：结算过渡动画的起始时刻（表现层据此算过渡进度）。
+        -- 用全局 elapsed 而非新增变量，避免 Game 顶层 local 超限（AB-166）。
+        animAt = elapsed,
     }
 end
 
