@@ -51,7 +51,7 @@ local BALL_TYPES = {
     normal = {
         radius = 20, speed = 560, damage = 1,
         splitChance = 0.05, splitAngle = 18, splitSpread = 18,
-        maxConcurrent = 20,       -- 待发 + 飞行 + 本帧待加入的分裂车总上限；库存队列不占名额
+        maxConcurrent = 15,       -- 待发 + 飞行 + 本帧待加入的分裂车总上限；库存队列不占名额
         bounceElasticity = 1.0,    -- WO-05/P4：反弹弹性，1.0 为标准
     },
     speed = {

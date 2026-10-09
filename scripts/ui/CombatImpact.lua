@@ -215,7 +215,9 @@ function CombatImpact.DrawSparks(ctx, presentation, project)
     return drawn
 end
 
--- 接上已存在但未绘制的普通命中闪光；只读存活机体，不触发材质/网格重建。
+-- 受伤但未击碎的砖块：**方块本身**极短闪白一下（不是十字标记），让玩家一眼看出"这块挨了一下"。
+-- 寿命须与 `Presentation.brickSpark` 写入 `hitFlashes` 的时长一致（0.12s）。
+local HIT_FLASH_SECONDS = 0.12
 function CombatImpact.DrawHits(ctx, game, presentation, project)
     local flashes = presentation.hitFlashes or {}
     local drawn, checked = 0, 0
@@ -230,22 +232,38 @@ function CombatImpact.DrawHits(ctx, game, presentation, project)
             if enemyId and c and r then
                 for _, enemy in ipairs(game.veggies or {}) do
                     if enemy.id == enemyId then
+                        -- 只在砖块仍存活时闪；击碎的那一格走碎裂特效，不叠闪白。
                         local live = false
                         for _, brick in ipairs(enemy.bricks or {}) do
                             if brick.col == c and brick.row == r and brick.alive then live = true; break end
                         end
                         if not live then break end
-                        local x, y = project(enemy.x + (c - 0.5) * enemy.brickSize,
-                            enemy.y + (r - 0.5) * enemy.brickSize)
-                        local flash = math.max(0, math.min(1, remaining / 0.12))
-                        local reach = 3 + 7 * flash
-                        nvgBeginPath(ctx)
-                        nvgMoveTo(ctx, x - reach, y); nvgLineTo(ctx, x + reach, y)
-                        nvgMoveTo(ctx, x, y - reach * 0.7); nvgLineTo(ctx, x, y + reach * 0.7)
-                        nvgStrokeColor(ctx, nvgRGBA(240, 248, 252, math.floor(205 * flash)))
-                        nvgStrokeWidth(ctx, 0.7 + flash)
-                        nvgStroke(ctx)
-                        drawn = drawn + 1
+                        local flash = math.max(0, math.min(1, remaining / HIT_FLASH_SECONDS))
+                        -- 砖块世界矩形 → 屏幕矩形（投影为逐轴仿射，取两角点即可）。
+                        local gx = enemy.x + (c - 1) * enemy.brickSize
+                        local gy = enemy.y + (r - 1) * enemy.brickSize
+                        local bx0, by0 = project(gx, gy)
+                        local bx1, by1 = project(gx + enemy.brickSize, gy + enemy.brickSize)
+                        local rw, rh = math.abs(bx1 - bx0), math.abs(by1 - by0)
+                        if rw > 1 and rh > 1 then
+                            local rx, ry = math.min(bx0, bx1), math.min(by0, by1)
+                            local inset = 0.06
+                            local ix, iy = rx + rw * inset, ry + rh * inset
+                            local iw, ih = rw * (1 - 2 * inset), rh * (1 - 2 * inset)
+                            local rad = math.min(iw, ih) * 0.18
+                            -- 暖白实心闪：暖色=撞击发热，与"冻结"的冷白区分开。
+                            nvgBeginPath(ctx)
+                            nvgRoundedRect(ctx, ix, iy, iw, ih, rad)
+                            nvgFillColor(ctx, nvgRGBA(255, 250, 236, math.floor(180 * flash)))
+                            nvgFill(ctx)
+                            -- 亮边：闪白时方块轮廓仍可读，不糊成一团。
+                            nvgBeginPath(ctx)
+                            nvgRoundedRect(ctx, ix, iy, iw, ih, rad)
+                            nvgStrokeColor(ctx, nvgRGBA(255, 255, 255, math.floor(232 * flash)))
+                            nvgStrokeWidth(ctx, 1.0 + 1.4 * flash)
+                            nvgStroke(ctx)
+                            drawn = drawn + 1
+                        end
                         break
                     end
                 end

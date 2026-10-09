@@ -215,7 +215,7 @@ local TRAIL_STYLE_PARAMS = {
     -- 余烬：宽柔光 + 明灭脉动 + 沿途余火颗粒 + 头端爆闪。
     ember  = {headW = 0.56, tailW = 0.006, bright = 1.20, base = 0.15, dash = 1, twin = 0, warm = 1,
               taper = 1.8, bulge = 0.0, hue = 0.0, flow = 0.0, pulse = 0.38, railSpread = 1.35, railTaper = 1.0,
-              glow = 2.80, core = 1.70, twist = 0.16, bead = 3, beadR = 0.50, head = 0.60},
+              glow = 1.45, core = 1.70, twist = 0.16, bead = 3, beadR = 0.50, head = 0.60},
 }
 
 ---@param style string

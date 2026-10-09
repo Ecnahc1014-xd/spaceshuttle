@@ -1394,24 +1394,36 @@ local function SyncVehicleTrails(game, dt)
             for _, track in ipairs(tracks) do
                 local samples = track.points
                 local n = #samples
-                local halfHead = track.radius * WORLD_SCALE * style.headW
-                local halfTail = track.radius * WORLD_SCALE * style.tailW
+                local radiusWorld = track.radius * WORLD_SCALE
+                local halfHead = radiusWorld * style.headW
+                local halfTail = radiusWorld * style.tailW
+                -- 🔴 光带总半宽上限 = 权威碰撞半径：任何一层（柔光/爆闪）都不得宽过车体，
+                -- 且随 radius 缩放 → 巨型车尾迹按比例更宽（「拖尾比例契约」）。
+                local maxHalf = radiusWorld
+                -- 🔴 光带前沿锚点 = 车辆当前车尾（`track.head`）。最新采样点也落后一整个
+                -- 采样间隔，光带若只画到 samples[n]，前沿就永远追不上车
+                -- （用户报「尾焰起点跟不上车」的真因）。
+                local tailPt = {x = track.head.x, y = track.head.y, z = track.head.z}
                 -- 双轨样式：只画左右两条细轨（不再画中线），轨距沿长度收拢。
                 local tw = style.twin == 1
                 local railW = halfHead * 0.32          -- 单条轨的半宽
-                for i = 1, n - 1 do
+                -- 扭转角：以「点到车头还有几段」为自变量，车头（含接到车尾的末段）恒为 0，
+                -- 越往尾端越大 → 螺旋朝后展开，车头环始终是平面贴车。
+                local function twistAngle(k) return twist * math.max(0, n - k) end
+                -- 共 n 段：samples[1..n-1]→samples[2..n]，最后一段 samples[n]→当前车尾。
+                for i = 1, n do
                     -- 断续样式：每 dash 段只画 1 段（实线时 dash=1，恒真）；
                     -- flow 让图案随时间平移，读起来像在跑。
                     if ((i + flowOffset) % style.dash) == 0 then
                         local a = samples[i]
-                        local b = samples[i + 1]
+                        local b = (i < n) and samples[i + 1] or tailPt
                         local sdx, sdy = b.x - a.x, b.y - a.y
                         local len = math.sqrt(sdx * sdx + sdy * sdy)
                         if len > 0.0005 then
                             local nx, ny = -sdy / len, sdx / len
-                            -- t：1 = 头（新），0 = 尾（旧）
-                            local t0 = (i - 1) / (n - 1)
-                            local t1 = i / (n - 1)
+                            -- t：1 = 头（新，贴车），0 = 尾（旧）。段数 n 段（含末段接车尾）。
+                            local t0 = (i - 1) / n
+                            local t1 = i / n
                             -- taper：宽度按指数曲线插值（<1 头段饱满、>1 尾段急收）。
                             local w0 = halfTail + (halfHead - halfTail) * (t0 ^ taper)
                             local w1 = halfTail + (halfHead - halfTail) * (t1 ^ taper)
@@ -1421,8 +1433,9 @@ local function SyncVehicleTrails(game, dt)
                                 w1 = w1 * (1 + bulge * t1 * t1)
                             end
                             local az, bz = a.z + TRAIL_BEHIND_Z, b.z + TRAIL_BEHIND_Z
-                            -- 扭转角：沿弧长线性增长（twist 弧度/采样点）。
-                            local ang0, ang1 = twist * (i - 1), twist * i
+                            -- 扭转角：锚定在车头（k=n → 0），越往尾端越大 → 螺旋朝后展开。
+                            -- 46° 斜俯视下 z 会投影成屏幕 Y；车头环平面贴车，故起点不脱离车体。
+                            local ang0, ang1 = twistAngle(i), twistAngle(i + 1)
                             local r0x, r0y, r0z = TwistedNormal(nx, ny, ang0)
                             local r1x, r1y, r1z = TwistedNormal(nx, ny, ang1)
                             -- 外层柔光：宽而暗，垫在主体下面（同一中线、更大半宽）。
@@ -1431,12 +1444,14 @@ local function SyncVehicleTrails(game, dt)
                                 if tw then
                                     local s0 = halfHead * railSpread * (t0 ^ railTaper)
                                     local s1 = halfHead * railSpread * (t1 ^ railTaper)
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * glow, railW * glow,
+                                    local gw = math.min(railW * glow, maxHalf * 0.5)
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, gw, gw,
                                         g0, g1, -s0, -s1, az, bz)
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * glow, railW * glow,
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, gw, gw,
                                         g0, g1, s0, s1, az, bz)
                                 else
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0 * glow, w1 * glow,
+                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z,
+                                        math.min(w0 * glow, maxHalf), math.min(w1 * glow, maxHalf),
                                         g0, g1, 0, 0, az, bz)
                                 end
                             end
@@ -1467,7 +1482,7 @@ local function SyncVehicleTrails(game, dt)
                             end
                             -- 沿途光珠：每隔 bead 个采样点，在主体上嵌一颗短而亮的珠（球状闪光）。
                             if bead > 0 and (i % bead) == 0 then
-                                local br = halfHead * beadR
+                                local br = math.min(halfHead * beadR, maxHalf)
                                 local t = (t0 + t1) * 0.5
                                 local bc = layerColor(t, 1.0 + 0.9 * t)
                                 local hx, hy, hz = (a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (az + bz) * 0.5
@@ -1477,10 +1492,12 @@ local function SyncVehicleTrails(game, dt)
                                 local pb = {x = hx + tx * br, y = hy + ty * br, z = hz}
                                 EmitTrailQuad(verts, pa, pb, r0x, r0y, r0z, br, br, bc, bc, 0, 0, hz, hz)
                             end
-                            -- 头端爆闪：只在最靠头的一段叠一条宽亮短光。
+                            -- 头端爆闪：只在最靠头的一段叠一条宽亮短光（同样钳到车体半径内）。
                             if head > 0 and i >= n - 2 then
                                 local hc = layerColor(1.0, 1.0 + head)
-                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0 * (1 + head), w1 * (1 + head),
+                                local hw0 = math.min(w0 * (1 + head), maxHalf)
+                                local hw1 = math.min(w1 * (1 + head), maxHalf)
+                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, hw0, hw1,
                                     hc, hc, 0, 0, az, bz)
                             end
                         end

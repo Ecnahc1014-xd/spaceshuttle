@@ -1024,17 +1024,20 @@ local function DrawTrailPreview(ctx, r, trailKey)
             end
             f = math.min(1, f)
             -- 扭转在 2D 预览里的投影：截面转出画面 → 中线随弧长上下摆。
-            local wob = twist * 6.0 * math.sin(twist * (i - 1) * 3.0 + phase * 0.8)
+            -- ⚠️ 与 3D 同锚点：**车头(i=1，宽亮端)处位移为 0**（贴车），越往尾端扭得越开。
+            local segFromHead = (i - 1) / (segs - 1)
+            local wob = twist * 6.0 * segFromHead * math.sin(twist * (i - 1) * 3.0 + phase * 0.8)
             local yc = cy + wob
-            -- ① 外层柔光：宽而暗，垫在主体下。
+            -- ① 外层柔光：宽而暗，垫在主体下（宽度同样钳到车体半径 baseHalf 内）。
             if glow > 1.0 then
                 local gA = math.floor(60 + 70 * f)
+                local gw = math.min(half * glow, baseHalf)
                 if twin then
                     local spread = baseHalf * railSpread * (t ^ railTaper)
-                    D.rect(ctx, rx, yc - spread - railHalf * glow, rw, railHalf * glow * 2, rgba(f, t, gA, 0.42), 0)
-                    D.rect(ctx, rx, yc + spread - railHalf * glow, rw, railHalf * glow * 2, rgba(f, t, gA, 0.42), 0)
+                    D.rect(ctx, rx, yc - spread - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
+                    D.rect(ctx, rx, yc + spread - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
                 else
-                    D.rect(ctx, rx, yc - half * glow, rw, half * glow * 2, rgba(f, t, gA, 0.42), 0)
+                    D.rect(ctx, rx, yc - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
                 end
             end
             -- ② 主体 + ③ 高亮芯。
@@ -1058,13 +1061,14 @@ local function DrawTrailPreview(ctx, r, trailKey)
             end
             -- ④ 沿途光珠：每隔 bead 段在主体上点一颗亮珠。
             if bead > 0 and (i % bead) == 0 then
-                local br = half * beadR * 1.6
+                local br = math.min(half * beadR * 1.6, baseHalf)
                 D.rect(ctx, rx + rw * 0.5 - br, yc - br, br * 2, br * 2,
                     rgba(f, t, 240, 1.0 + 0.9 * t), 1)
             end
-            -- ⑤ 头端爆闪：最靠头的一段叠一条宽亮短光。
+            -- ⑤ 头端爆闪：最靠头的一段叠一条宽亮短光（同样钳到车体半径内）。
             if head > 0 and i >= segs - 2 then
-                D.rect(ctx, rx, yc - half * (1 + head), rw, half * (1 + head) * 2,
+                local hh = math.min(half * (1 + head), baseHalf)
+                D.rect(ctx, rx, yc - hh, rw, hh * 2,
                     rgba(1.0, 1.0, 255, 1.0 + head), 0)
             end
         end
