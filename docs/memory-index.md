@@ -103,6 +103,11 @@
 - `Game._NormalMarbleSlots` / `BALL_TYPES.normal.maxConcurrent` 同源预算；分裂不足名额截生成数，0 不发成功事件，单子车居中，保留递归与 splitCount 2/3/4。常规装填/暂停补弹满额保队首，不删场上车、不丢库存；回收后自动装填。上限是单一常量，改口径只需改 `maxConcurrent` 一处。
 - 独立静态审查未发现问题，LSP 26 文件 0 Error；本地 Runtime **51/51、1578 断言 PASS、exit0**（cap=15）。官方多人 build 与预览上传 ✅（早期一次 `PLATFORM_OPERATION_FORBIDDEN` 为临时限制，重试成功）。POST-1 执行（persona 不新增），POST-2 代码独立提交（20 版 `c9f3413`、15 版单独提交），POST-3 判定跳过（小调整无新增跨项目信息）。展示版本不改，保留并发存钱罐/首机曲线/拖尾；手机与 3D 可见性未验收。
 
+## 局内道具加强 + 分裂 ±5° 随机（2026-10-10，item-split-buff 附记）
+- 用户「三个道具强度不明显，特别是炸弹继续加强；分裂车分裂时中间的车左右随机偏移 5 度以内」。
+- 炸弹：每机炸「存活格一半、上限 12」（原固定 4）；冰冻 4→6s；护盾 30→60。分裂：每颗子车在扇区基准角叠 ±5° 随机，中间车不再固定走正前方，不改数量/宽度。
+- 规则探针 4/4、496 断言、exit0（含实测最大偏移 4.997°）；LSP 0 Error；官方多人 build+预览上传 ✅。POST-1 执行、POST-2 本人 3 hunk 独立提交、POST-3 跳过（数值小调无新跨项目偏好）。
+
 ## 拖尾样式精进（2026-10-08，trail-style-mechanics 附记）
 - 用户「商店拖尾拉完了，然后需要精进」。根因：六种样式此前只是同一条光带的宽/亮/断续/双轨**数值微调**（本项目自己记过的 AB-214：差异化要落在机制不是数值）。
 - **加 7 条机制轴**（`MetaCatalog.TRAIL_STYLE_PARAMS` 纯数据）：`taper` 宽度曲线指数、`bulge` 头端鼓包亮核、`hue` 沿长度色相游移、`flow` 断续图案流动速度、`pulse` 明暗脉动、`railSpread`/`railTaper` 双轨间距与收拢。六种各占不同轴：经典=中性基准；彗星=taper+bulge；霓虹=hue；流光=dash+flow；双轨=railSpread+railTaper；余烬=taper+pulse。
