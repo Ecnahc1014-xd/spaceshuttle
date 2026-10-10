@@ -511,11 +511,26 @@ local FEEDBACK_HANDLERS = {
         SpawnParticles(event.x, event.y, {255, 210, 120}, 3, "spark")
     end,
     enchantExplode = function(event)
-        SpawnParticles(event.x, event.y, {255, 150, 80}, 6, "spark")
-        screenShake = math.max(screenShake, 0.16)
+        -- v0.13.58：爆炸 = 大范围扩散环（半径按规则层给的 radius 换算设计像素）+ 火花 + 震屏。
+        local rr = (event.radius or 24) * 3.2
+        shockRings[#shockRings + 1] = {
+            x = event.x, y = event.y,
+            life = 0.42, maxLife = 0.42,
+            r0 = 8, r1 = rr,
+            r = 255, g = 150, b = 80,
+        }
+        SpawnParticles(event.x, event.y, {255, 150, 80}, 12, "spark")
+        SpawnParticles(event.x, event.y, {255, 220, 140}, 4, "smoke")
+        screenShake = math.max(screenShake, 0.3)
     end,
     enchantChain = function(event)
-        SpawnParticles(event.targetX or event.x, event.targetY or event.y, {150, 200, 255}, 2, "spark")
+        -- 连锁 = 命中点向目标点的一串火花 + 冲击环，读作「电弧跳过去」。
+        SpawnParticles(event.targetX or event.x, event.targetY or event.y, {150, 200, 255}, 6, "spark")
+        SpawnParticles(event.x, event.y, {150, 200, 255}, 4, "spark")
+        shockRings[#shockRings + 1] = {
+            x = event.targetX or event.x, y = event.targetY or event.y,
+            life = 0.28, maxLife = 0.28, r0 = 4, r1 = 18, r = 150, g = 200, b = 255,
+        }
     end,
     enchantTriple = function(event)
         SpawnParticles(event.x, event.y, {255, 196, 72}, 4, "spark")
