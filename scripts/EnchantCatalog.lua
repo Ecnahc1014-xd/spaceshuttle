@@ -32,34 +32,36 @@ EnchantCatalog.RARITY_NAMES = {
 ---@field healPerHit integer|nil 每次命中回复的防线生命
 ---@field homing boolean|nil 命中后自动追向最近的方块
 ---@field chain boolean|nil 命中时向最近的另一块溅射伤害
+---@field chainDamage number|nil 连锁溅射的伤害倍率（相对本次弹珠伤害）
 ---@field freezeAll number|nil 命中时冻结全场的秒数
 ---@field explodeRadius number|nil 命中时以命中格为中心的范围爆炸半径（格）
+---@field explodeMul number|nil 爆炸伤害倍率（相对本次弹珠伤害）
 ---@field splitOnHit integer|nil 每次命中额外分裂的弹珠数
 ---@field tripleShot integer|nil 发射时额外扇形发射的同型车数量
 
 ---@type EnchantDef[]
 EnchantCatalog.CARDS = {
     -- 蓝（普通）：轻量、常出，提供基础增益。
-    { id = "split",     name = "裂变", rarity = "common", desc = "命中额外分裂",
-      splitOnHit = 1 },
-    { id = "lifesteal", name = "吸血", rarity = "common", desc = "命中回血 1",
-      healPerHit = 1 },
-    { id = "homing",    name = "追踪", rarity = "common", desc = "命中后自动追敌",
+    { id = "split",     name = "裂变", rarity = "common", desc = "每次命中额外分裂 3 颗",
+      splitOnHit = 3 },
+    { id = "lifesteal", name = "吸血", rarity = "common", desc = "每次命中防线回 3 血",
+      healPerHit = 3 },
+    { id = "homing",    name = "追踪", rarity = "common", desc = "每次命中自动追向新目标",
       homing = true },
     -- 紫（稀有）：改变作用方式。
-    { id = "pierce",    name = "穿透", rarity = "rare", desc = "穿透 4 块",
-      pierce = 4 },
-    { id = "chain",     name = "连锁", rarity = "rare", desc = "命中溅射附近",
-      chain = true },
-    { id = "freeze",    name = "霜冻", rarity = "rare", desc = "命中冻结全场",
-      freezeAll = 2.0 },
+    { id = "pierce",    name = "穿透", rarity = "rare", desc = "穿透 8 块不反弹",
+      pierce = 8 },
+    { id = "chain",     name = "连锁", rarity = "rare", desc = "命中溅射附近 +2× 伤害",
+      chain = true, chainDamage = 2.0 },
+    { id = "freeze",    name = "霜冻", rarity = "rare", desc = "每次命中冻结全场 4 秒",
+      freezeAll = 4.0 },
     -- 黄（史诗）：强力、稀有。
-    { id = "power",     name = "重击", rarity = "epic", desc = "伤害 ×2.5",
-      damageMul = 2.5 },
-    { id = "explode",   name = "爆裂", rarity = "epic", desc = "命中引发爆炸",
-      explodeRadius = 2.2 },
-    { id = "triple",    name = "三连", rarity = "epic", desc = "发射扇形三连",
-      tripleShot = 2 },
+    { id = "power",     name = "重击", rarity = "epic", desc = "伤害 ×5 并穿透 3 块",
+      damageMul = 5.0, pierce = 3 },
+    { id = "explode",   name = "爆裂", rarity = "epic", desc = "命中大范围爆炸",
+      explodeRadius = 3.5, explodeMul = 1.6 },
+    { id = "triple",    name = "三连", rarity = "epic", desc = "发射扇形四连（4 车）",
+      tripleShot = 3 },
 }
 
 local BY_ID = {}

@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: texture-uncompressed（2026-10-10，UI 像素图跳过 ASTC 压缩，修「艺术字异常缩放」乱码；不改展示版本）：
+  - 用户「现在就是确实有艺术字加上异常缩放」——**上一批 arttext-preload-fix 只解决了「有没有加载」，真凶是「压缩把字糊了」**。
+  - **真因（构建产物取证 + 放大实图）**：构建把**所有**纹理压成 **ASTC 6×6 + 7 级 mipmap**（mobile）/ BC7（windows）——`cooking_results.json` 记 `output_file=..._ASTC_6X6_medium_mip.png`；运行时 `Image:IsCompressed()==true`、`Texture2D:GetLevels()==7`。**细描边像素图**（艺术字 1–2px 轮廓、32×32 图标、24×32 数字）被 6×6 块压缩**平均掉**，真机解码后呈**竖条块状乱码**（用户截图放大可见）。⚠️ 之前我用桌面软件解 KTX **看不出糊**（软件解码近似无损），差点误判「压缩不是原因」——**判据要看真机 GPU 解码 + 放大实图**，不是离线解码。
+  - **修复**：给 `assets/image/ui_*.png`（**70 张**：艺术字 8 / 数字 10 / 图标 / 徽章 / 字标 / 手势图）各加**同名 `.png.xml`**（Urho3D 纹理配置约定），内容 `<compress format="none"/>` → **构建跳过压缩**。`ui_tt_resume.png.xml` 单独验证过：重建后该图 `size=761`（=源码，未压缩）。
+  - **验证**：重建后新清单 `manifest-origin.b409.json` 里 **70 张 `ui_*.png` 产物全部为原始 PNG（PNG=70 / KTX=0）**，`size == size@windows`。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION，当前常量 0.13.55）。
+  - ⚠️ **提交注意**：构建会为每个 `.png.xml` 生成 `.xml.meta`（uuid），**清单按 xml.meta 引用** → xml 与 xml.meta **必须一起提交**（本批 140 个文件 = 70 xml + 70 meta）。
+  - ⚠️ **与 arttext-preload-fix 的关系**：那批修的是「`Has()` 不触发加载 → 首次绘制前永远走 zpix 回退」（间歇性「有时艺术字有时文字」）；本批修的是「加载了但被压缩糊成乱码」。**两个独立真因**，都要。
 - 附记: arttext-preload-fix（2026-10-10，修「贴图艺术字概率出错」；不改展示版本）：
   - 用户报「贴图艺术字概率出错」+ 两张实机截图（暂停按钮「继续战斗」/选关面板标题位置各有一处**竖条状乱码**）。**「概率」是关键词**——间歇性、非确定。
   - **真因（本地复现实锤）**：`ui/ArtText.lua` / `ui/DigitFont.lua` 是**懒加载**（只有 `Draw()` 触发 `nvgCreateImage`），而 **`Has()/Width()/Height()` 不触发加载**。全项目多数调用点是 `if ArtText.Has(k) then Draw(...) else zpix` → **首次绘制前 `images_` 为空 → `Has()` 恒 false → 永远走 zpix 回退**；只有 `ui/StageSelect.lua` 的 `Draw("stage")` 是**无条件调用**（加载整个表）→ **打开过选关屏后艺术字才「恢复」**。于是同一按钮在不同路径下时而艺术字、时而 zpix 文字 = 用户说的「概率出错」。另一层风险：`nvgCreateImage` 在 `NanoVGRender` 帧内执行，纹理尚未上传完就同帧绘制。

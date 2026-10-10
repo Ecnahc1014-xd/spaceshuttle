@@ -1,0 +1,7 @@
+<texture>
+  <quality low="0" />
+  <platform name="android"><compress format="none" /></platform>
+  <platform name="ios"><compress format="none" /></platform>
+  <platform name="windows"><compress format="none" /></platform>
+  <platform name="web"><compress format="none" /></platform>
+</texture>

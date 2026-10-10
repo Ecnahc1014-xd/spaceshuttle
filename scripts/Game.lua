@@ -1888,8 +1888,8 @@ local itemGranted = {}                                     -- 本局是否已用
 local itemStock = { bomb = 0, freeze = 0, shield = 0 }
 ---@type table<string, boolean>
 local itemUsedThisRun = {}                                 -- 本局该道具是否已用过
-local FREEZE_SECONDS = 4.0                                 -- 冰冻持续
-local SHIELD_POINTS = 30                                   -- 护盾吸收量
+local FREEZE_SECONDS = 6.0                                 -- 冰冻持续（v0.13.58：4 → 6，加强）
+local SHIELD_POINTS = 60                                   -- 护盾吸收量（v0.13.58：30 → 60，加强）
 
 ResetItems = function()
     itemCharges = { bomb = 0, freeze = 0, shield = 0 }
@@ -1977,8 +1977,10 @@ function Game.UseItem(key)
                 for _, brick in ipairs(enemy.bricks) do
                     if brick.alive then live[#live + 1] = brick end
                 end
-                -- 每机随机炸掉至多 4 格，避免一键清场破坏节奏
-                for _ = 1, math.min(4, #live) do
+                -- v0.13.58：炸弹加强——每机炸掉「存活格数的一半（向上取整）」，
+                -- 最多 12 格（原为固定 4 格）。打满编队时明显清场，但仍非一键全清。
+                local take = math.min(12, math.ceil(#live * 0.5))
+                for _ = 1, take do
                     local idx = RandomInt(1, #live)
                     local brick = table.remove(live, idx)
                     if EjectBrick(enemy, brick) then popped = popped + 1 end
@@ -2108,6 +2110,12 @@ local function CreateSplitMarble(source, angle, originBrick)
         ignoredBrick = originBrick,
         giantPiercing = false,
     }
+    -- v0.13.58：分裂子车继承母车的附魔（否则「裂变/吸血/追踪」等卡在分裂后即失效）。
+    -- ⚠️ 但标记为子车——命中时不再触发「裂变」的 splitOnHit，否则子车再分裂会无限递归
+    --    （虽被 maxConcurrent=15 兜住，但会让屏上永久塞满 15 颗）。
+    marble.enchant = source.enchant
+    marble.enchantPierce = source.enchantPierce
+    marble.enchantIsChild = true
     nextMarbleId = nextMarbleId + 1
     return marble
 end
@@ -2122,9 +2130,12 @@ local function TrySplitNormal(marble, originBrick, pendingMarbles)
         Game._NormalMarbleSlots(pendingMarbles))
     if count <= 0 then return end
     -- 以母弹速度方向为中心铺开；只剩一个名额时居中，避免恒向左偏。
+    -- v0.13.58：每颗子车在基准角上叠 ±5° 随机偏移——中间的（基准 0°）不再永远走正前方，
+    -- 整个扇形也略微随机化，观感更自然。偏移上限固定 5°，不改变分裂数量与铺开宽度。
     local spread = def.splitSpread or 18
     for i = 1, count do
         local angle = count == 1 and 0 or -spread + (2 * spread) * (i - 1) / (count - 1)
+        angle = angle + (Random() * 10 - 5)
         table.insert(pendingMarbles,
             CreateSplitMarble(marble, angle, originBrick))
     end
@@ -2609,11 +2620,31 @@ UpdateMarbles = function(dt)
                         end
                     end
                     if enchant.chain then
+                        -- v0.13.58：连锁——命中时对最近的另一块**造成真实伤害**（此前只发事件无伤害，是 bug）。
                         local target = FindNearestBrick(enemy, brick, marble.x, marble.y)
                         if target then
+                            local mul = enchant.chainDamage or 1.5
+                            local dmg = GetMarbleDamage(marble, def) * mul
+                            -- 找到该目标对应的砖块并结算（溅射同时给一小片周围加成）。
+                            local splash = enemy.brickSize * 1.2
+                            for _, other in ipairs(veggies) do
+                                if not other.dead then
+                                    for _, otherBrick in ipairs(other.bricks) do
+                                        if otherBrick.alive and not otherBrick.ejected
+                                            and otherBrick ~= brick and not frameHitBricks[otherBrick] then
+                                            local bx = other.x + (otherBrick.col - 0.5) * other.brickSize
+                                            local by = other.y + (otherBrick.row - 0.5) * other.brickSize
+                                            local ddx, ddy = bx - target.x, by - target.y
+                                            if ddx * ddx + ddy * ddy <= splash * splash then
+                                                frameHitBricks[otherBrick] = true
+                                                DamageBrick(other, otherBrick, dmg)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
                             Emit("enchant_chain", { x = marble.x, y = marble.y,
-                                targetX = target.x, targetY = target.y,
-                                damage = GetMarbleDamage(marble, def) })
+                                targetX = target.x, targetY = target.y, damage = dmg })
                         end
                     end
                     if enchant.explodeRadius then
@@ -2621,6 +2652,7 @@ UpdateMarbles = function(dt)
                         local radiusSq = radius * radius
                         local cx = enemy.x + (brick.col - 0.5) * enemy.brickSize
                         local cy = enemy.y + (brick.row - 0.5) * enemy.brickSize
+                        local emul = enchant.explodeMul or 1.2
                         for _, other in ipairs(veggies) do
                             if not other.dead then
                                 for _, otherBrick in ipairs(other.bricks) do
@@ -2632,7 +2664,7 @@ UpdateMarbles = function(dt)
                                         if ddx * ddx + ddy * ddy <= radiusSq then
                                             frameHitBricks[otherBrick] = true
                                             DamageBrick(other, otherBrick,
-                                                GetMarbleDamage(marble, def) * 0.6)
+                                                GetMarbleDamage(marble, def) * emul)
                                         end
                                     end
                                 end
@@ -2640,7 +2672,7 @@ UpdateMarbles = function(dt)
                         end
                         Emit("enchant_explode", { x = cx, y = cy, radius = radius })
                     end
-                    if enchant.splitOnHit then
+                    if enchant.splitOnHit and not marble.enchantIsChild then
                         local room = Game._NormalMarbleSlots(pendingMarbles)
                         for _ = 1, math.min(enchant.splitOnHit, room) do
                             local angle = -18 + Random() * 36
