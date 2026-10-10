@@ -18,7 +18,7 @@ local DigitFont = {}
 local digitImages_ = {}
 -- 每张数字母版的「可见字形宽度」由后处理决定，逐字固定（同高 26）。
 -- 用于多位数排版：宽度按各自字形宽累加，避免等宽留白导致「11」中间空一条。
-local DIGIT_W = { 18, 16, 20, 21, 19, 19, 18, 21, 18, 20 }
+local DIGIT_W = { 19, 16, 17, 19, 17, 19, 18, 19, 17, 17 }
 local GLYPH_H = 26
 local MASTER_W = 24
 local MASTER_H = 32
