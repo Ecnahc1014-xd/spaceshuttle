@@ -1524,9 +1524,11 @@ local function DrawPixelLogo(ctx, cx, topY, title, size, bodyColor, shadowColor)
 end
 
 -- v0.13.4：主菜单「开始战斗」CTA 几何（绘制与命中共用，禁止两套常量）。
+-- v0.13.58：按钮 72→84 高——艺术字母版由 38 改 44 后，44(字) + 铭牌留白 + 13(副标题)
+-- 在 72 里塞不下，副标题会压到铭牌底边（实测重叠 ~4px）。加高后内容才有呼吸空间。
 local function GetMenuCtaRect(game)
     local w = (game and game.width) or DESIGN_W
-    return { x = 42, y = 430, w = w - 84, h = 72 }
+    return { x = 42, y = 430, w = w - 84, h = 84 }
 end
 
 local function DrawMenu(ctx, game, meta)
@@ -1573,19 +1575,20 @@ local function DrawMenu(ctx, game, meta)
     end
     -- v0.13.58：CTA 主标题改用 AI 像素艺术字。⚠️ 青底上**不能用深色 tint**——
     -- 双色母版的「白芯+近黑轮廓」乘深色后两级都塌成黑，整块读成黑疙瘩（实测）。
-    -- 正确做法：在标题后垫一块**暗色铭牌**，艺术字用亮青 tint，既保留青色按钮语义、
-    -- 又让艺术字的两级明暗完整显出来。无图时回退 zpix 深字。
+    -- 但**青色 tint 同样会塌**：金属灰被乘成扁平暗青，立体倒角全丢（实测对比）。
+    -- 正确做法：暗色铭牌垫底 + 艺术字用**白色 tint**——金属明暗两级完整保留，
+    -- 铭牌提供对比、青色按钮语义由底与描边承载。无图时回退 zpix 深字。
     if ArtText.Has("startbattle") then
         local aw, ah = ArtText.Width("startbattle"), ArtText.Height("startbattle")
-        local px, py = game.width * 0.5 - aw * 0.5 - 16, ctaY + 4
-        DrawRect(ctx, px, py, aw + 32, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 140}, 7)
-        DrawStroke(ctx, px, py, aw + 32, ah + 8, {C.cyan[1], C.cyan[2], C.cyan[3], 90}, 7, 1)
-        ArtText.Draw(ctx, "startbattle", game.width * 0.5, ctaY + 8, C.cyan)
+        local px, py = game.width * 0.5 - aw * 0.5 - 16, ctaY + 6
+        DrawRect(ctx, px, py, aw + 32, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 150}, 7)
+        DrawStroke(ctx, px, py, aw + 32, ah + 8, {C.cyan[1], C.cyan[2], C.cyan[3], 95}, 7, 1)
+        ArtText.Draw(ctx, "startbattle", game.width * 0.5, ctaY + 8, {255, 255, 255})
     else
-        DrawPixelText(ctx, game.width * 0.5, ctaY + 8, "开始战斗", 31, C.ink,
+        DrawPixelText(ctx, game.width * 0.5, ctaY + 10, "开始战斗", 31, C.ink,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
-    DrawPixelText(ctx, game.width * 0.5, ctaY + 52, "选择关卡", 13, C.ink,
+    DrawPixelText(ctx, game.width * 0.5, ctaY + 62, "选择关卡", 13, C.ink,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
     DrawPixelText(ctx, game.width * 0.5, 932,
@@ -2236,15 +2239,15 @@ local function DrawPaused(ctx, game, meta, presentation)
     nvgClosePath(ctx)
     nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], 255))
     nvgFill(ctx)
-    -- v0.13.58：继续战斗改用艺术字。同 CTA——青底不能用深 tint（会塌成黑块），
-    -- 垫暗色铭牌 + 亮青字；无图回退 zpix 深字。
+    -- v0.13.58：继续战斗改用艺术字。同 CTA——青/深 tint 都会把金属灰压塌，
+    -- 垫暗色铭牌 + **白色 tint** 保住立体倒角；无图回退 zpix 深字。
     if ArtText.Has("resume") then
         local aw, ah = ArtText.Width("resume"), ArtText.Height("resume")
         local pcx = layout.resume.x + layout.resume.w * 0.60
         DrawRect(ctx, pcx - aw * 0.5 - 12, layout.resume.y + (layout.resume.h - ah) * 0.5 - 4,
-            aw + 24, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 140}, 6)
+            aw + 24, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 150}, 6)
         ArtText.DrawCentered(ctx, "resume",
-            { x = pcx - aw * 0.5, y = layout.resume.y, w = aw, h = layout.resume.h }, C.cyan, 0)
+            { x = pcx - aw * 0.5, y = layout.resume.y, w = aw, h = layout.resume.h }, {255, 255, 255}, 0)
     else
         DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.60, layout.resume.y + 13,
             "继续战斗", 19, C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
