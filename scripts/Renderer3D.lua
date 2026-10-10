@@ -15,6 +15,9 @@ local VOXEL_DEPTH = 2.10
 local VOXEL_FRONT_OFFSET = -0.42
 local VEHICLE_PLANAR_RADIUS = 1.84
 local VEHICLE_COLLISION_FILL = 0.98
+-- 车体真实半宽 / 碰撞半径 = 视觉缩放(0.98×1.12/1.84) × 车体最宽半宽(局部 0.675，见 VehicleGeometry)。
+-- 尾迹宽度必须锚定这个值，不能用碰撞半径——碰撞圆比车体宽约 2.5 倍。
+local VEHICLE_HALF_FACTOR = VEHICLE_COLLISION_FILL * 1.12 / VEHICLE_PLANAR_RADIUS * 0.675
 local VEHICLE_LOCAL_CENTER_Z = -0.40
 local VEHICLE_TURN_SPEED = 420.0
 
@@ -1367,142 +1370,134 @@ local function SyncVehicleTrails(game, dt)
             local style = MetaCatalog.GetTrailStyleParams(trailStyle_)
             local taper = style.taper or 1.0
             local bulge = style.bulge or 0.0
-            local flow = style.flow or 0.0
             local railSpread = style.railSpread or 1.35
             local railTaper = style.railTaper or 1.0
-            -- 立体/层叠轴：外层柔光、内层亮芯、截面扭转、沿途光珠、头端爆闪。
+            -- 形态轴：宽度曲线、波动（抛弃直线）、明暗噪声、层叠、扭转。
             local glow = style.glow or 0.0
             local core = style.core or 0.0
             local twist = style.twist or 0.0
-            local bead = style.bead or 0
-            local beadR = style.beadR or 0.0
-            local head = style.head or 0.0
-            -- 三层各自一档明暗：外层柔光最暗、主体中、芯最亮（叠起来才「厚」）。
+            local waver = style.waver or 0.0
+            local waverLen = style.waverLen or 0.9
+            local waverDrift = style.waverDrift or 0.0
+            local flicker = style.flicker or 0.0
+            local flickerFreq = style.flickerFreq or 0.0
+            -- 层明暗倍率：外层柔光最暗、主体中、芯最亮（叠起来才「厚」）。
             local function layerColor(t, mul)
                 local c = TrailColor(base, t, style, trailPhase_)
                 return Color(math.min(1, c.r * mul), math.min(1, c.g * mul),
                     math.min(1, c.b * mul), 1)
             end
-            -- 截面法线：从平面法线 (nx,ny,0) 绕切线转出 angle → 得到带 z 分量的三维法线。
-            -- 这才是「螺旋」：截面转出玩法平面，光带在空间里盘绕而不是在平面里歪。
+            -- 截面法线：从平面法线 (nx,ny,0) 绕切线转出 angle → 带 z 分量的三维法线。
             local function TwistedNormal(nx, ny, angle)
                 local ca, sa = math.cos(angle), math.sin(angle)
                 return nx * ca, ny * ca, sa
             end
-            -- flow：断续图案随时间沿长度游动（段/秒）。用共享相位，同屏所有车同步。
-            local flowOffset = flow > 0 and math.floor(trailPhase_ * flow) or 0
+            -- 逐段明暗噪声：**空间锚定**（沿弧长取相位，不随时间跳），
+            -- 频率决定「粗细颗粒」，替代原先「每 dash 段画 1 段」的机械重复。
+            local function segNoise(along)
+                if flicker <= 0 then return 0 end
+                return flicker * math.sin(along * flickerFreq + 0.5)
+            end
             for _, track in ipairs(tracks) do
                 local samples = track.points
                 local n = #samples
                 local radiusWorld = track.radius * WORLD_SCALE
-                local halfHead = radiusWorld * style.headW
-                local halfTail = radiusWorld * style.tailW
-                -- 🔴 光带总半宽上限 = 权威碰撞半径：任何一层（柔光/爆闪）都不得宽过车体，
-                -- 且随 radius 缩放 → 巨型车尾迹按比例更宽（「拖尾比例契约」）。
-                local maxHalf = radiusWorld
-                -- 🔴 光带前沿锚点 = 车辆当前车尾（`track.head`）。最新采样点也落后一整个
-                -- 采样间隔，光带若只画到 samples[n]，前沿就永远追不上车
-                -- （用户报「尾焰起点跟不上车」的真因）。
+                -- 🔴 宽度基准 = **车体真实半宽**，不是碰撞半径：车体碰撞圆半径
+                -- radiusWorld 里只有 VEHICLE_PLANAR_RADIUS×0.63 是真车宽，
+                -- 用 radiusWorld 当上限会让尾迹比车宽 2.6 倍（用户报「比车还粗」）。
+                local vHalf = radiusWorld * VEHICLE_HALF_FACTOR
+                local halfHead = vHalf * style.headW
+                local halfTail = vHalf * style.tailW
+                -- 逐段波动相位：按**沿弧长**累加（同屏各车、各帧一致），非随时间跳。
+                local cum = 0.0
+                local phase0 = trailPhase_ * waverDrift
+                -- 光带前沿锚点 = 车辆当前车尾（最新采样点也落后一整个采样间隔）。
                 local tailPt = {x = track.head.x, y = track.head.y, z = track.head.z}
-                -- 双轨样式：只画左右两条细轨（不再画中线），轨距沿长度收拢。
                 local tw = style.twin == 1
-                local railW = halfHead * 0.32          -- 单条轨的半宽
-                -- 扭转角：以「点到车头还有几段」为自变量，车头（含接到车尾的末段）恒为 0，
-                -- 越往尾端越大 → 螺旋朝后展开，车头环始终是平面贴车。
+                local railW = halfHead * 0.32
+                -- 扭转角锚定车头（k=n → 0），越往尾端越大 → 螺旋朝后展开。
                 local function twistAngle(k) return twist * math.max(0, n - k) end
                 -- 共 n 段：samples[1..n-1]→samples[2..n]，最后一段 samples[n]→当前车尾。
                 for i = 1, n do
-                    -- 断续样式：每 dash 段只画 1 段（实线时 dash=1，恒真）；
-                    -- flow 让图案随时间平移，读起来像在跑。
-                    -- ⚠️ 头段（i==n，接车尾那段）**永远画**：否则断续图案会让光带前沿
-                    -- 停在离车 1~2 段处（用户报「尾焰起点跟不上车」的真因）。
-                    if i == n or ((i + flowOffset) % style.dash) == 0 then
-                        local a = samples[i]
-                        local b = (i < n) and samples[i + 1] or tailPt
-                        local sdx, sdy = b.x - a.x, b.y - a.y
-                        local len = math.sqrt(sdx * sdx + sdy * sdy)
-                        if len > 0.0005 then
-                            local nx, ny = -sdy / len, sdx / len
-                            -- t：1 = 头（新，贴车），0 = 尾（旧）。段数 n 段（含末段接车尾）。
-                            local t0 = (i - 1) / n
-                            local t1 = i / n
-                            -- taper：宽度按指数曲线插值（<1 头段饱满、>1 尾段急收）。
+                    local a = samples[i]
+                    local b = (i < n) and samples[i + 1] or tailPt
+                    local sdx, sdy = b.x - a.x, b.y - a.y
+                    local len = math.sqrt(sdx * sdx + sdy * sdy)
+                    if len > 0.0005 then
+                        -- t：1 = 头（新，贴车），0 = 尾（旧）。
+                        local t0 = (i - 1) / n
+                        local t1 = i / n
+                        -- 中线横向波动：沿弧长取正弦（**非直线**），幅度随 t 变化（尾端更飘）。
+                        local off0, off1 = 0, 0
+                        if waver > 0 then
+                            off0 = vHalf * waver * (1 - t0) * math.sin(cum / waverLen + phase0)
+                            off1 = vHalf * waver * (1 - t1) * math.sin((cum + len) / waverLen + phase0)
+                        end
+                        local ca = {x = a.x, y = a.y, z = a.z}
+                        local cb = {x = b.x, y = b.y, z = b.z}
+                        if off0 ~= 0 or off1 ~= 0 then
+                            local unx, uny = -sdy / len, sdx / len
+                            ca = {x = a.x + unx * off0, y = a.y + uny * off0, z = a.z}
+                            cb = {x = b.x + unx * off1, y = b.y + uny * off1, z = b.z}
+                        end
+                        local pdx, pdy = cb.x - ca.x, cb.y - ca.y
+                        local plen = math.sqrt(pdx * pdx + pdy * pdy)
+                        if plen > 0.0005 then
+                            local nx, ny = -pdy / plen, pdx / plen
+                            -- taper：宽度曲线（<1 头段饱满、>1 尾段急收）。
                             local w0 = halfTail + (halfHead - halfTail) * (t0 ^ taper)
                             local w1 = halfTail + (halfHead - halfTail) * (t1 ^ taper)
-                            -- bulge：头段额外加宽，做出「实心亮核」。
                             if bulge > 0 then
                                 w0 = w0 * (1 + bulge * t0 * t0)
                                 w1 = w1 * (1 + bulge * t1 * t1)
                             end
-                            local az, bz = a.z + TRAIL_BEHIND_Z, b.z + TRAIL_BEHIND_Z
-                            -- 扭转角：锚定在车头（k=n → 0），越往尾端越大 → 螺旋朝后展开。
-                            -- 46° 斜俯视下 z 会投影成屏幕 Y；车头环平面贴车，故起点不脱离车体。
+                            local az, bz = ca.z + TRAIL_BEHIND_Z, cb.z + TRAIL_BEHIND_Z
                             local ang0, ang1 = twistAngle(i), twistAngle(i + 1)
                             local r0x, r0y, r0z = TwistedNormal(nx, ny, ang0)
                             local r1x, r1y, r1z = TwistedNormal(nx, ny, ang1)
-                            -- 外层柔光：宽而暗，垫在主体下面（同一中线、更大半宽）。
+                            -- 段噪声（空间锚定）：明暗抖动，给「流光」断续火花感。
+                            local ns = segNoise(cum)
+                            -- 外层柔光：宽而暗，垫在主体下面（宽过主体但不超车体半宽）。
                             if glow > 1.0 then
-                                local g0, g1 = layerColor(t0, 0.34), layerColor(t1, 0.34)
+                                local g0 = layerColor(t0, math.max(0.05, 0.34 + ns * 0.4))
+                                local g1 = layerColor(t1, math.max(0.05, 0.34 + ns * 0.4))
                                 if tw then
                                     local s0 = halfHead * railSpread * (t0 ^ railTaper)
                                     local s1 = halfHead * railSpread * (t1 ^ railTaper)
-                                    local gw = math.min(railW * glow, maxHalf * 0.5)
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, gw, gw,
-                                        g0, g1, -s0, -s1, az, bz)
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, gw, gw,
-                                        g0, g1, s0, s1, az, bz)
+                                    local gw = math.min(railW * glow, vHalf * 0.5)
+                                    EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, gw, gw, g0, g1, -s0, -s1, az, bz)
+                                    EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, gw, gw, g0, g1, s0, s1, az, bz)
                                 else
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z,
-                                        math.min(w0 * glow, maxHalf), math.min(w1 * glow, maxHalf),
+                                    EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z,
+                                        math.min(w0 * glow, vHalf), math.min(w1 * glow, vHalf),
                                         g0, g1, 0, 0, az, bz)
                                 end
                             end
-                            -- 主体 + 高亮芯（芯更窄更亮，叠在主体中央）。
-                            local c0 = TrailColor(base, t0, style, trailPhase_)
-                            local c1 = TrailColor(base, t1, style, trailPhase_)
+                            -- 主体 + 高亮芯。
+                            local c0 = layerColor(t0, math.max(0, 1.0 + ns))
+                            local c1 = layerColor(t1, math.max(0, 1.0 + ns))
                             local k0 = layerColor(t0, core > 0 and (1.0 + core * 0.35) or 1.0)
                             local k1 = layerColor(t1, core > 0 and (1.0 + core * 0.35) or 1.0)
                             if tw then
-                                -- 双轨：轨距头端最宽、沿长度收拢成尖（railTaper<1）；
-                                -- 两条轨沿同一扭转法线错开 → 在空间里编成一股辫。
                                 local spread0 = halfHead * railSpread * (t0 ^ railTaper)
                                 local spread1 = halfHead * railSpread * (t1 ^ railTaper)
-                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW, railW, c0, c1, -spread0, -spread1, az, bz)
-                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW, railW, c0, c1, spread0, spread1, az, bz)
+                                EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, railW, railW, c0, c1, -spread0, -spread1, az, bz)
+                                EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, railW, railW, c0, c1, spread0, spread1, az, bz)
                                 if core > 0 then
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * 0.42, railW * 0.42,
+                                    EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, railW * 0.42, railW * 0.42,
                                         k0, k1, -spread0, -spread1, az, bz)
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, railW * 0.42, railW * 0.42,
+                                    EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, railW * 0.42, railW * 0.42,
                                         k0, k1, spread0, spread1, az, bz)
                                 end
                             else
-                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0, w1, c0, c1, 0, 0, az, bz)
+                                EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, w0, w1, c0, c1, 0, 0, az, bz)
                                 if core > 0 then
-                                    EmitTrailQuad(verts, a, b, r0x, r0y, r0z, w0 * 0.40, w1 * 0.40,
+                                    EmitTrailQuad(verts, ca, cb, r0x, r0y, r0z, w0 * 0.40, w1 * 0.40,
                                         k0, k1, 0, 0, az, bz)
                                 end
                             end
-                            -- 沿途光珠：每隔 bead 个采样点，在主体上嵌一颗短而亮的珠（球状闪光）。
-                            if bead > 0 and (i % bead) == 0 then
-                                local br = math.min(halfHead * beadR, maxHalf)
-                                local t = (t0 + t1) * 0.5
-                                local bc = layerColor(t, 1.0 + 0.9 * t)
-                                local hx, hy, hz = (a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (az + bz) * 0.5
-                                local tx, ty = sdx / len, sdy / len
-                                -- 用切向与法向各铺一格 → 一颗「十字星」状的立体光珠。
-                                local pa = {x = hx - tx * br, y = hy - ty * br, z = hz}
-                                local pb = {x = hx + tx * br, y = hy + ty * br, z = hz}
-                                EmitTrailQuad(verts, pa, pb, r0x, r0y, r0z, br, br, bc, bc, 0, 0, hz, hz)
-                            end
-                            -- 头端爆闪：只在最靠头的一段叠一条宽亮短光（同样钳到车体半径内）。
-                            if head > 0 and i >= n - 2 then
-                                local hc = layerColor(1.0, 1.0 + head)
-                                local hw0 = math.min(w0 * (1 + head), maxHalf)
-                                local hw1 = math.min(w1 * (1 + head), maxHalf)
-                                EmitTrailQuad(verts, a, b, r0x, r0y, r0z, hw0, hw1,
-                                    hc, hc, 0, 0, az, bz)
-                            end
                         end
+                        cum = cum + len
                     end
                 end
             end

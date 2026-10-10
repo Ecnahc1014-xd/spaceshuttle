@@ -3,6 +3,18 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: trail-shape-rework（2026-10-10，拖尾形态重做：**宽度锚车体 + 抛弃直线 + 去周期化**；不改展示版本）：
+  - 用户三点反馈：「有些拖尾比车都粗」「有些纹理循环太招笑」「你明明甚至都可以抛弃线性」——三条都是**形态层面**的真问题，不是调数值。
+  - **① 太粗（真因量化）**：宽度基准一直挂在**碰撞半径** `radiusWorld = radius*WORLD_SCALE`（normal=0.36m），而车体真实半宽只有 `radiusWorld × 0.5965 × 0.63 ≈ 0.137m`——**上限比车体宽 2.6 倍**。实测 `ember` 主体 headW 0.56 → **1.47× 车体半宽**、`comet` 1.10×，正是「比车还粗」。修法：新增 `VEHICLE_HALF_FACTOR = VEHICLE_COLLISION_FILL*1.12/VEHICLE_PLANAR_RADIUS*0.675`（≈0.403），宽度基准改 `vHalf = radiusWorld × VEHICLE_HALF_FACTOR`；`headW/tailW` 全部改成**车体半宽的倍数**（1.0 = 与车同宽），所有层 `math.min(..., vHalf)`。修复后最宽的 `ember/normal` 0.1413 vs 车体半宽 0.1450（**97.4%**，此前 147%）。
+  - **② 纹理循环招笑（真因）**：`dash` 样式是 `(i + flowOffset) % 3 == 0`——**每 3 段画 1 段**的机械重复，`flow=7` 又让它每秒跳 7 次；`bead` 每隔固定段数点一颗，也是规则重复。修法：**删掉 dash/flow/bead/head 四个轴**，改为**空间锚定的逐段明暗噪声** `flicker`（`segNoise(along) = flicker*sin(along*flickerFreq)`，相位沿弧长取、**不随时间跳**）+ `flickerFreq` 控颗粒。`dash` 样式 flicker 0.85/freq 17（碎光断续），`comet` 0.55/9（劈啪明灭），`ember` 0.30/5（烟状）。
+  - **③ 抛弃直线（新增形态轴）**：新增 `waver/waverLen/waverDrift`——**中线横向正弦波动**，幅度 `vHalf*waver*(1-t)`（尾端更飘）、相位沿弧长 `cum/waverLen + trailPhase_*waverDrift`。**按弧长累加**（同屏各车、各帧一致），不是逐帧随机。`twin` 0.22（蛇形辫）、`ember` 0.34（烟状漂移）、`comet` 0.06（微摆），`ribbon/neon/dash` 保持笔直（0）。
+  - **六样式现在的机制签名（两两不重复）**：ribbon=中性基准；comet=taper0.55+bulge1.1+**flicker0.55**；neon=hue0.65+**twist0.40**；dash=taper1.3+**flicker0.85/freq17**；twin=twin1+railTaper0.30+**waver0.22**；ember=taper1.7+**waver0.34**+pulse0.34+flicker0.30。
+  - **2D 预览同步**（`MetaUI.DrawTrailPreview`）：改用同一套新轴（waver/flicker、去 dash/bead/head），segs 26→40（更平滑的波动），沿弧长取相位与 3D 同式。
+  - 验证：**`probe_trailwidth` ALL PASS（24 组）**（每样式所有层 ≤ **车体半宽**，`ember/normal` 97.4%；`giant/speed` 比 1.67）；**`probe_trailstyles` ALL PASS**（6 样式机制轴齐全、签名两两不重复、ribbon 中性、未知样式回退）；**`probe_trailhead` ALL PASS**（worst 0.0570，前沿仍贴车）；真渲染冒烟 `probe_render` 零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`、真实进战斗并发射；LSP workspace **0 Error**（27 文件 1204 诊断）；官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - ⚠️ **避雷 AB-244：特效「宽度上限」必须锚**宿主真实尺寸**，不能用碰撞半径（trail-shape-rework，用户点名「比车都粗」）**：碰撞圆是**为了手感/命中留的余量**，通常远大于视觉本体——本项目碰撞半径 0.36m 而车体半宽仅 0.137m（2.6 倍）。用碰撞半径当尾迹上限，看着「没超上限」实则比车宽 47%。**做法**：先量出「视觉本体真实半宽 / 碰撞半径」的比值（本项目 `VEHICLE_HALF_FACTOR≈0.403`），宽度基准乘它；**探针的 cap 也要改成同一比值**，否则探针会继续报 PASS（本批探针原用碰撞半径，改车体半宽后才暴露 147%）。
+  - ⚠️ **避雷 AB-245：周期性图案（每 N 段画 1 段 / 每隔 N 点一颗）会读成「循环太招笑」，改用**空间锚定的噪声**（trail-shape-rework，用户点名）**：`i % dash == 0` 这类规则重复 + 时间驱动的相位平移（`floor(t*speed)`）会产生**肉眼可数的节拍**。替代：`flicker * sin(along * freq)`——相位取**沿弧长**（`along` 按段长累加），**不随时间跳**；再叠 `trailPhase_*drift` 做缓慢漂移即可。**关键区别**：噪声的相位来自几何位置（每段不同、不重复），不是来自段序号取模。
+  - ⚠️ **避雷 AB-246：「抛弃线性」= 给中线加**沿弧长**的横向波动（trail-shape-rework）**：一条光带「线性」的本质是**中线是直线**。做法：在段法线方向加 `off = vHalf*waver*(1-t)*sin(along/waverLen + phase)`，用**波动后的端点**重新算段方向与法线（`ca/cb` 替代原 `a/b`），宽度仍垂直于波动后的线。⚠️ 幅度要 `×(1-t)`（贴车端为 0，尾端最飘）——否则车头会被波动推离车体（同 AB-236 的「锚定贴物体那端」）。⚠️ 相位按 `along` 累加，禁止逐帧随机（会抖）。
+
 - 附记: digit-arttext-regen（2026-10-10，**重出 10 个关卡数字图标 + 3 张糊掉的艺术字**；不改展示版本）：
   - 用户「10个数字图标重新生成，很多其他艺术字装载出错」。**两件事分开处理**——①10 个数字图标重出；②「艺术字装载出错」实为**部分字标字形糊**（AI 生中文字没画清），不是加载失败。
   - **诊断（关键）**：真渲染探针日志 `[ArtText] pixel titles loaded=8/8` + `[DigitFont] pixel digits loaded=10/10` —— **装载本身 100% 成功**，8 张艺术字 + 10 张数字都在。把 8 张字标拼成放大图目视，定位真凶：`ui_tt_daily`（今日福利）/ `ui_tt_menu`（返回主菜单）/ `ui_tt_resume`（继续战斗）**字形糊成一团**（core/outline 比仅 0.09–0.30，其它清晰张 0.28–0.44），游戏内渲染就是乱码块。**「装载出错」= 字标图本身画坏了，不是运行时加载问题**（AB-242）。

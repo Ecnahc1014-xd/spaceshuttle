@@ -1106,6 +1106,21 @@ SpawnNextNormalEnemy = function()
         pendingSpawn.timer = 0.5
         return
     end
+    -- v0.13.57：屏幕外（尚未进入可见战场，底边仍在 -102 之上）的敌机超过上限时，
+    -- **暂停生成队列**——等屏外机下落进场后再放下一架，避免一波多架全堆在屏幕上沿之外。
+    -- 计数内联在函数内（不新增顶层 local，Game.lua 已逼近 Lua 200 上限，AB-166）。
+    local offscreen = 0
+    for i = 1, #veggies do
+        local e = veggies[i]
+        if not e.dead then
+            local _, ey, _, eh = EnemyAABB(e)
+            if ey + eh < -102 then offscreen = offscreen + 1 end
+        end
+    end
+    if offscreen >= StageCatalog.MAX_OFFSCREEN then
+        pendingSpawn.timer = 0.3
+        return
+    end
     local key = pendingSpawn.key
     if not AircraftData[key] then
         pendingSpawn.remaining = 0
@@ -2888,6 +2903,18 @@ UpdateWaveLogic = function(dt)
     local requiredSlots = plan and (1 + (plan.escortCount or 0)) or 1
     local availableSlots = StageCatalog.MAX_FLEET - #veggies
     if availableSlots < requiredSlots then
+        waveCooldown = 1
+        return
+    end
+    -- v0.13.57：屏幕外敌机已达上限时**不开新一波**——精英/护航/首领不走 pendingSpawn 队列，
+    -- 若不在此拦截，它们会在队列已堆满屏外时再叠一架，把屏外数顶到上限之上。
+    -- 计数内联（不新增顶层 local，AB-166），与 SpawnNextNormalEnemy 同口径。
+    local offscreen = 0
+    for i = 1, #veggies do
+        local e = veggies[i]
+        if not e.dead and e.y + e.gridH * e.brickSize < -102 then offscreen = offscreen + 1 end
+    end
+    if offscreen >= StageCatalog.MAX_OFFSCREEN then
         waveCooldown = 1
         return
     end

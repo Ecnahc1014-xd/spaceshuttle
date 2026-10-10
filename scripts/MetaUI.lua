@@ -969,8 +969,9 @@ local function GetShopTabs(layout)
            {x = layout.content.x + bw + gap, y = y, w = bw, h = 32}
 end
 
--- 拖尾 2D 预览：与 3D 光带**同一套样式参数与同一套机制轴**（taper/bulge/hue/flow/pulse/
--- 双轨收拢），保证预览里看到的差异就是实机差异。⚠️ D.rect 颜色是 0..255，样式色是 0..1。
+-- 拖尾 2D 预览：与 3D 光带**同一套样式参数与同一套机制轴**（taper/bulge/hue/waver/flicker/
+-- pulse/双轨收拢/层叠），保证预览里看到的差异就是实机差异。⚠️ D.rect 颜色是 0..255，样式色是 0..1。
+-- 宽度同样锚定**车体真实半宽**（3D 的 vHalf），预览用 baseHalf 表示车体半宽。
 local function DrawTrailPreview(ctx, r, trailKey)
     local C = Colors()
     local style = MetaCatalog.GetTrailStyleParams(MetaCatalog.GetTrailStyle(trailKey))
@@ -981,26 +982,23 @@ local function DrawTrailPreview(ctx, r, trailKey)
     local bulge = style.bulge or 0.0
     local hue = style.hue or 0.0
     local pulse = style.pulse or 0.0
-    local flow = style.flow or 0.0
+    local waver = style.waver or 0.0
+    local waverLen = style.waverLen or 0.9
+    local waverDrift = style.waverDrift or 0.0
+    local flicker = style.flicker or 0.0
+    local flickerFreq = style.flickerFreq or 0.0
     local railSpread = style.railSpread or 1.35
     local railTaper = style.railTaper or 1.0
-    -- 立体/层叠轴（与 3D 同一套）：外层柔光、内层亮芯、截面扭转、光珠、头端爆闪。
     local glow = style.glow or 0.0
     local core = style.core or 0.0
     local twist = style.twist or 0.0
-    local bead = style.bead or 0
-    local beadR = style.beadR or 0.0
-    local head = style.head or 0.0
     local cx, cy = r.x + r.w * 0.5, r.y + r.h * 0.5
     local x0, x1 = cx + r.w * 0.42, cx - r.w * 0.42   -- x0=车尾, x1=尾端
-    local baseHalf = 13
-    local dash = style.dash or 1
+    local baseHalf = 13                                 -- 车体真实半宽的屏幕代表
     local twin = style.twin == 1
     local railHalf = baseHalf * 0.32
-    local segs = 26
-    local flowOffset = flow > 0 and math.floor(phase * flow) or 0
-    -- mul：层明暗倍率（外层柔光暗、主体中、芯亮）；twist 在 2D 里体现为中线偏移
-    -- （用 sin 把截面转出画面平面的效果「投影」回来），与 3D 的 z 扭转同相。
+    local segs = 40
+    local phase0 = phase * waverDrift
     local function rgba(f, t, alpha, mul)
         mul = mul or 1
         local rr, gg, bb = base[1] * f * mul, base[2] * f * mul, base[3] * f * mul
@@ -1012,69 +1010,60 @@ local function DrawTrailPreview(ctx, r, trailKey)
             math.min(255, math.floor(bb * 255)), alpha}
     end
     for i = 1, segs - 1 do
-        if ((i + flowOffset) % dash) == 0 then
-            local t0 = (i - 1) / (segs - 1)
-            local t1 = i / (segs - 1)
-            -- x0(右=车尾) → x1(左=尾端)，宽度必须取正值。
-            local xa = x0 + (x1 - x0) * t0
-            local xb = x0 + (x1 - x0) * t1
-            local rx, rw = math.min(xa, xb), math.abs(xb - xa)
-            -- tm=0 在车尾(x0)、tm=1 在尾端(x1)；t 反过来：车尾最宽最亮（同 3D 头亮尾暗）。
-            local t = 1 - (t0 + t1) * 0.5
-            local half = (style.tailW + (style.headW - style.tailW) * (t ^ taper)) * baseHalf
-            if bulge > 0 then half = half * (1 + bulge * t * t) end
-            local f = (style.base + (1 - style.base) * t) * style.bright
-            if pulse > 0 then
-                f = f * (1 - pulse + pulse * (0.5 + 0.5 * math.sin(phase * 3.4 + t * 2.2)))
-            end
-            f = math.min(1, f)
-            -- 扭转在 2D 预览里的投影：截面转出画面 → 中线随弧长上下摆。
-            -- ⚠️ 与 3D 同锚点：**车头(i=1，宽亮端)处位移为 0**（贴车），越往尾端扭得越开。
-            local segFromHead = (i - 1) / (segs - 1)
-            local wob = twist * 6.0 * segFromHead * math.sin(twist * (i - 1) * 3.0 + phase * 0.8)
-            local yc = cy + wob
-            -- ① 外层柔光：宽而暗，垫在主体下（宽度同样钳到车体半径 baseHalf 内）。
-            if glow > 1.0 then
-                local gA = math.floor(60 + 70 * f)
-                local gw = math.min(half * glow, baseHalf)
-                if twin then
-                    local spread = baseHalf * railSpread * (t ^ railTaper)
-                    D.rect(ctx, rx, yc - spread - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
-                    D.rect(ctx, rx, yc + spread - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
-                else
-                    D.rect(ctx, rx, yc - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
-                end
-            end
-            -- ② 主体 + ③ 高亮芯。
-            local alpha = math.floor(90 + 165 * f)
+        local t0 = (i - 1) / (segs - 1)
+        local t1 = i / (segs - 1)
+        -- x0(右=车尾) → x1(左=尾端)，宽度必须取正值。
+        local xa = x0 + (x1 - x0) * t0
+        local xb = x0 + (x1 - x0) * t1
+        local rx, rw = math.min(xa, xb), math.abs(xb - xa)
+        -- t：1=车尾(宽亮端)，0=尾端（同 3D 头亮尾暗）。
+        local t = 1 - (t0 + t1) * 0.5
+        local half = (style.tailW + (style.headW - style.tailW) * (t ^ taper)) * baseHalf
+        if bulge > 0 then half = half * (1 + bulge * t * t) end
+        -- 沿弧长取相位（与 3D 同式）：波动 + 明暗噪声都**非周期、不随时间跳**。
+        local along = (t0 + t1) * 0.5 * 3.0
+        local ns = flicker > 0 and flicker * math.sin(along * flickerFreq + 0.5) or 0
+        local f = (style.base + (1 - style.base) * t) * style.bright * math.max(0, 1 + ns)
+        if pulse > 0 then
+            f = f * (1 - pulse + pulse * (0.5 + 0.5 * math.sin(phase * 3.4 + t * 2.2)))
+        end
+        f = math.min(1, f)
+        -- 中线波动：沿长度正弦（**非直线**），幅度随离车距离增大（尾端更飘）；与 3D 同式。
+        local wob = 0
+        if waver > 0 then
+            wob = baseHalf * waver * (1 - t) * math.sin(along / waverLen + phase0)
+        end
+        -- 扭转在 2D 里的投影：截面转出画面 → 中线随弧长上下摆（车头 0）。
+        local yc = cy + wob + twist * 5.0 * (1 - t) * math.sin(twist * (i - 1) * 2.2 + phase * 0.8)
+        -- ① 外层柔光：宽而暗，垫在主体下（不超车体半宽）。
+        if glow > 1.0 then
+            local gA = math.floor((60 + 70 * f) * math.max(0.05, 0.34 + ns * 0.4) / 0.34)
+            local gw = math.min(half * glow, baseHalf)
             if twin then
                 local spread = baseHalf * railSpread * (t ^ railTaper)
-                D.rect(ctx, rx, yc - spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
-                D.rect(ctx, rx, yc + spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
-                if core > 0 then
-                    D.rect(ctx, rx, yc - spread - railHalf * 0.42, rw, railHalf * 0.84,
-                        rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
-                    D.rect(ctx, rx, yc + spread - railHalf * 0.42, rw, railHalf * 0.84,
-                        rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
-                end
+                D.rect(ctx, rx, yc - spread - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
+                D.rect(ctx, rx, yc + spread - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
             else
-                D.rect(ctx, rx, yc - half, rw, half * 2, rgba(f, t, alpha), 0)
-                if core > 0 then
-                    D.rect(ctx, rx, yc - half * 0.40, rw, half * 0.80,
-                        rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
-                end
+                D.rect(ctx, rx, yc - gw, rw, gw * 2, rgba(f, t, gA, 0.42), 0)
             end
-            -- ④ 沿途光珠：每隔 bead 段在主体上点一颗亮珠。
-            if bead > 0 and (i % bead) == 0 then
-                local br = math.min(half * beadR * 1.6, baseHalf)
-                D.rect(ctx, rx + rw * 0.5 - br, yc - br, br * 2, br * 2,
-                    rgba(f, t, 240, 1.0 + 0.9 * t), 1)
+        end
+        -- ② 主体 + ③ 高亮芯。
+        local alpha = math.floor(90 + 165 * f)
+        if twin then
+            local spread = baseHalf * railSpread * (t ^ railTaper)
+            D.rect(ctx, rx, yc - spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
+            D.rect(ctx, rx, yc + spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)
+            if core > 0 then
+                D.rect(ctx, rx, yc - spread - railHalf * 0.42, rw, railHalf * 0.84,
+                    rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
+                D.rect(ctx, rx, yc + spread - railHalf * 0.42, rw, railHalf * 0.84,
+                    rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
             end
-            -- ⑤ 头端爆闪：最靠头的一段叠一条宽亮短光（同样钳到车体半径内）。
-            if head > 0 and i >= segs - 2 then
-                local hh = math.min(half * (1 + head), baseHalf)
-                D.rect(ctx, rx, yc - hh, rw, hh * 2,
-                    rgba(1.0, 1.0, 255, 1.0 + head), 0)
+        else
+            D.rect(ctx, rx, yc - half, rw, half * 2, rgba(f, t, alpha), 0)
+            if core > 0 then
+                D.rect(ctx, rx, yc - half * 0.40, rw, half * 0.80,
+                    rgba(f, t, math.min(255, alpha + 40), 1.0 + core * 0.35), 0)
             end
         end
     end
