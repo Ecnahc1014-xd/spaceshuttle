@@ -197,13 +197,13 @@ function StageCatalog.GetSpawnInterval(stage)
     return base
 end
 
--- v0.13.51：本关内按「出场序号」给敌机血量**封顶**——第 1 架 ≤1 血、第 2 架 ≤3 血、
--- 第 3 架 ≤5 血……（上限 = 2×序号-1），让关卡前段由弱到强平滑递进。
+-- 本关内按「出场序号」给敌机血量**封顶**（上限 = floor(0.5×(1.25^序号 + 1))）：
+-- 前几架恒为 1 血、随序号指数级缓慢抬升，让关卡前段由弱到强平滑递进。
 -- 只**封顶**不抬升：关卡曲线（GetBrickHp）高于上限时压到上限；后期曲线低于上限时保持不变。
 -- 精英/Boss 走各自曲线，不参与本表。
 function StageCatalog.GetFirstShipHpCap(spawnIndex)
     spawnIndex = math.max(1, math.floor(spawnIndex or 1))
-    return 2 * spawnIndex - 1
+    return math.floor(0.5 * (1.25 ^ spawnIndex + 1))
 end
 
 function StageCatalog.GetBossSummonLimit(stage)
