@@ -1330,6 +1330,16 @@ local ICON_PATHS = {
     talent_ammo = "image/ui_icon_talent_ammo.png",
     talent_unlock = "image/ui_icon_talent_unlock.png",
     talent_word = "image/ui_icon_talent_word.png",
+    -- v0.13.58 局内附魔卡图标（0718-pixelimage-aigc 后处理，32×32/≤7 色）。
+    ench_split = "image/ui_ench_split.png",
+    ench_lifesteal = "image/ui_ench_lifesteal.png",
+    ench_homing = "image/ui_ench_homing.png",
+    ench_pierce = "image/ui_ench_pierce.png",
+    ench_chain = "image/ui_ench_chain.png",
+    ench_freeze = "image/ui_ench_freeze.png",
+    ench_power = "image/ui_ench_power.png",
+    ench_explode = "image/ui_ench_explode.png",
+    ench_triple = "image/ui_ench_triple.png",
 }
 
 ---@type table<string, integer>
@@ -1423,6 +1433,14 @@ local function GetItemPanelLayout()
         slots[i] = { x = DESIGN_W - 60, y = 146 + (i - 1) * 58, w = 52, h = 52 }
     end
     return tab, slots
+end
+
+-- v0.13.58：局内附魔卡常驻左上角，与右上道具竖列镜像对称。
+-- ⚠️ 宽度限制在 132：Boss 阶段条从 x=150 起（DrawBossPhaseBar），更宽会与之重叠。
+-- ⚠️ 挂到 Backend 表上（不是顶层 local）——Scene3DBackend 顶层 local 已到 199，
+--    再加 local 会撞 Lua 200 上限导致 LoadChunk 全屏黑（AB-166）。
+function Backend.GetEnchantRect()
+    return { x = 12, y = 100, w = 132, h = 86 }
 end
 
 ---@param ctx any
@@ -2581,6 +2599,7 @@ local function RenderOverlay(game, presentation, meta)
         if not RunOverlayStage("playing-dock", function()
             DrawAmmoSlots(vg_, game, presentation)
             DrawItemSlots(vg_, game)
+            uiFx.battle.DrawEnchant(vg_, game, Backend.GetEnchantRect())
             DrawPullHint(vg_, game)
         end) then
             RunOverlayStage("dock-fallback", function() DrawMinimalDockFallback(game) end)
@@ -3201,6 +3220,14 @@ end
 ---@return boolean open
 function Backend.IsItemPanelOpen()
     return itemPanelOpen_
+end
+
+-- v0.13.58：左上角附魔卡命中（与 DrawEnchantCard 共用 GetEnchantRect）。
+---@return boolean
+function Backend.HitTestEnchant(uiX, uiY, game)
+    if not (game and game.enchantCard) then return false end
+    local r = Backend.GetEnchantRect()
+    return uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h
 end
 
 -- 控件显式登记几何，缓动统一由 UpdateScene 推进。

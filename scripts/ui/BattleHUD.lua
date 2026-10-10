@@ -3,6 +3,7 @@
 -- UI.Label / UI.ProgressBar 负责读数；NanoVG 只画仪器外壳、刻度和扫描图形。
 -- 不接管全局 UI root，不创建/销毁共享上下文，不订阅第二套输入或渲染事件。
 local UI = require "urhox-libs/UI"
+local EnchantCatalog = require "EnchantCatalog"
 local BattleHUD = {}
 local D = {}
 ---@type table<string, Panel>
@@ -493,6 +494,55 @@ function BattleHUD.DrawItems(ctx, game, tab, slots, open)
         end
     end
     Render("items", ctx)
+end
+
+-- v0.13.58：局内附魔卡（左上角，与右上道具竖列对称）。
+-- 一张常驻卡：稀有度色边框 + 图标 + 名称 + 效果说明。有卡时亮、空手时压暗成占位。
+-- 使用后卡片消失；若当前无待发车则显示「已顺延下一辆」。
+function BattleHUD.DrawEnchant(ctx, game, rect)
+    local C = D.C
+    local card = game.enchantCard
+    local pending = game.enchantPending
+    local rarity = card and card.rarity or (pending and pending.rarity)
+    local accent = rarity and EnchantCatalog.RARITY_COLORS[rarity] or C.dim
+    local hasCard = card ~= nil
+    local glow, press = D.controlFx(rect, hasCard)
+    -- 面板：空手时压暗，有卡时按稀有度描边 + 常驻辉光。
+    nvgSave(ctx)
+    nvgBeginPath(ctx)
+    nvgRoundedRect(ctx, rect.x, rect.y + press, rect.w, rect.h, 6)
+    nvgFillPaint(ctx, nvgLinearGradient(ctx, rect.x, rect.y, rect.x, rect.y + rect.h,
+        nvgRGBA(C.widget[1], C.widget[2], C.widget[3], 255),
+        nvgRGBA(C.panel[1], C.panel[2], C.panel[3], 255)))
+    nvgFill(ctx)
+    nvgRestore(ctx)
+    Trace(ctx, rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6, accent, hasCard and 14 or 8)
+    D.stroke(ctx, rect.x, rect.y + press, rect.w, rect.h,
+        hasCard and Alpha(accent, 200) or Alpha(C.dim, 70), 6, hasCard and 1.6 or 1)
+    -- 顶部稀有度识别条 + 角标
+    if hasCard then
+        Rect(ctx, rect.x + 6, rect.y + 2.5, rect.w - 12, 2, accent, 1)
+    end
+    Text(ctx, "enchant", "title", hasCard and "附魔 · " .. (EnchantCatalog.RARITY_NAMES[rarity] or "")
+        or "附魔槽", rect.x + 8, rect.y + 6, rect.w - 16, 18, 15,
+        hasCard and accent or C.dim)
+    if hasCard then
+        D.icon(ctx, "ench_" .. card.id, rect.x + 8, rect.y + 24, 32, 1)
+        Text(ctx, "enchant", "name", card.name, rect.x + 46, rect.y + 26, rect.w - 54, 22, 19, C.text)
+        Text(ctx, "enchant", "desc", card.desc or "", rect.x + 8, rect.y + 58, rect.w - 16, 18, 14, C.dim)
+        Text(ctx, "enchant", "hint", "点击附到待发车", rect.x + 8, rect.y + rect.h - 20, rect.w - 16, 16, 14,
+            glow > 0.1 and C.cyan or C.dim, "right")
+    elseif pending then
+        D.icon(ctx, "ench_" .. pending.id, rect.x + 8, rect.y + 24, 32, 0.5)
+        Text(ctx, "enchant", "name", "顺延 · " .. (pending.name or ""), rect.x + 46, rect.y + 26,
+            rect.w - 54, 22, 17, Alpha(accent, 220))
+        Text(ctx, "enchant", "desc", "下一辆自动生效", rect.x + 8, rect.y + 58, rect.w - 16, 18, 14, C.dim)
+    else
+        D.icon(ctx, "rarity", rect.x + 8, rect.y + 28, 28, 0.28)
+        Text(ctx, "enchant", "name", "暂无附魔", rect.x + 44, rect.y + 32, rect.w - 52, 22, 17, C.dim)
+        Text(ctx, "enchant", "desc", "每波获得一张", rect.x + 8, rect.y + 60, rect.w - 16, 18, 14, C.dim)
+    end
+    Render("enchant", ctx)
 end
 
 function BattleHUD.DrawBoss(ctx, game, boss)

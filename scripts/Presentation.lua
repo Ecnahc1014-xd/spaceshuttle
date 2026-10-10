@@ -90,6 +90,15 @@ local FEEDBACK_MAP = {
     -- v0.11.0 商业化 P4：局内道具槽
     item_used = {"itemUsed"},
     item_granted = {"itemGranted"},
+    -- v0.13.58：局内附魔卡
+    enchant_granted = {"enchantGranted"},
+    enchant_armed = {"enchantArmed"},
+    enchant_applied = {"enchantApplied"},
+    enchant_pierce = {"enchantPierce"},
+    enchant_explode = {"enchantExplode"},
+    enchant_chain = {"enchantChain"},
+    enchant_triple = {"enchantTriple"},
+    enchant_lifesteal = {"enchantLifesteal"},
 }
 
 local function GetBrickKey(enemyId, col, row)
@@ -481,6 +490,38 @@ local FEEDBACK_HANDLERS = {
     end,
     itemGranted = function(event)
         SpawnFloatText(270, 780, "道具已入库 · 点一下使用", {120, 255, 160}, 1.0)
+    end,
+    -- v0.13.58：局内附魔卡反馈（只写瞬时状态，不触达规则层）。
+    enchantGranted = function(event)
+        local col = ({ common = {92, 150, 255}, rare = {176, 110, 255}, epic = {255, 196, 72} })[event.rarity]
+            or {140, 235, 255}
+        SpawnFloatText(128, 210, "附魔 · " .. (event.name or ""), col, 1.15)
+        SpawnParticles(128, 200, col, 4, "spark")
+    end,
+    enchantArmed = function(event)
+        SpawnFloatText(128, 210, "已顺延 · " .. (event.name or ""), {120, 255, 160}, 1.0)
+    end,
+    enchantApplied = function(event)
+        local col = ({ common = {92, 150, 255}, rare = {176, 110, 255}, epic = {255, 196, 72} })[event.rarity]
+            or {140, 235, 255}
+        SpawnFloatText(270, 470, "附魔生效 · " .. (event.name or ""), col, 1.3)
+        screenShake = math.max(screenShake, 0.14)
+    end,
+    enchantPierce = function(event)
+        SpawnParticles(event.x, event.y, {255, 210, 120}, 3, "spark")
+    end,
+    enchantExplode = function(event)
+        SpawnParticles(event.x, event.y, {255, 150, 80}, 6, "spark")
+        screenShake = math.max(screenShake, 0.16)
+    end,
+    enchantChain = function(event)
+        SpawnParticles(event.targetX or event.x, event.targetY or event.y, {150, 200, 255}, 2, "spark")
+    end,
+    enchantTriple = function(event)
+        SpawnParticles(event.x, event.y, {255, 196, 72}, 4, "spark")
+    end,
+    enchantLifesteal = function(event)
+        SpawnFloatText(event.x, event.y - 26, "+" .. tostring(event.amount or 1), {120, 255, 160}, 0.8)
     end,
     -- marble_removed 无需维护拖尾状态。
 }

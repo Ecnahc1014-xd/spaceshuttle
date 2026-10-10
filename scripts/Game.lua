@@ -4,10 +4,16 @@
 local AircraftData = require "AircraftPixelData"
 local StageCatalog = require "StageCatalog"
 local TalentCatalog = require "TalentCatalog"
+local EnchantCatalog = require "EnchantCatalog"
 
 local Game = {}
 -- 空手长按只缩放战斗模拟，不改变表现时钟；收表避免增加主块 local 槽位。
 Game._holdSpeed = { down = false, active = false, time = 0, threshold = 0.35, epoch = 0 }
+-- v0.13.58：局内附魔卡状态（收进一张表，不新增顶层 local，AB-166）。
+--   card    = 当前持有的附魔卡（EnchantDef），nil 表示空手
+--   pending = 已使用但当前没有待发车时，顺延给「下一个预备发射的车」的附魔卡
+--   lastWave= 最近一次发放附魔卡时的波号（用于「每完成一波发一张」判定）
+Game._enchant = { card = nil, pending = nil, lastWave = 0 }
 
 local DW = 540
 local DH = 960
@@ -213,10 +219,11 @@ local PANEL_CARD_COUNT = 3         -- 常规候选数（v0.12.5 精简：面板�
 local pauseHealUsed = 0            -- 已用「防线急救」次数
 local pauseRareUsed = 0            -- 已用「下次强化保底稀有」次数
 local pendingRareRoll = false      -- 下次抽卡强制稀有（由暂停补给站购买）
-local PAUSE_HEAL_MAX = 1
-local PAUSE_HEAL_AMOUNT = 25
-local PAUSE_RARE_MAX = 1
+-- v0.13.58：暂停补给站的常量收进一张表（Game.lua 顶层 local 逼近 Lua 200 上限，AB-166）。
+local PAUSE_SUPPLY = { healMax = 1, healAmount = 25, rareMax = 1 }
 local EjectBrick
+-- v0.13.58：附魔挂载函数——CreateMarble（约 500 行）先于其定义使用，必须前向声明（AB-100）。
+local ApplyEnchantToMarble
 local pauseOrbitalUsed = false
 local pauseReloadUsed = false
 local pausePartsBoostUsed = false
@@ -535,6 +542,12 @@ local function CreateMarble(ballType, words)
         end
     end
     nextMarbleId = nextMarbleId + 1
+    -- v0.13.58：优先消费「顺延」的附魔卡（使用附魔卡时没有待发车 → 挂给下一个预备发射的车）。
+    if Game._enchant.pending then
+        local pendingCard = Game._enchant.pending
+        Game._enchant.pending = nil
+        ApplyEnchantToMarble(marble, pendingCard)
+    end
     return marble
 end
 
@@ -760,6 +773,10 @@ ResetGame = function(startStage)
     pauseHealUsed = 0
     pauseRareUsed = 0
     pendingRareRoll = false
+    -- v0.13.58：附魔卡状态复位（开局空手；lastWave 记录当前波，使本波完成时发放第一张）。
+    Game._enchant.card = nil
+    Game._enchant.pending = nil
+    Game._enchant.lastWave = wave
     pauseOrbitalUsed = false
     pauseReloadUsed = false
     pausePartsBoostUsed = false
@@ -1745,32 +1762,32 @@ end
 
 ---@return boolean
 function Game.CanPauseHeal()
-    return gameState == "paused" and pauseHealUsed < PAUSE_HEAL_MAX and baseHp < GetMaxBaseHp()
+    return gameState == "paused" and pauseHealUsed < PAUSE_SUPPLY.healMax and baseHp < GetMaxBaseHp()
 end
 
 ---@return integer 剩余可用次数
 function Game.GetPauseHealLeft()
-    return math.max(0, PAUSE_HEAL_MAX - pauseHealUsed)
+    return math.max(0, PAUSE_SUPPLY.healMax - pauseHealUsed)
 end
 
 ---@return boolean ok
 function Game.PauseHeal()
     if not Game.CanPauseHeal() then return false end
     pauseHealUsed = pauseHealUsed + 1
-    baseHp = math.min(GetMaxBaseHp(), baseHp + PAUSE_HEAL_AMOUNT)
-    Emit("base_healed", {amount = PAUSE_HEAL_AMOUNT, hp = baseHp})
+    baseHp = math.min(GetMaxBaseHp(), baseHp + PAUSE_SUPPLY.healAmount)
+    Emit("base_healed", {amount = PAUSE_SUPPLY.healAmount, hp = baseHp})
     print("[Game] pause supply: base healed to " .. baseHp)
     return true
 end
 
 ---@return boolean
 function Game.CanPauseRarePick()
-    return gameState == "paused" and pauseRareUsed < PAUSE_RARE_MAX
+    return gameState == "paused" and pauseRareUsed < PAUSE_SUPPLY.rareMax
 end
 
 ---@return integer
 function Game.GetPauseRareLeft()
-    return math.max(0, PAUSE_RARE_MAX - pauseRareUsed)
+    return math.max(0, PAUSE_SUPPLY.rareMax - pauseRareUsed)
 end
 
 -- 买「下一个强化面板保底出稀有」。
@@ -2000,6 +2017,72 @@ function Game.GetItemDefs()
     return ITEM_DEFS
 end
 
+-- ============================================================================
+-- 局内附魔卡（v0.13.58）。
+-- 每完成一波获得/更换一张附魔卡，显示在左上角（与右上道具竖列对称）。
+-- 使用后卡片消失，效果作用在**预备发射的车**上；若当前没有待发车（球在飞/补弹中），
+-- 则顺延给「下一个预备发射的车」。稀有度蓝/紫/黄，波次越高越容易出高稀有度。
+-- 规则层只判定「能不能用 / 用了什么效果」，绘制与命中在 UI 层。
+-- ============================================================================
+
+-- 把附魔卡挂到一颗弹珠上（改写行为字段；不改弹种定义，禁止硬编码到渲染层）。
+---@param marble table
+---@param card EnchantDef|nil
+ApplyEnchantToMarble = function(marble, card)
+    if not marble or not card then return end
+    marble.enchant = card
+    if card.pierce then marble.enchantPierce = card.pierce end
+    Emit("enchant_applied", {
+        id = marble.id, cardId = card.id, name = card.name, rarity = card.rarity,
+    })
+end
+
+-- 当前是否有附魔卡在手。
+---@return boolean
+function Game.HasEnchant()
+    return Game._enchant.card ~= nil
+end
+
+-- 能不能使用附魔卡：只在战斗中、且手上有卡时可用。
+---@return boolean
+function Game.CanUseEnchant()
+    return gameState == "playing" and Game._enchant.card ~= nil
+end
+
+-- 使用附魔卡。有预备发射的车 → 立即生效；否则顺延给下一个预备发射的车。
+-- 无论立即生效还是顺延，卡片都会从手上消失（用掉即消耗）。
+---@return boolean ok
+function Game.UseEnchant()
+    if not Game.CanUseEnchant() then return false end
+    local card = Game._enchant.card
+    Game._enchant.card = nil
+    if activeBall then
+        ApplyEnchantToMarble(activeBall, card)
+        print("[Game] enchant applied immediately: " .. card.id)
+    else
+        Game._enchant.pending = card
+        Emit("enchant_armed", {cardId = card.id, name = card.name, rarity = card.rarity})
+        print("[Game] enchant deferred to next vehicle: " .. card.id)
+    end
+    return true
+end
+
+-- 新一波完成时发放/更换一张附魔卡。由 UpdateWaveLogic 在波次推进处调用一次。
+local function GrantEnchant()
+    local card = EnchantCatalog.Roll(wave, Random)
+    Game._enchant.card = card
+    Emit("enchant_granted", {
+        cardId = card.id, name = card.name, rarity = card.rarity, wave = wave,
+    })
+    print("[Game] enchant granted at wave " .. wave .. ": " .. card.id .. " (" .. card.rarity .. ")")
+end
+
+-- 读取当前附魔状态（供渲染层只读展示）。
+---@return {card: EnchantDef|nil, pending: EnchantDef|nil}
+function Game.GetEnchantState()
+    return { card = Game._enchant.card, pending = Game._enchant.pending }
+end
+
 local function RotateVelocity(vx, vy, degrees)
     local radians = math.rad(degrees)
     local c = math.cos(radians)
@@ -2130,6 +2213,10 @@ local function GetMarbleDamage(marble, def)
         local bonus = math.floor(math.max(0, marble.speed - def.speed) / def.damageStep)
         base = def.damage + bonus + BALL_TUNING.damageBonus + TalentDamageBonus()
     end
+    -- v0.13.58：附魔「重击」——直接放大本次弹珠的基础伤害。
+    if marble.enchant and marble.enchant.damageMul then
+        base = base * marble.enchant.damageMul
+    end
     -- 暴击只影响本次结算，不改弹珠状态；表现层消费 crit_hit 出飘字。
     return ApplyCrit(base, marble)
 end
@@ -2244,6 +2331,27 @@ local function LaunchMarble(dx, dy, power)
         x = activeBall.x,
         y = activeBall.y,
     })
+    -- v0.13.58：附魔「三连」——发射时额外扇形射出同型车（继承附魔与词条，共享同一发射方向）。
+    local triple = activeBall.enchant and activeBall.enchant.tripleShot or 0
+    for k = 1, triple do
+        local sign = (k % 2 == 1) and 1 or -1
+        local spread = 16 * math.ceil(k / 2) * sign
+        local baseAngle = math.atan(-dy, -dx)
+        local a = baseAngle + math.rad(spread)
+        local extra = CreateSplitMarble(activeBall, 0, nil)
+        extra.ballType = activeBall.ballType
+        extra.radius = activeBall.radius
+        extra.speed = speed
+        extra.vx = math.cos(a) * speed
+        extra.vy = math.sin(a) * speed
+        extra.isPrimary = false
+        extra.enchant = activeBall.enchant
+        extra.enchantPierce = activeBall.enchantPierce
+        table.insert(marbles, extra)
+    end
+    if triple > 0 then
+        Emit("enchant_triple", { x = activeBall.x, y = activeBall.y, count = triple })
+    end
     activeBall = nil
 end
 
@@ -2425,6 +2533,22 @@ UpdateMarbles = function(dt)
                         Emit("speed_pierce", { id = marble.id, x = marble.x, y = marble.y,
                             remaining = marble.pierceLeft })
                     end
+                    -- v0.13.58：附魔「穿透」——任意车型都能带穿透次数，不反弹、连续吃块。
+                    if not pierced and (marble.enchantPierce or 0) > 0 then
+                        marble.enchantPierce = marble.enchantPierce - 1
+                        marble.ignoredBrick = brick
+                        frameHitBricks[brick] = true
+                        DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
+                        local vlen = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
+                        if vlen > 0.001 then
+                            local push = enemy.brickSize * 0.75
+                            marble.x = marble.x + marble.vx / vlen * push
+                            marble.y = marble.y + marble.vy / vlen * push
+                        end
+                        pierced = true
+                        Emit("enchant_pierce", { id = marble.id, x = marble.x, y = marble.y,
+                            remaining = marble.enchantPierce })
+                    end
                     if not pierced then
                         local resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
                         if not resolved then
@@ -2465,6 +2589,79 @@ UpdateMarbles = function(dt)
                     RedirectSpeedMarble(marble, enemy, brick)
                 elseif marble.ballType == "giant" and not marble.giantPiercing then
                     ArmGiantPiercing(marble)
+                end
+
+                -- v0.13.58：附魔卡命中效果（全部落在机制上，与词条/弹种效果相互独立）。
+                local enchant = marble.enchant
+                if enchant then
+                    if enchant.healPerHit and baseHp < GetMaxBaseHp() then
+                        baseHp = math.min(GetMaxBaseHp(), baseHp + enchant.healPerHit)
+                        Emit("enchant_lifesteal", { x = marble.x, y = marble.y,
+                            amount = enchant.healPerHit })
+                    end
+                    if enchant.freezeAll and not marble.enchantFrozen then
+                        marble.enchantFrozen = true
+                        for _, other in ipairs(veggies) do
+                            if not other.dead then
+                                other.frozen = enchant.freezeAll
+                                other.freezeRatio = 1
+                            end
+                        end
+                    end
+                    if enchant.chain then
+                        local target = FindNearestBrick(enemy, brick, marble.x, marble.y)
+                        if target then
+                            Emit("enchant_chain", { x = marble.x, y = marble.y,
+                                targetX = target.x, targetY = target.y,
+                                damage = GetMarbleDamage(marble, def) })
+                        end
+                    end
+                    if enchant.explodeRadius then
+                        local radius = enemy.brickSize * enchant.explodeRadius
+                        local radiusSq = radius * radius
+                        local cx = enemy.x + (brick.col - 0.5) * enemy.brickSize
+                        local cy = enemy.y + (brick.row - 0.5) * enemy.brickSize
+                        for _, other in ipairs(veggies) do
+                            if not other.dead then
+                                for _, otherBrick in ipairs(other.bricks) do
+                                    if otherBrick.alive and not otherBrick.ejected
+                                        and otherBrick ~= brick and not frameHitBricks[otherBrick] then
+                                        local bx = other.x + (otherBrick.col - 0.5) * other.brickSize
+                                        local by = other.y + (otherBrick.row - 0.5) * other.brickSize
+                                        local ddx, ddy = bx - cx, by - cy
+                                        if ddx * ddx + ddy * ddy <= radiusSq then
+                                            frameHitBricks[otherBrick] = true
+                                            DamageBrick(other, otherBrick,
+                                                GetMarbleDamage(marble, def) * 0.6)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        Emit("enchant_explode", { x = cx, y = cy, radius = radius })
+                    end
+                    if enchant.splitOnHit then
+                        local room = Game._NormalMarbleSlots(pendingMarbles)
+                        for _ = 1, math.min(enchant.splitOnHit, room) do
+                            local angle = -18 + Random() * 36
+                            table.insert(pendingMarbles, CreateSplitMarble(marble, angle, brick))
+                        end
+                        Emit("enchant_split", { x = marble.x, y = marble.y })
+                    end
+                    if enchant.homing then
+                        local target = FindNearestBrick(enemy, brick, marble.x, marble.y)
+                        if target then
+                            local dx, dy = target.x - marble.x, target.y - marble.y
+                            local d = math.sqrt(dx * dx + dy * dy)
+                            if d > 0.001 then
+                                local sp = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
+                                marble.vx = dx / d * sp
+                                marble.vy = dy / d * sp
+                                Emit("enchant_homing", { x = marble.x, y = marble.y,
+                                    targetX = target.x, targetY = target.y })
+                            end
+                        end
+                    end
                 end
             end
 
@@ -2929,6 +3126,9 @@ UpdateWaveLogic = function(dt)
     SpawnWave(availableSlots)
     waveCooldown = StageCatalog.GetInterval(stage, stageWave)
     EnsureNextWavePlan()
+    -- v0.13.58：每完成一波发放/更换一张附魔卡（高波次更容易出高稀有度）。
+    -- 放在波次真正推进处（stageWave 已 +1），不在 Boss 重派/开波失败路径触发。
+    GrantEnchant()
 end
 
 -- v0.10.15：全屏起手的相对拖拽。pull 为手指相对按下点的位移（不再相对固定弹弓点），
@@ -3442,6 +3642,13 @@ function Game.GetSnapshot()
     end
     s.items = items
     s.baseShield = baseShield
+    -- v0.13.58：附魔卡只读快照（左上角展示）。card=在手，pending=已顺延给下一辆待发车。
+    -- 只在有卡/有顺延时新建小表，避免每帧 GC（无卡时置 nil）。
+    local ecard, epend = Game._enchant.card, Game._enchant.pending
+    s.enchantCard = ecard and {
+        id = ecard.id, name = ecard.name, rarity = ecard.rarity, desc = ecard.desc,
+    } or nil
+    s.enchantPending = epend and { id = epend.id, name = epend.name, rarity = epend.rarity } or nil
     return s
 end
 

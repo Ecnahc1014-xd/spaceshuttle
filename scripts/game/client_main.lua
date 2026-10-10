@@ -1196,6 +1196,17 @@ local function TryUseItemAt(screenX, screenY)
     return true
 end
 
+-- v0.13.58：左上角附魔卡点击使用。返回 true 表示点击已被消费（不再穿透成拖拽起手）。
+---@return boolean handled
+local function TryUseEnchantAt(screenX, screenY)
+    if not gameSnapshot or gameSnapshot.state ~= "playing" then return false end
+    local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+    if not RenderBackend.HitTestEnchant(uiX, uiY, gameSnapshot) then return false end
+    if not Game.HasEnchant() then return false end
+    Game.UseEnchant()   -- 效果与反馈都由规则层事件驱动
+    return true
+end
+
 -- v0.11.0 商业化：暂停补给站的看广告按钮。返回 true 表示点击已被消费（不触发恢复）。
 ---@return boolean handled
 local function TryPauseSupplyAt(screenX, screenY)
@@ -1699,6 +1710,10 @@ function HandleMouseDown(eventType, eventData)
         metaPointerConsumed = true
         return
     end
+    if TryUseEnchantAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
     if TryUseItemAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -1829,6 +1844,10 @@ function HandleTouchBegin(eventType, eventData)
     -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
     -- v0.12.5：HUD 暂停按钮与道具竖列优先于拖拽起手。
     if TryHudPauseAt(screenX, screenY) then
+        metaPointerConsumed = true
+        return
+    end
+    if TryUseEnchantAt(screenX, screenY) then
         metaPointerConsumed = true
         return
     end
