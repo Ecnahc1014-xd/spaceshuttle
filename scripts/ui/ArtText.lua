@@ -61,6 +61,15 @@ local function LoadAll(ctx)
     print("[ArtText] pixel titles loaded=" .. n .. "/" .. SpecCount())
 end
 
+-- 公开预加载入口：宿主（Backend.Init）在拿到 vg 后调用一次，
+-- 让 Has/Width/Height 从启动起就可靠。⚠️ 必须显式调用——`Has()` 本身不触发加载，
+-- 否则「Has() 判 false → 走 zpix 回退」会在首次 Draw 之前一直成立（表现为
+-- 「有时是艺术字、有时是文字」的间歇性错误）。
+---@param ctx any
+function ArtText.Ensure(ctx)
+    if not loaded_ then LoadAll(ctx) end
+end
+
 ---@param key string
 ---@return boolean 该键是否有可用图集
 function ArtText.Has(key)
@@ -89,7 +98,7 @@ end
 ---@param alpha number|nil 0..1
 ---@return boolean drawn
 function ArtText.Draw(ctx, key, cx, topY, tint, alpha)
-    if not loaded_ then LoadAll(ctx) end
+    ArtText.Ensure(ctx)
     local it = images_[key]
     if not it then return false end
     local a = alpha or 1
@@ -113,7 +122,7 @@ end
 ---@param yOffset number|nil 相对垂直中心的微调
 ---@return boolean drawn
 function ArtText.DrawCentered(ctx, key, r, tint, yOffset)
-    if not loaded_ then LoadAll(ctx) end
+    ArtText.Ensure(ctx)
     local it = images_[key]
     if not it then return false end
     local topY = r.y + (r.h - it.h) * 0.5 + (yOffset or 0)

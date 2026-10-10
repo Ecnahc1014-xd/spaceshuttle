@@ -3,6 +3,13 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: arttext-preload-fix（2026-10-10，修「贴图艺术字概率出错」；不改展示版本）：
+  - 用户报「贴图艺术字概率出错」+ 两张实机截图（暂停按钮「继续战斗」/选关面板标题位置各有一处**竖条状乱码**）。**「概率」是关键词**——间歇性、非确定。
+  - **真因（本地复现实锤）**：`ui/ArtText.lua` / `ui/DigitFont.lua` 是**懒加载**（只有 `Draw()` 触发 `nvgCreateImage`），而 **`Has()/Width()/Height()` 不触发加载**。全项目多数调用点是 `if ArtText.Has(k) then Draw(...) else zpix` → **首次绘制前 `images_` 为空 → `Has()` 恒 false → 永远走 zpix 回退**；只有 `ui/StageSelect.lua` 的 `Draw("stage")` 是**无条件调用**（加载整个表）→ **打开过选关屏后艺术字才「恢复」**。于是同一按钮在不同路径下时而艺术字、时而 zpix 文字 = 用户说的「概率出错」。另一层风险：`nvgCreateImage` 在 `NanoVGRender` 帧内执行，纹理尚未上传完就同帧绘制。
+  - **修复**：`ArtText`/`DigitFont` 各加**公开 `Ensure(ctx)`**（幂等）；`Backend.Init` 在 `vg_` 就绪后调 `ArtText.Ensure(vg_)` + `DigitFont.Ensure(vg_)`，**启动即加载**；`Draw/DrawCentered` 内部改用 `Ensure`（预加载后为 no-op）。新增 1 个顶层 require（`DigitFont`）+ 2 行调用，零新增顶层 local（AB-166）。
+  - **⚠️ 探针方法论漏洞（本轮最重要）**：我最初写的暂停探针**从未真正渲染艺术字**——因为 `Has()` 返回 false 时走 zpix 回退，**日志里根本没有 `[ArtText] pixel titles loaded`**（我误以为「加载成功」）。修复后同一探针在**帧 3（Init）**就打印 `loaded=8/8`。**教训**：验证「贴图是否真的画出来」时，**先确认加载日志出现**（`[ArtText]/[DigitFont] loaded=`），别把 zpix 回退当成「渲染正常」（同 AB-242 的「装载出错 vs 图本身坏」、AB-216 的「无报错 ≠ 画出来了」）。
+  - 验证：真渲染探针 `probe_race`（**直接进暂停**、不先开选关）——修复前显示 zpix 文字，**修复后显示真艺术字**；菜单 CTA「开始战斗」启动即艺术字；`[ArtText] loaded=8/8` + `[DigitFont] loaded=10/10` 在帧 3 打印。LSP workspace **0 Error**（27 文件 1239 诊断）。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION，当前常量 0.13.55）。
+  - 排除项（记录以免重复排查）：①素材本身完好（ASCII 渲染可读、每张 2 色、alpha0 14–30%）；②`nvgImageSize` 返回**正确**（resume 103×26）；③构建的 **ASTC 6×6 压缩**虽把 761B→2145B，但**强制加载后 KTX 版与 PNG 版渲染差异 ≈0**（同帧 62489 px 中仅 14 px 差 >20）→ **不是压缩问题**。
 - 版本: 0.13.57（**局内附魔卡：每完成一波获得/更换，使用后附到待发车，蓝紫黄三稀有度**）：
   - 用户「每完成一波，玩家将允许获取/更换一个'附魔卡'，显示在局内界面左上角，与道具对称，使用后消失，效果是改变预备发射/当前若空则顺延下个预备发射的车，让它拥有一种强力的特殊效果，该效果也分蓝紫黄三种稀有度，高波次容易出高稀有度」；随后追加「没附魔时不显示，太挡了，用完之后2s内渐隐」。
   - **数据层 `scripts/EnchantCatalog.lua`（新增）**：9 张卡，**每张落在不同机制轴**（承接 AB-214/221 纪律）。蓝=裂变 `splitOnHit`(命中额外分裂 1 颗)/吸血 `healPerHit`(命中回血 1)/追踪 `homing`(命中后自动追最近砖)；紫=穿透 `pierce`(穿透 4 块不反弹)/连锁 `chain`(命中溅射最近砖)/霜冻 `freezeAll`(命中冻结全场 2s)；黄=重击 `damageMul`(伤害 ×2.5)/爆裂 `explodeRadius`(命中半径 2.2 格爆炸)/三连 `tripleShot`(发射扇形 +2 同型车)。`EnchantCatalog.Roll(wave, rng)` **稀有度权重随波次线性上升**：`t=(wave-1)/20` → wave1 蓝80/紫18/黄2 → wave21+ 蓝25/紫45/黄30；稀有度内均匀抽。rng 传 Game 的确定性随机流。

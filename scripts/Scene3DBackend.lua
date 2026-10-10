@@ -29,6 +29,7 @@ local MetaUI = require "MetaUI"
 local StageIntro = require "ui.StageIntro"
 local StageTransition = require "ui.StageTransition"
 local ArtText = require "ui.ArtText"
+local DigitFont = require "ui.DigitFont"
 
 local Backend = {}
 
@@ -2893,6 +2894,12 @@ function Backend.Init()
     -- ⚠️ 必须在 vg_ 创建之后加载；vg_ 为 nil 时所有图标都会静默失败。
     LoadIcons()
     LoadLogoTitles()
+    -- 艺术字/数字贴图**必须在这里预加载一次**：Has()/Width()/Height() 不触发加载，
+    -- 只有 Draw() 才加载。多数调用点是 `if Has() then Draw() else zpix`，若首次绘制前
+    -- images_ 仍为空则 Has() 恒 false → 永远走 zpix 回退（表现为「有时艺术字、有时文字」
+    -- 的间歇性错误，只有先打开过选关屏触发 Draw("stage") 后才会「恢复」）。
+    ArtText.Ensure(vg_)
+    DigitFont.Ensure(vg_)
     if not handImage_ or handImage_ <= 0 then
         handImage_ = -1
         print("[Scene3DBackend] hand hint image unavailable: " .. HAND_IMAGE_PATH)

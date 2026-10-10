@@ -44,6 +44,12 @@ local function Ensure(ctx)
     print("[DigitFont] pixel digits loaded=" .. loaded .. "/10")
 end
 
+-- 公开预加载入口：宿主（Backend.Init）在拿到 vg 后调用一次。
+---@param ctx any
+function DigitFont.Ensure(ctx)
+    Ensure(ctx)
+end
+
 ---@return boolean 是否可用（全部 10 张都加载成功才算）
 function DigitFont.Ready()
     for d = 0, 9 do
