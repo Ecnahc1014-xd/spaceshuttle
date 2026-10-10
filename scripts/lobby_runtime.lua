@@ -136,7 +136,7 @@ return function(ctx)
                                 backgroundColor = COL.cyan },
                             UI.Label { text = "货车大战飞机", fontSize = 18,
                                 fontColor = COL.cyan },
-                            UI.Label { text = "v0.13.55", fontSize = 13,
+                            UI.Label { text = "v0.13.57", fontSize = 13,
                                 fontColor = COL.dim, marginLeft = "auto" },
                         },
                     },

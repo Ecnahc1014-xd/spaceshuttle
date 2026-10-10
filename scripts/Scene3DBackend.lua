@@ -470,7 +470,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.55"
+local BUILD_VERSION = "0.13.57"
 local GAME_TITLE = "货车大战飞机"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "货车大战飞机"
@@ -1440,7 +1440,7 @@ end
 -- ⚠️ 挂到 Backend 表上（不是顶层 local）——Scene3DBackend 顶层 local 已到 199，
 --    再加 local 会撞 Lua 200 上限导致 LoadChunk 全屏黑（AB-166）。
 function Backend.GetEnchantRect()
-    return { x = 12, y = 100, w = 132, h = 86 }
+    return { x = 12, y = 100, w = 132, h = 104 }
 end
 
 ---@param ctx any

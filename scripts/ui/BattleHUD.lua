@@ -13,7 +13,9 @@ local labels = {}
 ---@type table<string, ProgressBar>
 local bars = {}
 local state = { elapsed = nil, hp = 1, hpTrail = 1, damageHold = 0,
-    score = 0, scorePop = 0, queue = {}, font = "zpix", ready = false }
+    score = 0, scorePop = 0, queue = {}, font = "zpix", ready = false,
+    -- v0.13.58 附魔卡显隐：空手不显示；用掉后 2 秒渐隐（enchantAlpha 1→0）。
+    enchantAlpha = 0, enchantCard = nil, enchantPending = nil }
 local ammoIcons = { normal = "ammo_normal", ice = "ammo_ice", speed = "ammo_speed", giant = "ammo_giant" }
 
 local function Alpha(color, a)
@@ -293,6 +295,7 @@ function BattleHUD.Shutdown()
     state.elapsed, state.ready = nil, false
     state.hp, state.hpTrail, state.damageHold = 1, 1, 0
     state.score, state.scorePop = 0, 0
+    state.enchantAlpha, state.enchantCard = 0, nil
 end
 
 -- 只有表现值缓动；数值标签永远读权威快照。菜单/重开清掉上一局掉血滞后段。
@@ -303,6 +306,8 @@ function BattleHUD.Update(game, dt)
     if state.elapsed == nil or game.elapsed < state.elapsed or game.state == "menu" then
         state.hp, state.hpTrail = hp, hp
         state.damageHold, state.scorePop = 0, 0
+        -- v0.13.58：进菜单/重开清掉附魔卡显隐。
+        state.enchantAlpha, state.enchantCard = 0, nil
     else
         if hp < state.hp then state.damageHold = 0.32 end
         if hp >= state.hpTrail then state.hpTrail = hp end
@@ -312,6 +317,14 @@ function BattleHUD.Update(game, dt)
         end
         if score > state.score then state.scorePop = 1 end
         state.scorePop = math.max(0, state.scorePop - dt * 3)
+    end
+    -- v0.13.58：附魔卡显隐。有卡立即全亮；用掉后 2 秒内渐隐（0.5/秒），空手不显示。
+    if game.enchantCard then
+        state.enchantAlpha = 1
+        state.enchantCard = game.enchantCard
+    elseif state.enchantAlpha > 0 then
+        state.enchantAlpha = math.max(0, state.enchantAlpha - dt * 0.5)
+        if state.enchantAlpha == 0 then state.enchantCard = nil end
     end
     state.hp, state.score, state.elapsed = hp, score, game.elapsed
 end
@@ -497,18 +510,30 @@ function BattleHUD.DrawItems(ctx, game, tab, slots, open)
 end
 
 -- v0.13.58：局内附魔卡（左上角，与右上道具竖列对称）。
--- 一张常驻卡：稀有度色边框 + 图标 + 名称 + 效果说明。有卡时亮、空手时压暗成占位。
--- 使用后卡片消失；若当前无待发车则显示「已顺延下一辆」。
+-- 只有**手上持卡时**才显示；空手完全不画（避免长期占屏遮挡）。
+-- 使用后卡片消失，面板在 2 秒内渐隐（state.enchantAlpha 1→0，见 Update）。
 function BattleHUD.DrawEnchant(ctx, game, rect)
     local C = D.C
-    local card = game.enchantCard
-    local pending = game.enchantPending
-    local rarity = card and card.rarity or (pending and pending.rarity)
-    local accent = rarity and EnchantCatalog.RARITY_COLORS[rarity] or C.dim
-    local hasCard = card ~= nil
-    local glow, press = D.controlFx(rect, hasCard)
-    -- 面板：空手时压暗，有卡时按稀有度描边 + 常驻辉光。
+    -- 显示用卡：持卡时用实时卡；正在渐隐时用缓存的上一次卡。
+    local card = game.enchantCard or state.enchantCard
+    local alpha = state.enchantAlpha
+    -- 标签是常驻控件：先按当前显隐设置可见性，避免残留。
+    local nameLabel = labels["enchant:name"]
+    local descLabel = labels["enchant:desc"]
+    local hintLabel = labels["enchant:hint"]
+    if not card or alpha <= 0.01 then
+        if nameLabel then nameLabel:SetVisible(false) end
+        if descLabel then descLabel:SetVisible(false) end
+        if hintLabel then hintLabel:SetVisible(false) end
+        return
+    end
+    local rarity = card.rarity
+    local accent = EnchantCatalog.RARITY_COLORS[rarity] or C.dim
+    local a255 = math.floor(255 * alpha)
+    local glow, press = D.controlFx(rect, game.enchantCard ~= nil)
+    -- 面板：按稀有度描边 + 常驻辉光（整体 alpha 跟随渐隐）。
     nvgSave(ctx)
+    nvgGlobalAlpha(ctx, alpha)
     nvgBeginPath(ctx)
     nvgRoundedRect(ctx, rect.x, rect.y + press, rect.w, rect.h, 6)
     nvgFillPaint(ctx, nvgLinearGradient(ctx, rect.x, rect.y, rect.x, rect.y + rect.h,
@@ -516,32 +541,21 @@ function BattleHUD.DrawEnchant(ctx, game, rect)
         nvgRGBA(C.panel[1], C.panel[2], C.panel[3], 255)))
     nvgFill(ctx)
     nvgRestore(ctx)
-    Trace(ctx, rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6, accent, hasCard and 14 or 8)
-    D.stroke(ctx, rect.x, rect.y + press, rect.w, rect.h,
-        hasCard and Alpha(accent, 200) or Alpha(C.dim, 70), 6, hasCard and 1.6 or 1)
-    -- 顶部稀有度识别条 + 角标
-    if hasCard then
-        Rect(ctx, rect.x + 6, rect.y + 2.5, rect.w - 12, 2, accent, 1)
-    end
-    Text(ctx, "enchant", "title", hasCard and "附魔 · " .. (EnchantCatalog.RARITY_NAMES[rarity] or "")
-        or "附魔槽", rect.x + 8, rect.y + 6, rect.w - 16, 18, 15,
-        hasCard and accent or C.dim)
-    if hasCard then
-        D.icon(ctx, "ench_" .. card.id, rect.x + 8, rect.y + 24, 32, 1)
-        Text(ctx, "enchant", "name", card.name, rect.x + 46, rect.y + 26, rect.w - 54, 22, 19, C.text)
-        Text(ctx, "enchant", "desc", card.desc or "", rect.x + 8, rect.y + 58, rect.w - 16, 18, 14, C.dim)
-        Text(ctx, "enchant", "hint", "点击附到待发车", rect.x + 8, rect.y + rect.h - 20, rect.w - 16, 16, 14,
-            glow > 0.1 and C.cyan or C.dim, "right")
-    elseif pending then
-        D.icon(ctx, "ench_" .. pending.id, rect.x + 8, rect.y + 24, 32, 0.5)
-        Text(ctx, "enchant", "name", "顺延 · " .. (pending.name or ""), rect.x + 46, rect.y + 26,
-            rect.w - 54, 22, 17, Alpha(accent, 220))
-        Text(ctx, "enchant", "desc", "下一辆自动生效", rect.x + 8, rect.y + 58, rect.w - 16, 18, 14, C.dim)
-    else
-        D.icon(ctx, "rarity", rect.x + 8, rect.y + 28, 28, 0.28)
-        Text(ctx, "enchant", "name", "暂无附魔", rect.x + 44, rect.y + 32, rect.w - 52, 22, 17, C.dim)
-        Text(ctx, "enchant", "desc", "每波获得一张", rect.x + 8, rect.y + 60, rect.w - 16, 18, 14, C.dim)
-    end
+    Trace(ctx, rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6, accent, math.floor(14 * alpha))
+    D.stroke(ctx, rect.x, rect.y + press, rect.w, rect.h, Alpha(accent, 200 * alpha), 6, 1.6)
+    Rect(ctx, rect.x + 6, rect.y + 2.5, rect.w - 12, 2, Alpha(accent, a255), 1)
+    Text(ctx, "enchant", "title", "附魔 · " .. (EnchantCatalog.RARITY_NAMES[rarity] or ""),
+        rect.x + 8, rect.y + 5, rect.w - 16, 17, 15, Alpha(accent, a255))
+    D.icon(ctx, "ench_" .. card.id, rect.x + 8, rect.y + 24, 30, alpha)
+    Text(ctx, "enchant", "name", card.name, rect.x + 44, rect.y + 25, rect.w - 52, 22, 19,
+        Alpha(C.text, a255))
+    Text(ctx, "enchant", "desc", card.desc or "", rect.x + 8, rect.y + 52, rect.w - 16, 16, 14,
+        Alpha(C.dim, a255))
+    Text(ctx, "enchant", "hint", "点击附到待发车", rect.x + 8, rect.y + 82, rect.w - 16, 16, 13,
+        glow > 0.1 and Alpha(C.cyan, a255) or Alpha(C.dim, a255), "right")
+    if nameLabel then nameLabel:SetVisible(true) end
+    if descLabel then descLabel:SetVisible(true) end
+    if hintLabel then hintLabel:SetVisible(true) end
     Render("enchant", ctx)
 end
 
