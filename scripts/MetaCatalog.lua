@@ -117,11 +117,11 @@ local TRAILS = {
     { key = "classic", name = "经典尾焰", cost = 0, style = "ribbon",
       desc = "笔直渐细 · 默认样式" },
     { key = "comet",   name = "彗星",     cost = 600, style = "comet",
-      desc = "头部鼓包实心核 · 沿尾劈啪明灭" },
+      desc = "密集粒子彗尾 · 头端灼核拖出光尘" },
     { key = "neon",    name = "霓虹",     cost = 1200, style = "neon",
       desc = "极细光丝 · 螺旋盘绕转品红" },
     { key = "dash",    name = "流光",     cost = 1800, style = "dash",
-      desc = "碎光断续 · 尾段急收" },
+      desc = "离散光片 · 高速自旋飞散" },
     { key = "twin",    name = "双轨",     cost = 2600, style = "twin",
       desc = "两条光轨 · 蛇形摆动收拢" },
     { key = "ember",   name = "余烬",     cost = 3600, style = "ember",
@@ -185,6 +185,15 @@ end
 ---@field glow number
 ---@field core number
 ---@field twist number
+---@field particle integer
+---@field emit number
+---@field emitSpread number
+---@field pSize number
+---@field pGrow number
+---@field pJitter number
+---@field pSpin number
+---@field pDrift number
+---@field pLife number
 
 ---@type table<string, TrailStyleParams>
 -- ⚠️ 宽度基准是**车体真实半宽**（`vHalf = radius*WORLD_SCALE*0.5965`，见 Renderer3D），
@@ -199,27 +208,40 @@ end
 --   pulse：整体明暗脉动；hue：沿长度色相游移；twist：截面绕切线扭转（真三维螺旋）
 --   twin/railSpread/railTaper：双轨（两条细轨 + 轨距收拢指数）
 --   glow/core：柔光层 / 亮芯层宽度倍率
+-- 🔴 粒子系（v0.13.58）：particle=1 时**不走三角带**，改为在采样轨迹上撒布 billboard 粒子
+--   （见 Renderer3D.SyncTrailParticles）。粒子颜色**烘焙进纹理**——DiffAlpha 不读顶点 rgb
+--   （本项目实测契约），故每种粒子样式一个专属纹理（`trailParticle` 键）。
+--   emit：每米发射密度（个/米，按弧长均匀 → 速度无关、不随帧率抖）
+--   emitSpread：发射点横向抖动（×vHalf）；pSize/pGrow：世界尺寸(×vHalf) / 沿寿命膨胀
+--   pJitter：位置抖动(×vHalf)；pSpin：自旋(度/秒)；pLife：粒子寿命(秒)
+--   pDrift：沿寿命的横向漂移(×vHalf)（彗尾散开 / 流光飞散）
 local TRAIL_STYLE_PARAMS = {
     -- 经典：中性基准——笔直、平滑收细，无波动无噪声（其余样式的参照物）。
     ribbon = {headW = 0.55, tailW = 0.10, bright = 1.00, base = 0.30, twin = 0, warm = 0,
               taper = 1.0, bulge = 0.0, hue = 0.0, waver = 0.0, waverLen = 0.9, waverDrift = 0.0,
               flicker = 0.0, flickerFreq = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
               glow = 1.55, core = 1.25, twist = 0.0},
-    -- 彗星：头端鼓包实心核 + **沿长度劈啪明灭**（燃烧的彗尾，非周期）。
+    -- 彗星（粒子系）：**密集粒子彗尾**——沿轨迹高频撒布亮尘，头端一颗灼核，
+    -- 粒子沿寿命横向散开并收缩成尾迹（不是一条光带）。
     comet  = {headW = 0.62, tailW = 0.30, bright = 1.15, base = 0.40, twin = 0, warm = 0,
               taper = 0.55, bulge = 1.1, hue = 0.0, waver = 0.06, waverLen = 0.7, waverDrift = 1.6,
               flicker = 0.55, flickerFreq = 9.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
-              glow = 1.50, core = 1.90, twist = 0.0},
+              glow = 1.50, core = 1.90, twist = 0.0,
+              particle = 1, emit = 60, emitSpread = 0.26, pSize = 1.50, pGrow = 0.80,
+              pJitter = 0.30, pSpin = 0, pDrift = 0.55, pLife = 0.42},
     -- 霓虹：极细等宽带 + 截面绕切线**扭转成螺旋** + 沿长度青→品红。
     neon   = {headW = 0.20, tailW = 0.20, bright = 1.45, base = 0.66, twin = 0, warm = 0,
               taper = 1.0, bulge = 0.0, hue = 0.65, waver = 0.0, waverLen = 0.9, waverDrift = 0.0,
               flicker = 0.0, flickerFreq = 0.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
               glow = 1.60, core = 1.70, twist = 0.40},
-    -- 流光：**高频明暗噪声**（断续火花感，替代「每 3 段画 1 段」的机械重复）+ 尾段急收。
+    -- 流光（粒子系）：**离散光片**——低频、大颗、高速自旋，像被甩出的碎光片，
+    -- 与「经典尾焰」的连续光带形态完全不同（用户点名「和普通的没区别」）。
     dash   = {headW = 0.44, tailW = 0.10, bright = 1.10, base = 0.28, twin = 0, warm = 0,
               taper = 1.3, bulge = 0.0, hue = 0.0, waver = 0.0, waverLen = 0.9, waverDrift = 0.0,
               flicker = 0.85, flickerFreq = 17.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
-              glow = 1.30, core = 1.45, twist = 0.0},
+              glow = 1.30, core = 1.45, twist = 0.0,
+              particle = 1, emit = 22, emitSpread = 0.35, pSize = 2.00, pGrow = 0.15,
+              pJitter = 0.70, pSpin = 420, pDrift = 1.10, pLife = 0.40},
     -- 双轨：两条细轨 + 轨距收拢 + **整体蛇形波动**（编成一股会摆的辫）。
     twin   = {headW = 0.34, tailW = 0.06, bright = 1.05, base = 0.20, twin = 1, warm = 0,
               taper = 1.0, bulge = 0.0, hue = 0.0, waver = 0.22, waverLen = 1.1, waverDrift = 2.4,

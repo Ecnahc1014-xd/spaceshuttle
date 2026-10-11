@@ -4,10 +4,6 @@
 local VisualCatalog = require "VisualCatalog"
 local CombatImpact = {}
 local SPARK_COLORS = {{255, 209, 120}, {170, 120, 255}, {100, 233, 232}, {180, 230, 255}, {255, 128, 120}}
--- v0.13.58：附魔稀有度色（与 EnchantCatalog.RARITY_COLORS 同值；此处本地留一份避免跨模块依赖）。
-local ENCHANT_RARITY = {
-    common = {92, 150, 255}, rare = {176, 110, 255}, epic = {255, 196, 72},
-}
 
 local function StrokeEllipse(ctx, x, y, rx, ry, color, alpha, width)
     nvgBeginPath(ctx)
@@ -278,70 +274,8 @@ function CombatImpact.DrawHits(ctx, game, presentation, project)
     return drawn
 end
 
--- v0.13.58：附魔车光环——让玩家**一眼看到**哪辆车带着附魔（此前毫无视觉标识，
--- 这也是「感觉效果不强」的隐藏原因）。稀有度色旋转双环 + 呼吸脉冲 + 顶部小三角标记。
--- 只画，不参与命中与几何；相位由 game.elapsed 派生（确定性，非逐帧随机）。
----@param ctx NVGContextWrapper
----@param game table
----@param presentation table
----@param project fun(x:number, y:number):number,number
-function CombatImpact.DrawEnchantAura(ctx, game, presentation, project)
-    local list = {}
-    if game.activeBall and game.activeBall.enchant then list[#list + 1] = game.activeBall end
-    for _, m in ipairs(game.marbles or {}) do
-        if m.alive and m.enchant and not m.onSling then list[#list + 1] = m end
-    end
-    if #list == 0 then return 0 end
-    local phase = (game.elapsed or 0) * 3.0
-    nvgSave(ctx)
-    nvgIntersectScissor(ctx, 0, 92, 540, 774)
-    local drawn = 0
-    for _, m in ipairs(list) do
-        local rarity = m.enchant.rarity or "common"
-        local col = ENCHANT_RARITY[rarity] or ENCHANT_RARITY.common
-        local x, y = project(m.x, m.y)
-        if x > -40 and x < 580 and y > 92 and y < 866 then
-            -- 半径锚定车辆权威半径（投影量一个半径）。
-            local ex = project(m.x + (m.radius or 18), m.y)
-            local _, ey = project(m.x, m.y + (m.radius or 18))
-            local rr = math.max(10, math.max(math.abs(ex - x), math.abs(ey - y)) * 1.9)
-            local pulse = 0.72 + 0.28 * math.sin(phase)
-            local a = math.floor(150 * pulse)
-            -- 底柔光（呼吸）
-            nvgBeginPath(ctx)
-            nvgCircle(ctx, x, y, rr * 1.15)
-            nvgFillPaint(ctx, nvgRadialGradient(ctx, x, y, rr * 0.35, rr * 1.15,
-                nvgRGBA(col[1], col[2], col[3], math.floor(46 * pulse)),
-                nvgRGBA(col[1], col[2], col[3], 0)))
-            nvgFill(ctx)
-            -- 旋转双环（外环 + 内环反向）
-            for k = 1, 2 do
-                local rot = phase * (k == 1 and 1.0 or -1.35)
-                local rad = rr * (k == 1 and 1.0 or 0.7)
-                nvgBeginPath(ctx)
-                for seg = 0, 7 do
-                    local ang = rot + seg * math.pi * 2 / 8
-                    local px, py = x + math.cos(ang) * rad, y + math.sin(ang) * rad * 0.82
-                    if seg == 0 then nvgMoveTo(ctx, px, py) else nvgLineTo(ctx, px, py) end
-                end
-                nvgStrokeColor(ctx, nvgRGBA(col[1], col[2], col[3], a))
-                nvgStrokeWidth(ctx, k == 1 and 2.4 or 1.4)
-                nvgStroke(ctx)
-            end
-            -- 顶部小三角标记（稀有度色），指向上方表示"已附魔"。
-            local tipY = y - rr * 1.15
-            nvgBeginPath(ctx)
-            nvgMoveTo(ctx, x, tipY - 6)
-            nvgLineTo(ctx, x - 5, tipY + 3)
-            nvgLineTo(ctx, x + 5, tipY + 3)
-            nvgClosePath(ctx)
-            nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], math.floor(220 * pulse)))
-            nvgFill(ctx)
-            drawn = drawn + 1
-        end
-    end
-    nvgRestore(ctx)
-    return drawn
-end
+-- v0.13.58：附魔环绕粒子已改为 **真 3D BillboardSet**（见 `Renderer3D.SyncEnchantAura`）——
+-- 2D overlay 手工投影的光环会因 46° 斜俯视的 z 投影与真实 3D 车分离（用户点名「2D 和 3D 不平行」）。
+-- 此处不再保留 overlay 版本。
 
 return CombatImpact

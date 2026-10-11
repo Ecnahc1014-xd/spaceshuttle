@@ -57,6 +57,13 @@ local particleSets_ = nil    -- {spark=..., shard=..., smoke=...}
 local particleSetActive_ = {spark = false, shard = false, smoke = false}
 local particleMaterials_ = nil
 local particleNodes_ = nil
+-- v0.13.58：附魔环绕粒子（真 3D BillboardSet，锚车辆世界锚点）。
+-- ⚠️ DiffAlpha 不读 billboard 顶点 rgb（颜色必须烘焙进纹理），故**每档稀有度一个 BillboardSet**
+--    （各带自己稀有度色的软圆纹理），而不是一个 set 靠顶点色区分。
+local enchantAuraSets_ = nil          -- {common=..., rare=..., epic=...}
+local enchantAuraActive_ = {common = false, rare = false, epic = false}
+local enchantAuraNodes_ = nil
+local enchantAuraMaterials_ = nil
 local aimLineSet_ = nil
 local aimLineActive_ = false
 local aimLineNode_ = nil
@@ -66,8 +73,15 @@ local aimLineMaterial_ = nil
 -- 做不出带厚度/带朝向的光带。走敌机箱体同一条已验证可见的材质路径
 -- （DiffVCol + 白底纹理 + 顶点色），并用 SetDynamic(true) 支持每帧重建
 -- ——历史 ribbon 版（v0.13.10）正是**漏了 SetDynamic(true)** 才完全画不出来。
-local trailGeometries_ = nil   -- {ballType = {node=..., geometry=...}}
-local trailMaterial_ = nil     -- 共享：DiffVCol + 白底 + CULL_NONE（双面）
+local trailGeometries_ = nil   -- {ballType = {node=..., geometry=...}}（光带样式用）
+-- v0.13.58：粒子系拖尾（彗星/流光）。每个弹种一个 BillboardSet + **专属烘焙纹理**
+-- （DiffAlpha 不读顶点 rgb，颜色只能进纹理）。与光带互斥：particle 样式只跑粒子，
+-- 不提交三角带几何（否则两套叠在一起）。
+local trailParticleSets_ = nil -- {ballType = {node=..., set=..., mat=..., tex=...}}
+local trailParticles_ = nil    -- {[style] = {[ballType] = {列表}}}
+local trailParticleActive_ = {normal = false, ice = false, speed = false, giant = false}
+local TRAIL_PARTICLE_STYLES = {"comet", "dash"}
+local TRAIL_PARTICLE_SLOTS = 320
 local trailSamples_ = {}
 local trailActive_ = {normal = false, ice = false, speed = false, giant = false}
 local lastRenderElapsed_ = nil
@@ -76,6 +90,17 @@ local initialized_ = false
 -- v0.10.21：粒子分三类，各用一个 BillboardSet（每类独立槽位预算，共 3 draw call）。
 -- spark/shard/smoke 都是小而稀疏的点缀；软圆与三角纹理程序化生成。
 local PARTICLE_SLOTS = { spark = 64, shard = 40, smoke = 28 }
+
+-- v0.13.58：附魔车环绕粒子 = **真 3D BillboardSet**（不是 2D overlay 光环）。
+-- 用户指出「2D 界面和 3D 界面并不完全平行」——46° 斜俯视正交下，overlay 手工投影的光环
+-- 与真实 3D 车会因 z 差在屏幕 Y 上分离。故改为挂在车辆世界锚点上的 3D 粒子环。
+local ENCHANT_AURA_SLOTS = 40          -- 每帧最多环绕粒子数（同屏全部附魔车共享）
+local ENCHANT_AURA_PER_VEHICLE = 10    -- 每辆附魔车的粒子数
+local ENCHANT_AURA_VEHICLE_LIMIT = 4   -- 同屏最多几辆附魔车带环
+local ENCHANT_AURA_RARITY = {
+    common = {0.36, 0.59, 1.00}, rare = {0.69, 0.43, 1.00}, epic = {1.00, 0.77, 0.28},
+}
+
 
 -- 车辆尾迹（3D BillboardSet，每弹种一个批次）
 local TRAIL_TYPES = {"normal", "ice", "speed", "giant"}
@@ -1175,6 +1200,66 @@ local function CreateTriangleTexture(r, g, b)
     return tex
 end
 
+-- v0.13.58：粒子系拖尾的**专属烘焙纹理**。DiffAlpha 不读顶点 rgb（本项目实测契约），
+-- 颜色只能进纹理，所以每种粒子样式一张。都带**热核 + 外辉光**两级，避免「一个糊圆点」
+-- 的廉价感（用户「千万千万不要太便宜」）。
+--   彗星：暖金白热核 + 琥珀辉光（灰阶→多弹种通用；速度弹靠暖色更「烧」）
+--   流光：青白热核 + 冷青辉光（硬边小片 + 短尾拖，读作「被甩出的碎光片」）
+local function CreateTrailCometTexture()
+    local N = 32
+    local image = Image()
+    image:SetSize(N, N, 4)
+    local c = (N - 1) * 0.5
+    for y = 0, N - 1 do
+        for x = 0, N - 1 do
+            local d = math.sqrt((x - c) ^ 2 + (y - c) ^ 2) / c
+            local a = math.max(0, math.min(1, 1 - d))
+            a = a * a * (3 - 2 * a)                 -- smoothstep：软边但中心实
+            if a <= 0 then
+                image:SetPixel(x, y, Color(0, 0, 0, 0))
+            else
+                local core = math.max(0, 1 - d / 0.34) ^ 1.5
+                -- 灰阶：外辉光偏暗 → 热核偏亮（≥0.98 时视为白热核）。
+                local g = 0.42 + 0.56 * core
+                image:SetPixel(x, y, Color(math.min(1, g * 1.10), math.min(1, g * 0.94),
+                    math.min(1, g * 0.78), a))
+            end
+        end
+    end
+    local tex = Texture2D:new()
+    tex:SetData(image, false)
+    tex:SetSRGB(true)
+    return tex
+end
+
+local function CreateTrailDashTexture()
+    local N = 32
+    local image = Image()
+    image:SetSize(N, N, 4)
+    local c = (N - 1) * 0.5
+    for y = 0, N - 1 do
+        for x = 0, N - 1 do
+            local dx, dy = (x - c) / c, (y - c) / c
+            -- 沿 x 拉长的椭圆（横向光片）；短尾拖让自旋时能看出方向。
+            local e = math.sqrt((dx / 0.62) ^ 2 + (dy / 1.0) ^ 2)
+            local a = math.max(0, math.min(1, 1 - e))
+            a = a * a
+            if a <= 0 then
+                image:SetPixel(x, y, Color(0, 0, 0, 0))
+            else
+                local core = math.max(0, 1 - e / 0.55) ^ 1.2
+                local g = 0.52 + 0.48 * core
+                image:SetPixel(x, y, Color(math.min(1, g * 0.62), math.min(1, g * 0.94),
+                    math.min(1, g * 1.00), a))
+            end
+        end
+    end
+    local tex = Texture2D:new()
+    tex:SetData(image, false)
+    tex:SetSRGB(true)
+    return tex
+end
+
 -- v0.10.21：粒子按 kind 分到三个 BillboardSet（spark 暖白软圆 / shard 浅金属
 -- 三角自旋 / smoke 灰软圆膨胀）。颜色已烘焙进 DiffAlpha 纹理，淡出走末段尺寸收缩。
 local function SyncParticles(presentation)
@@ -1222,7 +1307,70 @@ local function SyncParticles(presentation)
     end
 end
 
--- v0.10.22：3D 直瞄线。规则层快照 aimLine 给设计坐标起终点，这里转世界坐标，
+-- v0.13.58：附魔车环绕粒子（真 3D）。粒子绕车辆世界锚点在 **3D 空间**里转圈，
+-- 因此与车永远对齐（不像 2D overlay 会因 46° 斜俯视的 z 投影而分离）。
+-- 相位由 game.elapsed 派生（确定性，非逐帧随机）。只画，不参与命中。
+local function SyncEnchantAura(game)
+    if not enchantAuraSets_ then return end
+    local used = { common = 0, rare = 0, epic = 0 }
+    local phase = (game.elapsed or 0) * 2.6
+    -- 收集附魔车（待发 + 飞行）。
+    local cars = {}
+    if game.activeBall and game.activeBall.enchant then cars[#cars + 1] = game.activeBall end
+    for _, m in ipairs(game.marbles or {}) do
+        if m.alive and m.enchant and not m.onSling then cars[#cars + 1] = m end
+    end
+    for ci = 1, math.min(#cars, ENCHANT_AURA_VEHICLE_LIMIT) do
+        local m = cars[ci]
+        local rarity = m.enchant.rarity or "common"
+        if not enchantAuraSets_[rarity] then rarity = "common" end
+        local center = GetVehicleAnchorWorld(m)
+        -- 环半径锚车辆权威半径（世界米）。
+        local rr = math.max(0.05, m.radius * WORLD_SCALE * 1.5)
+        local spin = phase + ci * 1.7   -- 各车相位错开
+        for k = 1, ENCHANT_AURA_PER_VEHICLE do
+            if used[rarity] < ENCHANT_AURA_SLOTS then
+                used[rarity] = used[rarity] + 1
+                local bb = enchantAuraSets_[rarity]:GetBillboard(used[rarity] - 1)
+                local ang = spin + k * math.pi * 2 / ENCHANT_AURA_PER_VEHICLE
+                -- 3D 环绕：XZ 平面转圈 + 轻微 Y 起伏（绕车体，不是屏幕椭圆）。
+                local bob = math.sin(phase * 2.0 + k) * rr * 0.35
+                bb.enabled = true
+                bb.position = Vector3(
+                    center.x + math.cos(ang) * rr,
+                    center.y + bob,
+                    center.z + math.sin(ang) * rr)
+                local sz = math.max(0.012, rr * 0.34)
+                bb.size = Vector2(sz, sz)
+                bb.rotation = ang
+                bb.color = Color(1, 1, 1, 1)
+            end
+        end
+    end
+    for rarity, set in pairs(enchantAuraSets_) do
+        if used[rarity] > 0 or enchantAuraActive_[rarity] then
+            for i = used[rarity] + 1, ENCHANT_AURA_SLOTS do
+                set:GetBillboard(i - 1).enabled = false
+            end
+            set:Commit()
+        end
+        enchantAuraActive_[rarity] = used[rarity] > 0
+    end
+end
+
+-- 诊断（只读）：本帧**实际启用**的附魔环绕粒子数（供探针自证 3D 数据通路）。
+function Renderer3D.DebugEnchantAuraCount()
+    if not enchantAuraSets_ then return -1 end
+    local n = 0
+    for _, set in pairs(enchantAuraSets_) do
+        for i = 0, ENCHANT_AURA_SLOTS - 1 do
+            if set:GetBillboard(i).enabled then n = n + 1 end
+        end
+    end
+    return n
+end
+
+
 -- 沿射线排青色软圆点，从车辆到边界渐小。彩色+软边必须颜色烘焙进纹理 + DiffAlpha
 -- （DiffVCol 会忽略纹理 alpha 显示成方块）。起点 z 取车辆锚点 z，因相机为 46°
 -- 斜俯视正交，z 差会投影到屏幕 Y，不能用固定近相机 z。
@@ -1248,8 +1396,20 @@ local function EmitTrailQuad(verts, a, b, ndx, ndy, ndz, w0, w1, c0, c1, o0, o1,
     verts[#verts + 1] = {p4, c1}
 end
 
+-- 清空粒子系拖尾：列表 + 所有 billboard 槽停用（不 Commit 空集以外的内容）。
+local function ClearTrailParticles()
+    trailParticles_ = {}
+    if not trailParticleSets_ then return end
+    for _, rec in pairs(trailParticleSets_) do
+        for i = 0, TRAIL_PARTICLE_SLOTS - 1 do rec.set:GetBillboard(i).enabled = false end
+        rec.set:Commit()
+    end
+    trailParticleActive_ = {normal = false, ice = false, speed = false, giant = false}
+end
+
 local function ClearTrailSamples()
     trailSamples_ = {}
+    ClearTrailParticles()
     if not trailGeometries_ then return end
     for _, ballType in ipairs(TRAIL_TYPES) do
         if trailActive_[ballType] then
@@ -1344,11 +1504,12 @@ local function SyncVehicleTrails(game, dt)
             track.clock = 0
         end
         track.x, track.y, track.z = pos.x, pos.y, pos.z
+        track.radius = marble.radius
         track.flightTime = marble.flightTime or 0
         if #points >= 2 then
             tracked[ballType] = tracked[ballType] + 1
             perType[ballType][#perType[ballType] + 1] = {
-                points = points, head = pos, radius = marble.radius,
+                points = points, head = pos, radius = marble.radius, track = track,
             }
         end
     end
@@ -1360,10 +1521,13 @@ local function SyncVehicleTrails(game, dt)
         if not visible[id] then trailSamples_[id] = nil end
     end
 
+    -- v0.13.58：粒子系样式（彗星/流光）**不走三角带**——把 active 压成 false，
+    -- 原有几何分支随即只做「清空+停用」，光带让位给 SyncTrailParticles 的 billboard 粒子。
+    local particleStyle = (MetaCatalog.GetTrailStyleParams(trailStyle_).particle or 0) == 1
     for _, ballType in ipairs(TRAIL_TYPES) do
         local record = trailGeometries_[ballType]
         local tracks = perType[ballType]
-        local active = #tracks > 0
+        local active = (not particleStyle) and (#tracks > 0)
         if active or trailActive_[ballType] then
             local verts = {}
             local base = BALL_COLORS[ballType] or BALL_COLORS.normal
@@ -1658,6 +1822,22 @@ function Renderer3D.Init(scene, voxelWorld)
     particleMaterials_ = { sparkMat, shardMat, smokeMat }
     particleNodes_ = { sparkNode, shardNode, smokeNode }
 
+    -- v0.13.58：附魔环绕粒子——每档稀有度一个 BillboardSet（颜色烘焙进软圆纹理）。
+    do
+        local sets, mats, nodes = {}, {}, {}
+        for _, rarity in ipairs({"common", "rare", "epic"}) do
+            local c = ENCHANT_AURA_RARITY[rarity]
+            local tex = CreateSoftCircleTexture(c[1], c[2], c[3], 1.0, 0.0)
+            local set, mat, node = CreateParticleSet(
+                "EnchantAura_" .. rarity, ENCHANT_AURA_SLOTS, tex)
+            sets[rarity], mats[#mats + 1], nodes[#nodes + 1] = set, mat, node
+        end
+        enchantAuraSets_ = sets
+        enchantAuraMaterials_ = mats
+        enchantAuraNodes_ = nodes
+        enchantAuraActive_ = { common = false, rare = false, epic = false }
+    end
+
     -- v0.10.22：直瞄线用青色软圆纹理 + DiffAlpha（颜色烘焙，软边半透明）。
     aimLineNode_ = scene:CreateChild("AimLine")
     aimLineSet_ = aimLineNode_:CreateComponent("BillboardSet")
@@ -1806,6 +1986,7 @@ function Renderer3D.Render(game, presentation, skin, trail)
     SyncVehicleTrails(game, dt)
     SyncDebris(presentation)
     SyncParticles(presentation)
+    SyncEnchantAura(game)
     SyncAimLine(game)
 end
 
@@ -1882,6 +2063,20 @@ function Renderer3D.Shutdown()
     particleSetActive_ = {spark = false, shard = false, smoke = false}
     particleMaterials_ = nil
     particleNodes_ = nil
+    -- v0.13.58：附魔环绕粒子清理。
+    if enchantAuraNodes_ then
+        for _, node in ipairs(enchantAuraNodes_) do RemoveNode(node) end
+    end
+    if enchantAuraSets_ then
+        for _, set in pairs(enchantAuraSets_) do DisposeComponent(set) end
+    end
+    if enchantAuraMaterials_ then
+        for _, mat in ipairs(enchantAuraMaterials_) do mat:Dispose() end
+    end
+    enchantAuraSets_ = nil
+    enchantAuraMaterials_ = nil
+    enchantAuraNodes_ = nil
+    enchantAuraActive_ = {common = false, rare = false, epic = false}
     if aimLineNode_ then RemoveNode(aimLineNode_) end
     if aimLineSet_ then DisposeComponent(aimLineSet_) end
     if aimLineMaterial_ then aimLineMaterial_:Dispose() end

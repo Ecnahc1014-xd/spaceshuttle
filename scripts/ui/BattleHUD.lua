@@ -342,12 +342,13 @@ function BattleHUD.DrawHud(ctx, game, presentation, pauseRect)
     Line(ctx, 8, 91, 532, 91, Alpha(C.dim, 90))
     Line(ctx, 164, 91, 374, 91, Alpha(C.cyan, 120))
     local scoreSize = 28 + state.scorePop * 1.5
-    Text(ctx, "hud", "score-label", "本局得分", 18, 5, 110, 20, 15, dim)
-    Text(ctx, "hud", "score", tostring(math.floor(game.score or 0)), 18, 24, 128, 29, scoreSize, C.text)
-    Text(ctx, "hud", "record-label", "最高", 18, 53, 32, 19, 15, dim)
-    Text(ctx, "hud", "record", tostring(math.floor(game.highScore or 0)), 52, 53, 94, 19, 15, dim, "right")
-    Text(ctx, "hud", "level", "Lv." .. tostring(math.floor(game.playerLevel or 1)), 18, 71, 56, 16, 15, C.text)
-    Bar(ctx, "hud", "xp", 77, 77, 69, 5,
+    -- v0.13.59：暂停按钮移到左上角（x=10..38），左栏内容右移 26px 让位。
+    Text(ctx, "hud", "score-label", "本局得分", 44, 5, 108, 20, 15, dim)
+    Text(ctx, "hud", "score", tostring(math.floor(game.score or 0)), 44, 24, 108, 29, scoreSize, C.text)
+    Text(ctx, "hud", "record-label", "最高", 44, 53, 32, 19, 15, dim)
+    Text(ctx, "hud", "record", tostring(math.floor(game.highScore or 0)), 78, 53, 68, 19, 15, dim, "right")
+    Text(ctx, "hud", "level", "Lv." .. tostring(math.floor(game.playerLevel or 1)), 44, 71, 56, 16, 15, C.text)
+    Bar(ctx, "hud", "xp", 103, 77, 43, 5,
         (game.xp or 0) / math.max(1, game.xpToNext or 1), C.cyan)
     local cloud = presentation.cloudStatus
     Rect(ctx, 140, 12, 4, 4, cloud == "ok" and C.cyan or (cloud == "unavailable" and C.warn or C.dim), 2)

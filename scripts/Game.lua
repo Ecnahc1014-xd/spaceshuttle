@@ -909,11 +909,15 @@ local WAVE_ROSTER = {
     { key = "interceptor", minWave = 9 },
 }
 
+-- v0.13.58：可用机型池按「**累计难度**」解锁，不再按「关内波次」。
+-- 旧版用 GetStageWave（每关都从 1 重新数）→ 每关开局可用池都只有 scout，
+-- 于是「每关开局的敌机类型都一样」。现用 (关卡-1) + 关内波次：第 1 关与原版完全一致
+-- （1~10 波依次解锁全部机型），第 2 关起开局就带上已解锁机型、关卡越高类型越丰富。
 local function GetAvailableTypes(waveNum)
     local keys = {}
-    local currentStageWave = StageCatalog.GetStageWave(waveNum)
+    local progress = (StageCatalog.GetStage(waveNum) - 1) + StageCatalog.GetStageWave(waveNum)
     for _, entry in ipairs(WAVE_ROSTER) do
-        if currentStageWave >= entry.minWave and AircraftData[entry.key] then
+        if progress >= entry.minWave and AircraftData[entry.key] then
             table.insert(keys, entry.key)
         end
     end
@@ -990,8 +994,10 @@ local FORMATION_CYCLE = { "line", "vee", "grid", "swarm", "wedge", "stream" }
 
 local function PickWaveAircraft(pool)
     if #pool == 1 then return pool[1] end
-    -- 新解锁机型优先露脸，其余波次仍可抽到老机型。
-    if Random() < 0.6 then return pool[#pool] end
+    -- 新解锁机型略优先露脸，其余在已解锁池内均匀抽。
+    -- v0.13.58：偏置 0.6→0.3——机型池随关卡变大后，过高偏置会让每波过度偏向单一机型、
+    -- 削弱本已解锁机型的多样性（用户报「敌机类型太无聊」）。
+    if Random() < 0.3 then return pool[#pool] end
     return pool[RandomInt(1, #pool)]
 end
 

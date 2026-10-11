@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: stage-start-variety（2026-10-11，修「每关开局的敌机类型都一样」；不改展示版本）：
+  - 用户「每关开局的这些敌机类型都一样，真是太无聊了。」
+  - **真因（探针实锤）**：`Game.GetAvailableTypes(waveNum)` 用 `StageCatalog.GetStageWave(waveNum)` 做 `WAVE_ROSTER` 门槛，而 **`GetStageWave` 每关都从 1 重新数**（1..10 循环）→ 每关第 1 波可用池都只有 `scout`。基线探针 `probe_variety` 实测 **12 关开局全 `scout`（`uniqFirst=1`）**。
+  - **修法（`Game.lua` 两处）**：①`GetAvailableTypes` 的解锁进度改用「**累计难度**」`(StageCatalog.GetStage(waveNum) - 1) + StageCatalog.GetStageWave(waveNum)`——**第 1 关与原版完全一致**（1~10 波依次解锁全部机型），第 2 关起开局就带上已解锁机型、关卡越高类型越丰富；②`PickWaveAircraft` 的「最新机优先」偏置 **0.6→0.3**（池变大后过高偏置会让每波过度偏向单一机型、削弱多样性）。
+  - **验证**：LSP workspace **0 Error**（27 文件 1238 诊断）；规则探针 `probe_variety` **4/4 PASS**（关1 ×12seed 开局恒 `scout`＝第 1 关体验保留 / 关5 ×16seed 出现 4 种 / 关10 ×16seed 出现 5 种 / 固定 seed 下 12 关开局首机 >= 4 种）；回归 `probe_offscreen` **4/4 PASS**（屏外上限未破）；真渲染冒烟 `probe_render` 零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`（日志确认关1 波1 出 `scout`、波2 出 `dart`）。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：手机 FPS / 全 DPR / 用户审美未验收；**真机观感（中后期开局机型分布是否足够多样）需 Preview 目视**。
+  - ⚠️ **避雷 AB-263：机型/内容「按门槛表解锁」时，门槛不能用「关内波次」——那样每关都会从头重新解锁，导致每关开局都一样（stage-start-variety）**：本项目 `WAVE_ROSTER`（机型按 minWave 门槛解锁）一直用 `GetStageWave`（关内波次 1..10，**每关重置**）当门槛 → **每关第 1 波可用池都只有第一档**，玩家看到「每关开局都是同一种小飞机」。**判据**：任何「随进度解锁」的门槛，若关卡是**可重复进入**的（选关/重开），门槛变量必须**单调累积**（本项目 = `(关卡-1) + 关内波次`），**不能用每关重置的关内计数**。⚠️ 修的时候要**同时检查随机偏置**——门槛放开后池子变大，原本「新机优先 0.6」的偏置会反过来压掉多样性，要一并下调。
+
 - 附记: arttext-fill-white（2026-10-11，艺术字去黑幕铺满按钮 + 商店标签转白；不改展示版本）：
   - 用户「车型外观与拖尾样式需要变得更白一些（颜色更浅）」+「开始战斗还是不合格，**直接占满按钮无黑幕**」+「继续战斗有开始战斗同款的问题」——三处都是**艺术字运用问题**。
   - **① CTA「开始战斗」去黑幕铺满**：上一批（cta-arttext-fit）是「暗色铭牌 + 白 tint」，用户判不合格。**最终形态**：**去掉暗铭牌**，艺术字白 tint **等比放大铺满按钮高度**（`ArtText.FitHeight("startbattle", 50)` → scale≈1.14），金属字直接压在青色按钮上——青色按钮本身就是它的底，无黑幕。

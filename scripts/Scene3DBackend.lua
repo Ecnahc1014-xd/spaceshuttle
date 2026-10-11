@@ -1309,6 +1309,8 @@ local ICON_PATHS = {
     boost = "image/ui_icon_boost_20260928011116.png",
     -- v0.12.5 界面增强：HUD 暂停入口 / 主页出口 / 防线与等级读数图标
     pause = "image/ui_icon_pause_20260928094729.png",
+    -- v0.13.59：主菜单左上角「设置」齿轮入口
+    gear = "image/ui_icon_gear_20261011.png",
     home = "image/ui_icon_home_20260928094732.png",
     barrier = "image/ui_icon_barrier_20260928094833.png",
     levelup = "image/ui_icon_levelup_20260928094730.png",
@@ -1501,10 +1503,10 @@ local function DrawDamageVignette(ctx, game, presentation)
     nvgBeginPath(ctx); nvgRect(ctx, game.width - edge, 0, edge, game.height); nvgFillPaint(ctx, g); nvgFill(ctx)
 end
 
--- v0.12.5：HUD 右上角暂停按钮（绘制与命中共用）。
+-- v0.13.59：HUD 暂停按钮改到**左上角**（原右上角）。绘制与命中共用。
+-- ⚠️ 左栏内容（BattleHUD）相应右移 28px 让位。
 local function GetHudPauseRect(game)
-    local w = (game and game.width) or DESIGN_W
-    return { x = w - 42, y = 10, w = 28, h = 28 }
+    return { x = 10, y = 8, w = 28, h = 28 }
 end
 
 local function DrawHud(ctx, game, presentation)
@@ -1539,6 +1541,30 @@ local function DrawMenu(ctx, game, meta)
     uiFx.surface.Background(ctx, 0, 0, game.width, game.height, uiFx.anim)
     DrawCornerBrackets(ctx, 8, 8, game.width - 16, game.height - 16,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 100}, 18, 1)
+
+    -- v0.13.59：主菜单左上角「设置」齿轮按钮（几何与命中同源，见 Backend.HitTestMenuGear）。
+    -- ⚠️ Scene3DBackend 顶层 local 已满 200（AB-166），几何内联、不加模块级 local。
+    do
+        local gr = { x = 14, y = 14, w = 40, h = 40 }
+        local gGlow, gPress = Backend.GetControlFx(gr, true)
+        uiFx.surface.Button(ctx, gr, C.cyanDim, gGlow, uiFx.anim)
+        if not DrawIcon(ctx, "gear", gr.x + 6, gr.y + 6 + gPress * 2, 28, 1) then
+            -- 缺图回退：程序化齿轮（八齿圆环 + 中心孔）。
+            local cx, cy = gr.x + gr.w * 0.5, gr.y + gr.h * 0.5 + gPress * 2
+            nvgBeginPath(ctx)
+            for i = 0, 7 do
+                local a = i * math.pi / 4
+                nvgMoveTo(ctx, cx + math.cos(a) * 6, cy + math.sin(a) * 6)
+                nvgLineTo(ctx, cx + math.cos(a) * 12, cy + math.sin(a) * 12)
+            end
+            nvgStrokeColor(ctx, nvgRGBA(C.text[1], C.text[2], C.text[3], 230))
+            nvgStrokeWidth(ctx, 4)
+            nvgStroke(ctx)
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, cx, cy, 6)
+            nvgStroke(ctx)
+        end
+    end
 
     -- ① 像素字标标题（v0.12.8）：AI 生成+管线量化的成品图，母版 120 高，
     -- NEAREST 1× 等比居中显示，每 5 秒轮播下一张（起点在进菜单时随机）；
@@ -1576,17 +1602,15 @@ local function DrawMenu(ctx, game, meta)
     -- v0.13.58：CTA 主标题改用 AI 像素艺术字。⚠️ 青底上**不能用深色 tint**——
     -- 双色母版的「白芯+近黑轮廓」乘深色后两级都塌成黑，整块读成黑疙瘩（实测）。
     -- 但**青色 tint 同样会塌**：金属灰被乘成扁平暗青，立体倒角全丢（实测对比）。
-    -- 最终形态（用户要求「直接占满按钮、无黑幕」）：**去掉暗色铭牌**，艺术字用白 tint
-    -- 等比放大铺满按钮高度——金属明暗两级完整保留，青色按钮本身就是它的底。
+    -- 最终形态（用户要求「直接占满按钮、无黑幕」+ 去掉「选择关卡」小字让主标题更大）：
+    -- 去暗色铭牌 + 去副标题，艺术字白 tint 等比放大**居中铺满**按钮。
     if ArtText.Has("startbattle") then
-        local s = ArtText.FitHeight("startbattle", 50)
-        ArtText.Draw(ctx, "startbattle", game.width * 0.5, ctaY + 6, {255, 255, 255}, 1, s)
+        local s = ArtText.FitHeight("startbattle", 60)
+        ArtText.DrawCentered(ctx, "startbattle", cta, {255, 255, 255}, 0, s)
     else
-        DrawPixelText(ctx, game.width * 0.5, ctaY + 10, "开始战斗", 31, C.ink,
+        DrawPixelText(ctx, game.width * 0.5, ctaY + 22, "开始战斗", 40, C.ink,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
-    DrawPixelText(ctx, game.width * 0.5, ctaY + 62, "选择关卡", 13, C.ink,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgRestore(ctx)
     DrawPixelText(ctx, game.width * 0.5, 932,
         "v" .. BUILD_VERSION .. " · " .. GAME_TITLE, 12, C.dim,
@@ -2578,7 +2602,6 @@ local function RenderOverlay(game, presentation, meta)
                     math.cos(game.elapsed * 73) * amplitude * 0.65)
             end
             DrawBaseImpactFeedback(vg_, game, presentation)
-            uiFx.impact.DrawEnchantAura(vg_, game, presentation, ProjectGamePoint)
             DrawShockRings(vg_, game, presentation)
             uiFx.impact.DrawHits(vg_, game, presentation, ProjectGamePoint)
             uiFx.impact.DrawSparks(vg_, presentation, ProjectGamePoint)
@@ -3135,6 +3158,11 @@ end
 function Backend.HitTestMenuCta(uiX, uiY, game)
     local cta = GetMenuCtaRect(game or {})
     return (uiX >= cta.x and uiX <= cta.x + cta.w and uiY >= cta.y and uiY <= cta.y + cta.h)
+end
+
+-- v0.13.59：主菜单左上角「设置」齿轮按钮命中（几何与 DrawMenu 内联块同源）。
+function Backend.HitTestMenuGear(uiX, uiY, game)
+    return (uiX >= 14 and uiX <= 54 and uiY >= 14 and uiY <= 54)
 end
 
 -- v0.12.5 精简：升级面板命中（只保留免费重抽/看广告重抽/锁定/选卡）。
