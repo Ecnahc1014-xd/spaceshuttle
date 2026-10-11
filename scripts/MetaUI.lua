@@ -969,6 +969,60 @@ local function GetShopTabs(layout)
            {x = layout.content.x + bw + gap, y = y, w = bw, h = 32}
 end
 
+-- 粒子系拖尾的 2D 预览：与 3D `SyncTrailParticles` **同一套参数**（emit/pSize/pDrift/
+-- pLife），确定性散布（非 math.random），读起来是「一团离散光尘/光片」而非光带。
+-- 颜色与 3D 纹理烘焙色对应：彗星暖金、流光青白。
+local function DrawTrailParticlePreview(ctx, r, style, base, phase)
+    local C = Colors()
+    local cx, cy = r.x + r.w * 0.5, r.y + r.h * 0.5
+    local x0, x1 = cx + r.w * 0.42, cx - r.w * 0.42   -- x0=车尾(亮), x1=尾端
+    local baseHalf = 13
+    local emit = style.emit or 60
+    local spread = style.emitSpread or 0.3
+    local pSize = style.pSize or 1.2
+    local pGrow = style.pGrow or 0.4
+    local pJitter = style.pJitter or 0.3
+    local pDrift = style.pDrift or 0.5
+    local pLife = style.pLife or 0.42
+    -- 沿预览条长按 emit 撒点；相位随时间滚动 → 光尘在「往后飘」。
+    local span = math.abs(x0 - x1)
+    local count = math.min(150, math.floor(span / 7 * (emit / 60) * 2.4))
+    local function hash(n)
+        local s = math.sin(n * 12.9898 + 78.233) * 43758.5453
+        return s - math.floor(s)
+    end
+    for i = 1, count do
+        local f = hash(i)
+        local g = hash(i + 101.7)
+        local h = hash(i + 311.3)
+        -- t：1=车尾(新)，0=尾端(旧)。相位滚动让「新点」持续从车尾冒出。
+        local t = ((f + phase * 0.10) % 1.0)
+        local xa = x0 + (x1 - x0) * (1 - t)
+        local age = (1 - t) * pLife
+        local lifeT = math.max(0, 1 - age / pLife)
+        local half = baseHalf
+        -- 与 3D 同式：发射散布 + 抖动，沿寿命横向漂移。
+        local offY = (g - 0.5) * 2 * spread * half + (h - 0.5) * 2 * pJitter * half
+        local driftY = offY * 0.35 + (g - 0.5) * pDrift * age * half * 2.2
+        local grow = 1 + pGrow * (1 - lifeT)
+        local shrink = lifeT < 0.3 and (lifeT / 0.3) or 1
+        local sz = math.max(1.2, pSize * half * 0.42 * (0.7 + 0.6 * g) * grow * shrink)
+        local alpha = math.floor(40 + 190 * lifeT * lifeT)
+        local mul = 0.72 + 0.5 * lifeT
+        D.rect(ctx, xa - sz * 0.5, cy + driftY - sz * 0.5, sz, sz,
+            {math.min(255, math.floor(base[1] * mul * 255)),
+             math.min(255, math.floor(base[2] * mul * 255)),
+             math.min(255, math.floor(base[3] * mul * 255)), alpha}, sz * 0.5)
+    end
+    -- 头端一颗灼核（彗星）/ 亮片（流光）：标示「贴车端」。
+    local coreR = baseHalf * (style.particle == 1 and pSize * 0.55 or 4)
+    D.rect(ctx, x0 - coreR, cy - coreR, coreR * 2, coreR * 2,
+        {math.min(255, math.floor(base[1] * 255)), math.min(255, math.floor(base[2] * 255)),
+         math.min(255, math.floor(base[3] * 255)), 210}, coreR)
+    D.text(ctx, r.x + r.w * 0.5, r.y + 10, "尾迹预览", 15, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+end
+
 -- 拖尾 2D 预览：与 3D 光带**同一套样式参数与同一套机制轴**（taper/bulge/hue/waver/flicker/
 -- pulse/双轨收拢/层叠），保证预览里看到的差异就是实机差异。⚠️ D.rect 颜色是 0..255，样式色是 0..1。
 -- 宽度同样锚定**车体真实半宽**（3D 的 vHalf），预览用 baseHalf 表示车体半宽。
@@ -978,6 +1032,11 @@ local function DrawTrailPreview(ctx, r, trailKey)
     local base = {0.30, 0.90, 1.00}
     if style.warm == 1 then base = {1.00, 0.58, 0.18} end
     local phase = D.anim and D.anim() or 0
+    -- v0.13.58：彗星/流光是**粒子系**，2D 预览走离散光尘（与光带预览完全不同的形态）。
+    if style.particle == 1 then
+        DrawTrailParticlePreview(ctx, r, style, base, phase)
+        return
+    end
     local taper = style.taper or 1.0
     local bulge = style.bulge or 0.0
     local hue = style.hue or 0.0

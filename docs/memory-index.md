@@ -9,8 +9,24 @@
 
 项目：货车大战飞机
 当前版本：0.13.58
-简述：附魔车环绕粒子改真 3D BillboardSet（修 2D/3D 不平行导致的光环与车分离）。
+简述：从 0 到 1 建立音频系统（20 音效 + 3 首 8bit 太空公路 BGM + 状态机切换）。
 最后巩固：2026-10-11
+
+## 音频系统：音效 + 8bit 太空公路 BGM（2026-10-11，audio-system 附记）
+- 用户「希望强化。音乐音效表现力」+「bgm需要是8bit+太空+公路风格」。**本项目此前零音频**。
+- **素材**：`text_to_sound_effect` 出 **20 音效 mp3**（`assets/audio/sfx/`）+ `text_to_music` 出 **3 首 BGM ogg**（`bgm_menu` 星港/`bgm_battle` 战斗公路/`bgm_boss` 首领，随机文件名重命名）；每文件配 `.meta`（22hex uuid 验重）。
+- **新模块 `scripts/AudioDirector.lua`**：`Init(scene)` 建 8 SoundSource 播放池 + 2 条 BGM 通道；`Update(dt, snapshot, events)` 消费**与 Presentation 同一份**领域事件 → 播音效（`brick_hit` 按 destroyed 分流 + 节流；`item_used` 按 key）；**BGM 状态机** menu→menu、战斗态→battle、**首领在场→boss**（`bossAlive` 由 `wave_started.isBoss`/`boss_defeated` 跟踪）；**交叉淡入淡出**；音效 pitch 随机防单调（`Play(sound, freq*pitch, gain)`，frequency 是绝对 Hz 非倍率）。
+- **接线**：`uiFx.audio = require`（挂表，**零新增顶层 local**）+ `Backend.Init` pcall Init + `Backend.Shutdown` + `Backend.TickAudio/PlayUiSfx`（挂表）；`client_main.HandleUpdate` 把 DrainEvents 存 `frameEvents` 先给 Presentation 再给 TickAudio（只 Drain 一次）；`HandleMetaAction` 按 action 播 UI 音。资源可选（pcall，缺文件静默跳过）。
+- 验证：LSP **30 文件 0 Error**；**纯模块探针 `probe_audio2` 10/10 PASS**（加载 20/20、BGM 状态机全对、事件+UI 音不崩、Shutdown 幂等）；**真渲染 `probe_audiorender`** 跑完一局 `ready/menu/battle=true`，零 LoadChunk/overlay/Lua/空顶点错误；dist 含全部 23 音频资源。官方多人 build + 预览上传 ✅。
+- 抗体 AB-267（音频 0→1 先纯模块探针再真渲染集成探针；播放池轮转 + BGM 双通道交叉淡入）、AB-268（已满 200 顶层 local 的后端一律挂表+新模块）。⚠️ **本环境无 `/dev/snd`**，实际发声必须 Preview 真机。⚠️ 顺带修复并发会话造成的 broken commit（模块/资源未提交）。
+- ⚠️ 顺带发现：`ui/StageTransition.lua` 被 HEAD 引用却未提交（属并发会话，**未代提交**）。
+
+## 主菜单齿轮设置屏 + 危险操作确认面板（2026-10-11，gear-settings 附记）
+- 用户四项：①CTA 去掉「选择关卡」小字让「开始战斗」更大；②局内暂停键右上→左上；③主菜单左上角加齿轮设置键；④设置页含恢复购买/清空存档，点后弹**手机键盘（0-9 * #）确认面板**，输入正确确认码才执行。
+- **CTA**：去副标题，`ArtText.DrawCentered(..., FitHeight("startbattle",60))` 居中铺满。**暂停钮**：`GetHudPauseRect` 改 `{x=10,y=8,28,28}`，`BattleHUD` 左栏内容右移 26px。**齿轮**：`DrawMenu` 内联 40×40 按钮 + `Backend.HitTestMenuGear`（顶层 local 已满 200，只能内联+挂表）；新图标 `ui_icon_gear_20261011.png`（0718 管线）。
+- **设置屏 `ui/Settings.lua`（新）**：两屏插件注册 `settings`/`reset_confirm`。列表屏两项（恢复购买 gem/金、清空存档 reroll/红）；确认屏 = 提示 + 确认码显示（restore 1234/delete 0000）+ 电话键盘 3×4 + 删除/确认/取消；`input_==code` 才启用确认。`PlayerData.ResetAll()` 新增。
+- 验证：LSP 29 文件 0 Error；真渲染齿轮/设置屏/确认面板/战斗暂停钮/CTA 五图目视正常；`probe_setlogic` **9/9 PASS**（齿轮命中、确认码状态机、清档 11037→0）。官方多人 build + 预览上传 ✅。展示版本归并发会话（未动 BUILD_VERSION，当前 0.13.57）。
+- 抗体 AB-265（顶层 local 满 200 → 内联+挂表）、AB-266（危险操作要键盘确认码；多行网格按行数反推面板高）。⚠️ 真机观感待 Preview。
 
 ## 附魔车光环改真 3D（2026-10-11，enchant-aura-3d）
 - 用户「环绕车辆的粒子实行使用 3D 特效。因为呢，我们这个游戏呢，它这个 2D 的界面和 3D 界面并不是完全平行的，所以会导致有一些问题啊」。

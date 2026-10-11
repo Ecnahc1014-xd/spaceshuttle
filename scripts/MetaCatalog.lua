@@ -227,7 +227,7 @@ local TRAIL_STYLE_PARAMS = {
               taper = 0.55, bulge = 1.1, hue = 0.0, waver = 0.06, waverLen = 0.7, waverDrift = 1.6,
               flicker = 0.55, flickerFreq = 9.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
               glow = 1.50, core = 1.90, twist = 0.0,
-              particle = 1, emit = 60, emitSpread = 0.26, pSize = 1.50, pGrow = 0.80,
+              particle = 1, emit = 60, emitSpread = 0.26, pSize = 0.42, pGrow = 0.80,
               pJitter = 0.30, pSpin = 0, pDrift = 0.55, pLife = 0.42},
     -- 霓虹：极细等宽带 + 截面绕切线**扭转成螺旋** + 沿长度青→品红。
     neon   = {headW = 0.20, tailW = 0.20, bright = 1.45, base = 0.66, twin = 0, warm = 0,
@@ -240,8 +240,8 @@ local TRAIL_STYLE_PARAMS = {
               taper = 1.3, bulge = 0.0, hue = 0.0, waver = 0.0, waverLen = 0.9, waverDrift = 0.0,
               flicker = 0.85, flickerFreq = 17.0, pulse = 0.0, railSpread = 1.35, railTaper = 1.0,
               glow = 1.30, core = 1.45, twist = 0.0,
-              particle = 1, emit = 22, emitSpread = 0.35, pSize = 2.00, pGrow = 0.15,
-              pJitter = 0.70, pSpin = 420, pDrift = 1.10, pLife = 0.40},
+              particle = 1, emit = 22, emitSpread = 0.28, pSize = 0.62, pGrow = 0.15,
+              pJitter = 0.35, pSpin = 420, pDrift = 1.10, pLife = 0.40},
     -- 双轨：两条细轨 + 轨距收拢 + **整体蛇形波动**（编成一股会摆的辫）。
     twin   = {headW = 0.34, tailW = 0.06, bright = 1.05, base = 0.20, twin = 1, warm = 0,
               taper = 1.0, bulge = 0.0, hue = 0.0, waver = 0.22, waverLen = 1.1, waverDrift = 2.4,

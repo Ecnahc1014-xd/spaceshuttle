@@ -909,19 +909,28 @@ local WAVE_ROSTER = {
     { key = "interceptor", minWave = 9 },
 }
 
--- v0.13.58：可用机型池按「**累计难度**」解锁，不再按「关内波次」。
--- 旧版用 GetStageWave（每关都从 1 重新数）→ 每关开局可用池都只有 scout，
--- 于是「每关开局的敌机类型都一样」。现用 (关卡-1) + 关内波次：第 1 关与原版完全一致
--- （1~10 波依次解锁全部机型），第 2 关起开局就带上已解锁机型、关卡越高类型越丰富。
+-- 可用机型池按「累计难度」解锁，机型种类随**关卡号**逐步增多——关卡越高越丰富多元。
+-- v0.13.58：先修「每关开局都一样」（解锁进度不再每关归零）。
+-- v0.13.59：再修「关卡之间不递进」——旧进度 `(关卡-1)+关内波次` 让**第 1 关第 10 波就解锁全部 8 种**，
+--   玩家一关内就看遍所有机型，后续关卡毫无新意。现放慢**关内**解锁（每 3 波才 +1 档），
+--   让机型池主要由**关卡号**驱动：关1 开局 1 种、关2 开局 2 种…关 6+ 开局即全机型，
+--   且每关关内仍缓慢放宽（本关可用机型随波次小幅增加）。关卡越高，本关出现的机型越多。
 local function GetAvailableTypes(waveNum)
     local keys = {}
-    local progress = (StageCatalog.GetStage(waveNum) - 1) + StageCatalog.GetStageWave(waveNum)
+    local progress = (StageCatalog.GetStage(waveNum) - 1)
+        + math.floor((StageCatalog.GetStageWave(waveNum) - 1) / 3) + 1
     for _, entry in ipairs(WAVE_ROSTER) do
         if progress >= entry.minWave and AircraftData[entry.key] then
             table.insert(keys, entry.key)
         end
     end
     return keys
+end
+
+-- 只读诊断（表字段赋值，不占顶层 local 槽位）：返回某累计波号可用的普通机型池，
+-- 供探针验证「机型种类随关卡号递进」。游戏逻辑不消费。
+function Game.DebugAvailableTypes(waveNum)
+    return GetAvailableTypes(waveNum)
 end
 
 ---@param aircraftKey string

@@ -1397,12 +1397,16 @@ local function EmitTrailQuad(verts, a, b, ndx, ndy, ndz, w0, w1, c0, c1, o0, o1,
 end
 
 -- 清空粒子系拖尾：列表 + 所有 billboard 槽停用（不 Commit 空集以外的内容）。
+-- ⚠️ trailParticleSets_ 是 **两层表**（样式 → 弹种 → 记录），清空必须**嵌套遍历**；
+-- 只写一层会把「弹种表」当成记录、取 `.set` 得 nil（本批实测运行时每帧报错）。
 local function ClearTrailParticles()
     trailParticles_ = {}
     if not trailParticleSets_ then return end
-    for _, rec in pairs(trailParticleSets_) do
-        for i = 0, TRAIL_PARTICLE_SLOTS - 1 do rec.set:GetBillboard(i).enabled = false end
-        rec.set:Commit()
+    for _, byType in pairs(trailParticleSets_) do
+        for _, rec in pairs(byType) do
+            for i = 0, TRAIL_PARTICLE_SLOTS - 1 do rec.set:GetBillboard(i).enabled = false end
+            rec.set:Commit()
+        end
     end
     trailParticleActive_ = {normal = false, ice = false, speed = false, giant = false}
 end
@@ -1696,6 +1700,147 @@ local function SyncVehicleTrails(game, dt)
     end
 end
 
+-- v0.13.58：粒子系拖尾（彗星 / 流光）。
+-- 在**已有的世界坐标轨迹采样**（`trailSamples_`）上按**弧长**撒布 billboard 粒子——
+-- 粒子走过的路径 = 车辆真实飞行路径，且「每米 N 颗」与帧率/速度无关（不会像逐帧
+-- 随机那样忽密忽疏）。颜色烘焙进专属纹理（DiffAlpha 不读顶点 rgb），淡出靠末段收缩。
+-- 与光带**互斥**：particle 样式下 SyncVehicleTrails 不提交三角带。
+local function SyncTrailParticles(game, dt)
+    if not trailParticleSets_ then return end
+    local style = MetaCatalog.GetTrailStyleParams(trailStyle_)
+    local styleKey = (style.particle == 1) and trailStyle_ or nil
+    local sets = styleKey and trailParticleSets_[styleKey] or nil
+    if not sets or game.state ~= "playing" then
+        if trailParticles_ and next(trailParticles_) then ClearTrailParticles()
+        elseif not trailParticles_ then trailParticles_ = {} end
+        return
+    end
+    -- 只保留**当前样式**的一份粒子表（切样式时旧粒子立即消失，不会串色）。
+    if not trailParticles_ or trailParticles_.style ~= styleKey then
+        for _, byType in pairs(trailParticleSets_) do
+            for _, rec in pairs(byType) do
+                for i = 0, TRAIL_PARTICLE_SLOTS - 1 do rec.set:GetBillboard(i).enabled = false end
+                rec.set:Commit()
+            end
+        end
+        trailParticles_ = {style = styleKey, list = {}}
+    end
+    local list = trailParticles_.list
+    local step = dt or 0
+    local i = 1
+    while i <= #list do
+        local p = list[i]
+        p.age = p.age + step
+        if p.age >= p.life then table.remove(list, i) else i = i + 1 end
+    end
+    -- 确定性伪随机（非 math.random）：同一轨迹位置 + 相位 → 同结果，重开/暂停不跳变。
+    local function hash(n)
+        local s = math.sin(n * 12.9898 + 78.233) * 43758.5453
+        return s - math.floor(s)
+    end
+    local emit = style.emit or 60
+    local emitSpread = style.emitSpread or 0.3
+    local pSize = style.pSize or 1.2
+    local pGrow = style.pGrow or 0.4
+    local pJitter = style.pJitter or 0.3
+    local pSpin = style.pSpin or 0
+    local pDrift = style.pDrift or 0.5
+    local pLife = style.pLife or 0.42
+    for _, track in pairs(trailSamples_) do
+        local ballType = track.ballType
+        if sets[ballType] then
+            local vHalf = (track.radius or 20) * WORLD_SCALE * VEHICLE_HALF_FACTOR
+            local pts = track.points
+            local n = #pts
+            local acc = track.emitAcc or 0
+            local seq = track.emitSeq or 0
+            -- 段：pts[k] → pts[k+1]，最后一段接**实时车尾**（track.x/y/z）。
+            for k = 1, n do
+                local a = pts[k]
+                local b = (k < n) and pts[k + 1] or track
+                local dx, dy = b.x - a.x, b.y - a.y
+                local len = math.sqrt(dx * dx + dy * dy)
+                if len > 0.0001 then
+                    acc = acc + len * emit
+                    local nx, ny = -dy / len, dx / len
+                    while acc >= 1 do
+                        acc = acc - 1
+                        seq = seq + 1
+                        local f = hash(seq)
+                        local g = hash(seq + 101.7)
+                        local h = hash(seq + 311.3)
+                        -- 发射点：段内按 f 取位置 + 沿法线的散布/抖动。
+                        local u = f
+                        local off = (g - 0.5) * 2 * emitSpread * vHalf
+                        local jit = (h - 0.5) * 2 * pJitter * vHalf
+                        list[#list + 1] = {
+                            ballType = ballType,
+                            x = a.x + dx * u + nx * (off + jit),
+                            y = a.y + dy * u + ny * (off + jit),
+                            z = a.z + TRAIL_BEHIND_Z,
+                            age = 0, life = pLife * (0.75 + 0.5 * h),
+                            size = pSize * vHalf * (0.7 + 0.6 * g),
+                            grow = pGrow, drift = pDrift * vHalf,
+                            nx = nx, ny = ny,
+                            angle = h * 6.28318, spin = pSpin * (0.6 + 0.8 * f),
+                        }
+                    end
+                end
+            end
+            track.emitAcc = acc
+            track.emitSeq = seq
+        end
+    end
+    -- 提交：按弹种填槽；每槽只画一颗，超预算丢弃（预算 = 同屏上限，防爆）。
+    local counts = {normal = 0, ice = 0, speed = 0, giant = 0}
+    for _, p in ipairs(list) do
+        local bt = p.ballType
+        if counts[bt] and counts[bt] < TRAIL_PARTICLE_SLOTS then
+            counts[bt] = counts[bt] + 1
+            local bb = sets[bt].set:GetBillboard(counts[bt] - 1)
+            local lifeT = math.max(0, math.min(1, 1 - p.age / p.life))
+            -- 沿寿命：先膨胀（烟/尘）再末段收缩消散。
+            local grow = 1 + p.grow * (1 - lifeT)
+            local shrink = lifeT < 0.3 and (lifeT / 0.3) or 1
+            local size = math.max(0.01, p.size * grow * shrink)
+            -- 沿寿命的横向漂移（彗尾散开 / 流光飞散）：确定性、按 age 推进。
+            -- drift 已按 vHalf 归一（发射时算好），与粒子自身大小无关。
+            local dx = p.nx * p.drift * p.age
+            local dy = p.ny * p.drift * p.age
+            bb.enabled = true
+            bb.position = Vector3(p.x + dx, p.y + dy, p.z)
+            bb.size = Vector2(size, size)
+            bb.rotation = p.angle + p.spin * p.age
+            -- DiffAlpha 不读顶点 rgb；保留白顶点，颜色已在纹理里。
+            bb.color = Color(1, 1, 1, 1)
+        end
+    end
+    for _, bt in ipairs(TRAIL_TYPES) do
+        local rec = sets[bt]
+        if counts[bt] > 0 or trailParticleActive_[bt] then
+            for j = counts[bt] + 1, TRAIL_PARTICLE_SLOTS do
+                rec.set:GetBillboard(j - 1).enabled = false
+            end
+            rec.set:Commit()
+        end
+        trailParticleActive_[bt] = counts[bt] > 0
+    end
+end
+
+-- 诊断用（只读）：当前粒子系拖尾**实际启用**的 billboard 数（供探针自证数据通路）。
+function Renderer3D.DebugTrailParticleCount()
+    local total = 0
+    if not trailParticleSets_ then return 0 end
+    for _, byStyle in pairs(trailParticleSets_) do
+        for _, rec in pairs(byStyle) do
+            for i = 0, TRAIL_PARTICLE_SLOTS - 1 do
+                if rec.set:GetBillboard(i).enabled then total = total + 1 end
+            end
+        end
+    end
+    return total
+end
+
 local function SyncAimLine(game)
     if not aimLineSet_ then return end
     local line = game.aimLine
@@ -1882,6 +2027,37 @@ function Renderer3D.Init(scene, voxelWorld)
     end
     print("[Renderer3D] vehicle trails ready (3D ribbon geometry)")
 
+    -- v0.13.58：粒子系拖尾（彗星/流光）——每样式 × 每弹种一个 BillboardSet，
+    -- 各绑**专属烘焙纹理**（颜色只能进纹理，见 DiffAlpha 契约）。与光带互斥使用。
+    trailParticles_ = {}
+    trailParticleActive_ = {normal = false, ice = false, speed = false, giant = false}
+    local styleTex = {
+        comet = CreateTrailCometTexture(),
+        dash = CreateTrailDashTexture(),
+    }
+    trailParticleSets_ = {}
+    for _, styleName in ipairs(TRAIL_PARTICLE_STYLES) do
+        local tex = styleTex[styleName]
+        local byType = {}
+        for _, ballType in ipairs(TRAIL_TYPES) do
+            local node = scene:CreateChild("TrailParticle_" .. styleName .. "_" .. ballType)
+            local set = node:CreateComponent("BillboardSet")
+            set:SetNumBillboards(TRAIL_PARTICLE_SLOTS)
+            set.castShadows = false
+            set.relative = false
+            local mat = Material:new()
+            mat:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffAlpha.xml"))
+            mat:SetTexture(TU_DIFFUSE, tex)
+            mat:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+            set:SetMaterial(mat)
+            for i = 0, TRAIL_PARTICLE_SLOTS - 1 do set:GetBillboard(i).enabled = false end
+            set:Commit()
+            byType[ballType] = {node = node, set = set, mat = mat, tex = tex}
+        end
+        trailParticleSets_[styleName] = byType
+    end
+    print("[Renderer3D] trail particles ready (comet/dash billboards)")
+
 
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
@@ -1983,6 +2159,8 @@ function Renderer3D.Render(game, presentation, skin, trail)
         SyncEjectedBoxes(presentation)
     end
     SyncVehicles(game, dt)
+    -- 粒子系先跑（它在光带之前把光带关掉，避免同帧两套都提交）。
+    SyncTrailParticles(game, dt)
     SyncVehicleTrails(game, dt)
     SyncDebris(presentation)
     SyncParticles(presentation)
@@ -2094,6 +2272,20 @@ function Renderer3D.Shutdown()
     trailGeometries_ = nil
     if trailMaterial_ then trailMaterial_:Dispose() end
     trailMaterial_ = nil
+    -- v0.13.58：粒子系拖尾释放（每样式 × 每弹种的 set / 材质 / 纹理 / 节点）。
+    if trailParticleSets_ then
+        for _, byType in pairs(trailParticleSets_) do
+            for _, rec in pairs(byType) do
+                DisposeComponent(rec.set)
+                if rec.mat then rec.mat:Dispose() end
+                if rec.tex then rec.tex:Dispose() end
+                RemoveNode(rec.node)
+            end
+        end
+    end
+    trailParticleSets_ = nil
+    trailParticles_ = nil
+    trailParticleActive_ = {normal = false, ice = false, speed = false, giant = false}
     trailSamples_ = {}
     vehicleRecords_ = {}
     enemyMeshes_ = {}

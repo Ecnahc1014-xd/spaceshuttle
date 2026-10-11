@@ -892,6 +892,14 @@ end
 
 local function HandleMetaAction(action, index)
     if HandleRechargeAction(action, index) then return end
+    -- 元层交互音效：购买/解锁/领取类给确认音，其余给轻点击音。
+    if action == "buy" or action == "spend" or action == "buy_first_gift"
+        or action == "unlock_talent" or action == "signin" or action == "claim"
+        or action == "buy_premium_pass" then
+        RenderBackend.PlayUiSfx("confirm")
+    else
+        RenderBackend.PlayUiSfx("click")
+    end
     if action == "close" then
         metaState.screen = nil
         RefreshMeta()
@@ -1645,7 +1653,10 @@ function HandleUpdate(eventType, eventData)
     end
     ClientMain.ValidatePointer()
     local snapshot = Game.GetSnapshot()
-    Presentation.Update(dt, snapshot, Game.DrainEvents())
+    local frameEvents = Game.DrainEvents()
+    Presentation.Update(dt, snapshot, frameEvents)
+    -- 音频总控消费同一份领域事件（只读），并按其状态机切换 8bit BGM。
+    RenderBackend.TickAudio(dt, snapshot, frameEvents)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)

@@ -2787,6 +2787,8 @@ function Backend.Init()
     UpdateScreenMetrics()
     uiFx.surface = require "ui.PremiumSurface"
     uiFx.impact = require "ui.CombatImpact"
+    -- 音频总控：8bit 太空公路风格 BGM + 领域事件音效（可选资源，缺文件静默跳过）。
+    uiFx.audio = require "AudioDirector"
     -- v0.11.0 商业化：把游戏 UI 的令牌与绘制原语注入元层界面，保证两处风格同源。
     MetaUI.Init({
         C = C,
@@ -2938,6 +2940,8 @@ function Backend.Init()
             return false
         end
     end
+    -- 音频总控绑定场景（音源节点挂在 3D 场景下；2D 玩法用非定位 SoundSource）。
+    pcall(function() uiFx.audio.Init(scene_) end)
     -- 传函数值而非函数名：不受「处理器定义在哪个文件」影响。
     SubscribeToEvent(vg_, "NanoVGRender", HandleBackendNanoVGRender)
     print("[Scene3DBackend] initialized: 9:16 locked viewport, dark-tech HUD, orthographic 46-degree aircraft camera")
@@ -2945,6 +2949,7 @@ function Backend.Init()
 end
 
 function Backend.Shutdown()
+    if uiFx.audio then uiFx.audio.Shutdown() end
     if uiFx.battle then uiFx.battle.Shutdown() end
     MetaUI.Shutdown()
     if uiFx.surface then uiFx.surface.Shutdown() end
@@ -3000,6 +3005,18 @@ function Backend.ScreenToGame(screenX, screenY)
     local canvasX, canvasY = Backend.ScreenToUi(screenX, screenY)
     return (canvasX - projectionOffsetX_) / projectionScaleX_,
         (canvasY - projectionOffsetY_) / projectionScaleY_
+end
+
+-- 音频总控每帧推进：消费同一份领域事件（与 Presentation 共用），按状态切换 BGM。
+-- 编排层在 Presentation.Update 之后调用，事件数组原样传入（只读消费）。
+function Backend.TickAudio(dt, gameSnapshot, events)
+    if uiFx.audio then uiFx.audio.Update(dt, gameSnapshot, events) end
+end
+
+-- 供 UI 交互直接调用的音效入口（按钮点击/确认）。
+---@param kind string|nil
+function Backend.PlayUiSfx(kind)
+    if uiFx.audio then uiFx.audio.PlayUi(kind) end
 end
 
 -- 游戏快照在 Update 结束后已经稳定；在本帧 3D 绘制之前同步场景与体素。
