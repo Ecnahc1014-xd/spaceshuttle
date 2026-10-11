@@ -1576,14 +1576,11 @@ local function DrawMenu(ctx, game, meta)
     -- v0.13.58：CTA 主标题改用 AI 像素艺术字。⚠️ 青底上**不能用深色 tint**——
     -- 双色母版的「白芯+近黑轮廓」乘深色后两级都塌成黑，整块读成黑疙瘩（实测）。
     -- 但**青色 tint 同样会塌**：金属灰被乘成扁平暗青，立体倒角全丢（实测对比）。
-    -- 正确做法：暗色铭牌垫底 + 艺术字用**白色 tint**——金属明暗两级完整保留，
-    -- 铭牌提供对比、青色按钮语义由底与描边承载。无图时回退 zpix 深字。
+    -- 最终形态（用户要求「直接占满按钮、无黑幕」）：**去掉暗色铭牌**，艺术字用白 tint
+    -- 等比放大铺满按钮高度——金属明暗两级完整保留，青色按钮本身就是它的底。
     if ArtText.Has("startbattle") then
-        local aw, ah = ArtText.Width("startbattle"), ArtText.Height("startbattle")
-        local px, py = game.width * 0.5 - aw * 0.5 - 16, ctaY + 6
-        DrawRect(ctx, px, py, aw + 32, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 150}, 7)
-        DrawStroke(ctx, px, py, aw + 32, ah + 8, {C.cyan[1], C.cyan[2], C.cyan[3], 95}, 7, 1)
-        ArtText.Draw(ctx, "startbattle", game.width * 0.5, ctaY + 8, {255, 255, 255})
+        local s = ArtText.FitHeight("startbattle", 50)
+        ArtText.Draw(ctx, "startbattle", game.width * 0.5, ctaY + 6, {255, 255, 255}, 1, s)
     else
         DrawPixelText(ctx, game.width * 0.5, ctaY + 10, "开始战斗", 31, C.ink,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -2240,14 +2237,12 @@ local function DrawPaused(ctx, game, meta, presentation)
     nvgFillColor(ctx, nvgRGBA(C.ink[1], C.ink[2], C.ink[3], 255))
     nvgFill(ctx)
     -- v0.13.58：继续战斗改用艺术字。同 CTA——青/深 tint 都会把金属灰压塌，
-    -- 垫暗色铭牌 + **白色 tint** 保住立体倒角；无图回退 zpix 深字。
+    -- 且用户要求「同款问题一并修」：**去掉暗色铭牌**，白 tint 放大铺满按钮高度。
     if ArtText.Has("resume") then
-        local aw, ah = ArtText.Width("resume"), ArtText.Height("resume")
+        local s, aw = ArtText.FitHeight("resume", 34)
         local pcx = layout.resume.x + layout.resume.w * 0.60
-        DrawRect(ctx, pcx - aw * 0.5 - 12, layout.resume.y + (layout.resume.h - ah) * 0.5 - 4,
-            aw + 24, ah + 8, {C.ink[1], C.ink[2], C.ink[3], 150}, 6)
         ArtText.DrawCentered(ctx, "resume",
-            { x = pcx - aw * 0.5, y = layout.resume.y, w = aw, h = layout.resume.h }, {255, 255, 255}, 0)
+            { x = pcx - aw * 0.5, y = layout.resume.y, w = aw, h = layout.resume.h }, {255, 255, 255}, 0, s)
     else
         DrawPixelText(ctx, layout.resume.x + layout.resume.w * 0.60, layout.resume.y + 13,
             "继续战斗", 19, C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)

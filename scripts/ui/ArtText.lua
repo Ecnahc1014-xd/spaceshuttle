@@ -89,6 +89,7 @@ function ArtText.Height(key)
 end
 
 -- 画一张字标：以 `cx` 水平居中、`topY` 为顶。tint 为 0..255 的 {r,g,b}（可带 a）。
+-- `scale` 缺省 1（母版原尺寸）；>1 放大铺满按钮（母版是完整成品，等比缩放，勿非等比拉伸）。
 -- 返回 true 表示画了；false 表示无图（调用方自行回退 zpix 文本）。
 ---@param ctx any
 ---@param key string
@@ -96,19 +97,22 @@ end
 ---@param topY number
 ---@param tint integer[]|nil 染色（默认白）
 ---@param alpha number|nil 0..1
+---@param scale number|nil 缩放倍数（默认 1）
 ---@return boolean drawn
-function ArtText.Draw(ctx, key, cx, topY, tint, alpha)
+function ArtText.Draw(ctx, key, cx, topY, tint, alpha, scale)
     ArtText.Ensure(ctx)
     local it = images_[key]
     if not it then return false end
     local a = alpha or 1
+    local s = scale or 1
     local col = tint or { 255, 255, 255 }
     local cr, cg, cb = col[1] or 255, col[2] or 255, col[3] or 255
     local alpha255 = col[4] or 255
-    local x = cx - it.w * 0.5
+    local w, h = it.w * s, it.h * s
+    local x = cx - w * 0.5
     nvgBeginPath(ctx)
-    nvgRect(ctx, x, topY, it.w, it.h)
-    nvgFillPaint(ctx, nvgImagePatternTinted(ctx, x, topY, it.w, it.h, 0, it.img,
+    nvgRect(ctx, x, topY, w, h)
+    nvgFillPaint(ctx, nvgImagePatternTinted(ctx, x, topY, w, h, 0, it.img,
         nvgRGBA(cr, cg, cb, math.floor(alpha255 * a))))
     nvgFill(ctx)
     return true
@@ -120,13 +124,27 @@ end
 ---@param r table {x,y,w,h}
 ---@param tint integer[]|nil
 ---@param yOffset number|nil 相对垂直中心的微调
+---@param scale number|nil 缩放倍数（默认 1）
 ---@return boolean drawn
-function ArtText.DrawCentered(ctx, key, r, tint, yOffset)
+function ArtText.DrawCentered(ctx, key, r, tint, yOffset, scale)
     ArtText.Ensure(ctx)
     local it = images_[key]
     if not it then return false end
-    local topY = r.y + (r.h - it.h) * 0.5 + (yOffset or 0)
-    return ArtText.Draw(ctx, key, r.x + r.w * 0.5, topY, tint, 1)
+    local s = scale or 1
+    local h = it.h * s
+    local topY = r.y + (r.h - h) * 0.5 + (yOffset or 0)
+    return ArtText.Draw(ctx, key, r.x + r.w * 0.5, topY, tint, 1, s)
+end
+
+-- 计算「铺满高度」的缩放倍数：让字标高约等于 `targetH`，返回 缩放 + 宽 + 高。
+---@param key string
+---@param targetH number
+---@return number scale, number w, number h
+function ArtText.FitHeight(key, targetH)
+    local it = images_[key]
+    if not it then return 1, 0, 0 end
+    local s = targetH / it.h
+    return s, it.w * s, it.h * s
 end
 
 -- 仅供探针/验收：返回已加载的键数。

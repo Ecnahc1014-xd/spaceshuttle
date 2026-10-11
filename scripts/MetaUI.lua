@@ -1091,13 +1091,14 @@ local function DrawShopTabs(ctx, layout)
             D.stroke(ctx, r.x, r.y, r.w, r.h,
                 {C.warn[1], C.warn[2], C.warn[3], math.floor(glow * 200)}, 6, 1.4)
         end
-        -- v0.13.58：标签文案改用 AI 像素艺术字（深底亮字 → tint 金/暗）；
-        -- 无图回退 zpix 文本，位置/字号保持原样。
-        local tint = active and C.warn or C.dim
+        -- v0.13.58：标签文案改用 AI 像素艺术字。⚠️ 金属立体字**不能用非白 tint**
+        -- （金/暗灰都会把金属灰压塌、丢倒角，同 CTA）——统一用**白 tint**；
+        -- 用户要求「更白更浅」→ 白 tint + 激活满 alpha、未激活降 alpha（读起来浅灰）。
+        local tint = {255, 255, 255, active and 255 or 190}
         if not (artKey and ArtText.Has(artKey)
-            and ArtText.DrawCentered(ctx, artKey, r, tint, press * 2 + 1)) then
+            and ArtText.DrawCentered(ctx, artKey, r, tint, press * 2 + 1, 1)) then
             D.text(ctx, r.x + r.w * 0.5, r.y + 8 + press * 2, label, 17,
-                tint, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+                active and C.text or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
     end
     tab(vehicleTab, "车型外观", "vehicle", shopTab == "vehicle")
