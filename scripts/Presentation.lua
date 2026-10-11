@@ -98,6 +98,8 @@ local FEEDBACK_MAP = {
     enchant_explode = {"enchantExplode"},
     enchant_chain = {"enchantChain"},
     enchant_triple = {"enchantTriple"},
+    enchant_split = {"enchantSplit"},
+    enchant_homing = {"enchantHoming"},
     enchant_lifesteal = {"enchantLifesteal"},
 }
 
@@ -508,35 +510,55 @@ local FEEDBACK_HANDLERS = {
         screenShake = math.max(screenShake, 0.14)
     end,
     enchantPierce = function(event)
-        SpawnParticles(event.x, event.y, {255, 210, 120}, 3, "spark")
+        -- 穿透：一道向前的亮色速度线 + 火花。
+        SpawnParticles(event.x, event.y, {255, 210, 120}, 5, "spark")
+        shockRings[#shockRings + 1] = {
+            x = event.x, y = event.y, life = 0.2, maxLife = 0.2,
+            r0 = 3, r1 = 22, r = 255, g = 210, b = 120,
+        }
     end,
     enchantExplode = function(event)
-        -- v0.13.58：爆炸 = 大范围扩散环（半径按规则层给的 radius 换算设计像素）+ 火花 + 震屏。
-        local rr = (event.radius or 24) * 3.2
+        -- v0.13.58：爆炸 = 大范围扩散双环 + 白芯 + 火花 + 烟 + 震屏（更戏剧化）。
+        local rr = (event.radius or 24) * 4.2
         shockRings[#shockRings + 1] = {
-            x = event.x, y = event.y,
-            life = 0.42, maxLife = 0.42,
-            r0 = 8, r1 = rr,
-            r = 255, g = 150, b = 80,
+            x = event.x, y = event.y, life = 0.5, maxLife = 0.5,
+            r0 = 10, r1 = rr, r = 255, g = 150, b = 80,
         }
-        SpawnParticles(event.x, event.y, {255, 150, 80}, 12, "spark")
-        SpawnParticles(event.x, event.y, {255, 220, 140}, 4, "smoke")
-        screenShake = math.max(screenShake, 0.3)
+        shockRings[#shockRings + 1] = {
+            x = event.x, y = event.y, life = 0.34, maxLife = 0.34,
+            r0 = 4, r1 = rr * 0.62, r = 255, g = 232, b = 190,
+        }
+        SpawnParticles(event.x, event.y, {255, 150, 80}, 18, "spark")
+        SpawnParticles(event.x, event.y, {255, 220, 140}, 6, "smoke")
+        SpawnParticles(event.x, event.y, {255, 246, 220}, 5, "shard")
+        screenShake = math.max(screenShake, 0.42)
     end,
     enchantChain = function(event)
         -- 连锁 = 命中点向目标点的一串火花 + 冲击环，读作「电弧跳过去」。
-        SpawnParticles(event.targetX or event.x, event.targetY or event.y, {150, 200, 255}, 6, "spark")
-        SpawnParticles(event.x, event.y, {150, 200, 255}, 4, "spark")
+        SpawnParticles(event.targetX or event.x, event.targetY or event.y, {150, 200, 255}, 8, "spark")
+        SpawnParticles(event.x, event.y, {150, 200, 255}, 6, "spark")
         shockRings[#shockRings + 1] = {
             x = event.targetX or event.x, y = event.targetY or event.y,
-            life = 0.28, maxLife = 0.28, r0 = 4, r1 = 18, r = 150, g = 200, b = 255,
+            life = 0.32, maxLife = 0.32, r0 = 5, r1 = 24, r = 150, g = 200, b = 255,
         }
+        screenShake = math.max(screenShake, 0.1)
     end,
     enchantTriple = function(event)
-        SpawnParticles(event.x, event.y, {255, 196, 72}, 4, "spark")
+        SpawnParticles(event.x, event.y, {255, 196, 72}, 8, "spark")
+        shockRings[#shockRings + 1] = {
+            x = event.x, y = event.y, life = 0.26, maxLife = 0.26,
+            r0 = 4, r1 = 26, r = 255, g = 196, b = 72,
+        }
+    end,
+    enchantSplit = function(event)
+        SpawnParticles(event.x, event.y, {92, 220, 255}, 5, "spark")
+    end,
+    enchantHoming = function(event)
+        SpawnParticles(event.targetX or event.x, event.targetY or event.y, {120, 255, 200}, 3, "spark")
     end,
     enchantLifesteal = function(event)
-        SpawnFloatText(event.x, event.y - 26, "+" .. tostring(event.amount or 1), {120, 255, 160}, 0.8)
+        SpawnFloatText(event.x, event.y - 26, "+" .. tostring(event.amount or 1), {120, 255, 160}, 1.0)
+        SpawnParticles(event.x, event.y, {120, 255, 160}, 4, "spark")
     end,
     -- marble_removed 无需维护拖尾状态。
 }

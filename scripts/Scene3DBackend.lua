@@ -2578,6 +2578,7 @@ local function RenderOverlay(game, presentation, meta)
                     math.cos(game.elapsed * 73) * amplitude * 0.65)
             end
             DrawBaseImpactFeedback(vg_, game, presentation)
+            uiFx.impact.DrawEnchantAura(vg_, game, presentation, ProjectGamePoint)
             DrawShockRings(vg_, game, presentation)
             uiFx.impact.DrawHits(vg_, game, presentation, ProjectGamePoint)
             uiFx.impact.DrawSparks(vg_, presentation, ProjectGamePoint)

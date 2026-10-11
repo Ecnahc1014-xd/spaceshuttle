@@ -43,27 +43,27 @@ EnchantCatalog.RARITY_NAMES = {
 EnchantCatalog.CARDS = {
     -- 蓝（普通）：轻量、常出，提供基础增益。⚠️ 低关卡砖块常 1~2 血，纯「伤害倍率」看不出差别
     --   （同 AB-172），所以蓝卡全走**覆盖/可见**方向（多打几块、追敌、回血）。
-    { id = "split",     name = "裂变", rarity = "common", desc = "每次命中额外分裂 3 颗",
-      splitOnHit = 3 },
-    { id = "lifesteal", name = "吸血", rarity = "common", desc = "每次命中防线回 4 血",
-      healPerHit = 4 },
+    { id = "split",     name = "裂变", rarity = "common", desc = "每次命中额外分裂 4 颗",
+      splitOnHit = 4 },
+    { id = "lifesteal", name = "吸血", rarity = "common", desc = "每次命中防线回 6 血",
+      healPerHit = 6 },
     { id = "homing",    name = "追踪", rarity = "common", desc = "每次命中自动追向新目标",
       homing = true },
     -- 紫（稀有）：改变作用方式。
-    { id = "pierce",    name = "穿透", rarity = "rare", desc = "穿透 8 块不反弹",
-      pierce = 8 },
-    { id = "chain",     name = "连锁", rarity = "rare", desc = "命中溅射附近 +2× 伤害",
-      chain = true, chainDamage = 2.0 },
-    { id = "freeze",    name = "霜冻", rarity = "rare", desc = "每次命中冻结全场 4 秒",
-      freezeAll = 4.0 },
+    { id = "pierce",    name = "穿透", rarity = "rare", desc = "穿透 12 块不反弹",
+      pierce = 12 },
+    { id = "chain",     name = "连锁", rarity = "rare", desc = "命中溅射附近 +2.5× 伤害",
+      chain = true, chainDamage = 2.5 },
+    { id = "freeze",    name = "霜冻", rarity = "rare", desc = "每次命中冻结全场 5 秒",
+      freezeAll = 5.0 },
     -- 黄（史诗）：强力、稀有。
     -- 重击：低关卡伤害倍率不显眼，所以额外给穿透——一发贯穿一排，视觉上「一炮打穿」。
-    { id = "power",     name = "重击", rarity = "epic", desc = "伤害 ×5 并穿透 4 块",
-      damageMul = 5.0, pierce = 4 },
-    { id = "explode",   name = "爆裂", rarity = "epic", desc = "命中大范围爆炸",
-      explodeRadius = 3.5, explodeMul = 1.6 },
-    { id = "triple",    name = "三连", rarity = "epic", desc = "发射扇形四连（4 车）",
-      tripleShot = 3 },
+    { id = "power",     name = "重击", rarity = "epic", desc = "伤害 ×6 并穿透 6 块",
+      damageMul = 6.0, pierce = 6 },
+    { id = "explode",   name = "爆裂", rarity = "epic", desc = "命中超大范围爆炸",
+      explodeRadius = 4.5, explodeMul = 2.0 },
+    { id = "triple",    name = "三连", rarity = "epic", desc = "发射扇形五连（5 车）",
+      tripleShot = 4 },
 }
 
 local BY_ID = {}
