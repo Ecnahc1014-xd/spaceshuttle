@@ -24,6 +24,7 @@ local StageSelect = require "ui.StageSelect"
 local ItemShop = require "ui.ItemShop"
 local TalentTree = require "ui.TalentTree"
 local TestModePrompt = require "ui.TestModePrompt"
+local Settings = require "ui.Settings"
 local StageTransition = require "ui.StageTransition"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
@@ -962,6 +963,55 @@ local function HandleMetaAction(action, index)
         metaState.screen = nil
         pendingTestStage_ = 1
         RefreshMeta()
+    elseif action == "open_settings" then
+        -- v0.13.59：主菜单左上角齿轮 → 设置屏。
+        OpenMetaScreen("settings")
+    elseif action == "restore_purchase" then
+        -- 危险操作：先开确认面板，输入正确确认码后才真正恢复购买。
+        Settings.BeginConfirm("restore")
+        OpenMetaScreen("reset_confirm")
+    elseif action == "reset_save" then
+        Settings.BeginConfirm("delete")
+        OpenMetaScreen("reset_confirm")
+    elseif action == "confirm_key" and index then
+        local ch = Settings.KeyCharAt(index)
+        if ch then Settings.PushChar(ch) end
+        RefreshMeta()
+    elseif action == "confirm_backspace" then
+        Settings.Backspace()
+        RefreshMeta()
+    elseif action == "confirm_cancel" then
+        -- 取消确认面板：回设置屏（不执行任何危险操作）。
+        OpenMetaScreen("settings")
+    elseif action == "confirm_ok" then
+        if not Settings.IsConfirmed() then
+            SetMetaToast("确认码不正确")
+            RefreshMeta()
+        else
+            local reason = Settings.GetConfirmReason()
+            metaState.screen = nil
+            if reason == "delete" then
+                -- 清空存档：重置本地存档 + 云存档，回到出厂状态。
+                PlayerData.ResetAll()
+                PlayerData.Save()
+                SavePlayerDataToCloud()
+                Game.SetItemStock(PlayerData.GetItemStock())
+                metaState.talents = PlayerData.GetTalents()
+                metaState.gems = 0
+                SetMetaToast("存档已清空")
+                print("[Main] save wiped by player confirm")
+            else
+                -- 恢复购买：重新向服务端拉一次余额与已购内容（离线不可用）。
+                if GameMode.IsOffline() then
+                    SetMetaToast("需联网后可用")
+                else
+                    NetClient.RequestBalance()
+                    SetMetaToast("正在恢复购买…")
+                    print("[Main] restore purchase requested")
+                end
+            end
+            RefreshMeta()
+        end
     elseif action == "buy_item" and index then
         -- v0.13.13：花零件买局内道具（永久库存）。库存上限/零件不足都只给 toast。
         local def = StageSelect.ITEM_ORDER[index]
@@ -1118,6 +1168,11 @@ local function HandleMetaPointerDown(uiX, uiY)
     -- v0.13.4：主菜单「开始战斗」CTA 打开选关界面（不再直接开局）。
     if gameSnapshot and RenderBackend.HitTestMenuCta(uiX, uiY, gameSnapshot) then
         HandleMetaAction("open_stage_select", nil)
+        return true
+    end
+    -- v0.13.59：主菜单左上角齿轮 → 设置屏。
+    if gameSnapshot and RenderBackend.HitTestMenuGear(uiX, uiY, gameSnapshot) then
+        HandleMetaAction("open_settings", nil)
         return true
     end
     local action = RenderBackend.HitTestMenuBar(uiX, uiY, metaState)
@@ -1442,6 +1497,10 @@ function ClientMain.Start(opts)
     -- v0.13.56：第 1 关「测试模式」询问屏同源注册（复用元层窗口动画与命中分发）。
     TestModePrompt.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("test_mode", TestModePrompt.Draw, TestModePrompt.HitTest)
+    -- v0.13.59：设置屏 + 危险操作确认面板（手机键盘输入确认码）同源注册。
+    Settings.Init(MetaUI.GetDeps())
+    MetaUI.RegisterScreen("settings", Settings.Draw, Settings.HitTest)
+    MetaUI.RegisterScreen("reset_confirm", Settings.DrawConfirm, Settings.HitTestConfirm)
 
     PlayerData.Load()
     -- 开局自动拥有初始车的「允许局内出场」节点（幂等；必须在 Load 之后）。

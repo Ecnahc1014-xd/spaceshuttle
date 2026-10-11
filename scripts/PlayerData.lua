@@ -208,6 +208,14 @@ function PlayerData.Save()
     return true
 end
 
+-- v0.13.59：清空存档——把内存态重置为出厂默认（调用方负责 Save + 云同步）。
+-- ⚠️ 这是危险操作，只允许在玩家通过确认面板输入正确确认码后由编排层调用。
+function PlayerData.ResetAll()
+    state = NewState()
+    state.createdAt = os.time()
+    print("[PlayerData] reset all to fresh state")
+end
+
 -- 云同步：只做字符串编解码，真正的读写由编排层（main.lua）执行。
 ---@return string
 function PlayerData.ExportForCloud()

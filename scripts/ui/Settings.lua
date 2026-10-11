@@ -86,16 +86,16 @@ end
 -- 确认面板：标题 + 提示 + 输入显示 + 键盘(4×3) + 按钮。
 ---@return table panel
 local function GetConfirmPanel(w)
-    return { x = 46, y = 168, w = w - 92, h = 628 }
+    return { x = 46, y = 150, w = w - 92, h = 676 }
 end
 
-local KEY_COLS, KEY_ROWS, KEY_SZ, KEY_GAP = 3, 4, 84, 12
+local KEY_COLS, KEY_ROWS, KEY_SZ, KEY_GAP = 3, 4, 68, 10
 
 ---@return table 键盘区域左上角
 local function GetKeypadOrigin(w)
     local p = GetConfirmPanel(w)
     local totalW = KEY_COLS * KEY_SZ + (KEY_COLS - 1) * KEY_GAP
-    return { x = p.x + (p.w - totalW) * 0.5, y = p.y + 268 }
+    return { x = p.x + (p.w - totalW) * 0.5, y = p.y + 258 }
 end
 
 ---@param i integer 0..11
@@ -113,6 +113,13 @@ end
 
 -- 键盘字符（电话键盘顺序：1-9, *, 0, #）。
 local KEY_CHARS = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#" }
+
+-- 编排层命中 `confirm_key` 后，用 index(1..12) 取字符再 PushChar。
+---@param i integer 1..12
+---@return string|nil
+function Settings.KeyCharAt(i)
+    return KEY_CHARS[i]
+end
 
 ---@return table backspace
 ---@return table ok
