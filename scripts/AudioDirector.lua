@@ -68,11 +68,11 @@ local EVENT_SFX = {
 -- 局内道具 → 音效键。
 local ITEM_SFX = { bomb = "explode", freeze = "freeze", shield = "shield" }
 
--- 状态 → BGM 键（切换时交叉淡入淡出）。
-local BGM_PATHS = {
-    menu   = "audio/bgm_menu.ogg",
-    battle = "audio/bgm_battle.ogg",
-    boss   = "audio/bgm_boss.ogg",
+-- 状态 → BGM 播放列表（每态多首，曲终自动轮播下一首，避免长时游玩重复单调）。
+local BGM_TRACKS = {
+    menu   = { "audio/bgm_menu.ogg", "audio/bgm_menu_2.ogg", "audio/bgm_menu_3.ogg" },
+    battle = { "audio/bgm_battle.ogg", "audio/bgm_battle_2.ogg", "audio/bgm_battle_3.ogg" },
+    boss   = { "audio/bgm_boss.ogg", "audio/bgm_boss_2.ogg", "audio/bgm_boss_3.ogg" },
 }
 
 local SFX_POOL_SIZE = 8
@@ -89,10 +89,13 @@ local state = {
     sfxCursor = 1,
     throttle = {},      -- key → 上次播放时刻
     clock = 0,
-    bgmSounds = {},     -- key → Sound|false
+    bgmPlaylist = {},   -- key → Sound[]（该态的全部曲目，缺文件已剔除）
     bgmSources = {},    -- 两条通道做交叉淡入淡出
     bgmActive = 0,      -- 当前通道索引 1/2
     bgmKey = nil,       -- 当前目标 BGM 键
+    bgmTrackIdx = 1,    -- 当前播放列表内的曲目下标
+    bgmTime = 0,        -- 当前曲目已播放秒数（用于曲终轮播）
+    bgmTrackLen = 0,    -- 当前曲目时长（秒）
     bgmGain = {},       -- 每通道当前增益
     bgmFade = {},       -- 每通道目标增益
     lastState = nil,
@@ -126,10 +129,13 @@ function AudioDirector.Init(scene)
     state.sfxCursor = 1
     state.throttle = {}
     state.clock = 0
-    state.bgmSounds = {}
+    state.bgmPlaylist = {}
     state.bgmSources = {}
     state.bgmActive = 1
     state.bgmKey = nil
+    state.bgmTrackIdx = 1
+    state.bgmTime = 0
+    state.bgmTrackLen = 0
     state.bgmGain = { 0, 0 }
     state.bgmFade = { 0, 0 }
     state.lastState = nil
@@ -144,18 +150,24 @@ function AudioDirector.Init(scene)
     for i = 1, SFX_POOL_SIZE do
         state.sfxPool[i] = MakeSource("SfxVoice_" .. tostring(i))
     end
-    for key, path in pairs(BGM_PATHS) do
-        local sound = LoadSound(path)
-        if sound then
-            pcall(function() sound.looped = true end)
+    local bgmLoaded = 0
+    for key, paths in pairs(BGM_TRACKS) do
+        local list = {}
+        for _, path in ipairs(paths) do
+            local sound = LoadSound(path)
+            if sound then
+                pcall(function() sound.looped = true end)
+                list[#list + 1] = sound
+                bgmLoaded = bgmLoaded + 1
+            end
         end
-        state.bgmSounds[key] = sound
+        state.bgmPlaylist[key] = list
     end
     state.bgmSources[1] = MakeSource("BgmChannelA")
     state.bgmSources[2] = MakeSource("BgmChannelB")
     state.ready = true
     print("[AudioDirector] initialized sfx=" .. tostring(loaded) .. "/" .. tostring(total)
-        .. " pool=" .. tostring(SFX_POOL_SIZE))
+        .. " pool=" .. tostring(SFX_POOL_SIZE) .. " bgm=" .. tostring(bgmLoaded))
 end
 
 --- 播放一个音效键。
@@ -241,29 +253,52 @@ local function TargetBgm(snapshot)
     return nil
 end
 
--- 切换 BGM：把另一条通道设为当前目标并淡入，旧通道淡出。
-local function SwitchBgm(key)
-    if state.bgmKey == key then return end
-    local sound = key and state.bgmSounds[key]
-    if not sound then
-        -- 目标缺失：让当前通道淡出即可。
-        state.bgmKey = key
-        state.bgmFade[state.bgmActive] = 0
-        return
-    end
+-- 取某态播放列表内的第 idx 首（下标环绕）。
+local function PlaylistTrack(key, idx)
+    local list = state.bgmPlaylist[key]
+    if not list or #list == 0 then return nil, 0 end
+    local n = #list
+    local i = ((idx - 1) % n) + 1
+    return list[i], i
+end
+
+-- 在另一条通道上播放指定曲目并淡入，旧通道淡出（用于切状态与曲终轮播）。
+local function StartTrack(key, idx)
+    local sound, realIdx = PlaylistTrack(key, idx)
     local nextCh = state.bgmActive % 2 + 1
     local source = state.bgmSources[nextCh]
-    if source then
+    if sound and source then
         pcall(function() source:Play(sound, 0, 0) end)
         state.bgmGain[nextCh] = 0
         state.bgmFade[nextCh] = BGM_GAIN
+        state.bgmTrackIdx = realIdx
+        local okLen, len = pcall(function() return sound:GetLength() end)
+        state.bgmTrackLen = (okLen and len) or 0
+    else
+        -- 目标缺失：只让当前通道淡出。
+        state.bgmFade[state.bgmActive] = 0
+        state.bgmTrackLen = 0
     end
     state.bgmFade[state.bgmActive] = 0
     state.bgmActive = nextCh
     state.bgmKey = key
+    state.bgmTime = 0
+end
+
+-- 切换 BGM 状态（换主题时从该态第一首开始）。
+local function SwitchBgm(key)
+    if state.bgmKey == key then return end
+    StartTrack(key, 1)
 end
 
 local function UpdateBgm(dt)
+    -- 曲终轮播：当前曲目放完就交叉淡入同态的下一首（bgmTrackLen 未知时保持循环、不轮播）。
+    if state.bgmTrackLen > 1 and state.bgmKey then
+        state.bgmTime = state.bgmTime + dt
+        if state.bgmTime >= state.bgmTrackLen then
+            StartTrack(state.bgmKey, state.bgmTrackIdx + 1)
+        end
+    end
     for ch = 1, 2 do
         local gain = state.bgmGain[ch] or 0
         local target = state.bgmFade[ch] or 0
@@ -316,7 +351,7 @@ function AudioDirector.Shutdown()
     state.sfxPool = {}
     state.bgmSources = {}
     state.sfxSounds = {}
-    state.bgmSounds = {}
+    state.bgmPlaylist = {}
     state.scene = nil
     print("[AudioDirector] shutdown")
 end
@@ -325,6 +360,14 @@ end
 ---@return string|nil, boolean
 function AudioDirector.DebugState()
     return state.bgmKey, state.ready
+end
+
+--- 只读诊断：返回某态播放列表的曲目数（供探针断言轮播池）。
+---@param key string
+---@return integer
+function AudioDirector.DebugTrackCount(key)
+    local list = state.bgmPlaylist[key]
+    return list and #list or 0
 end
 
 return AudioDirector
