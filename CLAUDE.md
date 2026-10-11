@@ -42,6 +42,14 @@
   - ⚠️ **避雷 AB-267：音频「从 0 到 1」的落地顺序——先纯模块探针证明数据通路，再真渲染集成探针证明不打断游戏**（audio-system，2026-10-11）：本项目此前零音频。做法：①先写**独立模块探针**（只 require AudioDirector + 自建 `Scene()`，不跑游戏 3D）——**规避并发会话在途的 3D 半成品**（本批真渲染首跑就撞上并发会话未提交的 `Renderer3D:1404 trailParticleSets_` 错误，纯模块探针完全不受影响），且能精确断言「加载 N/N、BGM 键随状态切换、Shutdown 幂等」；②再写真渲染集成探针走 `client_main` 真实路径，证明「不打断 2D/3D/快照」。**两个探针各证明一半**，缺一不可。⚠️ 音效播放要用**播放池轮转**（`pool[cursor]; cursor = cursor%#pool+1`），不要每帧新建 SoundSource；BGM 切换用**两条通道交叉淡入淡出**，不要 `Stop` 后 `Play`（会断音）。
   - ⚠️ **避雷 AB-268：给「已满 200 顶层 local」的后端加功能，一律挂表 + 新模块**（audio-system，2026-10-11，承接 AB-265）：`Scene3DBackend.lua` 顶层 local 已满 200——本批加音频时，**所有新增都是**「`uiFx.audio`（挂 uiFx 表）+ `Backend.TickAudio/PlayUiSfx`（挂 Backend 表）+ 一个 `require`」，**零新增顶层 local**。这是该文件唯一安全的加法模式。⚠️ 用 `git diff | grep "^+local "` 自检（应为空）。
 
+- 附记: cta-stretch（2026-10-11，CTA「开始战斗」艺术字**横向拉伸**；不改展示版本）：
+  - 用户「继续，开始战斗横向也需要拉长」——上一批（gear-settings）把 CTA 改成艺术字**等比**放大铺满（FitHeight 60，宽 ~165 设计像素），但 4 字标题在 456 宽的按钮里**左右留白仍多**，用户要「更宽」。
+  - **做法（`ui/ArtText.lua` 加横向拉伸能力，零破坏既有调用点）**：`Draw`/`DrawCentered` 新增**可选尾参 `stretchX`（缺省 1）**——`w = it.w * s * stretchX`、`h = it.h * s`（只横向拉、纵向不变）；新增 `ArtText.FitWidth(key, targetW, scale)` 返回「让字标宽约等于 targetW 所需的横向拉伸倍数」。⚠️ `nvgImagePatternTinted(ctx, ox,oy, ex,ey, ...)` 的 `ex,ey` 就是图案填充矩形尺寸，**横向拉伸只需 w 与 h 不同**，无需改纹理。
+  - **CTA（`Scene3DBackend.DrawMenu`，~1607）**：`s = FitHeight("startbattle", 60)`（纵向不变），`sx = math.min(1.7, FitWidth("startbattle", cta.w * 0.66, s))`——横向拉到按钮宽 ~66%、**上限 1.7×**（4 字标题拉过头会明显变形），`DrawCentered(..., s, sx)`。实测金属字宽 **165 → 258 设计像素**（撞 1.7× 上限）。
+  - **验证**：LSP workspace **29 文件 0 Error**（1311 诊断）；真渲染探针 `probe_ctastretch`（停菜单、`-screenshot-frame=160`）——`[ArtText] loaded=8/8`、零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`；**像素取证**（按 CONTAIN 映射裁 CTA 区，数白亮金属像素）实测金属字宽 258 设计像素（原 ~165）。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：手机 FPS / 全 DPR / 用户审美未验收；**真机观感（1.7× 拉伸后字是否显宽扁、与青底按钮比例）需 Preview 目视**。
+  - 附：**除 Zpix 外适合本项目的像素字体**（用户问「除了 ZPix 还有什么适合的像素字体」）——项目内 `ui-pixelforge` skill 自带 **Fusion Pixel 12px**（`FusionPixel-12px-Prop-zh_hans.ttf` 正文 / `-Bold.ttf` 加粗 / `-Mono-zh_hans.ttf` 等宽数字），含简体中文、体量 ~7MB/款。实测渲染对比：**Fusion Pixel 比 Zpix 更细更干净**（Zpix 更重、带硬描边，适合标题/大字；Fusion Pixel 线条细，适合正文/小字/数字），两者可**分层使用**（标题 Zpix、正文 Fusion Pixel）。⚠️ 换字体要 `nvgCreateFont` 重新注册 + 按字号调行高（Fusion 12px 网格比 Zpix 更小）。
+
 - 附记: gear-settings（2026-10-11，主菜单齿轮设置屏 + 危险操作确认面板 + CTA 去副标题 + 暂停钮移左上；不改展示版本）：
   - 用户四项要求：①CTA 去掉「选择关卡」小字、让「开始战斗」更大；②局内暂停键从**右上移到左上**；③主菜单左上角加**齿轮设置键**；④设置页含**恢复购买 + 清空存档**，二者点后弹**手机键盘（0-9 * #）确认面板**，输入正确确认码才执行。
   - **① CTA**：去掉 `DrawPixelText(... "选择关卡" ...)`，艺术字改 `ArtText.DrawCentered(ctx, "startbattle", cta, {255,255,255}, 0, ArtText.FitHeight("startbattle", 60))` 居中铺满（原 ctaY+8 顶对齐 + FitHeight 50）。

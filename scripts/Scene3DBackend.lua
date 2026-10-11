@@ -1603,10 +1603,13 @@ local function DrawMenu(ctx, game, meta)
     -- 双色母版的「白芯+近黑轮廓」乘深色后两级都塌成黑，整块读成黑疙瘩（实测）。
     -- 但**青色 tint 同样会塌**：金属灰被乘成扁平暗青，立体倒角全丢（实测对比）。
     -- 最终形态（用户要求「直接占满按钮、无黑幕」+ 去掉「选择关卡」小字让主标题更大）：
-    -- 去暗色铭牌 + 去副标题，艺术字白 tint 等比放大**居中铺满**按钮。
+    -- 去暗色铭牌 + 去副标题，艺术字白 tint 放大铺满按钮；横向再拉伸填满按钮宽度
+    -- （用户追加「开始战斗横向也需要拉长」——纵向保持 FitHeight 的 60，横向拉伸见下）。
     if ArtText.Has("startbattle") then
         local s = ArtText.FitHeight("startbattle", 60)
-        ArtText.DrawCentered(ctx, "startbattle", cta, {255, 255, 255}, 0, s)
+        -- 横向拉伸到按钮宽的 ~66%，上限 1.7×（避免 4 字标题被拉得过分变形）。
+        local sx = math.min(1.7, ArtText.FitWidth("startbattle", cta.w * 0.66, s))
+        ArtText.DrawCentered(ctx, "startbattle", cta, {255, 255, 255}, 0, s, sx)
     else
         DrawPixelText(ctx, game.width * 0.5, ctaY + 22, "开始战斗", 40, C.ink,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)

@@ -558,3 +558,4 @@
 
 - 下一步改为：在预览中点击开始，重点确认 UI 仍可见、敌方箱体材质、车辆体量、命中后箱体旋转飞散、飞机无重叠，以及暂停/升级触摸命中。预瞄线和尾迹不再回归。
 - 拖尾粒子系（2026-10-11）：彗星/流光从「三角带光带」换成 **billboard 粒子**（真粒子系）——彗星=密集暖金尘+头端灼核、流光=离散青白光片+自旋；经典/霓虹/余烬/双轨保留光带不变。粒子按弧长撒布（每米 N 颗，帧率/速度无关）、确定性 hash（非 math.random）、沿寿命膨胀+漂移+收缩；颜色烘焙进专属纹理（DiffAlpha 不读顶点 rgb）；**与光带互斥**（particle 样式下清空并停用光带节点）。2D 预览同步。详见 versions.md / CLAUDE.md 附记 trail-particle-styles，抗体 AB-269/270。
+- CTA 横向拉伸（2026-10-11）：`ui/ArtText.lua` 新增可选尾参 `stretchX`（`Draw`/`DrawCentered`）+ `FitWidth(key,targetW,scale)`；CTA「开始战斗」纵向 FitHeight 60 不变、横向拉伸到按钮宽 ~66%（上限 1.7×，实测金属字宽 165→258 设计像素）。除 Zpix 外的像素字体推荐：`ui-pixelforge` skill 自带 Fusion Pixel 12px（Prop/Prop-Bold/Mono，含简体中文），比 Zpix 更细更干净，适合正文/小字，可与 Zpix（标题）分层使用。详见 CLAUDE.md 附记 cta-stretch。
