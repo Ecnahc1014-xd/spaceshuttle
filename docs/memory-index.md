@@ -9,8 +9,14 @@
 
 项目：货车大战飞机
 当前版本：0.13.58
-简述：可用机型池改按「累计难度」解锁——修「每关开局敌机类型都一样」（原每关第 1 波都只有 scout）。
+简述：附魔车环绕粒子改真 3D BillboardSet（修 2D/3D 不平行导致的光环与车分离）。
 最后巩固：2026-10-11
+
+## 附魔车光环改真 3D（2026-10-11，enchant-aura-3d）
+- 用户「环绕车辆的粒子实行使用 3D 特效。因为呢，我们这个游戏呢，它这个 2D 的界面和 3D 界面并不是完全平行的，所以会导致有一些问题啊」。
+- **真因（通道级）**：上一批的可见标识是 **2D overlay 光环**（`CombatImpact.DrawEnchantAura` 手工投影），46° 斜俯视正交下 `z` 投影到屏幕 Y，overlay 按玩法平面 z=0 标定、车辆锚点 z≈-0.09~-0.13m → 光环相对真实 3D 车分离。
+- **修法**：`Renderer3D.SyncEnchantAura`——粒子绕 `GetVehicleAnchorWorld` 在 3D 空间 XZ 平面转圈 + Y 起伏；每档稀有度一个 BillboardSet（3 个，颜色烘焙进软圆纹理，DiffAlpha 不读顶点 rgb）；相位 `game.elapsed*2.6` 派生。移除 2D 版。诊断 `DebugEnchantAuraCount()`。
+- 验证：LSP 29 文件 0 Error；真渲染探针（真实渲染路径 540 帧）**aura=0→aura=10**，零 overlay/Lua/LoadChunk/空顶点错误。官方多人 build + 预览上传 ✅。抗体 AB-264。
 
 ## 每关开局机型多样化（2026-10-11，stage-start-variety）
 - 用户「每关开局的这些敌机类型都一样，真是太无聊了。」

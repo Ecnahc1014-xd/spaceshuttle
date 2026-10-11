@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: enchant-aura-3d（2026-10-11，附魔车环绕粒子改**真 3D**；不改展示版本）：
+  - 用户「环绕车辆的粒子实行使用 3D 特效。因为呢，我们这个游戏呢，它这个 2D 的界面和 3D 界面并不是完全平行的，所以会导致有一些问题啊」——**这是一个通道级判断**：上一批给附魔车加的可见标识是 **2D overlay 光环**（`CombatImpact.DrawEnchantAura` 用 `ProjectGamePoint` 手工投影 + `nvgRadialGradient` 旋转双环）。**真因**：本项目相机是 **46° 斜俯视正交**，`z` 会投影到屏幕 Y——overlay 用**玩法平面 z=0** 标定的投影去画，而车辆锚点在 z≈-0.09~-0.13m，于是光环整体相对真实 3D 车**在屏幕上分离**（同 v0.13.15b 尾迹「与车分离」的同一根因族）。**2D 与 3D 不平行 = overlay 画不出「贴在 3D 物体上」的效果**。
+  - **修法（`Renderer3D.lua`，真 3D）**：新增 `SyncEnchantAura(game)`——粒子**绕车辆世界锚点 `GetVehicleAnchorWorld(m)` 在 3D 空间 XZ 平面转圈** + 轻微 Y 起伏，因此与车永远对齐（3D 世界坐标天然同投影）。**每档稀有度一个 BillboardSet**（3 个，各带自己稀有度色的软圆纹理）——因为 **DiffAlpha 不读 billboard 顶点 rgb**（本项目 v0.10.21 契约），颜色只能烘焙进纹理。相位 `game.elapsed * 2.6` 派生（确定性、非逐帧随机），各车 `+ci*1.7` 错开。`Init` 建 / `Shutdown` 清；只画、不参与命中。新增只读诊断 `Renderer3D.DebugEnchantAuraCount()`（返回本帧**实际启用**的 billboard 数，供探针自证数据通路）。
+  - **移除 2D 版**：`Scene3DBackend` 的 `uiFx.impact.DrawEnchantAura(...)` 调用删除；`ui/CombatImpact.lua` 的 `DrawEnchantAura` 整段 + 本地 `ENCHANT_RARITY` 删除（被 3D 版取代）。
+  - 验证：LSP workspace **29 文件 0 Error**（1295 诊断）；真渲染探针（走 `client_main` 真实渲染路径：菜单→选关→战斗→附魔→发射→飞行 540 帧）实测 **`aura=0`（无附魔）→ `aura=10`（附魔后，10 个 3D billboard 启用）** 并随飞行持续；零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - ⚠️ **避雷 AB-264：贴 3D 物体的特效**必须画在 3D 世界里（共享相机投影），不要用 2D overlay 手工投影——本项目 2D/3D 不平行（46° 斜俯视正交，z 投影到屏幕 Y），overlay 的光环/尾迹会与真实车辆分离（enchant-aura-3d，同 v0.13.15b 尾迹族）：用户一句话点破「2D 界面和 3D 界面并不是完全平行的」——**这是「光环跟车分离」的真因**，不是参数问题。做法：把特效挂到物体的**世界坐标**上（`GetVehicleAnchorWorld`），粒子绕世界锚点在 **3D 空间**转圈，由 3D 相机统一投影 → 天然对齐。⚠️ 但**本环境离屏 3D 层恒黑（AB-220），无法目视 3D 特效**——只能用**数据探针**自证（读 `DebugEnchantAuraCount()>0` 证明粒子真的提交到 3D 场景）；真机观感仍需 Preview。⚠️ 颜色进 3D BillboardSet 必须**烘焙进纹理**（DiffAlpha 不读顶点 rgb），**每色一个 set**——不能指望一个 set 靠 `bb.color` 区分稀有度。
+  - 边界：手机 FPS / 全 DPR / 用户审美未验收；**真机观感（3D 光环是否真的绕车、稀有度色是否可辨）需 Preview 目视**（本环境 3D 层不可见，只证明了数据通路）。
+
 - 附记: stage-start-variety（2026-10-11，修「每关开局的敌机类型都一样」；不改展示版本）：
   - 用户「每关开局的这些敌机类型都一样，真是太无聊了。」
   - **真因（探针实锤）**：`Game.GetAvailableTypes(waveNum)` 用 `StageCatalog.GetStageWave(waveNum)` 做 `WAVE_ROSTER` 门槛，而 **`GetStageWave` 每关都从 1 重新数**（1..10 循环）→ 每关第 1 波可用池都只有 `scout`。基线探针 `probe_variety` 实测 **12 关开局全 `scout`（`uniqFirst=1`）**。
