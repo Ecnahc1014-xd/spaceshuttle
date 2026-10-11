@@ -42,6 +42,14 @@
   - ⚠️ **避雷 AB-267：音频「从 0 到 1」的落地顺序——先纯模块探针证明数据通路，再真渲染集成探针证明不打断游戏**（audio-system，2026-10-11）：本项目此前零音频。做法：①先写**独立模块探针**（只 require AudioDirector + 自建 `Scene()`，不跑游戏 3D）——**规避并发会话在途的 3D 半成品**（本批真渲染首跑就撞上并发会话未提交的 `Renderer3D:1404 trailParticleSets_` 错误，纯模块探针完全不受影响），且能精确断言「加载 N/N、BGM 键随状态切换、Shutdown 幂等」；②再写真渲染集成探针走 `client_main` 真实路径，证明「不打断 2D/3D/快照」。**两个探针各证明一半**，缺一不可。⚠️ 音效播放要用**播放池轮转**（`pool[cursor]; cursor = cursor%#pool+1`），不要每帧新建 SoundSource；BGM 切换用**两条通道交叉淡入淡出**，不要 `Stop` 后 `Play`（会断音）。
   - ⚠️ **避雷 AB-268：给「已满 200 顶层 local」的后端加功能，一律挂表 + 新模块**（audio-system，2026-10-11，承接 AB-265）：`Scene3DBackend.lua` 顶层 local 已满 200——本批加音频时，**所有新增都是**「`uiFx.audio`（挂 uiFx 表）+ `Backend.TickAudio/PlayUiSfx`（挂 Backend 表）+ 一个 `require`」，**零新增顶层 local**。这是该文件唯一安全的加法模式。⚠️ 用 `git diff | grep "^+local "` 自检（应为空）。
 
+- 附记: cta-startbattle-regen（2026-10-12，**「开始战斗」艺术字重出为斜体银白金属字 + 青色光晕**；不改展示版本）：
+  - 用户上传主菜单截图 + 「重新生成一个开始战斗吧」→ 参考图里 CTA 是**斜体（向右倾斜）+ 银白金属立体字 + 青边缘光晕**，而现有 `ui_tt_startbattle.png` 是**正体**金属字（121×44）。**用户随后回「这个好」**确认方向。
+  - **做法（0718 管线，沿用旧文件名/uuid，零路径风险）**：`batch_generate_images`（nanobanana, `transparent:true`, 1248×832）出 2 版草案——`sb_a` 干净斜体银白金属字、`sb_b` **同款 + 青边缘光晕**；选 **`sb_b`**（与参考图一致：青晕与青底 CTA 同语义；`sb_a` 无晕会读成「平」）。后处理：**alpha>128 裁切** → **按母版高度 44 归一**（宽 140，**高度不变 = 零布局改动**，AB-259 同族）→ 覆盖同名 `ui_tt_startbattle.png`。⚠️ **`sb_b` 是彩色（银+青）**，与旧版「灰度金属」不同——但 CTA 用**白 tint**（`ArtText.DrawCentered(..., {255,255,255}, ...)`），乘法染色对**近白**安全，青晕只被乘到略暗、不塌（AB-258 只针对「非白 tint」塌，白 tint 对彩色素材同样安全）。若哪天 CTA 改用非白 tint，这版彩色素材会塌——**彩色素材的 tint 约束比灰度更严**。
+  - **草案清理**：`sb_a/sb_b` PNG + 生成的 `.png.meta` 残片全部移出 assets 到 `/home/Maker/sb_v2/drafts/`，`assets/image/` 只留按目标名命名的成品（AB-206/207 目录纪律）。
+  - 验证：LSP workspace **29 文件 0 Error**；真渲染探针 `probe_ctastretch`（停菜单）——`[ArtText] loaded=8/8`、`has_startbattle=true w=140 h=44`、零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`；**像素取证**：CTA 银白金属像素 **4286（旧 1952）**、青色光晕 **29033px**、金属字宽 267 设计像素。官方多人 build + 预览上传 ✅（首次 `PLATFORM_OPERATION_FORBIDDEN` 属平台临时限制，重试成功——不绕过）。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：手机 FPS / 全 DPR / 用户审美未验收；**真机观感（斜体倾斜角度、青晕强度、金属高光是否够亮）需 Preview 目视**。
+  - ⚠️ **避雷 AB-275：换「艺术字风格」时，参考图里的「光晕/描边/颜色」要一起复刻——别只换字形**（cta-startbattle-regen）：用户给参考图说「重新生成」，参考 CTA 的特征是**斜体 + 青边缘光晕**两件；只出干净斜体字（`sb_a`）会缺掉「青晕」这一层，读起来仍与参考不同。做法：**先量参考图的构成**（本项目用像素分析确认 CTA 区 35927px 青调 vs 7143px 银调 → 青晕是主导特征），再按此出草案。⚠️ 带光晕的草案是**彩色**素材——比灰度素材更依赖「白 tint」才不塌（见上）。
+
 - 附记: cta-stretch（2026-10-11，CTA「开始战斗」艺术字**横向拉伸**；不改展示版本）：
   - 用户「继续，开始战斗横向也需要拉长」——上一批（gear-settings）把 CTA 改成艺术字**等比**放大铺满（FitHeight 60，宽 ~165 设计像素），但 4 字标题在 456 宽的按钮里**左右留白仍多**，用户要「更宽」。
   - **做法（`ui/ArtText.lua` 加横向拉伸能力，零破坏既有调用点）**：`Draw`/`DrawCentered` 新增**可选尾参 `stretchX`（缺省 1）**——`w = it.w * s * stretchX`、`h = it.h * s`（只横向拉、纵向不变）；新增 `ArtText.FitWidth(key, targetW, scale)` 返回「让字标宽约等于 targetW 所需的横向拉伸倍数」。⚠️ `nvgImagePatternTinted(ctx, ox,oy, ex,ey, ...)` 的 `ex,ey` 就是图案填充矩形尺寸，**横向拉伸只需 w 与 h 不同**，无需改纹理。
