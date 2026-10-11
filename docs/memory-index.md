@@ -18,6 +18,13 @@
 - **修法（`Game.lua` 一处）**：`GetAvailableTypes` 进度改 `(关卡-1) + floor((关内波次-1)/3) + 1`（关内每 3 波 +1 档）→ 池子主要由**关卡号**驱动：关1 开局 1 种 → 关9 开局全 8 种；关1 整关最多 4 种。加只读诊断 `Game.DebugAvailableTypes(wave)`（挂表，不占顶层 local）。
 - 验证：LSP 29 文件 0 Error；`probe_variety2` **7/7**（单调不减 / 关6>关1 / 关9+ 全机型 / 关1 整关<8）；回归 `probe_variety` 4/4；真渲染冒烟零目标错误。官方多人 build + 预览上传 ✅。抗体 AB-271。
 
+## BGM 扩到 9 首 + 每态播放列表轮播（2026-10-11，bgm-playlist 附记）
+- 用户「音乐太少生成更好的」——上一批只有 3 首 BGM（每态 1 首、单曲循环），长时游玩重复单调。
+- **生成 6 首新曲**（`text_to_music`，8bit+太空+公路）：菜单 Drifting Hangar/Nebula Docks、战斗 Hyperdrive Skirmish/Asteroid Run、首领 Void Warlord/Core Meltdown → **每态 3 首、总数 3→9**；重命名语义名 + `.meta`。
+- **`AudioDirector` 改「每态播放列表轮播」**：`BGM_PATHS`→`BGM_TRACKS`（路径数组）；`bgmPlaylist[key]=Sound[]`；`PlaylistTrack`/`StartTrack(key,idx)`（另一通道播指定曲+记录 trackIdx/trackLen 交叉淡入）；`UpdateBgm` 曲终轮播（`bgmTime>=bgmTrackLen` 切下一首；**长度取 `sound:GetLength()`，未知 ≤1s 回退单曲循环**防死循环）；新增 `DebugTrackCount(key)`。
+- 验证：LSP **29 文件 0 Error**；**`probe_audio2` 14/14 PASS**（`bgm=9` / 每态 3 首 / 状态机全对 / **曲终轮播稳定**喂 250s 不崩 / Shutdown 清空）；**真渲染 `probe_audiorender`** 跑完一局 `tracks=3/3/3`、零错误；dist 含 9 首 BGM。官方多人 build + 预览上传 ✅。
+- 抗体 AB-272（播放列表轮播非随机播）、AB-273（随机名生成物的 meta 要一起清理）。⚠️ 无 `/dev/snd`，实际听感必须 Preview 真机。
+
 ## 音频系统：音效 + 8bit 太空公路 BGM（2026-10-11，audio-system 附记）
 - 用户「希望强化。音乐音效表现力」+「bgm需要是8bit+太空+公路风格」。**本项目此前零音频**。
 - **素材**：`text_to_sound_effect` 出 **20 音效 mp3**（`assets/audio/sfx/`）+ `text_to_music` 出 **3 首 BGM ogg**（`bgm_menu` 星港/`bgm_battle` 战斗公路/`bgm_boss` 首领，随机文件名重命名）；每文件配 `.meta`（22hex uuid 验重）。

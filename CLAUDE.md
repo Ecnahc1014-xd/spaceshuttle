@@ -3,6 +3,15 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: bgm-playlist（2026-10-11，**BGM 扩到 9 首 + 每态播放列表轮播**；承接 audio-system，不改展示版本）：
+  - 用户「音乐太少生成更好的」——**「太少」是关键词**：上一批只有 3 首 BGM（每态 1 首、单曲循环），长时游玩必然重复单调（同用户对「重复/无聊」的低容忍度，见 AB-263/AB-271）。
+  - **生成 6 首新曲**（`text_to_music`，全部 8bit+太空+公路风格）：菜单 `bgm_menu_2` Drifting Hangar / `bgm_menu_3` Nebula Docks；战斗 `bgm_battle_2` Hyperdrive Skirmish / `bgm_battle_3` Asteroid Run；首领 `bgm_boss_2` Void Warlord / `bgm_boss_3` Core Meltdown。**每态从 1 首扩到 3 首，BGM 总数 3→9**。生成后**重命名为语义名** + 生成 `.meta`（22hex uuid 全库验重）。
+  - **`AudioDirector` 从「单曲循环」改为「每态播放列表轮播」**：①`BGM_PATHS`（key→单路径）→ **`BGM_TRACKS`（key→路径数组）**；②Init 把每态的多首加载成 `state.bgmPlaylist[key] = Sound[]`（缺文件自动剔除）；③新增 `PlaylistTrack(key, idx)`（下标环绕取曲）+ `StartTrack(key, idx)`（在另一通道播指定曲、记录 `bgmTrackIdx`/`bgmTrackLen`，交叉淡入）；`SwitchBgm` 改调 `StartTrack(key, 1)`（换主题从该态第一首开始）；④`UpdateBgm` 加**曲终轮播**：`bgmTime += dt`，`>= bgmTrackLen` 就 `StartTrack(key, bgmTrackIdx+1)`——**曲目长度取 `sound:GetLength()`，未知（≤1s）时保持单曲循环不轮播**（防探针/异常资源死循环）。⑤新增只读诊断 `DebugTrackCount(key)`。
+  - 验证：LSP workspace **29 文件 0 Error**（1311 诊断）；**纯模块探针 `probe_audio2` 14/14 PASS**（`bgm=9` 全加载 / 每态 playlist=3 / BGM 状态机 menu→battle→boss→battle→menu 全对 / **曲终轮播稳定**（喂 250 秒仍停在 menu 不崩）/ 事件突发+UI 音不崩 / Shutdown 清空播放列表）；**真渲染集成探针 `probe_audiorender`** 跑完一局 `ready/menu/battle=true`、`tracks=3/3/3`，零 LoadChunk/overlay/Lua/空顶点错误；构建后 **dist 清单含全部 9 首 BGM**。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 顺手清理：6 个**孤儿 `.meta`**（`text_to_music` 会为每次生成的随机名 ogg 也生成 meta，重命名时漏删）→ 删掉，`assets/audio/` 现 9 ogg + 9 meta 一一对应。
+  - ⚠️ **避雷 AB-273：`text_to_music`/`text_to_sound_effect` 生成的随机名文件**，重命名成语义名后**必须连 `.meta` 一起处理**——生成器会为**随机名 ogg** 也产出 `.meta`（`music_<ts>.ogg.meta`），重命名 ogg 时这些 meta **不会跟着改名** → 变成孤儿（无同名 ogg）。做法：重命名后 `for m in assets/audio/*.meta; do [ -f "${m%.meta}" ] || rm "$m"; done` 扫一遍，再确认 `ls *.ogg | wc -l` == `ls *.ogg.meta | wc -l`。
+  - ⚠️ **避雷 AB-272：给「单曲循环」的 BGM 系统加「更多曲目」时，要的是「播放列表轮播」不是「多首随机播」**（bgm-playlist，2026-10-11）：用户说「音乐太少」——直接解法是**每态一个播放列表、曲终自动切下一首**（本项目 3 首/态），而不是随机抽一首（随机会出现「刚放完又抽到同一首」）。实现要点：①曲目长度用 `sound:GetLength()` 取**真实时长**驱动轮播（不是写死秒数）；②长度取不到（异常/静音资源）时**回退单曲循环**，别让 `bgmTime` 无限涨却不切换（也防探针里的 0 长度资源触发死循环）；③切主题与曲终轮播**复用同一个 `StartTrack`**（都在另一通道交叉淡入，旧通道淡出）。⚠️ 本项目**本环境无 `/dev/snd`**，轮播只能由**纯模块探针喂长 dt**证明「喂 250 秒不崩、键不变」，**实际听感（曲目衔接是否顺、风格是否统一）必须 Preview 真机**。
+
 - 附记: stage-variety-ramp（2026-10-11，**机型种类随关卡号递进**——关卡越高越丰富多元；不改展示版本）：
   - 用户「在当前的标准下十关卡随着数字提高丰富多元」——承接上一批「每关开局机型雷同」，这次要求**关卡之间要递进**（越高越丰富）。
   - **真因（探针实锤）**：上一批 v0.13.58 把解锁进度改成 `(关卡-1) + 关内波次`，**第 1 关第 10 波 progress=10 就已解锁全部 8 种机型**——玩家**一关之内就看遍所有机型**，第 2 关起开局虽不再只有 scout，但**后续关卡没有新东西**（都饱和到 8 种）。「丰富」是有了，「多元/递进」没有。
@@ -1211,6 +1220,8 @@
 
 ## 避雷清单
 
+- **AB-272：给「单曲循环」的 BGM 加「更多曲目」时，要的是「播放列表轮播」不是「多首随机播」**（bgm-playlist，2026-10-11）：用户说「音乐太少」——直接解法是**每态一个播放列表、曲终自动切下一首**，不是随机抽一首（随机会出现「刚放完又抽到同一首」）。要点：①曲目长度用 `sound:GetLength()` 取**真实时长**驱动轮播（不写死秒数）；②长度取不到（异常/静音资源）时**回退单曲循环**，别让计时器无限涨却不切换（防探针 0 长度资源死循环）；③切主题与曲终轮播**复用同一个 `StartTrack`**（都在另一通道交叉淡入、旧通道淡出）。⚠️ 无 `/dev/snd` 时只能由**纯模块探针喂长 dt**证明「喂 250 秒不崩、键不变」，**实际听感必须 Preview 真机**。
+- **AB-273：`text_to_music`/`text_to_sound_effect` 生成的随机名文件，重命名后必须连 `.meta` 一起清理**（bgm-playlist，2026-10-11）：生成器会为**随机名 ogg**（`music_<ts>.ogg`）也产出 `.meta`，重命名 ogg 为语义名时这些 meta **不跟着改名** → 变孤儿（无同名 ogg）。做法：重命名后扫 `for m in assets/audio/*.meta; do [ -f "${m%.meta}" ] || rm "$m"; done`，再确认 `ls *.ogg | wc -l` == `ls *.ogg.meta | wc -l`。
 - **AB-268：给「已满 200 顶层 local」的后端加功能，一律挂表 + 新模块**（audio-system，2026-10-11，承接 AB-265）：`Scene3DBackend.lua` 顶层 local 已满 200——加音频时**所有新增都是**「`uiFx.audio`（挂 uiFx 表）+ `Backend.TickAudio/PlayUiSfx`（挂 Backend 表）+ 一个 `require`」，**零新增顶层 local**。这是该文件唯一安全的加法模式；`git diff | grep "^+local "` 自检应为空。
 - **AB-269：换「渲染通道」是解决「这个样式丑/和普通没区别」的最强手段——不要继续调同一条光带的数值**（trail-particle-styles，2026-10-11，承接 AB-221）：用户点名「彗星一点也不好看」「流光和一开始的普通没什么区别」——两者当时都是**同一条三角带光带**的数值变体（彗星 taper/bulge 鼓包、流光 flicker 明暗），**形态上仍是「一条光带」**，所以无论怎么调都读作「同一根东西」。做法：**换通道**——把这两个样式从 `CustomGeometry` 三角带换成 **billboard 粒子**（真粒子系统），形态上与光带**根本不同**（离散光尘 vs 连续带）。**判据**：当用户说某个变体「丑 / 和默认没区别」时，先问「它和默认是不是同一个通道的同一个形状？」——是，就别再调数值，**换通道**（光带↔粒子↔…）。⚠️ 换通道后必须处理**互斥**：粒子样式下要**清空并停用**光带节点（`tracks` 置空 + `active=false` + `or particleStyle` 进入清理分支），否则两套叠着画（本项目实测「光带顶点残留在节点上」= 粒子与光带同时可见，`maxVerts=162` 不归零）。
 - **AB-270：给「只有部分变体用」的数据表加字段，`@field` 必须写 `|nil`**（trail-particle-styles，2026-10-11）：给 `TrailStyleParams` 加粒子轴（emit/pSize/…）时，只有 comet/dash 有、其余样式没有 → LSP `assign-type-mismatch`：`Cannot assign {…} to table<string,TrailStyleParams>. missing member emit`。**修法**：这些字段声明为 **`---@field emit number|nil`**（可选）。**通用规则**：往「共享的变体参数表」加字段时，若该字段**不是所有变体都有**，`@field` 一律加 `|nil`；否则 LSP 会拿「最严的那个变体」去要求全体。同族：v0.13.56 的 `RegisterScreen` 形参非空注解（AB-218）——**Lua LSP 的「可选性」要在类型注解里显式表达**。
