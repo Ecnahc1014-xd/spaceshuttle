@@ -25,6 +25,7 @@
       "lobby_runtime": "scripts/lobby_runtime.lua",
       "match_info": {
         "player_number": 1,
+        "immediately_start": true,
         "desc_name": "free_match"
       },
       "persistent_world": {

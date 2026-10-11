@@ -185,15 +185,15 @@ end
 ---@field glow number
 ---@field core number
 ---@field twist number
----@field particle integer
----@field emit number
----@field emitSpread number
----@field pSize number
----@field pGrow number
----@field pJitter number
----@field pSpin number
----@field pDrift number
----@field pLife number
+---@field particle integer|nil
+---@field emit number|nil
+---@field emitSpread number|nil
+---@field pSize number|nil
+---@field pGrow number|nil
+---@field pJitter number|nil
+---@field pSpin number|nil
+---@field pDrift number|nil
+---@field pLife number|nil
 
 ---@type table<string, TrailStyleParams>
 -- ⚠️ 宽度基准是**车体真实半宽**（`vHalf = radius*WORLD_SCALE*0.5965`，见 Renderer3D），

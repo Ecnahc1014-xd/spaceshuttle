@@ -1530,9 +1530,12 @@ local function SyncVehicleTrails(game, dt)
     local particleStyle = (MetaCatalog.GetTrailStyleParams(trailStyle_).particle or 0) == 1
     for _, ballType in ipairs(TRAIL_TYPES) do
         local record = trailGeometries_[ballType]
-        local tracks = perType[ballType]
+        -- 粒子样式下**不构建光带**（tracks 置空 → 走 else 清空分支），否则三角带会与粒子并存。
+        local tracks = particleStyle and {} or perType[ballType]
         local active = (not particleStyle) and (#tracks > 0)
-        if active or trailActive_[ballType] then
+        -- ⚠️ 粒子样式下也必须**进入清理分支**（否则上一套光带的顶点会残留在节点上、
+        -- 与粒子同时可见）。`particleStyle` 为真时 active=false → 走 else 清空+停用。
+        if active or trailActive_[ballType] or particleStyle then
             local verts = {}
             local base = BALL_COLORS[ballType] or BALL_COLORS.normal
             local style = MetaCatalog.GetTrailStyleParams(trailStyle_)
