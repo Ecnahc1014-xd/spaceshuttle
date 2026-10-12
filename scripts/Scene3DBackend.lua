@@ -1606,9 +1606,10 @@ local function DrawMenu(ctx, game, meta)
     -- 去暗色铭牌 + 去副标题，艺术字白 tint 放大铺满按钮；横向再拉伸填满按钮宽度
     -- （用户追加「开始战斗横向也需要拉长」——纵向保持 FitHeight 的 60，横向拉伸见下）。
     if ArtText.Has("startbattle") then
-        local s = ArtText.FitHeight("startbattle", 60)
-        -- 横向拉伸到按钮宽的 ~66%，上限 1.7×（避免 4 字标题被拉得过分变形）。
-        local sx = math.min(1.7, ArtText.FitWidth("startbattle", cta.w * 0.66, s))
+        local s = ArtText.FitHeight("startbattle", 64)
+        -- 横向拉伸 1.10×（对齐参考图 CTA 的自然比例：金属字 aspect ≈2.4、约占按钮高 3/4）。
+        -- ⚠️ 素材已换成「无青晕的紧凑银白金属字」（aspect 2.14）；旧的宽光晕素材会显散/显扁（用户报「素材缩放有误」）。
+        local sx = math.min(1.10, ArtText.FitWidth("startbattle", cta.w * 0.60, s))
         ArtText.DrawCentered(ctx, "startbattle", cta, {255, 255, 255}, 0, s, sx)
     else
         DrawPixelText(ctx, game.width * 0.5, ctaY + 22, "开始战斗", 40, C.ink,

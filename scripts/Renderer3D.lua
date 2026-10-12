@@ -1753,50 +1753,49 @@ local function SyncTrailParticles(game, dt)
         local ballType = track.ballType
         if sets[ballType] then
             local vHalf = (track.radius or 20) * WORLD_SCALE * VEHICLE_HALF_FACTOR
-            local pts = track.points
-            local n = #pts
-            local acc = track.emitAcc or 0
-            local seq = track.emitSeq or 0
-            -- 段：pts[k] → pts[k+1]，最后一段接**实时车尾**（track.x/y/z）。
-            for k = 1, n do
-                local a = pts[k]
-                local b = (k < n) and pts[k + 1] or track
-                local dx, dy = b.x - a.x, b.y - a.y
-                local len = math.sqrt(dx * dx + dy * dy)
-                if len > 0.0001 then
-                    acc = acc + len * emit
-                    local nx, ny = -dy / len, dx / len
-                    while acc >= 1 do
-                        acc = acc - 1
-                        seq = seq + 1
-                        local f = hash(seq)
-                        local g = hash(seq + 101.7)
-                        local h = hash(seq + 311.3)
-                        -- 发射点：段内按 f 取位置 + 沿法线的散布/抖动。
-                        local u = f
-                        local off = (g - 0.5) * 2 * emitSpread * vHalf
-                        local jit = (h - 0.5) * 2 * pJitter * vHalf
-                        list[#list + 1] = {
-                            ballType = ballType,
-                            x = a.x + dx * u + nx * (off + jit),
-                            y = a.y + dy * u + ny * (off + jit),
-                            z = a.z + TRAIL_BEHIND_Z,
-                            age = 0, life = pLife * (0.75 + 0.5 * h),
-                            size = pSize * vHalf * (0.7 + 0.6 * g),
-                            grow = pGrow, drift = pDrift * vHalf,
-                            nx = nx, ny = ny,
-                            angle = h * 6.28318, spin = pSpin * (0.6 + 0.8 * f),
-                        }
-                    end
+            -- ⚠️ 只沿「上一帧发射点 → 当前车尾」这段**新走过的距离**发射，不能每帧重走整条轨迹
+            -- （否则同一段被反复累加、粒子暴增 → 被槽位上限截断 → 车头附近的粒子被丢掉 = 「拖尾滞后」）。
+            local hx, hy = track.x, track.y
+            local ex, ey = track.emitX or hx, track.emitY or hy
+            local dx, dy = hx - ex, hy - ey
+            local len = math.sqrt(dx * dx + dy * dy)
+            local acc = (track.emitAcc or 0) + len * emit
+            if len > 0.0001 then
+                local nx, ny = -dy / len, dx / len
+                local seq = track.emitSeq or 0
+                while acc >= 1 do
+                    acc = acc - 1
+                    seq = seq + 1
+                    local f = hash(seq)
+                    local g = hash(seq + 101.7)
+                    local h = hash(seq + 311.3)
+                    -- 发射点：段内按 f 取位置 + 沿法线的散布/抖动。
+                    local u = f
+                    local off = (g - 0.5) * 2 * emitSpread * vHalf
+                    local jit = (h - 0.5) * 2 * pJitter * vHalf
+                    list[#list + 1] = {
+                        ballType = ballType,
+                        x = ex + dx * u + nx * (off + jit),
+                        y = ey + dy * u + ny * (off + jit),
+                        z = track.z + TRAIL_BEHIND_Z,
+                        age = 0, life = pLife * (0.75 + 0.5 * h),
+                        size = pSize * vHalf * (0.7 + 0.6 * g),
+                        grow = pGrow, drift = pDrift * vHalf,
+                        nx = nx, ny = ny,
+                        angle = h * 6.28318, spin = pSpin * (0.6 + 0.8 * f),
+                    }
                 end
+                track.emitSeq = seq
             end
             track.emitAcc = acc
-            track.emitSeq = seq
+            track.emitX, track.emitY = hx, hy
         end
     end
-    -- 提交：按弹种填槽；每槽只画一颗，超预算丢弃（预算 = 同屏上限，防爆）。
+    -- 提交：按弹种填槽，**从最新（列表尾）往回取**——超预算时丢掉的是最老的粒子（尾端），
+    -- 保证贴车那一段永远在（否则 `ipairs` 从头取会把车头粒子挤掉 = 「拖尾滞后」）。
     local counts = {normal = 0, ice = 0, speed = 0, giant = 0}
-    for _, p in ipairs(list) do
+    for i = #list, 1, -1 do
+        local p = list[i]
         local bt = p.ballType
         if counts[bt] and counts[bt] < TRAIL_PARTICLE_SLOTS then
             counts[bt] = counts[bt] + 1
@@ -1828,6 +1827,24 @@ local function SyncTrailParticles(game, dt)
         end
         trailParticleActive_[bt] = counts[bt] > 0
     end
+end
+
+-- 诊断用（只读）：本帧粒子系发射诊断（每弹种：头移动距离 / 发射数 / 粒子寿命）。
+function Renderer3D.DebugTrailEmitDiag()
+    local out = {}
+    if not trailSamples_ then return out end
+    for _, track in pairs(trailSamples_) do
+        local hx, hy = track.x, track.y
+        local ex, ey = track.emitX or hx, track.emitY or hy
+        local dx, dy = hx - ex, hy - ey
+        local style = MetaCatalog.GetTrailStyleParams(trailStyle_)
+        out[track.ballType] = {
+            len = math.sqrt(dx * dx + dy * dy),
+            emit = (style.emit or 0) * math.sqrt(dx * dx + dy * dy),
+            life = style.pLife or 0,
+        }
+    end
+    return out
 end
 
 -- 诊断用（只读）：当前粒子系拖尾**实际启用**的 billboard 数（供探针自证数据通路）。
