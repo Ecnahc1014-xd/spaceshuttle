@@ -3530,6 +3530,24 @@ function Game.GoToMenu()
     return false
 end
 
+-- 仅供探针/验收：把基地血量打空，触发真实失败结算路径（走同一条 gameover 逻辑）。
+function Game.DebugForceGameOver()
+    if gameState ~= "playing" then return false end
+    baseHp = 1
+    return true
+end
+
+-- 仅供探针/验收：构造一次真实胜利结算（走同一条 stagewin 逻辑，含 stageResult）。
+function Game.DebugForceStageWin()
+    if gameState ~= "playing" then return false end
+    stageResult = ComputeStageResult()
+    score = score + stageResult.bonusScore
+    partsEarned = partsEarned + stageResult.bonusParts
+    if score > highScore then highScore = score end
+    gameState = "stagewin"
+    return true
+end
+
 function Game.DrainEvents()
     local events = pendingEvents
     pendingEvents = {}

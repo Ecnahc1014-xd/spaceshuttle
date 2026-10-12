@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: spawn-lane-stage-fix（2026-10-12，**修「每关第一架都贴最左」**；不改展示版本）：
+  - 用户「为何每一关第一个飞机都靠很左啊」。
+  - **真因（算式实锤）**：`SpawnWave` 的起始车道 `pendingSpawn.lane = (wave - 1) % 5` 用的是**累计波号 `wave`**——每关首波 `wave = (关卡-1)*10 + 1`，减 1 后是 **10 的倍数**，`(10k) % 5 == 0` 恒成立 → **每关第一架永远落在车道 0（最左）**。v0.13.27 的「起始车道随波次错开」对**同关内**后续波有效，但**跨关的首波恒贴左**（用户看到的正是每关开局）。
+  - **修法（2 处）**：①`StageCatalog.SPAWN_LANE_COUNT = 5`（单一来源，替换 `Game` 里的函数内魔数 `laneCount = 5`）；②起始车道改 **`(stage - 1 + stageWave - 1) % SPAWN_LANE_COUNT`**——每关首波 = `(关卡-1) % 5`，逐关轮换（关1→车道0、关2→车道1 … 关6 回车道0）；同关内仍随波次错开。**零新增 `Game.lua` 顶层 local**（AB-166）。
+  - 验证：LSP workspace **29 文件 0 Error**（1319 诊断）；规则探针 `probe_lanefix` **6/6 PASS**（公式：关1..10 首波车道 `0,1,2,3,4,0,1,2,3,4` 覆盖全部 5 条、关6 周期回 0；**实战每关第一架 x 实测 25.1 / 111.6 / 198.1 / 263.6 / 343.1**（关1..5，横跨场地，此前全 ≈25 贴左））；回归 `probe_wsregress` ALL PASS（机型池递进 / 血量封顶 / 屏外上限 / 真实发射 playing）；真渲染冒烟 `probe_render` `state=playing stage=1 wave=2 enemies=2 launched=true`、零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：手机 FPS / 全 DPR / 用户手感未验收；**真机观感（每关开局位置轮换是否自然）需 Preview 目视**。
+  - ⚠️ **避雷 AB-285：「按波次错开」的偏移量别用**累计波号**，否则会被关卡长度整除、退化成常数**（spawn-lane-stage-fix，用户「为何每一关第一个飞机都靠很左」）：本项目车道 = `(wave-1) % 5`，而每关 10 波 → 每关首波 `wave-1` 恒为 10 的倍数 → `%5` 恒 0 → **每关第一架都贴最左**。**判据**：凡「随波次/关卡轮换」的偏移，若它的模数能整除**关卡长度**（或任何周期性基数），就会在每个周期起点退化成同一个值。**做法**：偏移里**显式掺入关卡号**（本项目 `(stage-1 + stageWave-1) % N`），并**探针断言「连续多关的该位置两两不同、且覆盖全部槽位」**——只测「同关内后续波不同」会漏掉这个坑（v0.13.27 的探针正是只测了同关内）。
+
 - 附记: wave-speed-ramp（2026-10-12，**每关前四波移速 60%→100% 缓入**；不改展示版本）：
   - 用户「第一波到第四波敌人的移速倍率为60%逐渐加回到100%」——给**每关关内**的头四波加「缓入」：第 1 波 60%、逐波线性加回、第 4 波起 100%（此后完全回到关卡曲线）。
   - **实现（`StageCatalog.lua` 一处，单一来源）**：新增 `StageCatalog.GetWaveSpeedRamp(stageWave)`——`w>=4 → 1.0`，否则 `0.6 + (w-1)*(0.4/3)`（0.6 / 0.7333 / 0.8667 / 1.0）；`GetBaseSpeed` 改为 `原曲线 * ramp`。⚠️ **只乘 `GetBaseSpeed`**——普通波（`GetWaveParams`→`pendingSpawn.speed`）、精英护航（`ReleaseEscortVolley`）、精英/Boss（`SpawnSpecialEnemy`）、Boss 召唤、出怪间隔下界（`CurrentSpawnInterval`）**全部经它**，天然一致；**零新增 `Game.lua` 顶层 local**（AB-166）。

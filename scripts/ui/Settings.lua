@@ -63,24 +63,35 @@ end
 -- 布局（纯几何，绘制与命中共用）
 -- ============================================================================
 
+-- 面板加高以容纳「音乐/音效开关 + 两项危险操作 + 制作鸣谢」。
+-- ⚠️ 先加高容器再排各元素 y（AB-259），避免元素互相压叠。
+local PANEL_H = 500
+
 ---@return table panel
 local function GetSettingsPanel(w)
-    return { x = 54, y = 300, w = w - 108, h = 360 }
+    return { x = 54, y = 220, w = w - 108, h = PANEL_H }
 end
 
+-- 行顺序：音乐 / 音效 / 恢复购买 / 清空存档。
+---@return table music
+---@return table sfx
 ---@return table restore
 ---@return table delete
 local function GetSettingRows(w)
     local p = GetSettingsPanel(w)
     local bw = p.w - 48
-    return { x = p.x + 24, y = p.y + 96, w = bw, h = 72 },
-           { x = p.x + 24, y = p.y + 188, w = bw, h = 72 }
+    local y0 = p.y + 96
+    local step = 76
+    return { x = p.x + 24, y = y0,            w = bw, h = 64 },
+           { x = p.x + 24, y = y0 + step,     w = bw, h = 64 },
+           { x = p.x + 24, y = y0 + step * 2, w = bw, h = 64 },
+           { x = p.x + 24, y = y0 + step * 3, w = bw, h = 64 }
 end
 
 ---@return table close
 local function GetSettingsClose(w)
     local p = GetSettingsPanel(w)
-    return { x = p.x + p.w * 0.5 - 90, y = p.y + p.h - 68, w = 180, h = 48 }
+    return { x = p.x + p.w * 0.5 - 90, y = p.y + p.h - 64, w = 180, h = 48 }
 end
 
 -- 确认面板：标题 + 提示 + 输入显示 + 键盘(4×3) + 按钮。
@@ -189,6 +200,36 @@ local function SettingRow(ctx, r, iconKey, title, desc, tone)
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 end
 
+-- 开关行：图标 + 标题 + 说明 + 右侧拨动开关（开=青、关=暗轨）。
+---@param ctx any
+---@param r table
+---@param iconKey string
+---@param title string
+---@param desc string
+---@param on boolean
+local function ToggleRow(ctx, r, iconKey, title, desc, on)
+    local C = Colors()
+    local tone = on and C.cyan or C.rail
+    local glow = D.controlFx(r, true)
+    D.panel(ctx, r.x, r.y, r.w, r.h, C.card, glow > 0.01 and tone or C.rail, 8)
+    D.rect(ctx, r.x + 1, r.y + 12, 3, r.h - 24, tone, 1)
+    D.icon(ctx, iconKey, r.x + 16, r.y + r.h * 0.5 - 16, 32, 1)
+    D.text(ctx, r.x + 60, r.y + 12, title, 20, C.text)
+    D.text(ctx, r.x + 60, r.y + 40, desc, 14, C.dim)
+    -- 拨动开关：轨道 + 滑块（开启时滑块靠右、青色发光）。
+    local tw, th = 54, 28
+    local tx = r.x + r.w - tw - 18
+    local ty = r.y + (r.h - th) * 0.5
+    D.rect(ctx, tx, ty, tw, th, on and C.cyanDim or C.widget, th * 0.5)
+    local knobR = th * 0.5 - 3
+    local knobX = on and (tx + tw - th * 0.5) or (tx + th * 0.5)
+    if on then
+        D.rect(ctx, knobX - knobR, ty + 3, knobR * 2, knobR * 2, C.cyan, knobR)
+    else
+        D.rect(ctx, knobX - knobR, ty + 3, knobR * 2, knobR * 2, C.dim, knobR)
+    end
+end
+
 -- ============================================================================
 -- 设置屏 绘制 / 命中
 -- ============================================================================
@@ -206,12 +247,29 @@ function Settings.Draw(ctx, w, meta)
     if D.icon(ctx, "gear", p.x + 12, p.y + 8, 32, 1) then titleX = p.x + 52 end
     D.text(ctx, titleX, p.y + 8, "设置", 27, C.text)
 
-    local restore, del = GetSettingRows(w)
+    local music, sfx, restore, del = GetSettingRows(w)
+    ToggleRow(ctx, music, "boost", "音乐", "背景音乐开关", meta.musicEnabled ~= false)
+    ToggleRow(ctx, sfx, "premium_energy_core", "音效", "游戏音效开关", meta.sfxEnabled ~= false)
     SettingRow(ctx, restore, "gem", "恢复购买", "重新同步已购商品与内容", C.warn)
     SettingRow(ctx, del, "reroll", "清空存档", "重置全部进度、零件与解锁", C.error)
 
-    D.text(ctx, p.x + 24, del.y + del.h + 16,
+    D.text(ctx, p.x + 24, del.y + del.h + 14,
         "⚠️ 危险操作需在确认面板输入确认码。", 13, C.dim)
+
+    -- 制作鸣谢（分区标题 + 三行）。
+    local cy = del.y + del.h + 44
+    D.text(ctx, p.x + 24, cy, "制作鸣谢", 16, C.cyan)
+    D.rect(ctx, p.x + 24, cy + 22, p.w - 48, 1, C.rail, 0)
+    local credits = {
+        { "制作者", "薪主" },
+        { "导入素材", "工作室出品" },
+        { "特别鸣谢", "TapTap" },
+    }
+    for i, line in ipairs(credits) do
+        local ly = cy + 32 + (i - 1) * 24
+        D.text(ctx, p.x + 28, ly, line[1] .. "：", 15, C.dim)
+        D.text(ctx, p.x + 118, ly, line[2], 15, C.text)
+    end
 
     local close = GetSettingsClose(w)
     PromptButton(ctx, close, "关闭", C.cyan, false)
@@ -224,7 +282,9 @@ end
 ---@return string|nil action
 ---@return integer|nil index
 function Settings.HitTest(uiX, uiY, w, meta)
-    local restore, del = GetSettingRows(w)
+    local music, sfx, restore, del = GetSettingRows(w)
+    if Inside(music, uiX, uiY) then return "toggle_music", nil end
+    if Inside(sfx, uiX, uiY) then return "toggle_sfx", nil end
     if Inside(restore, uiX, uiY) then return "restore_purchase", nil end
     if Inside(del, uiX, uiY) then return "reset_save", nil end
     if Inside(GetSettingsClose(w), uiX, uiY) then return "close", nil end

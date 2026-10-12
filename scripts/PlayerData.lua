@@ -36,6 +36,8 @@ local DATA_VERSION = 1
 ---@field createdAt integer 首次运行时间戳（首充限时窗基准）
 ---@field purchasedPartsClaimed integer 已补领的钻石兑换零件累计额
 ---@field itemStock table<string, integer> 局内道具永久库存（选关界面花零件购买）
+---@field musicEnabled boolean 设置页：BGM 开关（默认开）
+---@field sfxEnabled boolean 设置页：音效开关（默认开）
 ---@field stats table<string, integer> 通用计数器（复活次数、广告观看等）
 
 ---@return PlayerDataState
@@ -68,6 +70,8 @@ local function NewState()
         createdAt = 0,
         purchasedPartsClaimed = 0,
         itemStock = {},
+        musicEnabled = true,
+        sfxEnabled = true,
         stats = {},
     }
 end
@@ -178,6 +182,9 @@ function PlayerData.Load()
     state.createdAt = math.max(0, AsInt(d.createdAt))
     state.purchasedPartsClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
     state.itemStock    = AsIntMap(d.itemStock)
+    -- 设置页开关：缺省（旧档/首次）为开；显式 false 才关。
+    state.musicEnabled = d.musicEnabled ~= false
+    state.sfxEnabled   = d.sfxEnabled ~= false
     state.stats        = AsIntMap(d.stats)
     local skins = AsBoolMap(d.skins)
     skins.default = true
@@ -305,6 +312,9 @@ function PlayerData.ImportFromCloud(text)
         local cur = state.itemStock[k] or 0
         if v > cur then state.itemStock[k] = v end
     end
+    -- 音乐/音效开关是纯偏好：云端显式布尔才覆盖本地（旧档无此字段则保留本机）。
+    if type(d.musicEnabled) == "boolean" then state.musicEnabled = d.musicEnabled end
+    if type(d.sfxEnabled) == "boolean" then state.sfxEnabled = d.sfxEnabled end
     local cloudSignTotal = math.max(0, AsInt(d.signInTotal))
     state.signInTotal = math.max(state.signInTotal, cloudSignTotal)
     print("[PlayerData] cloud merged parts=" .. state.parts)
@@ -380,6 +390,32 @@ function PlayerData.AddItem(key, amount)
     local n = math.floor(amount or 0)
     if n <= 0 then return end
     state.itemStock[key] = (state.itemStock[key] or 0) + n
+    PlayerData.Save()
+end
+
+-- ============================================================================
+-- 设置页开关：音乐 / 音效（纯偏好，默认开）
+-- ============================================================================
+
+---@return boolean
+function PlayerData.IsMusicEnabled()
+    return state.musicEnabled ~= false
+end
+
+---@return boolean
+function PlayerData.IsSfxEnabled()
+    return state.sfxEnabled ~= false
+end
+
+---@param enabled boolean
+function PlayerData.SetMusicEnabled(enabled)
+    state.musicEnabled = enabled == true
+    PlayerData.Save()
+end
+
+---@param enabled boolean
+function PlayerData.SetSfxEnabled(enabled)
+    state.sfxEnabled = enabled == true
     PlayerData.Save()
 end
 

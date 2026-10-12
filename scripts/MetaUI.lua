@@ -75,6 +75,8 @@ local trailIndex = 1
 ---@field giftUsed table<string, integer>
 ---@field wheelReady boolean
 ---@field wheelPrize integer
+---@field musicEnabled boolean 设置页：BGM 开关
+---@field sfxEnabled boolean 设置页：音效开关
 ---@field toast string|nil
 
 -- ============================================================================

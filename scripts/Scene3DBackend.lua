@@ -1630,36 +1630,17 @@ end
 -- 视觉几何与命中判定共用此处，禁止在 main.lua 再写一套常量。
 local function GetGameOverButtonLayout(game)
     local w = game.width or DESIGN_W
-    local btnH, gap = 48, 12
+    local btnH, gap = 56, 14
     local rowW = 216
     local rowPairW = rowW * 2 + gap
     local rowX = (w - rowPairW) * 0.5
-    local revive = {
-        x = (w - rowW) * 0.5,
-        y = 496,
-        w = rowW,
-        h = btnH,
-    }
-    local double = {
-        x = rowX,
-        y = revive.y + btnH + gap,
-        w = rowW,
-        h = btnH,
-    }
-    local restart = {
-        x = rowX + rowW + gap,
-        y = double.y,
-        w = rowW,
-        h = btnH,
-    }
-    -- v0.12.5：回主菜单（用户否决「游戏结束不让回主菜单」）。窗口壳底边 720，
-    -- 第四行放 616..664，窗口内、toast 提示上方，不压既有三行几何。
-    local menu = {
-        x = rowX,
-        y = double.y + btnH + gap,
-        w = rowPairW,
-        h = 44,
-    }
+    -- v0.13.60：用户「浪费UI空间且广告太过密集」——窗口下移加高后重排：
+    -- 主 CTA「再来一局」置顶整行宽（唯一实心青），两个广告按钮降为**次级描边**并列一行
+    -- （不再两块实心绿），回主菜单在底。视觉上只剩一个实心 CTA，广告不再密集。
+    local restart = { x = rowX, y = 560, w = rowPairW, h = btnH }
+    local revive  = { x = rowX, y = restart.y + btnH + gap, w = rowW, h = btnH }
+    local double  = { x = rowX + rowW + gap, y = revive.y, w = rowW, h = btnH }
+    local menu    = { x = rowX, y = revive.y + btnH + gap, w = rowPairW, h = 48 }
     return revive, double, restart, menu
 end
 
@@ -1668,8 +1649,10 @@ local function DrawGameOver(ctx, game, presentation)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
 
-    local winX, winY = 24, 200
-    local winW, winH = game.width - 48, 520
+    -- v0.13.60：窗口垂直居中于可视区（92..960，高 868）——原 200..720 偏上、下方大片空白。
+    -- winH=620 → winY=92+(868-620)/2=216，上下留白各 124，窗口内按钮下方也留白均匀。
+    local winY = 216
+    local winX, winW, winH = 24, game.width - 48, 620
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
     DrawModalTechDecor(ctx, winX, winY, winW, winH, game.elapsed)
     DrawPixelText(ctx, winX + 18, winY + 10, "防线失守", 22, C.cyan)
@@ -1677,87 +1660,90 @@ local function DrawGameOver(ctx, game, presentation)
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
     if game.newRecord then
-        DrawIcon(ctx, "record", game.width * 0.5 - 104, 266, 32)
-        DrawPixelText(ctx, game.width * 0.5 + 14, 272, "刷新最高分", 20, C.warn,
+        DrawIcon(ctx, "record", game.width * 0.5 - 104, winY + 62, 32)
+        DrawPixelText(ctx, game.width * 0.5 + 14, winY + 68, "刷新最高分", 20, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
-        DrawPixelText(ctx, game.width * 0.5, 278, "游戏结束", 36, C.text,
+        DrawPixelText(ctx, game.width * 0.5, winY + 74, "游戏结束", 36, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
-    DrawPixelText(ctx, game.width * 0.5, 322, "敌机突破了底部防线", 18, C.dim,
+    DrawPixelText(ctx, game.width * 0.5, winY + 118, "敌机突破了底部防线", 18, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 348,
+    DrawPixelText(ctx, game.width * 0.5, winY + 144,
         string.format("分数 %d    最高 %d    第 %d 关 %d/%d 波",
             game.score, game.highScore, game.stage or 1,
             game.stageWave or game.wave, game.wavesPerStage or 10), 18, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    DrawBluePanel(ctx, 44, 370, game.width - 88, 92, C.rail, C.cyanDim, 6)
-    DrawPixelText(ctx, 60, 380, string.format("到达第 %d 关", game.stage or 1), 17, C.text)
-    DrawPixelText(ctx, 60, 402, string.format("等级 %d", game.playerLevel), 17, C.text)
-    DrawPixelText(ctx, 60, 424, string.format("击碎 %d 块", game.bricksBroken or 0), 17, C.dim)
-    DrawPixelText(ctx, game.width - 60, 380, string.format("强化 %d 次", #(game.upgradePicks or {})), 17,
+    DrawBluePanel(ctx, 44, winY + 178, game.width - 88, 92, C.rail, C.cyanDim, 6)
+    DrawPixelText(ctx, 60, winY + 188, string.format("到达第 %d 关", game.stage or 1), 17, C.text)
+    DrawPixelText(ctx, 60, winY + 210, string.format("等级 %d", game.playerLevel), 17, C.text)
+    DrawPixelText(ctx, 60, winY + 232, string.format("击碎 %d 块", game.bricksBroken or 0), 17, C.dim)
+    DrawPixelText(ctx, game.width - 60, winY + 188, string.format("强化 %d 次", #(game.upgradePicks or {})), 17,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 60, 402, string.format("连击 %d", game.clearStreak or 0), 17,
+    DrawPixelText(ctx, game.width - 60, winY + 210, string.format("连击 %d", game.clearStreak or 0), 17,
         C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width - 60, 424, string.format("存活 %.0f 秒", game.elapsed or 0), 17,
+    DrawPixelText(ctx, game.width - 60, winY + 232, string.format("存活 %.0f 秒", game.elapsed or 0), 17,
         C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     -- v0.11.0 商业化：本局零件产出（结算页最直观的变现锚点）。
-    DrawPixelText(ctx, game.width * 0.5, 446,
-        string.format("本局获得  零件 ×%d", game.runParts or 0), 18, C.warn,
+    DrawPixelText(ctx, game.width * 0.5, winY + 288,
+        string.format("本局获得  零件 ×%d", game.runParts or 0), 19, C.warn,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawIcon(ctx, "parts", game.width * 0.5 - 184, 439, 28)
+    DrawIcon(ctx, "parts", game.width * 0.5 - 184, winY + 281, 28)
 
     local reviveBtn, doubleBtn, restartBtn, menuBtn = GetGameOverButtonLayout(game)
     local canRevive = game.canRevive
     local adBusy = presentation and presentation.adStatus == "loading"
+
+    -- 主 CTA「再来一局」：唯一实心青块，置顶整行宽（视觉焦点）。
+    DrawRect(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.cyan, 8)
+    DrawPixelText(ctx, restartBtn.x + restartBtn.w * 0.5, restartBtn.y + 16, "再来一局", 22, C.ink,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    -- v0.13.60：两个广告按钮降为**次级描边**（不再两块实心绿）——绿只保留描边+文字，
+    -- 底用暗 card，避免「广告密集」的观感。副行字号缩到 14 容纳在 56 高内。
     if canRevive then
+        DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.card, 8)
+        DrawStroke(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.ad, 8, 1.6)
         if adBusy then
-            DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.widget, 8)
-            DrawStroke(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyanDim, 8, 1)
-            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 12, "广告加载中…", 18, C.dim,
+            DrawPixelText(ctx, reviveBtn.x + reviveBtn.w * 0.5, reviveBtn.y + 8, "广告加载中…", 16, C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         else
-            DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.ad, 8)
-            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 4, "看广告复活", 20, C.ink,
+            DrawPixelText(ctx, reviveBtn.x + reviveBtn.w * 0.5, reviveBtn.y + 8, "看广告复活", 18, C.ad,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-            DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 28, "防线回 50 血 · 本局一次", 15, C.ink,
+            DrawPixelText(ctx, reviveBtn.x + reviveBtn.w * 0.5, reviveBtn.y + 32, "防线回 50 血 · 本局一次", 14, C.dim,
                 NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         end
     else
         DrawRect(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.widget, 8)
         DrawStroke(ctx, reviveBtn.x, reviveBtn.y, reviveBtn.w, reviveBtn.h, C.cyanDim, 8, 1)
-        DrawPixelText(ctx, game.width * 0.5, reviveBtn.y + 12, "本局已复活", 18, C.dim,
+        DrawPixelText(ctx, reviveBtn.x + reviveBtn.w * 0.5, reviveBtn.y + 16, "本局已复活", 17, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- 看广告双倍零件：已翻倍后置灰，不可重复领取。
+    -- 看广告双倍零件：次级描边；已翻倍后置灰，不可重复领取。
     if game.canDoubleSettle then
         DrawRect(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.card, 8)
-        DrawStroke(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.ad, 8, 1.5)
-        DrawIcon(ctx, "double", doubleBtn.x + 9, doubleBtn.y + 10, 28)
-        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 5, "看广告 双倍零件", 18, C.ad,
+        DrawStroke(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.ad, 8, 1.6)
+        DrawIcon(ctx, "double", doubleBtn.x + 9, doubleBtn.y + 14, 28)
+        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 8, "看广告 双倍零件", 17, C.ad,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 28,
-            string.format("再得 %d 零件", game.runParts or 0), 15, C.dim,
+        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 32,
+            string.format("再得 %d 零件", game.runParts or 0), 14, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         DrawRect(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.widget, 8)
         DrawStroke(ctx, doubleBtn.x, doubleBtn.y, doubleBtn.w, doubleBtn.h, C.cyanDim, 8, 1)
-        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 12,
+        DrawPixelText(ctx, doubleBtn.x + doubleBtn.w * 0.5, doubleBtn.y + 16,
             game.partsDoubled and "零件已翻倍" or "零件已入库", 17, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawRect(ctx, restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, C.cyan, 8)
-    DrawPixelText(ctx, restartBtn.x + restartBtn.w * 0.5, restartBtn.y + 12, "再来一局", 20, C.ink,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-
     -- v0.12.5：回主菜单（次级出口：widget 底 + 青 dim 描边，不与主 CTA 抢焦点）
     DrawRect(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.widget, 8)
     DrawStroke(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.cyanDim, 8, 1.4)
-    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 10, 24, 1)
-    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 10, "回主菜单", 18, C.text,
+    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 12, 24, 1)
+    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 12, "回主菜单", 18, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local toast = presentation and presentation.adToast
@@ -1793,13 +1779,15 @@ end
 
 local function GetStageWinButtonLayout(game)
     local w = (game and game.width) or DESIGN_W
-    local btnH, gap = 48, 12
+    local btnH, gap = 56, 14
     local rowW = 216
     local rowPairW = rowW * 2 + gap
     local rowX = (w - rowPairW) * 0.5
-    local menu = { x = (w - rowW) * 0.5, y = 496, w = rowW, h = btnH }
-    local retry = { x = rowX, y = menu.y + btnH + gap, w = rowW, h = btnH }
-    local nextBtn = { x = rowX + rowW + gap, y = retry.y, w = rowW, h = btnH }
+    -- v0.13.60：主 CTA「下一关」置顶整行宽（唯一实心青，视觉焦点）；
+    -- 再战本关 + 回主菜单并列一行（次级）。与失败页同语言。
+    local nextBtn = { x = rowX, y = 560, w = rowPairW, h = btnH }
+    local retry = { x = rowX, y = nextBtn.y + btnH + gap, w = rowW, h = btnH }
+    local menu = { x = rowX + rowW + gap, y = retry.y, w = rowW, h = btnH }
     return retry, nextBtn, menu
 end
 
@@ -1811,8 +1799,9 @@ local function DrawStageWin(ctx, game, presentation)
         game.width, game.height - MENU_CONTENT_TOP)
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
 
-    local winX, winY = 24, 200
-    local winW, winH = game.width - 48, 468
+    -- v0.13.60：窗口垂直居中于可视区（92..960，高 868）——原 200..668 偏上、下方大片空白。
+    local winY = 216
+    local winX, winW, winH = 24, game.width - 48, 620
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
     DrawModalTechDecor(ctx, winX, winY, winW, winH, game.elapsed)
     DrawPixelText(ctx, winX + 18, winY + 10, "防线守住", 22, C.cyan)
@@ -1820,48 +1809,48 @@ local function DrawStageWin(ctx, game, presentation)
         string.format("第 %d 关告捷", result.stage or game.stage or 1), 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width * 0.5, winY + 70, result.rating or "通关", 34, C.text,
+    DrawPixelText(ctx, game.width * 0.5, winY + 78, result.rating or "通关", 34, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawStarRow(ctx, game.width * 0.5, winY + 120, stars, 40, 18)
+    DrawStarRow(ctx, game.width * 0.5, winY + 128, stars, 44, 20)
 
-    DrawPixelText(ctx, game.width * 0.5, winY + 188,
+    DrawPixelText(ctx, game.width * 0.5, winY + 208,
         string.format("剩余防线 %d / %d", math.floor(game.baseHp or 0), game.maxBaseHp or 100),
-        17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, winY + 214,
+        18, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, game.width * 0.5, winY + 238,
         string.format("本关奖励  +%d 分   +%d 零件", math.floor(result.bonusScore or 0),
-            math.floor(result.bonusParts or 0)), 16, C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            math.floor(result.bonusParts or 0)), 17, C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     if game.newRecord then
-        DrawPixelText(ctx, game.width * 0.5, winY + 240, "刷新最高分", 16, C.warn,
+        DrawPixelText(ctx, game.width * 0.5, winY + 268, "刷新最高分", 17, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
     local retryBtn, nextBtn, menuBtn = GetStageWinButtonLayout(game)
-    -- 下一关：有下一关时青底主 CTA，通关到最后一关时置灰。
+    -- 主 CTA「下一关」：唯一实心青块，置顶整行宽；通关到最后一关时置灰。
     if game.stageHasNext then
         DrawRect(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.cyan, 8)
-        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 12, "下一关", 20, C.ink,
+        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 16, "下一关", 22, C.ink,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         DrawRect(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.widget, 8)
         DrawStroke(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.cyanDim, 8, 1)
-        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 12, "已通关全部", 18, C.dim,
+        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 16, "已通关全部", 19, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
-    -- 再战本关（次级）+ 回主菜单（次级）。
+    -- 再战本关 + 回主菜单（并列次级）。
     DrawRect(ctx, retryBtn.x, retryBtn.y, retryBtn.w, retryBtn.h, C.card, 8)
     DrawStroke(ctx, retryBtn.x, retryBtn.y, retryBtn.w, retryBtn.h, C.cyanDim, 8, 1.4)
-    DrawPixelText(ctx, retryBtn.x + retryBtn.w * 0.5, retryBtn.y + 12, "再战本关", 20, C.text,
+    DrawPixelText(ctx, retryBtn.x + retryBtn.w * 0.5, retryBtn.y + 16, "再战本关", 20, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     DrawRect(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.widget, 8)
     DrawStroke(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.cyanDim, 8, 1.4)
-    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 10, 24, 1)
-    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 10, "回主菜单", 18, C.text,
+    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 16, 24, 1)
+    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 16, "回主菜单", 18, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
-        DrawPixelText(ctx, game.width * 0.5, menuBtn.y + menuBtn.h + 22, toast, 15, C.warn,
+        DrawPixelText(ctx, game.width * 0.5, menuBtn.y + menuBtn.h + 18, toast, 15, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
@@ -3022,6 +3011,23 @@ end
 ---@param kind string|nil
 function Backend.PlayUiSfx(kind)
     if uiFx.audio then uiFx.audio.PlayUi(kind) end
+end
+
+-- 设置页开关：音乐/音效开与关（挂 Backend 表，零新增顶层 local，AB-265/268）。
+---@param enabled boolean
+function Backend.SetMusicEnabled(enabled)
+    if uiFx.audio then uiFx.audio.SetMusicEnabled(enabled) end
+end
+
+---@param enabled boolean
+function Backend.SetSfxEnabled(enabled)
+    if uiFx.audio then uiFx.audio.SetSfxEnabled(enabled) end
+end
+
+---@return boolean, boolean
+function Backend.AudioEnabled()
+    if uiFx.audio then return uiFx.audio.IsMusicEnabled(), uiFx.audio.IsSfxEnabled() end
+    return true, true
 end
 
 -- 游戏快照在 Update 结束后已经稳定；在本帧 3D 绘制之前同步场景与体素。

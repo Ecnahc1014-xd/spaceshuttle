@@ -352,6 +352,9 @@ local metaState = {
     giftUsed = {},
     wheelReady = false,
     wheelPrize = 0,
+    -- 设置页开关（v0.13.60）：音乐 / 音效，供设置屏只读渲染。
+    musicEnabled = true,
+    sfxEnabled = true,
     toast = nil,
     -- 联机 / 氪金代币
     offline = false,
@@ -477,6 +480,9 @@ RefreshMeta = function()
     -- 选关界面「局内道具」购买条：库存 / 单价 / 本局每样限用一次。
     metaState.itemStock = PlayerData.GetItemStock()
     metaState.itemPrices = ItemShop.PRICES
+    -- 设置页开关（v0.13.60）：音乐 / 音效，供设置屏只读渲染。
+    metaState.musicEnabled = PlayerData.IsMusicEnabled()
+    metaState.sfxEnabled = PlayerData.IsSfxEnabled()
 
     -- 天赋树界面数据（v0.13.5）：已解锁节点 + 星级汇总。
     metaState.talents = PlayerData.GetTalents()
@@ -974,6 +980,22 @@ local function HandleMetaAction(action, index)
     elseif action == "open_settings" then
         -- v0.13.59：主菜单左上角齿轮 → 设置屏。
         OpenMetaScreen("settings")
+    elseif action == "toggle_music" then
+        -- v0.13.60：音乐开关——写存档 + 立即作用到音频总控 + 刷新快照。
+        local on = not PlayerData.IsMusicEnabled()
+        PlayerData.SetMusicEnabled(on)
+        RenderBackend.SetMusicEnabled(on)
+        SavePlayerDataToCloud()
+        SetMetaToast(on and "音乐已开启" or "音乐已关闭")
+        RefreshMeta()
+    elseif action == "toggle_sfx" then
+        -- v0.13.60：音效开关——写存档 + 立即作用到音频总控 + 刷新快照。
+        local on = not PlayerData.IsSfxEnabled()
+        PlayerData.SetSfxEnabled(on)
+        RenderBackend.SetSfxEnabled(on)
+        SavePlayerDataToCloud()
+        SetMetaToast(on and "音效已开启" or "音效已关闭")
+        RefreshMeta()
     elseif action == "restore_purchase" then
         -- 危险操作：先开确认面板，输入正确确认码后才真正恢复购买。
         Settings.BeginConfirm("restore")
@@ -1004,6 +1026,9 @@ local function HandleMetaAction(action, index)
                 PlayerData.Save()
                 SavePlayerDataToCloud()
                 Game.SetItemStock(PlayerData.GetItemStock())
+                -- v0.13.60：清档后音乐/音效回到默认开，重新作用到音频总控。
+                RenderBackend.SetMusicEnabled(PlayerData.IsMusicEnabled())
+                RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
                 metaState.talents = PlayerData.GetTalents()
                 metaState.gems = 0
                 SetMetaToast("存档已清空")
@@ -1511,6 +1536,9 @@ function ClientMain.Start(opts)
     MetaUI.RegisterScreen("reset_confirm", Settings.DrawConfirm, Settings.HitTestConfirm)
 
     PlayerData.Load()
+    -- v0.13.60：把存档里的音乐/音效开关作用到音频总控（AudioDirector 已在 Backend.Init 就绪）。
+    RenderBackend.SetMusicEnabled(PlayerData.IsMusicEnabled())
+    RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
     -- 开局自动拥有初始车的「允许局内出场」节点（幂等；必须在 Load 之后）。
     PlayerData.EnsureAutoOwnedTalents(TalentCatalog.AUTO_OWNED)
     -- v0.13.5：天赋提供者——每次开局（选关/下一关/重开）Game 自动拉取最新解锁集合。

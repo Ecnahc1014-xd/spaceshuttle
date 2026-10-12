@@ -102,6 +102,7 @@ local state = {
     bossAlive = false,  -- 由 wave_started(isBoss) / boss_defeated 事件跟踪，决定是否切首领主题
     musicEnabled = true, -- 设置页开关：关则 BGM 淡出并静音（不动曲目状态，开回来可续）
     sfxEnabled = true,   -- 设置页开关：关则直接跳过所有音效播放
+    sfxPlays = 0,        -- 已播放音效计数（只读诊断，供探针自证开关生效）
 }
 
 -- 创建一条音效节点（相对场景、非 3D 定位，2D 玩法全局音）。
@@ -141,6 +142,7 @@ function AudioDirector.Init(scene)
     state.bgmGain = { 0, 0 }
     state.bgmFade = { 0, 0 }
     state.lastState = nil
+    state.sfxPlays = 0
 
     local loaded, total = 0, 0
     for key, path in pairs(SFX_PATHS) do
@@ -191,6 +193,7 @@ function AudioDirector.PlaySfx(key, gain, pitch)
         if ok and base then freq = base * pitch end
     end
     pcall(function() source:Play(sound, freq, gain or 0.55) end)
+    state.sfxPlays = state.sfxPlays + 1
 end
 
 --- 供 UI 直接调用的音效入口（按钮点击/确认等）。
@@ -201,6 +204,28 @@ function AudioDirector.PlayUi(kind)
     else
         AudioDirector.PlaySfx("ui_click", 0.45)
     end
+end
+
+--- 设置页开关：音乐开/关（关闭时 BGM 淡出静音，曲目状态保留，开回来可续播）。
+---@param enabled boolean
+function AudioDirector.SetMusicEnabled(enabled)
+    state.musicEnabled = enabled == true
+end
+
+--- 设置页开关：音效开/关（关闭时直接跳过所有音效播放）。
+---@param enabled boolean
+function AudioDirector.SetSfxEnabled(enabled)
+    state.sfxEnabled = enabled == true
+end
+
+---@return boolean
+function AudioDirector.IsMusicEnabled()
+    return state.musicEnabled
+end
+
+---@return boolean
+function AudioDirector.IsSfxEnabled()
+    return state.sfxEnabled
 end
 
 -- 事件 → 音效（含砖块击中/击碎的 destroyed 分流与节流）。
@@ -264,6 +289,11 @@ local function PlaylistTrack(key, idx)
     return list[i], i
 end
 
+-- BGM 目标增益：关闭音乐时为 0（淡出并静音），否则回到常驻音量。
+local function TargetGain()
+    return state.musicEnabled and BGM_GAIN or 0
+end
+
 -- 在另一条通道上播放指定曲目并淡入，旧通道淡出（用于切状态与曲终轮播）。
 local function StartTrack(key, idx)
     local sound, realIdx = PlaylistTrack(key, idx)
@@ -272,7 +302,7 @@ local function StartTrack(key, idx)
     if sound and source then
         pcall(function() source:Play(sound, 0, 0) end)
         state.bgmGain[nextCh] = 0
-        state.bgmFade[nextCh] = BGM_GAIN
+        state.bgmFade[nextCh] = TargetGain()
         state.bgmTrackIdx = realIdx
         local okLen, len = pcall(function() return sound:GetLength() end)
         state.bgmTrackLen = (okLen and len) or 0
@@ -299,6 +329,15 @@ local function UpdateBgm(dt)
         state.bgmTime = state.bgmTime + dt
         if state.bgmTime >= state.bgmTrackLen then
             StartTrack(state.bgmKey, state.bgmTrackIdx + 1)
+        end
+    end
+    -- 开关切换：把当前通道的目标增益同步到音乐开关（关闭时淡出静音）。
+    local tgt = TargetGain()
+    if state.bgmKey then
+        for ch = 1, 2 do
+            if (state.bgmGain[ch] or 0) > 0 or (state.bgmFade[ch] or 0) > 0 then
+                state.bgmFade[ch] = tgt
+            end
         end
     end
     for ch = 1, 2 do
@@ -370,6 +409,18 @@ end
 function AudioDirector.DebugTrackCount(key)
     local list = state.bgmPlaylist[key]
     return list and #list or 0
+end
+
+--- 只读诊断：返回音乐/音效开关状态（供探针断言设置页开关真的生效）。
+---@return boolean, boolean
+function AudioDirector.DebugEnabled()
+    return state.musicEnabled, state.sfxEnabled
+end
+
+--- 只读诊断：返回已播放音效计数（供探针断言「关音效后不再新增」）。
+---@return integer
+function AudioDirector.DebugSfxPlays()
+    return state.sfxPlays
 end
 
 return AudioDirector
