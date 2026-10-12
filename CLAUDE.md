@@ -3,6 +3,14 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 附记: wave-speed-ramp（2026-10-12，**每关前四波移速 60%→100% 缓入**；不改展示版本）：
+  - 用户「第一波到第四波敌人的移速倍率为60%逐渐加回到100%」——给**每关关内**的头四波加「缓入」：第 1 波 60%、逐波线性加回、第 4 波起 100%（此后完全回到关卡曲线）。
+  - **实现（`StageCatalog.lua` 一处，单一来源）**：新增 `StageCatalog.GetWaveSpeedRamp(stageWave)`——`w>=4 → 1.0`，否则 `0.6 + (w-1)*(0.4/3)`（0.6 / 0.7333 / 0.8667 / 1.0）；`GetBaseSpeed` 改为 `原曲线 * ramp`。⚠️ **只乘 `GetBaseSpeed`**——普通波（`GetWaveParams`→`pendingSpawn.speed`）、精英护航（`ReleaseEscortVolley`）、精英/Boss（`SpawnSpecialEnemy`）、Boss 召唤、出怪间隔下界（`CurrentSpawnInterval`）**全部经它**，天然一致；**零新增 `Game.lua` 顶层 local**（AB-166）。
+  - 验证：LSP workspace **29 文件 0 Error**（1312 诊断）；规则探针 `probe_wavespeed` **15/15 PASS**（ramp 端点 0.6/1.0、第5+波不变、单调、线性等步长；`GetBaseSpeed` 关1/5/12/15 × 波1-6 共 24 组 = 原曲线×ramp；**实战真实生成敌机 vy 逐波抬升 7.711→11.236→14.065→31.623**，wave1 ≈ 60% 基准）；回归 `probe_wsregress` **ALL PASS**（机型池递进 关1=1/关6=5/关9=8、关1 整关不饱和、血量封顶 1/2/43、MAX_OFFSCREEN=3、真实发射后 state=playing）；真渲染冒烟 `probe_render`（菜单→选关→战斗→发射）`state=playing stage=1 wave=2 enemies=3 launched=true`、零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：手机 FPS / 全 DPR / 用户手感未验收；**真机观感（开局缓入是否舒适、第4波切回全速是否有突兀感）需 Preview 目视**。
+  - ⚠️ **避雷 AB-283：给「每关前几波」加缓入/缓冲曲线时，乘在**速度的单一来源**（`GetBaseSpeed`）上，不要只改普通波那条路径**（wave-speed-ramp）：本项目敌机速度有 5 条消费路径（普通波 / 精英护航 / 精英+Boss / Boss 召唤 / 出怪间隔下界）——若只在 `GetWaveParams` 或 `pendingSpawn.speed` 乘倍率，**精英波和护航不受影响**（玩家会在第 3 波突然撞到全速精英）。做法：找到所有路径共用的**那个函数**（本项目 `StageCatalog.GetBaseSpeed`）乘一次；⚠️ 副作用是 `CurrentSpawnInterval` 的间隔下界也会跟着变（descent 变小 → 间隔变大，属良性：更慢的敌机本来就需要更长间隔才拉开一格），**改完要核对间隔仍有限、不爆炸**。
+  - ⚠️ **避雷 AB-284：「第 N 波」的口径要先定死是**关内波次**还是**累计波号****（wave-speed-ramp）：用户说「第一波到第四波」——本项目每关 10 波、`wave` 是**累计**波号（关2 第1波 = wave 11），而 `stageWave` 是**关内**波次（1..10）。用户要的是「每关开局的缓入」，即 `stageWave` 1..4。**做法**：加「每关前几波」类规则前，先确认 `Game.lua` 里哪个量是关内波次（本项目 `stageWave`）、哪个是累计（`wave`）——用错会让规则只在第 1 关生效。探针要断言「**关 5 / 关 12 的第 1 波同样拿到 60%**」，不能只测关 1。
+
 - 附记: trail-particle-lag-fix（2026-10-12，**修「拖尾滞后明显」**；不改展示版本）：
   - 用户「拖尾滞后明显」——承接 trail-particle-styles（彗星/流光改粒子系）。**滞后 = 尾迹在车尾前方就断了**（贴车那段没有粒子）。
   - **两个真因（都在 `SyncTrailParticles`）**：①🔴 **每帧重走整条轨迹采样**（`for k=1,n` 遍历 `track.points` 的每一段），且对每段都 `acc += len*emit`——同一段被**反复累加** → 粒子暴增（探针实测彗星 287 粒 / 流光 111 粒，远超寿命所需的稳态量）→ 撞槽位上限。②🔴 **提交按 `ipairs` 从头取**（列表里最老的粒子）→ 超预算时被丢掉的是**最新（贴车）那批**，于是「车头段」永远画不出来 = 滞后。

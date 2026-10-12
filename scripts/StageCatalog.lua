@@ -166,9 +166,21 @@ function StageCatalog.GetBrickHp(stage, kind)
     return base
 end
 
+-- v0.13.60：每关**关内前四波**的敌机移速倍率——第 1 波 60%，逐波线性加回，第 4 波起 100%。
+-- 让每关开局有个「缓入」节奏（新关卡的头几波明显更慢，玩家有时间进入状态），
+-- 第 4 波之后完全回到关卡曲线——**不改变任何已有波次的既有速度**。
+-- 单一来源：普通波 / 精英护航 / Boss 召唤 / 出怪间隔下界都走 GetBaseSpeed，天然一致。
+function StageCatalog.GetWaveSpeedRamp(stageWave)
+    local w = math.max(1, math.floor(stageWave or 1))
+    if w >= 4 then return 1.0 end
+    return 0.6 + (w - 1) * (0.4 / 3)
+end
+
 -- v0.13.49：整体抬高——基准速度 28→34、每关 +1.5→+1.8（关1 首波 28→34、关13 起 46→55.6）。
+-- v0.13.60：再乘「关内前四波缓入」倍率（第 1 波 60% → 第 4 波 100%）。
 function StageCatalog.GetBaseSpeed(stage, stageWave)
-    return 34 + (stageWave - 1) * 4 + math.min(stage - 1, 12) * 1.8
+    local speed = 34 + (stageWave - 1) * 4 + math.min(stage - 1, 12) * 1.8
+    return speed * StageCatalog.GetWaveSpeedRamp(stageWave)
 end
 
 -- v0.13.26：波间隔改为**逐关收紧**（旧版随关卡变长 15.5→25.1s，方向反了）。
