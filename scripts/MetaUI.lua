@@ -341,25 +341,66 @@ local function ProgressBar(ctx, x, y, w, ratio, color, height)
 end
 
 -- 面板壳的纯几何（不含绘制）：命中判定与绘制共用，禁止两处各写一套。
+-- v0.13.61：底部让出 34px 给「状态条」——把钱包余额与社交锚点常驻到每一屏（最商业化的一条）。
+local SHELL_BAR_H = 34
+
 ---@param w number
 ---@return table content
 ---@return table close
+---@return table statusBar
 local function GetShellLayout(w)
     local x, y = 18, 108
     local sw, sh = w - 36, 780
-    return { x = x + 14, y = y + 60, w = sw - 28, h = sh - 76 },
-           { x = x + sw - 46, y = y + 8, w = 36, h = 36 }
+    local content = { x = x + 14, y = y + 60, w = sw - 28, h = sh - 76 - SHELL_BAR_H - 6 }
+    return content,
+           { x = x + sw - 46, y = y + 8, w = 36, h = 36 },
+           { x = content.x, y = content.y + content.h + 6, w = content.w, h = SHELL_BAR_H }
 end
 
--- 面板壳：整页覆盖 + 标题栏 + 右上关闭。返回内容区 {x,y,w,h}。
+-- 底栏状态条：常驻「零件 · 钻石 · 最远关卡 · 全服名次」——每次打开面板都看到持有量与排名，
+-- 是商业化 UI 最强的价值锚点（钱包可见 + 社交证明）。全部读真实 meta 字段，无字段则降级。
+---@param ctx any
+---@param bar table
+---@param meta MetaState
+local function ShellStatusBar(ctx, bar, meta)
+    local C = Colors()
+    D.panel(ctx, bar.x, bar.y, bar.w, bar.h, C.rail, C.cyanDim, 6)
+    D.rect(ctx, bar.x + 2, bar.y + 2, bar.w - 4, math.floor(bar.h * 0.44),
+        {255, 255, 255, 16}, 4)
+    D.rect(ctx, bar.x + 4, bar.y + 1, bar.w - 8, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
+    local cy = bar.y + math.floor(bar.h * 0.5) - 9
+    D.icon(ctx, "parts", bar.x + 8, cy - 3, 24, 1)
+    D.text(ctx, bar.x + 36, cy, tostring(meta.parts or 0), 16, C.text)
+    local gemX = bar.x + 118
+    D.rect(ctx, gemX - 10, bar.y + 6, 1, bar.h - 12, {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 110}, 0)
+    D.icon(ctx, "gem", gemX, cy - 3, 24, 1)
+    D.text(ctx, gemX + 28, cy, tostring(meta.gems or 0), 16, C.warn)
+    -- 中段：最远关卡（进度锚点）。
+    D.text(ctx, bar.x + bar.w * 0.62, cy, string.format("最远第 %d 关", meta.maxStage or 1),
+        15, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- 右段：全服名次（社交证明）优先，离线/未上榜降级为最高分。
+    local rightText, rightColor
+    if meta.myRank and (meta.rankTotal or 0) > 0 then
+        rightText = string.format("全服第 %d 名", meta.myRank)
+        rightColor = C.cyan
+    else
+        rightText = string.format("最高分 %d", meta.highScore or 0)
+        rightColor = C.dim
+    end
+    D.text(ctx, bar.x + bar.w - 14, cy, rightText, 15, rightColor,
+        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+end
+
+-- 面板壳：整页覆盖 + 标题栏 + 右上关闭 + 底部状态条。返回内容区 {x,y,w,h}。
 ---@param ctx any
 ---@param w number
 ---@param h number
 ---@param title string
 ---@param subtitle string
+---@param meta MetaState|nil 有则画底部状态条（钱包/进度/排名）
 ---@return table content
 ---@return table close
-local function Shell(ctx, w, h, title, subtitle)
+local function Shell(ctx, w, h, title, subtitle, meta)
     local C = Colors()
     D.backdrop(ctx, 0, 0, w, h)
     local x, y = 18, 108
@@ -384,10 +425,11 @@ local function Shell(ctx, w, h, title, subtitle)
         D.text(ctx, x + sw - 58, y + 14, subtitle, 15, C.dim,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
-    local content, close = GetShellLayout(w)
+    local content, close, statusBar = GetShellLayout(w)
     D.panel(ctx, close.x, close.y, close.w, close.h, C.card, C.cyanDim, 6)
     D.text(ctx, close.x + close.w * 0.5, close.y + 6, "×", 21, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if meta then ShellStatusBar(ctx, statusBar, meta) end
     return content, close
 end
 
@@ -714,14 +756,11 @@ end
 -- 任务面板
 -- ============================================================================
 
----@param ctx any
----@param w number
----@param meta MetaState
----@return table content
----@return table close
+local DrawTaskExtras = nil   -- 前向声明：DrawTasks 调用点在定义之前（AB-100 同族）
+
 local function DrawTasks(ctx, w, meta)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "每日任务", "")
+    local content, close = Shell(ctx, w, 960, "每日任务", "", meta)
     local tasks = meta.tasks or {}
     local rowH, gap = 108, 12
     local y = content.y + 16
@@ -755,7 +794,104 @@ local function DrawTasks(ctx, w, meta)
             Button(ctx, btn, string.format("+%d", task.reward), "进行中", "disabled")
         end
     end
+
+    -- v0.13.61：任务行下方原本大片留白——补「价值锚点」三段（全部读真实 tasks 数据，
+    -- 无数据则整块隐藏，不造假数）：①本屏可赚总览 ②下一目标进度 ③领取里程碑阶梯。
+    DrawTaskExtras(ctx, content, meta, y + #tasks * (rowH + gap))
     return content, close
+end
+
+-- 任务面板下半屏的价值锚点模块（商业化：价值锚定 + 进度目标 + 成就阶梯）。
+-- 聚合读数全部来自 meta.tasks 真实字段；无任务则整块不画。
+---@param ctx any
+---@param content table
+---@param meta MetaState
+---@param topY number 任务行下方的起始 y
+DrawTaskExtras = function(ctx, content, meta, topY)
+    local C = Colors()
+    local tasks = meta.tasks or {}
+    if #tasks == 0 then return end
+    local claimed, claimable, totalReward = 0, 0, 0
+    for _, t in ipairs(tasks) do
+        if t.claimed then claimed = claimed + 1 end
+        if t.claimable then claimable = claimable + 1 end
+        totalReward = totalReward + (t.reward or 0)
+    end
+    local y = math.max(topY + 8, content.y + 440)
+
+    -- ① 任务总览条：把散落的奖励聚成「这一屏能拿多少」——价值锚定。
+    local sum = { x = content.x, y = y, w = content.w, h = 76 }
+    D.panel(ctx, sum.x, sum.y, sum.w, sum.h, C.rail, C.cyanDim, 6)
+    D.rect(ctx, sum.x + 2, sum.y + 2, sum.w - 4, math.floor(sum.h * 0.42), {255, 255, 255, 18}, 4)
+    D.rect(ctx, sum.x + 2, sum.y + math.floor(sum.h * 0.6), sum.w - 4,
+        sum.h - math.floor(sum.h * 0.6) - 2, {0, 0, 0, 40}, 4)
+    D.rect(ctx, sum.x + 4, sum.y + 1, sum.w - 8, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
+    local cellW = sum.w / 3
+    local stats = {
+        { string.format("%d / %d", claimed, #tasks), "已领取", C.cyan },
+        { string.format("%d", claimable), "可领取", claimable > 0 and C.warn or C.dim },
+        { string.format("%d", totalReward), "零件总额", C.text },
+    }
+    for i, st in ipairs(stats) do
+        local cx = sum.x + cellW * (i - 0.5)
+        D.text(ctx, cx, sum.y + 12, st[1], 24, st[3], NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, cx, sum.y + 46, st[2], 14, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        if i < 3 then
+            D.rect(ctx, sum.x + cellW * i, sum.y + 12, 1, sum.h - 24,
+                {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 0)
+        end
+    end
+
+    -- ② 下一目标卡：挑最接近完成（进度比最高、未领）的一条，给「再打一点就拿到」。
+    local best, bestRatio = nil, -1
+    for _, t in ipairs(tasks) do
+        if not t.claimed then
+            local ratio = (t.progress or 0) / math.max(1, t.target or 1)
+            if t.claimable then ratio = 2 end
+            if ratio > bestRatio then best, bestRatio = t, ratio end
+        end
+    end
+    if best then
+        local g = { x = content.x, y = sum.y + sum.h + 10, w = content.w, h = 96 }
+        D.panel(ctx, g.x, g.y, g.w, g.h, C.card, C.cyanDim, 6)
+        D.rect(ctx, g.x + 2, g.y + 2, g.w - 4, math.floor(g.h * 0.42), {255, 255, 255, 16}, 4)
+        D.rect(ctx, g.x + 2, g.y + math.floor(g.h * 0.62), g.w - 4,
+            g.h - math.floor(g.h * 0.62) - 2, {0, 0, 0, 34}, 4)
+        D.rect(ctx, g.x + 3, g.y + 12, 3, g.h - 24, best.claimable and C.warn or C.cyan, 1)
+        SectionHeader(ctx, g.x + 14, g.y + 10, g.w - 28, "下一目标")
+        D.text(ctx, g.x + 16, g.y + 40, best.name, 18, C.text)
+        local prog, tgt = best.progress or 0, math.max(1, best.target or 1)
+        D.text(ctx, g.x + g.w - 16, g.y + 40,
+            string.format("%d / %d", math.min(prog, tgt), tgt), 15,
+            best.claimable and C.warn or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        ProgressBar(ctx, g.x + 16, g.y + 68, g.w - 32, math.min(1, prog / tgt),
+            best.claimable and C.warn or C.cyan, 10)
+    end
+
+    -- ③ 领取里程碑阶梯：3 档（领 1 / 领 2 / 领 3 项），已过档打勾——成就阶梯。
+    local ms = { x = content.x, y = (best and (sum.y + sum.h + 116) or (sum.y + sum.h + 10)), w = content.w, h = 52 }
+    if ms.y + ms.h <= content.y + content.h then
+        D.panel(ctx, ms.x, ms.y, ms.w, ms.h, C.rail, C.cyanDim, 6)
+        D.rect(ctx, ms.x + 2, ms.y + 2, ms.w - 4, math.floor(ms.h * 0.42), {255, 255, 255, 14}, 4)
+        local tiers = { 1, 2, 3 }
+        local cw = ms.w / #tiers
+        for i, need in ipairs(tiers) do
+            local cx = ms.x + cw * (i - 0.5)
+            local done = claimed >= need
+            local tone = done and C.cyan or { C.dim[1], C.dim[2], C.dim[3], 200 }
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, cx - 26, ms.y + ms.h * 0.5, 9)
+            nvgStrokeColor(ctx, nvgRGBA(tone[1], tone[2], tone[3], done and 230 or 130))
+            nvgStrokeWidth(ctx, done and 2 or 1)
+            nvgStroke(ctx)
+            if done then
+                D.text(ctx, cx - 26, ms.y + ms.h * 0.5 - 8, "✓", 15, C.cyan,
+                    NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            end
+            D.text(ctx, cx - 10, ms.y + ms.h * 0.5 - 9,
+                string.format("领取 %d 项", need), 15, done and C.text or C.dim)
+        end
+    end
 end
 
 ---@return string|nil action
@@ -787,10 +923,12 @@ end
 local function DrawCodex(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "敌机图鉴",
-        string.format("%d / %d", meta.codexUnlocked or 0, meta.codexTotal or 0))
+        string.format("%d / %d", meta.codexUnlocked or 0, meta.codexTotal or 0), meta)
     local entries = MetaCatalog.GetCodex()
-    local cw, ch, gap = 226, 146, 12
-    local y0 = content.y + 16
+    -- v0.13.61：Shell 底部新增状态条，内容区矮 40px——压缩行距（gap 12→9）与起点，
+    -- 4 行卡仍落在 scissor 可视区内（卡内文本用 ch 锚底，故不改卡高）。
+    local cw, ch, gap = 226, 146, 9
+    local y0 = content.y + 10
     local rowsPerPage = 4
     local totalPages = math.max(1, math.ceil(#entries / (rowsPerPage * 2)))
     local page = math.max(1, math.min(totalPages, meta.codexPage or 1))
@@ -865,7 +1003,7 @@ end
 local function DrawRank(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "全服排行榜",
-        meta.rankTotal and ("共 " .. tostring(meta.rankTotal) .. " 人") or "")
+        meta.rankTotal and ("共 " .. tostring(meta.rankTotal) .. " 人") or "", meta)
     local list = meta.rankList or {}
     if meta.rankLoading then
         D.text(ctx, content.x + content.w * 0.5, content.y + 200, "排行榜加载中…", 18, C.dim,
@@ -938,12 +1076,14 @@ end
 local function GetShopLayout(w)
     local content, close = GetShellLayout(w)
     -- 顶行：左侧紧凑分页标签 + 右侧当前项名称/序号（两者同行不重叠）。
+    -- v0.13.61：Shell 底部新增 34px 状态条，内容区矮了 40px——商店整体压缩让位，
+    -- 保证两行免费补给（giftRowY + 2×56）仍落在 content 底之内。
     return {
         content = content, close = close, titleY = content.y + 8,
-        stage = {x = content.x, y = content.y + 58, w = content.w, h = 234},
-        rowY = content.y + 326, rowH = 72, rowStep = 80,
-        purchase = {x = content.x + content.w - 182, y = content.y + 498, w = 180, h = 52},
-        giftTitleY = content.y + 562, giftRowY = content.y + 590,
+        stage = {x = content.x, y = content.y + 56, w = content.w, h = 216},
+        rowY = content.y + 300, rowH = 68, rowStep = 74,
+        purchase = {x = content.x + content.w - 182, y = content.y + 452, w = 180, h = 50},
+        giftTitleY = content.y + 512, giftRowY = content.y + 538,
     }
 end
 
@@ -1229,7 +1369,7 @@ end
 
 local function DrawShop(ctx, w, meta)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "皮肤商店", "外观 · 不改变属性")
+    local content, close = Shell(ctx, w, 960, "皮肤商店", "外观 · 不改变属性", meta)
     local layout = GetShopLayout(w)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
@@ -1353,7 +1493,7 @@ end
 local function DrawPass(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "战斗档案",
-        meta.piggyMode and "存钱罐" or (meta.premiumPass and "双轨奖励" or "精英档案"))
+        meta.piggyMode and "存钱罐" or (meta.premiumPass and "双轨奖励" or "精英档案"), meta)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
 
@@ -1485,7 +1625,7 @@ end
 ---@return table close
 local function DrawWheel(ctx, w, meta)
     local C = Colors()
-    local content, close = Shell(ctx, w, 960, "幸运转盘", meta.wheelReady and "今日机会  /  01" or "今日机会已用")
+    local content, close = Shell(ctx, w, 960, "幸运转盘", meta.wheelReady and "今日机会  /  01" or "今日机会已用", meta)
     local spin, cx, cy, radius = GetWheelLayout(w)
     -- v0.13.46：补分区标题（盘面上方留白充足，不与外环刻度相碰）。
     SectionHeader(ctx, content.x + 4, content.y + 8, content.w - 8, "转盘奖池")
@@ -1617,6 +1757,42 @@ local function DrawWheel(ctx, w, meta)
         D.text(ctx, w * 0.5, spin.y - 34,
             "每次抽取必得至少 120 零件", 14, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+
+    -- v0.13.61：转盘按钮下方原本留白 ~114px——补「奖池一览条」（价值锚定：把最大可得值
+    -- 亮出来）+「本次/上次获得卡」，全部读 MetaCatalog 奖池与 meta.wheelPrize 真实数据。
+    local poolY = spin.y + spin.h + 12
+    if poolY + 44 <= content.y + content.h then
+        local pool = { x = content.x, y = poolY, w = content.w, h = 44 }
+        D.panel(ctx, pool.x, pool.y, pool.w, pool.h, C.rail, C.cyanDim, 6)
+        D.rect(ctx, pool.x + 2, pool.y + 2, pool.w - 4, math.floor(pool.h * 0.42),
+            {255, 255, 255, 14}, 4)
+        D.text(ctx, pool.x + 12, pool.y + 12, "奖池", 14, C.dim)
+        -- 8 档奖品小格，最高档（800）金色高亮放大——价值锚点。
+        local maxPrize = 0
+        for _, pz in ipairs(prizes) do if pz > maxPrize then maxPrize = pz end end
+        local cellW = (pool.w - 66) / n
+        for i, pz in ipairs(prizes) do
+            local gx = pool.x + 56 + (i - 1) * cellW
+            local top = pz == maxPrize
+            D.rect(ctx, gx, pool.y + 8, cellW - 5, pool.h - 16,
+                top and C.warnDim or C.widget, 4)
+            D.text(ctx, gx + (cellW - 5) * 0.5, pool.y + 15, tostring(pz),
+                top and 15 or 13, top and C.warn or C.text,
+                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
+    end
+    local lastY = poolY + 52
+    if meta.wheelPrize and meta.wheelPrize > 0 and lastY + 40 <= content.y + content.h then
+        local last = { x = content.x, y = lastY, w = content.w, h = 40 }
+        D.panel(ctx, last.x, last.y, last.w, last.h, C.card, C.warnDim, 6)
+        D.rect(ctx, last.x + 2, last.y + 2, last.w - 4, math.floor(last.h * 0.42),
+            {255, 255, 255, 16}, 4)
+        D.icon(ctx, "premium_wheel_medal", last.x + 10, last.y + 4, 32, 1)
+        D.text(ctx, last.x + 52, last.y + 11, "上次抽到", 15, C.dim)
+        D.text(ctx, last.x + last.w - 16, last.y + 8,
+            string.format("+%d 零件", meta.wheelPrize), 20, C.warn,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     end
     return content, close
 end

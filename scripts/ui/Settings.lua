@@ -258,8 +258,33 @@ function Settings.Draw(ctx, w, meta)
     D.text(ctx, p.x + 24, del.y + del.h + 14,
         "⚠️ 危险操作需在确认面板输入确认码。", 13, C.dim)
 
+    -- v0.13.61：鸣谢区上方原本留白 ~90px——补「账号进度摘要卡」（商业化：把设置页也变成
+    -- 战绩页，顺带暴露钱包持有量）。全部读真实 meta 字段。
+    local sumY = del.y + del.h + 36
+    local sum = { x = p.x + 24, y = sumY, w = p.w - 48, h = 68 }
+    D.panel(ctx, sum.x, sum.y, sum.w, sum.h, C.rail, C.cyanDim, 6)
+    D.rect(ctx, sum.x + 2, sum.y + 2, sum.w - 4, math.floor(sum.h * 0.42),
+        {255, 255, 255, 16}, 4)
+    D.rect(ctx, sum.x + 4, sum.y + 1, sum.w - 8, 1, {C.dim[1], C.dim[2], C.dim[3], 70}, 0)
+    local cells = {
+        { string.format("%d", meta.highScore or 0), "最高分", C.text },
+        { string.format("第 %d 关", meta.maxStage or 1), "最远进度", C.cyan },
+        { string.format("%d", meta.parts or 0), "零件", C.text },
+        { string.format("%d", meta.gems or 0), "钻石", C.warn },
+    }
+    local cw = sum.w / #cells
+    for i, cell in ipairs(cells) do
+        local cx = sum.x + cw * (i - 0.5)
+        D.text(ctx, cx, sum.y + 12, cell[1], 18, cell[3], NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, cx, sum.y + 40, cell[2], 13, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        if i < #cells then
+            D.rect(ctx, sum.x + cw * i, sum.y + 12, 1, sum.h - 24,
+                {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 0)
+        end
+    end
+
     -- 制作鸣谢（分区标题 + 三行）。
-    local cy = del.y + del.h + 44
+    local cy = sum.y + sum.h + 16
     D.text(ctx, p.x + 24, cy, "制作鸣谢", 16, C.cyan)
     D.rect(ctx, p.x + 24, cy + 22, p.w - 48, 1, C.rail, 0)
     local credits = {
