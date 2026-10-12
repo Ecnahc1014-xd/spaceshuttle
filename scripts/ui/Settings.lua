@@ -63,13 +63,13 @@ end
 -- 布局（纯几何，绘制与命中共用）
 -- ============================================================================
 
--- 面板加高以容纳「音乐/音效开关 + 两项危险操作 + 制作鸣谢」。
--- ⚠️ 先加高容器再排各元素 y（AB-259），避免元素互相压叠。
-local PANEL_H = 500
+-- 面板加高以容纳「音乐/音效开关 + 两项危险操作 + 制作鸣谢 + 关闭按钮」。
+-- ⚠️ 先加高容器再排各元素 y（AB-259），否则关闭按钮会压住鸣谢文字。
+local PANEL_H = 600
 
 ---@return table panel
 local function GetSettingsPanel(w)
-    return { x = 54, y = 220, w = w - 108, h = PANEL_H }
+    return { x = 54, y = 180, w = w - 108, h = PANEL_H }
 end
 
 -- 行顺序：音乐 / 音效 / 恢复购买 / 清空存档。
@@ -80,12 +80,12 @@ end
 local function GetSettingRows(w)
     local p = GetSettingsPanel(w)
     local bw = p.w - 48
-    local y0 = p.y + 96
-    local step = 76
-    return { x = p.x + 24, y = y0,            w = bw, h = 64 },
-           { x = p.x + 24, y = y0 + step,     w = bw, h = 64 },
-           { x = p.x + 24, y = y0 + step * 2, w = bw, h = 64 },
-           { x = p.x + 24, y = y0 + step * 3, w = bw, h = 64 }
+    local y0 = p.y + 72
+    local step = 72
+    return { x = p.x + 24, y = y0,            w = bw, h = 60 },
+           { x = p.x + 24, y = y0 + step,     w = bw, h = 60 },
+           { x = p.x + 24, y = y0 + step * 2, w = bw, h = 60 },
+           { x = p.x + 24, y = y0 + step * 3, w = bw, h = 60 }
 end
 
 ---@return table close
