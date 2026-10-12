@@ -1607,8 +1607,10 @@ local function DrawMenu(ctx, game, meta)
     -- （用户追加「开始战斗横向也需要拉长」——纵向保持 FitHeight 的 60，横向拉伸见下）。
     if ArtText.Has("startbattle") then
         local s = ArtText.FitHeight("startbattle", 67)
-        -- 用户直接提供的成品（带青晕的斜体金属字，aspect 3.18）——**保持原图自然比例，不横向拉伸**（用户「直接加上去，不用压缩」）。
-        local sx = math.min(1.0, ArtText.FitWidth("startbattle", cta.w * 0.60, s))
+        -- ⚠️ 用户直接提供的成品（带青晕的斜体金属字）——纵向 FitHeight 67 铺满按钮高度，
+        -- **横向拉到按钮宽 ~66%**（上限 1.9）。此前误设上限 1.0 把字压成自然宽度（仅占按钮 ~13%），
+        -- 用户「谁要你缩小了」——上限必须放开，让字横向铺开。
+        local sx = math.min(1.9, ArtText.FitWidth("startbattle", cta.w * 0.66, s))
         ArtText.DrawCentered(ctx, "startbattle", cta, {255, 255, 255}, 0, s, sx)
     else
         DrawPixelText(ctx, game.width * 0.5, ctaY + 22, "开始战斗", 40, C.ink,
