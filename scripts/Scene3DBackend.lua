@@ -2662,7 +2662,9 @@ local function RenderOverlay(game, presentation, meta)
 
     -- v0.13.57：关卡结束 → 结算窗口的过渡动画。画在结算窗之上（过渡期间结算窗
     -- 尚未弹出），星级越高越华丽；结束后自身淡出，玩家可点击跳过。
-    if game.state == "stagewin" and StageTransition.IsActive(game) then
+    -- v0.13.60：失败（gameover）也走过渡——「防线崩溃」动态漫（4.0s），与胜利同门控。
+    if (game.state == "stagewin" or game.state == "gameover")
+        and StageTransition.IsActive(game) then
         RunOverlayStage("stage-transition", function()
             ApplyOverlayDesignTransform()
             nvgGlobalAlpha(vg_, 1.0)

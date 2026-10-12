@@ -23,6 +23,11 @@ local StageTransition = {}
 StageTransition.DURATION = 2.15
 local COUNT_UP_END = 1.25
 
+-- v0.13.60：失败（gameover）过渡——「防线崩溃」动态漫，用户要求「三到五秒、复杂一点」。
+-- 与胜利的 2.15s 分开，给足 4.0s 让各段落依次展开（冲击闪 → 裂纹 → 碎片 → 断裂 → 战报）。
+StageTransition.DEFEAT_DURATION = 4.0
+local DEFEAT_DIGIT_END = 2.35   -- 分数滚动结束时刻
+
 -- 内置 dark-tech 令牌（与 Scene3DBackend.C 同值；本模块不反向依赖后端）。
 local C = {
     cyan    = {0, 229, 208, 255},
@@ -123,18 +128,35 @@ end
 local skip_ = false
 local seenAnimAt_ = nil
 
+-- v0.13.60：本模块现在服务**两态**——胜利（stagewin，读 stageResult.animAt）与
+-- 失败（gameover，读 defeatAt）。下面两个 helper 统一给出「本态过渡起点与时长」，
+-- 让可见性/绘制/跳过共用同一套计时。
+---@param game table|nil
+---@return number|nil startAt 过渡起点（elapsed 基准）；无过渡数据时 nil
+---@return number dur 该态的过渡时长
+local function TransitionInfo(game)
+    if not game then return nil, 0 end
+    if game.state == "gameover" then
+        if not game.defeatAt then return nil, 0 end
+        return game.defeatAt, StageTransition.DEFEAT_DURATION
+    end
+    local r = game.stageResult
+    if not r or not r.animAt then return nil, 0 end
+    return r.animAt, StageTransition.DURATION
+end
+
 ---结算窗口是否应显示（过渡结束后为 true；无过渡数据时兜底为 true）。
 ---@param game table|nil
 ---@return boolean
 function StageTransition.WindowVisible(game)
-    local r = game and game.stageResult
-    if not r or not r.animAt then return true end
-    if seenAnimAt_ ~= r.animAt then
-        seenAnimAt_ = r.animAt
+    local startAt, dur = TransitionInfo(game)
+    if not startAt then return true end
+    if seenAnimAt_ ~= startAt then
+        seenAnimAt_ = startAt
         skip_ = false
     end
     if skip_ then return true end
-    return ((game.elapsed or 0) - r.animAt) >= StageTransition.DURATION
+    return ((game.elapsed or 0) - startAt) >= dur
 end
 
 ---过渡是否正在进行（此期间结算按钮不可点）。
@@ -149,10 +171,26 @@ function StageTransition.Skip()
     skip_ = true
 end
 
+---当前过渡进度（秒）。非过渡期为 nil。供绘制与探针共用。
+---@param game table|nil
+---@return number|nil t
+function StageTransition.Elapsed(game)
+    local startAt, dur = TransitionInfo(game)
+    if not startAt then return nil end
+    local t = (game.elapsed or 0) - startAt
+    if t < 0 then t = 0 end
+    if t > dur then return nil end
+    return t
+end
+
 -- ---- 主绘制 -----------------------------------------------------------------
 ---@param ctx any
 ---@param game table 快照（需 stageResult/stage/elapsed/width/height）
 function StageTransition.Draw(ctx, game)
+    if game.state == "gameover" then
+        StageTransition.DrawDefeat(ctx, game)
+        return
+    end
     local r = game.stageResult
     if not r or not r.animAt then return end
     local t = (game.elapsed or 0) - r.animAt
@@ -328,6 +366,237 @@ function StageTransition.Draw(ctx, game)
 
     -- ⑭ 底部提示（过渡尾段）：告知即将进入结算。
     local hp = seg(t, 1.55, 1.9)
+    if hp > 0 then
+        nvgFontSize(ctx, 13)
+        nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        nvgFillColor(ctx, rgba({ C.dim[1], C.dim[2], C.dim[3], math.floor(200 * hp) }))
+        nvgText(ctx, cx, h * 0.5 + 300, "点击跳过", nil)
+    end
+end
+
+-- ============================================================================
+-- v0.13.60：失败过渡「防线崩溃」动态漫（4.0s，用户要求「三到五秒、复杂一点」）。
+-- 与胜利的青/金区分：整体走**红/暗红/铁灰**色调，节奏更快更「重」。
+-- 段落（按 t 秒）：
+--   0.00-0.22 白色冲击闪 + 强震屏（防线被击穿的一瞬）
+--   0.10-1.30 红色裂纹从中心向四周蔓裂（确定性折线）
+--   0.30-1.90 砖块碎片自下飞散（物理感，带自转）
+--   0.50-2.10 防线断裂：横向裂痕 + 红色警戒光带扫过
+--   1.00-2.60 「防线失守」大字冲击入（缩放 + 双描边）
+--   1.60-2.80 分数滚动（战报数字）
+--   2.20-3.40 统计逐条淡入（到达关卡 / 击碎 / 强化 / 存活）
+--   2.80-3.90 底部红色警戒扫描 + 提示
+-- 全部用确定性伪随机（不依赖 math.random，重开/暂停不抖动）。
+-- ============================================================================
+
+-- 红色系令牌（失败语义）。
+local DEFEAT_RED = { 236, 62, 58 }
+local DEFEAT_DEEP = { 120, 22, 26 }
+local DEFEAT_IRON = { 96, 104, 118 }
+
+-- 确定性伪随机：返回 0..1，输入相同时恒定（避免每帧抖动）。
+local function hash01(n)
+    local v = math.sin(n * 12.9898 + 78.233) * 43758.5453
+    return v - math.floor(v)
+end
+
+-- 从中心向外的折线裂纹：一条由若干段组成的抖动折线。
+local function Crack(ctx, cx, cy, ang, len, jitter, segs, col, width)
+    nvgBeginPath(ctx)
+    nvgMoveTo(ctx, cx, cy)
+    local x, y = cx, cy
+    for i = 1, segs do
+        local f = i / segs
+        local j = (hash01(ang * 7.1 + i * 3.7) - 0.5) * jitter * f
+        local a = ang + j * 0.02
+        local r = len * f
+        x = cx + math.cos(a) * r + j
+        y = cy + math.sin(a) * r + j * 0.6
+        nvgLineTo(ctx, x, y)
+    end
+    nvgStrokeColor(ctx, rgba(col))
+    nvgStrokeWidth(ctx, width)
+    nvgStroke(ctx)
+end
+
+---失败过渡绘制。t = elapsed - defeatAt，时长 DEFEAT_DURATION。
+---@param ctx any
+---@param game table
+function StageTransition.DrawDefeat(ctx, game)
+    local startAt = game.defeatAt
+    if not startAt then return end
+    local t = (game.elapsed or 0) - startAt
+    if t < 0 then t = 0 end
+    local DUR = StageTransition.DEFEAT_DURATION
+    if t > DUR then return end
+
+    local w = game.width or 540
+    local h = game.height or 960
+    local cx = w * 0.5
+    local cy = h * 0.5 - 40
+    nvgFontFace(ctx, "zpix")
+
+    -- ① 暗化遮罩（红调）：0.12s 渐入，收尾 0.30s 淡出（衔接结算窗）。
+    local bd = seg(t, 0, 0.12) * (1 - seg(t, DUR - 0.30, DUR))
+    FillRect(ctx, 0, 0, w, h, { 8, 4, 8, math.floor(232 * bd) })
+
+    -- ② 屏幕震动：0.5s 内快速衰减（失败更「重」，幅值比胜利大）。
+    local shake = 8.5 * (1 - seg(t, 0, 0.5)) + 2.0 * (1 - seg(t, 1.0, 1.9))
+    local shakeOn = shake > 0.2
+    if shakeOn then
+        nvgSave(ctx)
+        nvgTranslate(ctx, math.sin(t * 132) * shake, math.cos(t * 97) * shake * 0.7)
+    end
+
+    -- ③ 白色冲击闪：极短（0.10s），只在击穿瞬间。
+    local flash = 1 - seg(t, 0.0, 0.10)
+    if flash > 0 then
+        FillRect(ctx, 0, 0, w, h, { 255, 236, 236, math.floor(210 * flash) })
+    end
+
+    -- ④ 红色裂纹：从中心向四周蔓裂（10 条，确定性角度/长度）。
+    local cp = seg(t, 0.10, 1.30)
+    if cp > 0 and cp < 1 then
+        local grow = easeOut(cp)
+        local alpha = math.floor(230 * math.min(1, cp * 2) * (1 - seg(t, 1.05, 1.30)))
+        for i = 1, 10 do
+            local ang = (i - 1) * (math.pi * 2 / 10) + hash01(i) * 0.5
+            local len = (150 + hash01(i * 2.3) * 130) * grow
+            Crack(ctx, cx, cy, ang, len, 14, 7, { DEFEAT_RED[1], DEFEAT_RED[2], DEFEAT_RED[3], alpha }, 2.4)
+        end
+        -- 裂纹交汇处的白热核
+        if cp < 0.6 then
+            local kr = 26 * (1 - cp / 0.6)
+            nvgBeginPath(ctx)
+            nvgCircle(ctx, cx, cy, kr)
+            nvgFillPaint(ctx, nvgRadialGradient(ctx, cx, cy, 0, kr,
+                rgba({ 255, 220, 210, math.floor(200 * (1 - cp / 0.6)) }),
+                rgba({ 255, 120, 90, 0 })))
+            nvgFill(ctx)
+        end
+    end
+
+    -- ⑤ 砖块碎片自下飞散（16 片，确定性初速/自转，带重力回落）。
+    local fp = seg(t, 0.30, 1.90)
+    if fp > 0 and fp < 1 then
+        for i = 1, 16 do
+            local a = hash01(i * 1.7) * math.pi * 2
+            local spd = 90 + hash01(i * 3.1) * 190
+            local life = fp
+            local dx = math.cos(a) * spd * life * (0.6 + hash01(i * 5.3) * 0.8)
+            local dy = math.sin(a) * spd * life * 0.5 - 150 * life + 220 * life * life  -- 上抛后落
+            local px = cx + dx
+            local py = cy + 40 + dy
+            local rot = hash01(i * 7.9) * math.pi * 2 + life * (hash01(i * 2.7) - 0.5) * 12
+            local sz = 7 + hash01(i * 4.1) * 9
+            local fade = 1 - seg(t, 1.3, 1.90)
+            nvgSave(ctx)
+            nvgTranslate(ctx, px, py)
+            nvgRotate(ctx, rot)
+            nvgBeginPath(ctx)
+            nvgRect(ctx, -sz * 0.5, -sz * 0.5, sz, sz)
+            local tone = (i % 3 == 0) and DEFEAT_RED or DEFEAT_IRON
+            nvgFillColor(ctx, rgba({ tone[1], tone[2], tone[3], math.floor(230 * fade) }))
+            nvgFill(ctx)
+            nvgRestore(ctx)
+        end
+    end
+
+    -- ⑥ 防线断裂：横向裂痕从中间向两侧拉开 + 红色警戒光带扫过。
+    local bp = seg(t, 0.50, 2.10)
+    if bp > 0 and bp < 1 then
+        local grow = easeOut(bp)
+        local halfW = (w * 0.5) * grow
+        local gap = 6 + 10 * grow
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, cx - halfW, cy + 92)
+        nvgLineTo(ctx, cx - gap, cy + 92 + math.sin(t * 20) * 2)
+        nvgMoveTo(ctx, cx + gap, cy + 92 + math.sin(t * 20 + 1) * 2)
+        nvgLineTo(ctx, cx + halfW, cy + 92)
+        nvgStrokeColor(ctx, rgba({ DEFEAT_RED[1], DEFEAT_RED[2], DEFEAT_RED[3], math.floor(240 * grow) }))
+        nvgStrokeWidth(ctx, 3)
+        nvgStroke(ctx)
+        -- 警戒光带：自左向右扫过
+        local scanX = (-0.2 + easeOut(seg(t, 0.6, 2.0)) * 1.4) * w
+        FillRect(ctx, scanX, cy + 60, 60, 66,
+            { DEFEAT_RED[1], DEFEAT_RED[2], DEFEAT_RED[3], math.floor(70 * (1 - seg(t, 1.7, 2.10))) }, 0)
+    end
+
+    -- ⑦ 「防线失守」大字：冲击入（从大缩到正常 + 双描边）。
+    local tp = seg(t, 1.00, 2.60)
+    if tp > 0 then
+        local pop = 1 + 0.55 * (1 - easeOut(tp))
+        local alpha = math.floor(255 * math.min(1, tp * 2))
+        nvgSave(ctx)
+        nvgTranslate(ctx, cx, cy - 96)
+        nvgScale(ctx, pop, pop)
+        nvgTranslate(ctx, -cx, -(cy - 96))
+        nvgFontSize(ctx, 58)
+        nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        -- 外描边（深红）+ 内层（亮红）
+        nvgFillColor(ctx, rgba({ DEFEAT_DEEP[1], DEFEAT_DEEP[2], DEFEAT_DEEP[3], alpha }))
+        for _, o in ipairs({ {-2, 0}, {2, 0}, {0, -2}, {0, 2}, {-2, -2}, {2, 2}, {-2, 2}, {2, -2} }) do
+            nvgText(ctx, cx + o[1], cy - 96 + o[2], "防线失守", nil)
+        end
+        nvgFillColor(ctx, rgba({ DEFEAT_RED[1], DEFEAT_RED[2], DEFEAT_RED[3], alpha }))
+        nvgText(ctx, cx, cy - 96, "防线失守", nil)
+        nvgRestore(ctx)
+    end
+
+    -- ⑧ 分数滚动（战报数字）：0.0 → 实际分数，1.60-2.35s 完成。
+    local k = easeOut(seg(t, 1.60, DEFEAT_DIGIT_END))
+    local shown = math.floor((game.score or 0) * k + 0.5)
+    local dp = seg(t, 1.60, 2.00)
+    if dp > 0 then
+        DrawNumber(ctx, shown, cx, cy - 6, 74, { 255, 226, 224, math.floor(255 * dp) })
+        nvgFontSize(ctx, 19)
+        nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        nvgFillColor(ctx, rgba({ C.dim[1], C.dim[2], C.dim[3], math.floor(230 * dp) }))
+        nvgText(ctx, cx, cy + 78, "分", nil)
+    end
+
+    -- ⑨ 统计逐条淡入（到达关卡 / 击碎 / 强化 / 存活）。
+    local rows = {
+        string.format("到达第 %d 关", game.stage or 1),
+        string.format("击碎 %d 块", game.bricksBroken or 0),
+        string.format("强化 %d 次", #(game.upgradePicks or {})),
+        string.format("存活 %.0f 秒", game.elapsed or 0),
+    }
+    for i = 1, #rows do
+        local rp = seg(t, 2.20 + (i - 1) * 0.14, 2.70 + (i - 1) * 0.14)
+        if rp > 0 then
+            nvgFontSize(ctx, 16)
+            nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            nvgFillColor(ctx, rgba({ C.text[1], C.text[2], C.text[3], math.floor(215 * rp) }))
+            nvgText(ctx, cx, cy + 120 + (i - 1) * 26, rows[i], nil)
+        end
+    end
+
+    -- ⑩ 底部红色警戒扫描线（2.80-3.90s，克制）。
+    local sp = seg(t, 2.80, 3.90)
+    if sp > 0 and sp < 1 then
+        local sy = (easeOut(sp) * 1.15 - 0.05) * h
+        FillRect(ctx, 0, sy, w, 2, { DEFEAT_RED[1], DEFEAT_RED[2], DEFEAT_RED[3], math.floor(120 * bd) })
+    end
+
+    -- ⑪ 四角取景折线（红调，与胜利同语言）。
+    local fl = seg(t, 0.0, 0.30) * (1 - seg(t, DUR - 0.28, DUR))
+    if fl > 0 then
+        local m, cl = 26, 34
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, m, m + cl); nvgLineTo(ctx, m, m); nvgLineTo(ctx, m + cl, m)
+        nvgMoveTo(ctx, w - m - cl, m); nvgLineTo(ctx, w - m, m); nvgLineTo(ctx, w - m, m + cl)
+        nvgMoveTo(ctx, m, h - m - cl); nvgLineTo(ctx, m, h - m); nvgLineTo(ctx, m + cl, h - m)
+        nvgMoveTo(ctx, w - m - cl, h - m); nvgLineTo(ctx, w - m, h - m); nvgLineTo(ctx, w - m, h - m - cl)
+        nvgStrokeColor(ctx, rgba({ DEFEAT_RED[1], DEFEAT_RED[2], DEFEAT_RED[3], math.floor(190 * fl) }))
+        nvgStrokeWidth(ctx, 1.6)
+        nvgStroke(ctx)
+    end
+
+    if shakeOn then nvgRestore(ctx) end
+
+    -- ⑫ 尾部提示（3.40s 起）。
+    local hp = seg(t, 3.40, 3.80)
     if hp > 0 then
         nvgFontSize(ctx, 13)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)

@@ -14,6 +14,10 @@ Game._holdSpeed = { down = false, active = false, time = 0, threshold = 0.35, ep
 --   pending = 已使用但当前没有待发车时，顺延给「下一个预备发射的车」的附魔卡
 --   lastWave= 最近一次发放附魔卡时的波号（用于「每完成一波发一张」判定）
 Game._enchant = { card = nil, pending = nil, lastWave = 0 }
+-- v0.13.60：失败结算过渡（收进一张表，不新增顶层 local，AB-166）。
+--   at     = 进入 gameover 的时刻（elapsed），过渡动画的计时基准
+--   revive = 本局是否还能复活（决定动画里是否出现「可复活」提示）
+Game._defeat = { at = nil, revive = false }
 
 local DW = 540
 local DH = 960
@@ -743,6 +747,8 @@ ResetGame = function(startStage)
     StageCatalog.BeginStage(startStage, os.time())
     bossDefeated = false
     stageResult = nil
+    Game._defeat.at = nil
+    Game._defeat.revive = false
     elapsed = 0
     veggies = {}
     marbles = {}
@@ -3026,6 +3032,9 @@ UpdateEnemies = function(dt)
             aiming = false
             startArmed = false
             if score > highScore then highScore = score end
+            -- v0.13.60：记录失败时刻（过渡动画计时基准）与复活资格。
+            Game._defeat.at = elapsed
+            Game._defeat.revive = not reviveUsed
             Emit("game_over", {
                 score = score, highScore = highScore, wave = wave,
                 canRevive = not reviveUsed,
@@ -3530,10 +3539,21 @@ function Game.GoToMenu()
     return false
 end
 
--- 仅供探针/验收：把基地血量打空，触发真实失败结算路径（走同一条 gameover 逻辑）。
+-- 仅供探针/验收：直接进入失败结算（复刻真实 gameover 分支的状态设置 + 事件）。
 function Game.DebugForceGameOver()
     if gameState ~= "playing" then return false end
-    baseHp = 1
+    baseHp = 0
+    gameState = "gameover"
+    Game.CancelHoldSpeed()
+    aiming = false
+    startArmed = false
+    if score > highScore then highScore = score end
+    Game._defeat.at = elapsed
+    Game._defeat.revive = not reviveUsed
+    Emit("game_over", {
+        score = score, highScore = highScore, wave = wave,
+        canRevive = not reviveUsed,
+    })
     return true
 end
 
@@ -3611,6 +3631,9 @@ function Game.GetSnapshot()
     s.wavesPerStage = StageCatalog.WAVES_PER_STAGE
     s.stageSubtitle = StageCatalog.GetLayoutSubtitle(stage)
     s.stageResult = stageResult
+    -- v0.13.60：失败过渡（gameover 动画的计时基准 + 是否可复活）。
+    s.defeatAt = Game._defeat.at
+    s.defeatRevive = Game._defeat.revive
     -- v0.13.13：关卡无限——永远有下一关；stageTotal 只是「难度封顶参考关数」。
     s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil) or false
     s.stageTotal = StageCatalog.STAGE_SOFT_CAP

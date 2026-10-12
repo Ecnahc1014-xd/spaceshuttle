@@ -33,6 +33,19 @@
   - 边界：手机 FPS / 全 DPR / 用户手感未验收；**真机观感（每关开局位置轮换是否自然）需 Preview 目视**。
   - ⚠️ **避雷 AB-285：「按波次错开」的偏移量别用**累计波号**，否则会被关卡长度整除、退化成常数**（spawn-lane-stage-fix，用户「为何每一关第一个飞机都靠很左」）：本项目车道 = `(wave-1) % 5`，而每关 10 波 → 每关首波 `wave-1` 恒为 10 的倍数 → `%5` 恒 0 → **每关第一架都贴最左**。**判据**：凡「随波次/关卡轮换」的偏移，若它的模数能整除**关卡长度**（或任何周期性基数），就会在每个周期起点退化成同一个值。**做法**：偏移里**显式掺入关卡号**（本项目 `(stage-1 + stageWave-1) % N`），并**探针断言「连续多关的该位置两两不同、且覆盖全部槽位」**——只测「同关内后续波不同」会漏掉这个坑（v0.13.27 的探针正是只测了同关内）。
 
+- 附记: defeat-transition（2026-10-12，**失败结算加 4 秒「防线崩溃」动态漫过渡**；承接 endpage-layout，不改展示版本）：
+  - 用户「失败重构之后需要用三到五秒动画表现，甚至要复杂一点，做成动态漫」——**失败页此前无过渡**（`gameover` 直接弹结算窗），而胜利页早就有 `StageTransition`（2.15s 星级分档动画）。本批把过渡**扩展到失败态**，并做成 4.0s 的**多段落动态漫**。
+  - **数据层（`Game.lua`，挂 `Game._defeat` 表——顶层 local 已满 200，AB-166）**：gameover 分支写 `Game._defeat.at = elapsed`（过渡计时基准）+ `.revive`（是否可复活）；快照出 `s.defeatAt`/`s.defeatRevive`；`ResetGame` 复位。**零新增顶层 local**。
+  - **动画层（`ui/StageTransition.lua`，本批新增失败动画）**：新增 `DEFEAT_DURATION = 4.0` + `DrawDefeat(ctx, game)`——**红/暗红/铁灰**色调（与胜利的青/金区分），**12 个段落**按 t 秒依次展开：①白色冲击闪（0.10s）+ 强震屏 ②红色裂纹从中心蔓裂（10 条确定性折线 + 白热核）③砖块碎片自下飞散（16 片，确定性初速/自转/重力回落）④防线断裂（横向裂痕 + 红色警戒光带扫过）⑤「防线失守」大字冲击入（缩放 + 双描边）⑥分数滚动（战报数字）⑦统计逐条淡入（到达关卡/击碎/强化/存活）⑧底部红色警戒扫描线 ⑨四角取景折线（红调）⑩「点击跳过」提示。**全部确定性伪随机**（`hash01(n)=sin(n*12.9898+78.233)*43758.5453` 取小数，**非 math.random**——重开/暂停不抖动）。
+  - **门控泛化（关键）**：`StageTransition` 原只读 `stageResult.animAt`，本批抽出 `TransitionInfo(game)` 统一返回「本态起点 + 时长」——`gameover` 读 `defeatAt`/`DEFEAT_DURATION`、`stagewin` 读 `animAt`/`DURATION`；`WindowVisible`/`IsActive`/`Skip`/新增的 `Elapsed` **全部走它**，渲染与命中同源。
+  - **接线（`Scene3DBackend.lua` 一处 + `client_main.lua` 一处）**：绘制条件 `game.state == "stagewin"` → **`(stagewin or gameover)`**；`HandleGameOverPointerDown` 补「过渡期间任意点击 = 跳过」（与 `HandleStageWinPointerDown` 同款）。
+  - **`Game.DebugForceGameOver` 增强**（探针用）：原来只把 `baseHp=1`，改为**复刻真实 gameover 分支**（置 `gameState`/`_defeat.at`/发 `game_over` 事件），探针才能进失败结算态。
+  - 验证：LSP workspace **29 文件 0 Error**（1339 诊断）；**逻辑探针** `probe_defeat`——`state=gameover defeatAt=1.0`、`DURATION=4.0`、门控边界实测 **t=0~3.9 `visible=false`（结算窗不弹）/ t=4.0 `visible=true` / t=4.5 `elapsed=nil`（过渡结束）**；**真渲染探针** `probe_defrun`（让动画跑满 t 0→3.03s）**零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`**。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：⚠️ **本环境 `-screenshot-frame` 截不到深层帧（AB-220）**——**失败动画的实图未自证**（只能证明「门控正确 + 绘制路径不崩」），**真机观感（动态漫是否够「复杂」、红调是否够重、节奏是否合适）必须 Preview 目视**。手机 FPS（动画有多层循环绘制，需看真机帧率）/ 全 DPR / 用户审美未验收。
+  - ⚠️ **避雷 AB-291：给「结算/过渡」类动画加「另一态」时，把「本态起点 + 时长」抽成一个 helper，别在每处 `if state==...` 里各写一套计时**（defeat-transition）：本项目 `StageTransition` 原本只服务 `stagewin`（硬编码读 `stageResult.animAt` + `DURATION`），加失败态时若在每个函数里各判一次，`WindowVisible`/`IsActive`/`Skip`/`Elapsed` 四处的边界会漂移（命中与渲染不同步）。**做法**：抽 `TransitionInfo(game) → startAt, dur`，所有计时相关函数都走它；⚠️ **`Skip` 的去重键要从「单一 animAt」改成「本态起点」**（本项目 `seenAnimAt_` 现在比的是 `startAt`，两态各自独立重置）。验收探针要**断言门控边界**（本项目实测 t=3.9 不可见 / t=4.0 可见 / 4.5 结束）。
+  - ⚠️ **避雷 AB-292：过渡动画的「计时基准」要用**规则层的 `elapsed`**（非 playing 仍递增），并在进入该态时**同帧写入**（defeat-transition）**：本项目 `Game._defeat.at = elapsed` 在 gameover 分支里与 `gameState="gameover"` **同帧**设置；动画读 `game.elapsed - defeatAt`。⚠️ **别用渲染层自己累计的 dt**（模态态下渲染可能停帧，累计会与真实时间脱节）；⚠️ 也别复用 `stageResult.animAt`（那是胜利专用，两态并存会串）。
+  - ⚠️ **避雷 AB-293：给「失败」类动画定色调时，要和「成功」拉开——本项目失败走红/暗红/铁灰，成功走青/金**（defeat-transition）：两态共用一套 `StageTransition` 骨架，但**配色令牌分开**（`DEFEAT_RED/DEEP/IRON` vs `TIERS` 的青/金）——否则失败动画会和胜利「长得一样」，玩家分不清。⚠️ 复用 `StageTransition` 模块时，`Draw` 开头按 `game.state` **分发到 `Draw`/`DrawDefeat`**，不要在同一个函数里塞两套段落。
+
 - 附记: settings-credit-fix（2026-10-12，**修设置屏「制作鸣谢被挡住」——面板再加高 600→640**；不改展示版本）：
   - 用户上传设置屏截图 + 「制作鸣谢被挡住了」——截图里**「关闭」按钮压在「制作者/导入素材/特别鸣谢」三行文字上**。
   - **真因（两层）**：①**截图是旧预览包**——设置屏「补全音乐/音效开关 + 制作鸣谢」是并发会话提交 `5238492` 才加的，而截图里面板仍是**旧布局**（`y=300, h=360`，关闭按钮 y=592），鸣谢文字被关闭按钮压住。②**即便在 `5238492` 之后**（面板 180/600、关闭按钮 y=716），关闭按钮顶边距鸣谢末行（652）**仅 46px**——真机字体/缩放差异下仍有压字风险（AB-259 同族：容器加高不足）。

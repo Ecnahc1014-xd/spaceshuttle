@@ -1395,6 +1395,11 @@ local function TryPickUpgradeAt(uiX, uiY)
 end
 
 local function HandleGameOverPointerDown(uiX, uiY)
+    -- v0.13.60：失败过渡动画期间任意点击 = 跳过过渡，立即显示结算窗（不误触按钮）。
+    if StageTransition.IsActive(Game.GetSnapshot()) then
+        StageTransition.Skip()
+        return true
+    end
     local hit = RenderBackend.HitTestGameOverButton(uiX, uiY, Game.GetSnapshot())
     reviveArmed = (hit == "revive")
     doubleArmed = (hit == "double")
