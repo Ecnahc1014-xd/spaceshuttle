@@ -1829,24 +1829,6 @@ local function SyncTrailParticles(game, dt)
     end
 end
 
--- 诊断用（只读）：本帧粒子系发射诊断（每弹种：头移动距离 / 发射数 / 粒子寿命）。
-function Renderer3D.DebugTrailEmitDiag()
-    local out = {}
-    if not trailSamples_ then return out end
-    for _, track in pairs(trailSamples_) do
-        local hx, hy = track.x, track.y
-        local ex, ey = track.emitX or hx, track.emitY or hy
-        local dx, dy = hx - ex, hy - ey
-        local style = MetaCatalog.GetTrailStyleParams(trailStyle_)
-        out[track.ballType] = {
-            len = math.sqrt(dx * dx + dy * dy),
-            emit = (style.emit or 0) * math.sqrt(dx * dx + dy * dy),
-            life = style.pLife or 0,
-        }
-    end
-    return out
-end
-
 -- 诊断用（只读）：当前粒子系拖尾**实际启用**的 billboard 数（供探针自证数据通路）。
 function Renderer3D.DebugTrailParticleCount()
     local total = 0

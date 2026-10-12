@@ -24,9 +24,9 @@
       "background_match": false,
       "lobby_runtime": "scripts/lobby_runtime.lua",
       "match_info": {
-        "player_number": 1,
+        "desc_name": "free_match",
         "immediately_start": true,
-        "desc_name": "free_match"
+        "player_number": 1
       },
       "persistent_world": {
         "enabled": false
