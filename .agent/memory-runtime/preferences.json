@@ -161,7 +161,8 @@
       "require_vehicle_trails_overlay_channel": true,
       "require_wave_speed_ramp_first_four_waves": true,
       "require_stage_wave_semantics_for_per_wave_rules": true,
-      "require_per_stage_rotating_spawn_start": true
+      "require_per_stage_rotating_spawn_start": true,
+      "require_wave_ramp_start_scales_with_stage": true
     }
   }
 }
