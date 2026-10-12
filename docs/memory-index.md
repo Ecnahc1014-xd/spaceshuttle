@@ -8,9 +8,18 @@
 # 项目记忆索引
 
 项目：货车大战飞机
-当前版本：0.13.61
-简述：每关第一架不再恒贴最左——起始车道掺入关卡号，逐关轮换。
+当前版本：0.13.60
+简述：设置页补全——音乐/音效开关 + 制作鸣谢（薪主 / 工作室出品 / TapTap）。
 最后巩固：2026-10-12
+
+## 设置页补全：音乐/音效开关 + 制作鸣谢（2026-10-12，settings-audio-credits）
+- 用户「设置页补全功能，音乐音效。制作者：薪主  导入素材工作室出品。特别鸣谢TapTap」。
+- **音频开关**：`AudioDirector` 新增 `SetMusicEnabled/SetSfxEnabled`（+ 诊断 `DebugEnabled/DebugSfxPlays`）。音乐关 = BGM **目标增益**变 0（`TargetGain()`，淡出静音、曲目保留可续播）；音效关 = `PlaySfx` 开头短路。
+- **持久化**：`PlayerData.musicEnabled/sfxEnabled`（默认 true，`Load` 用 `~= false` 缺省开，云合并仅显式布尔才覆盖）。
+- **设置屏**：4 行（音乐/音效/恢复购买/清空存档）+ 鸣谢三行；面板 h 360→600、y 300→180（先加高容器再排 y）。
+- **链路**：PlayerData → RefreshMeta → HandleMetaAction（翻转+写档+`RenderBackend.Set*` 即时+云同步）→ Scene3DBackend 委托（挂表，零新增 local）；启动时/清档后各作用一次。
+- 验证：LSP 29 文件 0 Error；`probe_audioset` **24/24**；真渲染 `probe_setrender`（真实点击→music=false sfx=false 同步）；截图目视开关+鸣谢；战斗冒烟零目标错误。官方多人 build + 预览上传 ✅。展示版本 → 0.13.60。抗体 AB-289/290/291/292。
+- 边界：无 `/dev/snd`，静音/发声效果待 Preview 真机。
 
 ## 每关第一架不再贴最左（2026-10-12，spawn-lane-stage-fix 附记）
 - 用户「为何每一关第一个飞机都靠很左啊」。

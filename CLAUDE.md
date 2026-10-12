@@ -3,6 +3,20 @@
 > AI 自维护，每次 POST 自动更新。详细规则见 memory-system skill。
 
 ## 当前状态
+- 版本: 0.13.60（**设置页补全：音乐/音效开关 + 制作鸣谢**）：
+  - 用户「设置页补全功能，音乐音效。制作者：薪主  导入素材工作室出品。特别鸣谢TapTap」——在既有设置屏（恢复购买/清空存档）上补 ①音乐/音效两个开关 ②制作鸣谢三行。
+  - **音频开关（`AudioDirector`）**：新增 `SetMusicEnabled/SetSfxEnabled/IsMusicEnabled/IsSfxEnabled` + 只读诊断 `DebugEnabled/DebugSfxPlays`。`state.musicEnabled`（默认 true）控制 **BGM 目标增益**（`TargetGain()` 返回 `BGM_GAIN` 或 0）——关音乐时**淡出静音、曲目状态保留**（开回来续播，不 Stop 断音）；`state.sfxEnabled` 在 `PlaySfx` 开头短路（关音效时**不播任何音效**）。
+  - **持久化（`PlayerData`）**：新增 `musicEnabled/sfxEnabled`（默认 true）；`Load` 用 `d.musicEnabled ~= false`（**缺省开**，旧档无字段不误关）；云合并**仅当云端是显式布尔才覆盖**（纯偏好，不取并集）。新增 `IsMusicEnabled/IsSfxEnabled/SetMusicEnabled/SetSfxEnabled`。
+  - **设置屏（`ui/Settings.lua`）**：`GetSettingRows` 从 2 行扩到 **4 行**（音乐/音效/恢复购买/清空存档）；新增 `ToggleRow`（拨动开关：开=青轨道+右滑青滑块，关=暗轨+左灰滑块）；面板 `h 360→600`、`y 300→180`、行高 64→60、step 76→72（**先加高容器再排 y**，AB-259）；鸣谢区（「制作鸣谢」青色标题 + 断线 + 三行 `制作者：薪主 / 导入素材：工作室出品 / 特别鸣谢：TapTap`）。命中新增 `toggle_music`/`toggle_sfx`。
+  - **编排层（`client_main`）**：metaState 加 `musicEnabled/sfxEnabled`，`RefreshMeta` 从 PlayerData 填；`HandleMetaAction` 新增 `toggle_music`/`toggle_sfx`（翻转 → 写存档 → `RenderBackend.SetMusicEnabled/SetSfxEnabled` 立即生效 → 云同步 → toast）；启动时（`PlayerData.Load` 后）把存档开关作用到音频总控；**清档后**开关回默认开并重新作用。
+  - **后端（`Scene3DBackend`）**：`Backend.SetMusicEnabled/SetSfxEnabled/AudioEnabled`（挂 Backend 表，**零新增顶层 local**，AB-265/268）。
+  - 验证：LSP **29 文件 0 Error**（1334 诊断）；纯模块探针 `probe_audioset` **24/24 PASS**（默认开 / 音效关后 `DebugSfxPlays` 不再增 / 音乐关后 `DebugEnabled=false` / PlayerData 开关持久化 reload 存活 / 云显式布尔覆盖 + 旧档保留本地 / 设置屏 4 行 + 关闭命中 + 面板外不命中 + Draw 不崩）；真渲染探针 `probe_setrender`（真实鼠标点击两行开关，经 `ScreenToUi` 逆变换）实测 `music=false sfx=false pdMusic=false pdSfx=false`（编排层→AudioDirector+PlayerData 同步）、后端委托 `AudioEnabled()→false`；真渲染截图**实图目视**——音乐/音效青色开关、危险操作行、鸣谢三行（薪主/工作室出品/TapTap）、关闭按钮不压鸣谢；完整战斗冒烟 `probe_audiorender`（进关+发射）`AudioDirector initialized sfx=20/20 bgm=9`、零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`。官方多人 build + 预览上传 ✅。展示版本 → **0.13.60**（BUILD_VERSION + lobby_runtime）。
+  - 边界：⚠️ **本环境无 `/dev/snd`（`Could not initialize audio output`）**——探针只能证「开关状态机 + 通路 + 不崩」，**实际静音/发声效果必须 Preview 真机**。手机 FPS / 全 DPR / 用户审美未验收。
+  - ⚠️ **避雷 AB-289：给音频总控加「静音开关」要改**目标增益**，不要 `Stop`/`Play` 硬切**（settings-audio-credits）：本项目 `AudioDirector` 的 BGM 走**两条通道交叉淡入淡出**（v0.13.x 契约）。加音乐开关时若在 `SetMusicEnabled(false)` 里直接 `Stop()`，会**断音**（下次开回来要重新淡入、且曲目位置丢失）。做法：引入 `TargetGain()`（开=`BGM_GAIN`、关=0），`StartTrack` 与 `UpdateBgm` 都从它取目标增益 → 关音乐只是「目标增益变 0、自然淡出」，曲目状态（`bgmTrackIdx/bgmTime`）保留，开回来续播。⚠️ 音效开关同理——在 `PlaySfx` **开头短路**（不播），别去 `Stop` 已播放的音源。
+  - ⚠️ **避雷 AB-290：加「设置项开关」要三处同源——存档(默认开) + 编排层(即时生效) + 后端委托**（settings-audio-credits）：本项目开关链路是 `PlayerData`（持久化，`~= false` 缺省开）→ `client_main.RefreshMeta`（填 metaState 供屏渲染）→ `HandleMetaAction`（翻转+写档+`RenderBackend.Set*` 即时生效+云同步）→ `Scene3DBackend` 委托（挂 Backend 表，零新增 local）。⚠️ **启动时**（`PlayerData.Load` 之后）必须把存档开关**作用一次**到音频总控，否则重启后设置屏显示「关」但实际还在响；**清档**后也要重作用（回默认开）。⚠️ 云合并对「纯偏好」用**显式布尔才覆盖**（不是取并集/取大）——否则新设备会把本机的关静音强行打开。
+  - ⚠️ **避雷 AB-291：往「已满 200 顶层 local」的后端加开关委托，只能挂表**（settings-audio-credits，承接 AB-265/268）：`Scene3DBackend.lua` 顶层 local 已满 200——本批的 `SetMusicEnabled/SetSfxEnabled/AudioEnabled` 全部是 `function Backend.Xxx(...)`（挂表），**零新增顶层 local**。自检：`git diff scripts/Scene3DBackend.lua | grep "^+local "` 应为空。
+  - ⚠️ **避雷 AB-292：新增设置行要「先加高容器再排 y」，并用**真渲染截图**验证不重叠**（settings-audio-credits）：把设置屏从 2 行扩到 4 行 + 鸣谢区时，首版 `h 360→500` **不够**——关闭按钮（`y+h-64`）压住了鸣谢第三行「特别鸣谢：TapTap」（**只有真渲染截图能发现**，LSP/build/纯几何探针都无感）。修法：`h 500→600`、`y 220→180`、行高/step 收紧（60/72）。**通用规则**：给「底部有固定按钮 + 中间有可变内容」的面板加内容时，先算「内容底边 vs 按钮顶边」的间隙，容器不够就加高——别只调行 y。
+
 - 附记: spawn-lane-stage-fix（2026-10-12，**修「每关第一架都贴最左」**；不改展示版本）：
   - 用户「为何每一关第一个飞机都靠很左啊」。
   - **真因（算式实锤）**：`SpawnWave` 的起始车道 `pendingSpawn.lane = (wave - 1) % 5` 用的是**累计波号 `wave`**——每关首波 `wave = (关卡-1)*10 + 1`，减 1 后是 **10 的倍数**，`(10k) % 5 == 0` 恒成立 → **每关第一架永远落在车道 0（最左）**。v0.13.27 的「起始车道随波次错开」对**同关内**后续波有效，但**跨关的首波恒贴左**（用户看到的正是每关开局）。
