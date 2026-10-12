@@ -1607,10 +1607,8 @@ local function DrawMenu(ctx, game, meta)
     -- （用户追加「开始战斗横向也需要拉长」——纵向保持 FitHeight 的 60，横向拉伸见下）。
     if ArtText.Has("startbattle") then
         local s = ArtText.FitHeight("startbattle", 67)
-        -- 目标：金属字宽占按钮 ~57%、高占 ~80%（对齐参考图 CTA 的占比；参考字框 aspect≈4.0）。
-        -- 素材本身 aspect 2.14 → 横向拉伸 ~1.85× 补到参考比例（斜体字略扁宽，与参考一致）。
-        -- ⚠️ 素材是「无青晕的紧凑银白金属字」；旧的宽光晕素材会显散（用户报「素材缩放有误」）。
-        local sx = math.min(1.90, ArtText.FitWidth("startbattle", cta.w * 0.57, s))
+        -- 用户直接提供的成品（带青晕的斜体金属字，aspect 3.18）——**保持原图自然比例，不横向拉伸**（用户「直接加上去，不用压缩」）。
+        local sx = math.min(1.0, ArtText.FitWidth("startbattle", cta.w * 0.60, s))
         ArtText.DrawCentered(ctx, "startbattle", cta, {255, 255, 255}, 0, s, sx)
     else
         DrawPixelText(ctx, game.width * 0.5, ctaY + 22, "开始战斗", 40, C.ink,
