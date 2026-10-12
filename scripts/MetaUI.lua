@@ -817,10 +817,12 @@ DrawTaskExtras = function(ctx, content, meta, topY)
         if t.claimable then claimable = claimable + 1 end
         totalReward = totalReward + (t.reward or 0)
     end
-    local y = math.max(topY + 8, content.y + 440)
+    -- ⚠️ 三段必须整体落在内容区内（Shell 底部让出状态条后内容高 664）——起始 y 与
+    -- 各段高度都收紧，保证「总览 + 下一目标 + 里程碑」三段底边 < content 底。
+    local y = math.max(topY + 6, content.y + 424)
 
     -- ① 任务总览条：把散落的奖励聚成「这一屏能拿多少」——价值锚定。
-    local sum = { x = content.x, y = y, w = content.w, h = 76 }
+    local sum = { x = content.x, y = y, w = content.w, h = 68 }
     D.panel(ctx, sum.x, sum.y, sum.w, sum.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, sum.x + 2, sum.y + 2, sum.w - 4, math.floor(sum.h * 0.42), {255, 255, 255, 18}, 4)
     D.rect(ctx, sum.x + 2, sum.y + math.floor(sum.h * 0.6), sum.w - 4,
@@ -834,8 +836,8 @@ DrawTaskExtras = function(ctx, content, meta, topY)
     }
     for i, st in ipairs(stats) do
         local cx = sum.x + cellW * (i - 0.5)
-        D.text(ctx, cx, sum.y + 12, st[1], 24, st[3], NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        D.text(ctx, cx, sum.y + 46, st[2], 14, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, cx, sum.y + 8, st[1], 23, st[3], NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, cx, sum.y + 42, st[2], 14, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         if i < 3 then
             D.rect(ctx, sum.x + cellW * i, sum.y + 12, 1, sum.h - 24,
                 {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90}, 0)
@@ -852,24 +854,24 @@ DrawTaskExtras = function(ctx, content, meta, topY)
         end
     end
     if best then
-        local g = { x = content.x, y = sum.y + sum.h + 10, w = content.w, h = 96 }
+        local g = { x = content.x, y = sum.y + sum.h + 8, w = content.w, h = 86 }
         D.panel(ctx, g.x, g.y, g.w, g.h, C.card, C.cyanDim, 6)
         D.rect(ctx, g.x + 2, g.y + 2, g.w - 4, math.floor(g.h * 0.42), {255, 255, 255, 16}, 4)
         D.rect(ctx, g.x + 2, g.y + math.floor(g.h * 0.62), g.w - 4,
             g.h - math.floor(g.h * 0.62) - 2, {0, 0, 0, 34}, 4)
         D.rect(ctx, g.x + 3, g.y + 12, 3, g.h - 24, best.claimable and C.warn or C.cyan, 1)
-        SectionHeader(ctx, g.x + 14, g.y + 10, g.w - 28, "下一目标")
-        D.text(ctx, g.x + 16, g.y + 40, best.name, 18, C.text)
+        SectionHeader(ctx, g.x + 14, g.y + 8, g.w - 28, "下一目标")
+        D.text(ctx, g.x + 16, g.y + 34, best.name, 17, C.text)
         local prog, tgt = best.progress or 0, math.max(1, best.target or 1)
-        D.text(ctx, g.x + g.w - 16, g.y + 40,
+        D.text(ctx, g.x + g.w - 16, g.y + 34,
             string.format("%d / %d", math.min(prog, tgt), tgt), 15,
             best.claimable and C.warn or C.dim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        ProgressBar(ctx, g.x + 16, g.y + 68, g.w - 32, math.min(1, prog / tgt),
-            best.claimable and C.warn or C.cyan, 10)
+        ProgressBar(ctx, g.x + 16, g.y + 60, g.w - 32, math.min(1, prog / tgt),
+            best.claimable and C.warn or C.cyan, 9)
     end
 
     -- ③ 领取里程碑阶梯：3 档（领 1 / 领 2 / 领 3 项），已过档打勾——成就阶梯。
-    local ms = { x = content.x, y = (best and (sum.y + sum.h + 116) or (sum.y + sum.h + 10)), w = content.w, h = 52 }
+    local ms = { x = content.x, y = (best and (sum.y + sum.h + 102) or (sum.y + sum.h + 8)), w = content.w, h = 46 }
     if ms.y + ms.h <= content.y + content.h then
         D.panel(ctx, ms.x, ms.y, ms.w, ms.h, C.rail, C.cyanDim, 6)
         D.rect(ctx, ms.x + 2, ms.y + 2, ms.w - 4, math.floor(ms.h * 0.42), {255, 255, 255, 14}, 4)
@@ -966,9 +968,9 @@ local function DrawCodex(ctx, w, meta)
                     scale - 0.5, scale - 0.5, owned and C.cyan or C.dim, 0)
             end
         end
-        local lines = D.wrap(ctx, entry.note, 14, cw - 28)
+        local lines = D.wrap(ctx, entry.note, 13, cw - 28)
         for li = 1, math.min(2, #lines) do
-            D.text(ctx, x + 14, y + 96 + (li - 1) * 17, lines[li], 14, C.dim)
+            D.text(ctx, x + 14, y + 90 + (li - 1) * 15, lines[li], 13, C.dim)
         end
         D.text(ctx, x + 14, y + ch - 25, owned and "已收录" or "未收录", 14,
             owned and C.cyan or C.dim)
