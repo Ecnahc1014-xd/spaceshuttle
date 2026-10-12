@@ -3,6 +3,10 @@ local StageCatalog = {}
 
 StageCatalog.WAVES_PER_STAGE = 10
 StageCatalog.MAX_FLEET = 12
+-- v0.13.61：逐架放出的横向分道数（Game.SpawnNextNormalEnemy 用）。
+-- 起始车道 = `(关卡-1 + 关内波次-1) % SPAWN_LANE_COUNT`——⚠️ 必须掺入**关卡号**：
+-- 旧式 `(累计 wave - 1) % 5` 每关首波恒为 `(10k) % 5 == 0`，导致**每关第一架都贴最左**。
+StageCatalog.SPAWN_LANE_COUNT = 5
 -- v0.13.57：屏幕外（尚未进入可见战场）的敌机数量上限。逐架放出时若屏外已堆积到这个数，
 -- 就暂停生成队列、等屏外机下落进场后再放下一架——避免一波多架全挤在屏幕上沿之外。
 StageCatalog.MAX_OFFSCREEN = 3

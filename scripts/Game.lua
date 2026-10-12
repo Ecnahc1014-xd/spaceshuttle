@@ -1165,7 +1165,7 @@ SpawnNextNormalEnemy = function()
     local shipW, shipH = GetAircraftSize(key, brickSize)
     -- v0.13.27：横向分道——逐架轮换不同 x（确定性，非随机），避免整波都叠在正中一条竖线上。
     -- 车道数用函数内局部量，不新增顶层 local（Game.lua 已逼近 Lua 200 上限）。
-    local laneCount = 5
+    local laneCount = StageCatalog.SPAWN_LANE_COUNT
     local margin = 20
     local maxX = math.max(margin, DW - margin - shipW)
     local lane = pendingSpawn.lane % laneCount
@@ -1274,8 +1274,9 @@ SpawnWave = function(availableSlots)
     pendingSpawn.speed = baseSpeed
     pendingSpawn.remaining = count
     pendingSpawn.timer = 0
-    -- 起始车道随波次错开，避免每波第一架总从最左出来。
-    pendingSpawn.lane = (wave - 1) % 5
+    -- v0.13.61：起始车道掺入**关卡号**（不再用累计 wave）——每关首波恒为
+    -- `(关卡-1) % 5`，逐关轮换；否则 `(10k)%5==0` 会让每关第一架永远贴最左（用户点名）。
+    pendingSpawn.lane = (stage - 1 + stageWave - 1) % StageCatalog.SPAWN_LANE_COUNT
     -- v0.13.51：出场序号计数随每波开波复位——它只在本关第一波生效（血量封顶判定带 wave 约束），
     -- 复位保证第一波从「第 1 架」重新计数。
     pendingSpawn.spawned = 0

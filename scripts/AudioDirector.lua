@@ -100,6 +100,8 @@ local state = {
     bgmFade = {},       -- 每通道目标增益
     lastState = nil,
     bossAlive = false,  -- 由 wave_started(isBoss) / boss_defeated 事件跟踪，决定是否切首领主题
+    musicEnabled = true, -- 设置页开关：关则 BGM 淡出并静音（不动曲目状态，开回来可续）
+    sfxEnabled = true,   -- 设置页开关：关则直接跳过所有音效播放
 }
 
 -- 创建一条音效节点（相对场景、非 3D 定位，2D 玩法全局音）。
@@ -175,7 +177,7 @@ end
 ---@param gain? number
 ---@param pitch? number
 function AudioDirector.PlaySfx(key, gain, pitch)
-    if not state.ready then return end
+    if not state.ready or not state.sfxEnabled then return end
     local sound = state.sfxSounds[key]
     if not sound then return end
     local pool = state.sfxPool
