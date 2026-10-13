@@ -4,6 +4,13 @@
 
 ## 当前状态
 
+- 调查: xhr-report-96（2026-10-13，**96 次 `XMLHttpRequest response: {}` 尚未定位，不冒称修复**；无游戏代码/配置改动）：
+  - 用户报告 `fcb250f9 (HEAD@24772cad)`、2026-10-13 15:14:12.632 首条、15:36:07.413 生成。公开 stable→引擎 **1.33.14 / manifest49920946**；`src/engine/assets/BNghoXJZYBHd9d6Ij4FLlfFu-212defa1.json` 返回相同 binary_hash/commit_hash/branch，125B CRC32=212defa1。**两哈希是引擎身份，不是游戏包哈希，不能据此判旧包**。
+  - 本轮只读校验当前 **build33**（client6007d810/server7e6e8b39）清单 **220/221 项 size+CRC32 零错配**，sources仅engine-res、adopt空；不支持重现此前清单损坏/official pin 两条根因。
+  - 平台运行索引本轮588条，UTC14:48:11..15:35:26，仅engine/user_script/server_user_script三渠道，**无精确XHR条目或URL/HTTP状态/异常栈**；调试反馈查询返回0条（不标记已处理）。包含23:14:12本地启动及随后云高分/存档/余额成功，但成功业务不能证伪宿主其它请求失败，也不能把96个错误等同96次请求。
+  - 当前代码只读审查未发现失败后每帧重发闭环；高分15s周期无在途锁、成就离线门控/异步确认等为**独立候选隐患，尚无请求级证据关联本报告**，不以顺手加固代替根因修复。公开loader/引擎JS未找到精确报错catch；不改只读宿主或dist、不禁云、不过滤错误。
+  - **待证据**：原报错请求的脱敏路径/方法/状态/响应类型/initiator与异常message/stack，或可复现的操作链；没有Cookie/Authorization需求。本轮未改Lua，LSP/build/玩法回归判定跳过；**未完成用户要求的代码修复及平台错误消失验证**。POST-1执行调查状态，persona跳过无新偏好；POST-2独立记录提交；POST-3沿用AB-238证据纪律，跳过无新增跨项目事实。保留并发ArtText/发布配置及其它玩法修改，不代提交。
+
 - 修复: end-transition-input-fix（2026-10-13，**修胜利/战败动画被输入跳过 + 结算窗先闪后弹**；不改展示版本）：
   - 用户「胜利和战败动画被跳过」。本批只改 `ui/StageTransition.lua`、`game/client_main.lua`、`Scene3DBackend.lua`，不改动画视觉/总时长、Game/Presentation/Renderer3D、存档或服务端职责。
   - **跳过门控与生命周期**：旧 `Skip()` 无条件置位，战斗连点会吞掉开头；旧状态只以 `animAt` 数值复位，重开时间回卷/两态同起点会串场。改 `transition_={state,startAt,lastElapsed,skipped}`，状态/起点变化、离开过渡、时间回卷均复位；后端每帧同步。只在原「点击跳过」提示时刻后允许跳过（胜利 1.55s、战败 3.40s，助手选定防误触门控，非用户指定参数）。**总时长仍胜利 2.15s、战败 4.0s**，提示与资格共用常量。

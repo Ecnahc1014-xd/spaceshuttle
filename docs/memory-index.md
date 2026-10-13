@@ -12,6 +12,13 @@
 简述：开局缓入起始倍率随关卡下降（关1 60% → 关20 起 40%）；每关第一架不再恒贴最左。
 最后巩固：2026-10-13
 
+## XHR 96 次报告只读取证（2026-10-13，xhr-report-96）
+- `fcb250f9/24772cad` 经公开 stable 1.33.14/manifest49920946/version.json 精确核验为**引擎身份**，不是游戏包哈希。源URL：`https://tapcode-sce.spark.xd.com/src/engine/assets/BNghoXJZYBHd9d6Ij4FLlfFu-212defa1.json`（125B、CRC32 212defa1）。
+- 当前build33 client6007d810/server7e6e8b39，两清单220/221项size+CRC32全部匹配，sources仅engine-res、adopt空。运行索引588条覆盖UTC14:48:11..15:35:26，但无精确XHR/HTTP请求字段；调试反馈0条（只读、不标记处理）。成功云读写/余额日志不能证伪其它失败请求。
+- 当前源码审查未见失败后每帧自重发；高分周期在途锁/成就确认等独立隐患未与本报告建立因果，不当作本错修复。公开loader/engineJS无精确报错catch。
+- **根因未定位、未改Lua/配置、未完成平台不再报错验证**。待原请求的脱敏路径/方法/状态/响应类型/initiator及message/stack；不需要认证信息，不禁云或过滤日志。
+- POST-1记录执行，persona无新偏好跳过；POST-2仅三份记录独立提交；POST-3沿用AB-238，跳过无新增跨项目事实。无Lua改动，LSP/build/玩法回归跳过；保留并发脚本与发布配置。
+
 ## 胜败过渡防误跳与结算入场（2026-10-13，end-transition-input-fix）
 - 用户「胜利和战败动画被跳过」。只改 StageTransition/client_main/Backend，动画内容与胜利 2.15s、战败 4.0s 总时长不变。
 - `transition_` 按 state/startAt/elapsed 回卷/离开过渡复位 skip；提示出现后才允许跳过（胜利1.55s/战败3.40s为助手选定门控）。早期鼠标/触摸只消费，清 armed 防同次 Up 点按钮；战败重复回车不跳过/重开，过渡中回车不直接重开。
