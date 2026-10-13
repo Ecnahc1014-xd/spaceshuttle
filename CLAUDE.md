@@ -4,6 +4,19 @@
 
 ## 当前状态
 
+- 版本: 0.14.0（**成就并入战斗档案：单入口 + 页签 + 翻页 + 已解锁置顶**；不改展示版本常量）：
+  - 用户「成就界面并入战斗档案任务，同时战斗档案任务也并入平台成就，并增加额外成就，列表变为上下翻页且被解锁的优先在顶端」→ 澄清后：①主菜单**只留「战斗档案」一个入口**（去掉独立「成就」卡）；②档案屏内加**两个页签**（战斗档案 / 成就）；③档案里程碑各做成一条**平台成就**；④**再加额外成就**；⑤成就列表改**上下翻页**且**已解锁优先置顶**。
+  - **入口合并**：`MetaUI.GetGrowDefs` 删掉「成就」卡（grow 行 5→4，`GetMenuBarLayout` 的 `grow` 回到 `row(842,80,4)`）；战斗档案卡副标题在有可领奖励时优先提示、否则显示 `成就 N/M`。
+  - **页签（`MetaUI.DrawPass`/`HitTestPass`）**：新增 `GetPassTabs(content)`（两枚各半宽页签，`content.y+2`，h40）与 `GetPassBody(content)`（页签下移 50px 的内容区）。**档案内容整体改用 `body` 定位**（`hero`/`GetPassUnlockRect(body)`/`SectionHeader(body...)`/`GetPassRewardRect(body,i)` 全部由 `content`→`body`）——⚠️ 改几何来源时**绘制与命中必须同改**（`HitTestPass` 的 piggy cr / unlock rect / 里程碑行也全部换 `body`），否则「看得见点不到」。页签命中返回 `pass_tab`/`ach_tab`。
+  - **成就列表（`ui/Achievements.lua` 重写）**：不再注册独立屏，改为 `MetaUI.DrawPass` 在成就页签直接 `Achievements.Draw(ctx, body, meta)` / `Achievements.HitTest(uiX,uiY,body,meta)`（`MetaUI` 顶部 `require "ui.Achievements"`）。列表**已解锁优先置顶**（`BuildList` 两趟收集：unlocked 在前、locked 在后，稳定不跳变）；**翻页**改「‹ 上一页 / 页码 / 下一页 ›」三件（`ach_prev_page`/`ach_next_page`，`metaState.achPage` 钳 1..pages），删掉旧的「点文字区循环」。单页可见数由 `GetListRect` 高度反推（`VisibleCount`）。
+  - **额外成就（`AchievementCatalog`）**：新增 3 条档案里程碑成就 `pass_lv3`/`pass_lv5`/`pass_lv6`（steps = 档案等级 3/5/6，`ComputeValue` 读 `PlayerData.GetPassLevel()`）。目录 20→**23 条**。
+  - **里程碑条数 5→4**：页签占去 50px，第 5 条里程碑会被底栏裁掉 → `client_main` 的 `#rewards >= 5` 改 `>= 4`（真渲染截图实锤）。
+  - 验证：LSP workspace **30 文件 0 Error**；真渲染探针 `probe_achtab`（`DebugOpenScreen("pass")` → 页签命中 `pass_tab`/`ach_tab` 各半区正确、零 overlay/Lua/LoadChunk 错误）；`probe_ache2e`（**真实鼠标点击**：菜单「战斗档案」卡 → 成就页签，端到端零错误）；`probe_passtab`（档案页签真渲染截图确认 3 条里程碑完整、无裁切）。**实图目视**：成就页签——8 张已解锁卡全「已达成」置顶、`1/3 页`、上一页禁用/下一页可点、查看平台成就按钮；档案页签——页签在顶、英雄卡+里程碑完整。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：⚠️ **本环境 `-screenshot-frame` 深层帧不可靠（AB-220）**，但本次真渲染截到目标屏（成就/档案页签内容清晰可辨）→ 实图可视作有效证据。手机 FPS / 全 DPR / 用户审美未验收。
+  - ⚠️ **避雷 AB-301：把「某面板」并入「另一面板」时，被并入方若原本是独立「元层屏」，要**取消其 RegisterScreen 并改为被调用**（achievement-into-pass）：本项目 `ui/Achievements.lua` 原本 `MetaUI.RegisterScreen("achievements", …)` 独立成屏；并入后改为 `MetaUI.DrawPass` 直接 `Achievements.Draw/HitTest(ctx, body, meta)`（`MetaUI` 顶部 require），**删掉 `RegisterScreen` 与 `open_achievements` 分支**（否则残留一个永远打不开的屏 + 主菜单多一张卡）。⚠️ 被并入的 Draw/HitTest 形参要从「w 整宽」改成「rect 内容区」，且**绘制与命中共用同一 rect**（本项目传 `body`）——几何来源一改，两侧必须同改。
+  - ⚠️ **避雷 AB-302：给「底部有固定按钮/状态栏」的面板加内容，要先算「内容底边 vs 底栏顶边」的间隙**（achievement-into-pass，承接 AB-259/292）：档案屏加 50px 页签后，第 5 条里程碑（`content.y+196+4*92` 附近）被底部状态栏裁掉——**只有真渲染截图能发现**（LSP/build/纯几何探针都无感）。修法：把可变内容条数从 5 收到 4（或加高容器）。**通用规则**：给面板顶部/底部加固定高度元素时，先算中间可变内容的可用高度，装不下就**减条数或加高容器**，别只挪 y。
+
+
 - 附记: visual-recipes-skill（2026-10-13，**把「逐层绘制」反哺进 dark-tech skill**；纯文档，不改展示版本）：
   - 用户「继续然后我要求最具体的绘制比如你这些流光纹理按钮也要反哺skill」——上一轮反哺的是**架构/界面/适配**层，这次要的是**「最具体的绘制」**：一个控件、一层的**逐行画法**（面板怎么叠六层、按钮的漆面与扫光怎么画、艺术字怎么染色）。**「具体」是关键词**——不是再写一遍「要贵」，而是把**代码**给出来。
   - **产出（`references/visual-recipes.md`，469 行新增）**：把本项目**已落地并跑过真机**的绘制提炼成可复制配方，每条 = 完整代码 + 参数 + **层序** + 性能门槛 + 踩过的坑：①金属面板六层（双层投影 → 对角金属渐变 `+30/−9` → 内顶受光 → 内底沉影 → 玻璃漆面斜高光 → 亮暗描边，装饰门槛 `big=w>=130 and h>=66`）；②按钮（漆面斜高光 / 3.2s 斜扫光前 55% / 6s 底边流光 / **暖金「贵金属」配方**，`warm` 判定别写成「非青即暖」）；③窗口壳（外辉光 + 标题舱受光带）；④背景在动（径向底 + 暗角 + 顶部环境辉光 + 7s 慢速扫光）；⑤艺术字（**乘法染色塌陷约束**）；⑥像素图标（NEAREST / 32×32 / ≤9 色 / 死键 / 「AI 原图直接缩 32×32 ≠ 像素画」）；⑦悬停加色光（`GetControlFx` 显式登记 + 平滑逼近 + 指针在所有 return 之前喂入）；⑧氛围标量（`AnomalyPulse`）；⑨非阻塞提示（上边界不能用 dangerY + 互斥 + 按状态自隐）；⑩10 条交付检查清单。`SKILL.md` 参考列表 + 工作流指引 + `elements.md` 文件清单已接入。

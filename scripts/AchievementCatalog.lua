@@ -67,6 +67,12 @@ local ACHIEVEMENTS = {
     -- —— 商业化 / 收集 ——
     { id = "skin_3",        title = "车库扩充",   desc = "解锁 3 款车型",                steps = 3,     icon = "shop",              tone = "cyan" },
     { id = "trail_3",       title = "流光溢彩",   desc = "解锁 3 款拖尾样式",            steps = 3,     icon = "premium_energy_core", tone = "cyan" },
+
+    -- —— 战斗档案里程碑（v0.14.0：档案等级并入成就）——
+    -- 档案每 200 块升一级（满 6 级），此处按「档案等级」建条目。
+    { id = "pass_lv3",      title = "档案 3 级",  desc = "战斗档案达到 3 级",            steps = 3,     icon = "premium_pass_crest", tone = "cyan" },
+    { id = "pass_lv5",      title = "档案 5 级",  desc = "战斗档案达到 5 级",            steps = 5,     icon = "premium_pass_crest", tone = "warn" },
+    { id = "pass_lv6",      title = "档案满级",   desc = "战斗档案达到 6 级（解锁存钱罐）", steps = 6,   icon = "premium_pass_crest", tone = "warn" },
 }
 
 ---@return AchievementDef[]

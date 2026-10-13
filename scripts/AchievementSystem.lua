@@ -106,6 +106,9 @@ local function ComputeValue(id)
             if t.cost == 0 or PlayerData.HasTrail(t.key) then n = n + 1 end
         end
         return n
+    elseif id == "pass_lv3" or id == "pass_lv5" or id == "pass_lv6" then
+        -- v0.14.0：战斗档案里程碑——按当前档案等级（每 200 块升一级、满 6 级）。
+        return PlayerData.GetPassLevel()
     end
     return 0
 end

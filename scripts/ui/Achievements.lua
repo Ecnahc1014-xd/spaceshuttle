@@ -1,11 +1,12 @@
 -- ui/Achievements.lua
--- 成就面板（元层模态屏）。本地成就为权威；平台成就只做镜像（外发由 AchievementSystem 处理）。
+-- 成就列表（嵌入「战斗档案」屏的下半区；本地成就为权威，平台成就只做镜像）。
 --
--- ⚠️ 插件式注册（MetaUI.RegisterScreen("achievements", …)），复用元层窗口动画与命中逆变换，
---    后端零状态。只画与命中；数据由编排层 RefreshMeta 填进 metaState.achievements（只读）。
+-- ⚠️ 本模块**不再**注册成独立元层屏——它被 MetaUI.DrawPass / HitTestPass 直接调用，
+--    绘制/命中几何（页签、列表区、翻页）全部在 MetaUI 里保持同源。
+--    本模块只负责「成就列表 + 翻页」这一块内容的绘制与命中。
 --
--- ⚠️ 布局：面板壳同 MetaUI.Shell（x18 y108 w504 h780，内容区 32..508 × 168..832）。
---    列表 2 列卡片 + 顶部总进度条 + 底部「查看平台成就」入口。
+-- 排序：**已解锁优先置顶**（未解锁按目录顺序跟随其后，稳定不跳变）。
+-- 翻页：上下页按钮（不再靠点击文字区循环）。
 
 local Achievements = {}
 
@@ -34,40 +35,86 @@ end
 -- 布局（纯几何，绘制与命中共用）
 -- ============================================================================
 
-local CONTENT = { x = 32, y = 168, w = 476, h = 664 }
--- 卡高 92 / 2 列 × 5 行 = 10 张/页，把内容区填满（原 76/4 行下方留大片空白）。
 local CARD_H = 92
 local GAP = 8
 local COLS = 2
 
----@return table 单卡矩形（index 从 1 开始）
-local function GetCardRect(index)
-    local bw = (CONTENT.w - GAP * (COLS - 1)) / COLS
+-- 列表区（相对传入的 rect：MetaUI 传入的成就内容区）。
+-- 顶部让出「总进度条」，底部让出「翻页行 + 查看平台成就按钮」。
+local HEADER_H = 52
+local FOOTER_H = 104
+
+---@param rect table 内容区（x/y/w/h）
+---@return table 列表裁剪区
+local function GetListRect(rect)
+    return { x = rect.x, y = rect.y + HEADER_H, w = rect.w, h = rect.h - HEADER_H - FOOTER_H }
+end
+
+---@return integer 单页可见卡片数
+local function VisibleCount(rect)
+    local list = GetListRect(rect)
+    local rows = math.max(1, math.floor((list.h + GAP) / (CARD_H + GAP)))
+    return rows * COLS
+end
+
+---@param rect table
+---@param index integer 从 1 开始
+---@return table
+local function GetCardRect(rect, index)
+    local list = GetListRect(rect)
+    local bw = (list.w - GAP * (COLS - 1)) / COLS
     local col = (index - 1) % COLS
     local row = math.floor((index - 1) / COLS)
     return {
-        x = CONTENT.x + col * (bw + GAP),
-        y = CONTENT.y + 58 + row * (CARD_H + GAP),
+        x = list.x + col * (bw + GAP),
+        y = list.y + row * (CARD_H + GAP),
         w = bw, h = CARD_H,
     }
 end
 
----@return table 顶部总进度条区域
-local function GetHeaderRect()
-    return { x = CONTENT.x, y = CONTENT.y + 4, w = CONTENT.w, h = 46 }
+---@param rect table
+---@return table 顶部总进度条
+local function GetHeaderRect(rect)
+    return { x = rect.x, y = rect.y + 4, w = rect.w, h = 44 }
 end
 
----@return table 底部「查看平台成就」按钮
-local function GetPlatformBtn()
-    return { x = CONTENT.x + CONTENT.w * 0.5 - 120, y = CONTENT.y + CONTENT.h - 44, w = 240, h = 40 }
+---@param rect table
+---@return table prev
+---@return table next
+local function GetPagerRects(rect)
+    local y = rect.y + rect.h - FOOTER_H + 12
+    return { x = rect.x, y = y, w = 108, h = 36 },
+           { x = rect.x + rect.w - 108, y = y, w = 108, h = 36 }
 end
 
--- 可见卡片数 = 单屏能放几行（5 行 × 2 列 = 10），超出可翻页。
-local VISIBLE = 10
+---@param rect table
+---@return table 查看平台成就按钮
+local function GetPlatformBtn(rect)
+    return { x = rect.x + rect.w * 0.5 - 120, y = rect.y + rect.h - 46, w = 240, h = 40 }
+end
 
----@return integer 总页数
-local function PageCount(total)
-    return math.max(1, math.ceil(total / VISIBLE))
+---@param rect table
+---@return integer
+local function PageCount(rect, total)
+    return math.max(1, math.ceil(total / VisibleCount(rect)))
+end
+
+-- ============================================================================
+-- 排序：已解锁优先置顶（两趟收集，稳定不跳变）
+-- ============================================================================
+
+---@param meta MetaState
+---@return table[] 已解锁在前、未解锁在后
+local function BuildList(meta)
+    local src = meta.achievements or {}
+    local unlocked, locked = {}, {}
+    for _, a in ipairs(src) do
+        if a.unlocked then unlocked[#unlocked + 1] = a else locked[#locked + 1] = a end
+    end
+    local out = {}
+    for _, a in ipairs(unlocked) do out[#out + 1] = a end
+    for _, a in ipairs(locked) do out[#out + 1] = a end
+    return out
 end
 
 -- ============================================================================
@@ -75,45 +122,35 @@ end
 -- ============================================================================
 
 ---@param ctx any
----@param w number
+---@param rect table 内容区（x/y/w/h，由 MetaUI 传入）
 ---@param meta MetaState
-function Achievements.Draw(ctx, w, meta)
+function Achievements.Draw(ctx, rect, meta)
     local C = Colors()
-    D.backdrop(ctx, 0, 0, w, 960)
-    local x, y, sw, sh = 18, 108, w - 36, 780
-    D.shell(ctx, x, y, sw, sh, 48)
-    D.rect(ctx, x, y + 48, 3, 22, C.cyan, 0)
-    local titleX = x + 16
-    if D.icon(ctx, "premium_wheel_medal", x + 12, y + 8, 32, 1) then titleX = x + 52 end
-    D.text(ctx, titleX, y + 8, "成就", 27, C.text)
-    D.text(ctx, x + sw - 58, y + 14,
-        string.format("%d / %d", meta.achUnlocked or 0, meta.achTotal or 0), 15, C.dim,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-
-    local list = meta.achievements or {}
+    local list = BuildList(meta)
     local total = #list
-    local pages = PageCount(total)
+    local pages = PageCount(rect, total)
     local page = math.max(1, math.min(pages, meta.achPage or 1))
 
     -- 顶部总进度条：把「已解锁 N/M」做成一条价值锚定的进度。
-    local hdr = GetHeaderRect()
+    local hdr = GetHeaderRect(rect)
     D.panel(ctx, hdr.x, hdr.y, hdr.w, hdr.h, C.rail, C.cyanDim, 6)
     D.rect(ctx, hdr.x + 2, hdr.y + 2, hdr.w - 4, math.floor(hdr.h * 0.44), {255, 255, 255, 16}, 4)
-    D.text(ctx, hdr.x + 14, hdr.y + 8, "成就进度", 15, C.dim)
-    D.text(ctx, hdr.x + hdr.w - 14, hdr.y + 7,
+    D.text(ctx, hdr.x + 14, hdr.y + 7, "成就进度", 15, C.dim)
+    D.text(ctx, hdr.x + hdr.w - 14, hdr.y + 6,
         string.format("%d / %d", meta.achUnlocked or 0, total), 17, C.cyan,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     local ratio = total > 0 and (meta.achUnlocked or 0) / total or 0
-    D.progress(ctx, hdr.x + 14, hdr.y + 30, hdr.w - 28, ratio, C.cyan, 7)
+    D.progress(ctx, hdr.x + 14, hdr.y + 28, hdr.w - 28, ratio, C.cyan, 7)
 
     -- 卡片列表（当前页）。
+    local area = GetListRect(rect)
     nvgSave(ctx)
-    nvgIntersectScissor(ctx, CONTENT.x, CONTENT.y + 54, CONTENT.w, CONTENT.h - 104)
-    for i = 1, VISIBLE do
-        local idx = (page - 1) * VISIBLE + i
-        local a = list[idx]
+    nvgIntersectScissor(ctx, area.x, area.y, area.w, area.h)
+    local perPage = VisibleCount(rect)
+    for i = 1, perPage do
+        local a = list[(page - 1) * perPage + i]
         if not a then break end
-        local r = GetCardRect(i)
+        local r = GetCardRect(rect, i)
         local tone = a.tone == "warn" and C.warn or (a.tone == "ad" and C.ad or C.cyan)
         local done = a.unlocked == true
         D.panel(ctx, r.x, r.y, r.w, r.h, done and C.widget or C.card,
@@ -150,15 +187,24 @@ function Achievements.Draw(ctx, w, meta)
     end
     nvgRestore(ctx)
 
-    -- 分页提示（多于 1 页时）。
-    if pages > 1 then
-        D.text(ctx, CONTENT.x + CONTENT.w * 0.5, CONTENT.y + CONTENT.h - 78,
-            string.format("第 %d/%d 页 · 点击下方切换", page, pages), 13, C.dim,
-            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    end
+    -- 翻页行：上一页 / 页码 / 下一页。
+    local prev, next_ = GetPagerRects(rect)
+    local prevOn = page > 1
+    local nextOn = page < pages
+    D.stroke(ctx, prev.x, prev.y, prev.w, prev.h,
+        prevOn and C.cyanDim or {C.dim[1], C.dim[2], C.dim[3], 90}, 6, 1)
+    D.text(ctx, prev.x + prev.w * 0.5, prev.y + 10, "‹ 上一页", 15,
+        prevOn and C.text or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    D.stroke(ctx, next_.x, next_.y, next_.w, next_.h,
+        nextOn and C.cyanDim or {C.dim[1], C.dim[2], C.dim[3], 90}, 6, 1)
+    D.text(ctx, next_.x + next_.w * 0.5, next_.y + 10, "下一页 ›", 15,
+        nextOn and C.text or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    D.text(ctx, rect.x + rect.w * 0.5, prev.y + 10,
+        string.format("%d / %d 页", page, pages), 14, C.dim,
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     -- 底部：查看平台成就（平台能力；不可用时点后提示）。
-    local btn = GetPlatformBtn()
+    local btn = GetPlatformBtn(rect)
     D.stroke(ctx, btn.x, btn.y, btn.w, btn.h, C.cyanDim, 6, 1)
     D.text(ctx, btn.x + btn.w * 0.5, btn.y + 10, "查看平台成就", 16, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -170,21 +216,19 @@ end
 
 ---@param uiX number
 ---@param uiY number
----@param w number
+---@param rect table 内容区（与 Draw 同一几何）
 ---@param meta MetaState
 ---@return string|nil action
 ---@return integer|nil index
-function Achievements.HitTest(uiX, uiY, w, meta)
-    -- 关闭按钮（与 MetaUI.GetShellLayout 的 close 同几何）。
-    local close = { x = 18 + (w - 36) - 46, y = 108 + 8, w = 36, h = 36 }
-    if Inside(close, uiX, uiY) then return "close", nil end
-    if Inside(GetPlatformBtn(), uiX, uiY) then return "show_platform_achievements", nil end
-    -- 点下方分页区：翻页（多于 1 页时）。
-    local list = meta.achievements or {}
-    local pages = PageCount(#list)
-    if pages > 1 and uiY >= CONTENT.y + CONTENT.h - 84 and uiY <= CONTENT.y + CONTENT.h - 58 then
-        return "ach_next_page", nil
-    end
+function Achievements.HitTest(uiX, uiY, rect, meta)
+    if not Inside(rect, uiX, uiY) then return nil, nil end
+    local list = BuildList(meta)
+    local pages = PageCount(rect, #list)
+    local page = math.max(1, math.min(pages, meta.achPage or 1))
+    local prev, next_ = GetPagerRects(rect)
+    if page > 1 and Inside(prev, uiX, uiY) then return "ach_prev_page", nil end
+    if page < pages and Inside(next_, uiX, uiY) then return "ach_next_page", nil end
+    if Inside(GetPlatformBtn(rect), uiX, uiY) then return "show_platform_achievements", nil end
     return nil, nil
 end
 

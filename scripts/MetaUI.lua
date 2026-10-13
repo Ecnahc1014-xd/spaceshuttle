@@ -6,6 +6,8 @@
 local MetaCatalog = require "MetaCatalog"
 local VehicleShowcase = require "ui.VehicleShowcase"
 local ArtText = require "ui.ArtText"
+-- v0.14.0：成就列表并入「战斗档案」屏——本模块直接调用它的 Draw/HitTest（不注册独立屏）。
+local Achievements = require "ui.Achievements"
 
 local MetaUI = {}
 local showroom = { index = 1, screen = "", key = "default" }
@@ -77,6 +79,11 @@ local trailIndex = 1
 ---@field wheelPrize integer
 ---@field musicEnabled boolean 设置页：BGM 开关
 ---@field sfxEnabled boolean 设置页：音效开关
+---@field passTab string|nil 战斗档案屏页签："pass"（档案）| "ach"（成就）
+---@field achievements table[] 成就列表（id/title/desc/steps/icon/tone/progress/unlocked）
+---@field achUnlocked integer
+---@field achTotal integer
+---@field achPage integer|nil
 ---@field toast string|nil
 
 -- ============================================================================
@@ -463,7 +470,7 @@ local function GetMenuBarLayout()
         fleet  = { x = 18, y = 532, w = 504, h = 84 },
         wallet = { x = 18, y = 632, w = 504, h = 62 },
         daily  = row(732, 80, 3),
-        grow   = row(842, 80, 5),
+        grow   = row(842, 80, 4),
     }
 end
 
@@ -536,9 +543,11 @@ end
 -- 养成收藏：花零件/成长线/付费加速。v0.12.7：用户否决开局首充促销——
 -- 菜单不再用金框「新手礼包」顶替图鉴位；首充只在玩家主动打开钻石商店时出现。
 local function GetGrowDefs(meta)
+    -- v0.14.0：战斗档案屏含成就页签——副标题补一个成就进度锚点（有可领奖励时优先提示）。
+    local achSub = string.format("成就 %d/%d", meta.achUnlocked or 0, meta.achTotal or 0)
     local passSub = meta.piggyMode and string.format("存钱罐 %d 齿轮", meta.piggyGear or 0)
         or (meta.passClaimable and "有奖励可领"
-        or (meta.premiumPass and "双倍奖励" or ("等级 " .. tostring(meta.passLevel or 1))))
+        or (meta.premiumPass and "双倍奖励" or achSub))
     return {
         { action = "open_shop", icon = "shop", label = "车型商店",
           sub = "零件换新车", hot = false, tone = "free" },
@@ -547,10 +556,6 @@ local function GetGrowDefs(meta)
         { action = "open_codex", icon = "codex", label = "敌机图鉴",
           sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
           hot = meta.codexClaimable, tone = "free" },
-        -- v0.13.62：成就入口（本地成就为权威，平台成就只做镜像）。
-        { action = "open_achievements", icon = "premium_wheel_medal", label = "成就",
-          sub = string.format("%d/%d", meta.achUnlocked or 0, meta.achTotal or 0),
-          hot = false, tone = "free" },
         { action = "open_rank", icon = "rank", label = "排行榜",
           sub = "全服最高分", hot = false, tone = "free" },
     }
@@ -1496,17 +1501,58 @@ local function GetPassUnlockRect(content)
     return { x = content.x + content.w - 156, y = content.y + 110, w = 144, h = 42 }
 end
 
+-- v0.14.0：战斗档案屏顶部两个页签——「战斗档案」/「成就」。
+-- 返回页签带（含整条底衬）与两枚页签矩形，绘制与命中同源。
+---@param content table
+---@return table tabPass
+---@return table tabAch
+local function GetPassTabs(content)
+    local w = math.floor((content.w - 8) / 2)
+    local y = content.y + 2
+    return { x = content.x, y = y, w = w, h = 40 },
+           { x = content.x + w + 8, y = y, w = w, h = 40 }
+end
+
+-- 页签下方的实际内容区（档案/成就共用）。
+---@param content table
+---@return table
+local function GetPassBody(content)
+    return { x = content.x, y = content.y + 50, w = content.w, h = content.h - 50 }
+end
+
 local function DrawPass(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "战斗档案",
         meta.piggyMode and "存钱罐" or (meta.premiumPass and "双轨奖励" or "精英档案"), meta)
+
+    -- v0.14.0：成就并入战斗档案——顶部两个页签，切换内容。
+    local tabPass, tabAch = GetPassTabs(content)
+    local achTab = (meta.passTab == "ach")
+    local function Tab(rect, label, active)
+        D.panel(ctx, rect.x, rect.y, rect.w, rect.h, active and C.widget or C.rail,
+            active and C.cyan or C.cyanDim, 6)
+        D.rect(ctx, rect.x + 2, rect.y + 2, rect.w - 4, math.floor(rect.h * 0.42),
+            {255, 255, 255, active and 20 or 10}, 4)
+        if active then D.rect(ctx, rect.x + 10, rect.y + rect.h - 4, rect.w - 20, 3, C.cyan, 1) end
+        D.text(ctx, rect.x + rect.w * 0.5, rect.y + 11, label, 16,
+            active and C.text or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+    Tab(tabPass, "战斗档案", not achTab)
+    Tab(tabAch, string.format("成就 %d/%d", meta.achUnlocked or 0, meta.achTotal or 0), achTab)
+
+    local body = GetPassBody(content)
+    if achTab then
+        Achievements.Draw(ctx, body, meta)
+        return content, close
+    end
+
     nvgSave(ctx)
-    nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
+    nvgIntersectScissor(ctx, body.x, body.y, body.w, body.h)
 
     -- v0.14.x 存钱罐式：档案领满 6 级后改为无限积累、随时领取的存钱罐。
     if meta.piggyMode then
         local gear = meta.piggyGear or 0
-        local hero = {x=content.x, y=content.y+2, w=content.w, h=190}
+        local hero = {x=body.x, y=body.y + 2, w=body.w, h=190}
         D.panel(ctx, hero.x, hero.y, hero.w, hero.h, C.rail,
             meta.premiumPass and C.warnDim or C.cyanDim, 8)
         D.icon(ctx, "premium_pass_crest", hero.x + 14, hero.y + 12, 32)
@@ -1529,7 +1575,7 @@ local function DrawPass(ctx, w, meta)
         return content, close
     end
 
-    local hero = {x=content.x, y=content.y+2, w=content.w, h=160}
+    local hero = {x=body.x, y=body.y+2, w=body.w, h=160}
     D.panel(ctx, hero.x, hero.y, hero.w, hero.h, C.rail,
         meta.premiumPass and C.warnDim or C.cyanDim, 8)
     D.icon(ctx, "premium_pass_crest", hero.x + 14, hero.y + 12, 32)
@@ -1550,7 +1596,7 @@ local function DrawPass(ctx, w, meta)
         D.text(ctx, hero.x + 16, hero.y + 137, "每级零件奖励翻倍", 12, C.dim)
     else
         D.text(ctx, hero.x + 16, hero.y + 119, "免费轨 · 持续作战即可升级", 13, C.dim)
-        local ur = GetPassUnlockRect(content)
+        local ur = GetPassUnlockRect(body)
         local affordable = (not meta.offline) and (meta.gems or 0) >= (meta.premiumPassCost or 100)
         local label = meta.offline and "需联网" or (affordable and
             string.format("%d 钻石解锁", meta.premiumPassCost or 100) or "钻石不足")
@@ -1558,9 +1604,9 @@ local function DrawPass(ctx, w, meta)
     end
 
     -- v0.13.45：补分区标题，与主菜单/钻石商店同语言（青色＝免费产出语义）。
-    SectionHeader(ctx, content.x + 4, content.y + 172, content.w - 8, "里程碑奖励")
+    SectionHeader(ctx, body.x + 4, body.y + 172, body.w - 8, "里程碑奖励")
     for i, item in ipairs(meta.passRewards or {}) do
-        local r = GetPassRewardRect(content, i)
+        local r = GetPassRewardRect(body, i)
         local border = item.claimable and C.cyan or (item.unlocked and C.cyanDim or {C.dim[1], C.dim[2], C.dim[3], 130})
         D.panel(ctx, r.x, r.y, r.w, r.h, C.card, border, 7)
         if item.claimable then D.rect(ctx, r.x, r.y + 8, 3, r.h - 16, C.cyan, 0) end
@@ -1588,15 +1634,28 @@ local function HitTestPass(uiX, uiY, w, meta)
     local content, close = GetShellLayout(w)
     if Inside(close, uiX, uiY) then return "close", nil end
     if not Inside(content, uiX, uiY) then return nil, nil end
+
+    -- v0.14.0：顶部两个页签（战斗档案 / 成就）——切换内容。
+    local tabPass, tabAch = GetPassTabs(content)
+    if Inside(tabPass, uiX, uiY) then return "pass_tab", nil end
+    if Inside(tabAch, uiX, uiY) then return "ach_tab", nil end
+
+    local body = GetPassBody(content)
+    -- 成就页：命中交给 Achievements（列表区在其自身几何内，翻页/平台按钮同源）。
+    if meta.passTab == "ach" then
+        return Achievements.HitTest(uiX, uiY, body, meta)
+    end
+    if not Inside(body, uiX, uiY) then return nil, nil end
+
     -- v0.14.x 存钱罐式：命中唯一的「领取」按钮（几何与 DrawPass 的 cr 同源）。
     if meta.piggyMode then
-        local heroY = content.y + 2
-        local cr = { x = content.x + 16, y = heroY + 144, w = content.w - 32, h = 38 }
+        local heroY = body.y + 2
+        local cr = { x = body.x + 16, y = heroY + 144, w = body.w - 32, h = 38 }
         if (meta.piggyGear or 0) > 0 and Inside(cr, uiX, uiY) then return "claim_gear", nil end
         return nil, nil
     end
     if not meta.premiumPass then
-        local ur = GetPassUnlockRect(content)
+        local ur = GetPassUnlockRect(body)
         if Inside(ur, uiX, uiY)
             and not meta.offline
             and (meta.gems or 0) >= (meta.premiumPassCost or 100) then
@@ -1604,7 +1663,7 @@ local function HitTestPass(uiX, uiY, w, meta)
         end
     end
     for i, item in ipairs(meta.passRewards or {}) do
-        local row = GetPassRewardRect(content, i)
+        local row = GetPassRewardRect(body, i)
         local r = { x = row.x + row.w - 136, y = row.y + 17, w = 120, h = 48 }
         if item.claimable and Inside(r, uiX, uiY) then return "claim_pass", item.level end
     end

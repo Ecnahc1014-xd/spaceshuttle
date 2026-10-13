@@ -69,6 +69,9 @@ local metaSaveInFlight = false
 local highScoreDirty = 0        -- 待提交的最高分（0 表示无待提交）
 local highScoreCommitCooldown = 0  -- 距下次允许提交的秒数（局内周期兜底）
 local HIGH_SCORE_COMMIT_INTERVAL = 15
+-- 上一帧的 game.state：用于「进入结算/菜单态时提交一次」（避免持续态每帧提交）。
+---@type string|nil
+local prevHighScoreState_ = nil
 local RefreshMeta
 
 local function RefreshSnapshots()
@@ -373,6 +376,8 @@ local metaState = {
     achUnlocked = 0,
     achTotal = 0,
     achPage = 1,
+    -- v0.14.0：战斗档案屏内的页签（"pass" 档案 / "ach" 成就）。
+    passTab = "pass",
     rankList = {},
     rankLoading = false,
     rankTotal = 0,
@@ -607,7 +612,7 @@ RefreshMeta = function()
             claimed = level <= claimed,
             claimable = level == claimed + 1 and level <= metaState.passLevel,
         }
-        if #rewards >= 5 then break end
+        if #rewards >= 4 then break end
     end
     metaState.passRewards = rewards
     metaState.passClaimable = metaState.passLevel > claimed
@@ -1134,24 +1139,31 @@ local function HandleMetaAction(action, index)
         OpenMetaScreen("tasks")
     elseif action == "open_rank" then
         OpenMetaScreen("rank")
-    elseif action == "open_achievements" then
-        -- 打开成就面板前重算一次（把最新统计折算进来 + 幂等外发）。
+    elseif action == "pass_tab" then
+        -- v0.14.0：战斗档案屏切到「战斗档案」页签。
+        metaState.passTab = "pass"
+    elseif action == "ach_tab" then
+        -- v0.14.0：战斗档案屏切到「成就」页签——打开前重算一次（折算最新统计 + 幂等外发）。
         AchievementSystem.Refresh()
         RefreshMeta()
+        metaState.passTab = "ach"
         metaState.achPage = 1
-        OpenMetaScreen("achievements")
     elseif action == "show_platform_achievements" then
         -- 跳平台原生成就页（能力不可用时提示）。
         if not AchievementSystem.ShowPlatformAchievements() then
             SetMetaToast("当前环境不支持平台成就页")
         end
+    elseif action == "ach_prev_page" then
+        metaState.achPage = math.max(1, (metaState.achPage or 1) - 1)
     elseif action == "ach_next_page" then
         local total = metaState.achTotal or 0
-        local pages = math.max(1, math.ceil(total / 8))
-        metaState.achPage = (metaState.achPage or 1) % pages + 1
+        local pages = math.max(1, math.ceil(total / 10))
+        metaState.achPage = math.min(pages, (metaState.achPage or 1) + 1)
     elseif action == "open_wheel" then
         OpenMetaScreen("wheel")
     elseif action == "open_pass" then
+        -- v0.14.0：打开战斗档案屏默认落在「战斗档案」页签。
+        metaState.passTab = "pass"
         OpenMetaScreen("pass")
     elseif action == "claim_pass" and index then
         local reward = PlayerData.ClaimPass(index, metaState.premiumPass and 2 or 1)
@@ -1609,9 +1621,9 @@ function ClientMain.Start(opts)
     Settings.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("settings", Settings.Draw, Settings.HitTest)
     MetaUI.RegisterScreen("reset_confirm", Settings.DrawConfirm, Settings.HitTestConfirm)
-    -- v0.13.62：成就面板同源注册（本地成就为权威，平台成就只做镜像）。
+    -- v0.14.0：成就列表已并入「战斗档案」屏（MetaUI.DrawPass 直接调用），不再单独注册屏；
+    -- 这里只注入依赖（本地成就为权威，平台成就只做镜像）。
     Achievements.Init(MetaUI.GetDeps())
-    MetaUI.RegisterScreen("achievements", Achievements.Draw, Achievements.HitTest)
 
     PlayerData.Load()
     -- v0.13.60：把存档里的音乐/音效开关作用到音频总控（AudioDirector 已在 Backend.Init 就绪）。
@@ -1768,16 +1780,20 @@ function HandleUpdate(eventType, eventData)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
-    -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及局内每
+    -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及每
     -- HIGH_SCORE_COMMIT_INTERVAL 秒的兜底才真正写一次云（配额 300 次/分钟）。
+    -- ⚠️ 结算/菜单是「持续态」——只在**进入**这些态的那一帧提交一次，不能每帧提交，
+    --    否则写失败（error 回调会重新标脏）会每帧重试，形成远超配额的写风暴。
     if not GameMode.IsOffline() then
         if snapshot.highScore and snapshot.highScore > lastSavedHighScore then
             MarkHighScoreDirty(snapshot.highScore)
         end
         highScoreCommitCooldown = highScoreCommitCooldown - dt
-        local leavingRun = snapshot.state == "gameover" or snapshot.state == "stagewin"
-            or snapshot.state == "menu"
-        if leavingRun or highScoreCommitCooldown <= 0 then
+        local state = snapshot.state
+        local enteredEndState = state ~= prevHighScoreState_
+            and (state == "gameover" or state == "stagewin" or state == "menu")
+        prevHighScoreState_ = state
+        if enteredEndState or highScoreCommitCooldown <= 0 then
             CommitHighScore()
         end
     end
