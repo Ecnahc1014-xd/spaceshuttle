@@ -38,6 +38,9 @@ local DATA_VERSION = 1
 ---@field itemStock table<string, integer> 局内道具永久库存（选关界面花零件购买）
 ---@field musicEnabled boolean 设置页：BGM 开关（默认开）
 ---@field sfxEnabled boolean 设置页：音效开关（默认开）
+---@field achProgress table<string, integer> 成就进度（多步成就累计值）
+---@field achUnlocked table<string, boolean> 成就是否已达成（本地权威）
+---@field achPushed table<string, integer> 已外发平台的步数（幂等外发用，避免重复上报）
 ---@field stats table<string, integer> 通用计数器（复活次数、广告观看等）
 
 ---@return PlayerDataState
@@ -72,6 +75,9 @@ local function NewState()
         itemStock = {},
         musicEnabled = true,
         sfxEnabled = true,
+        achProgress = {},
+        achUnlocked = {},
+        achPushed = {},
         stats = {},
     }
 end
@@ -185,6 +191,9 @@ function PlayerData.Load()
     -- 设置页开关：缺省（旧档/首次）为开；显式 false 才关。
     state.musicEnabled = d.musicEnabled ~= false
     state.sfxEnabled   = d.sfxEnabled ~= false
+    state.achProgress  = AsIntMap(d.achProgress)
+    state.achUnlocked  = AsBoolMap(d.achUnlocked)
+    state.achPushed    = AsIntMap(d.achPushed)
     state.stats        = AsIntMap(d.stats)
     local skins = AsBoolMap(d.skins)
     skins.default = true
@@ -315,6 +324,16 @@ function PlayerData.ImportFromCloud(text)
     -- 音乐/音效开关是纯偏好：云端显式布尔才覆盖本地（旧档无此字段则保留本机）。
     if type(d.musicEnabled) == "boolean" then state.musicEnabled = d.musicEnabled end
     if type(d.sfxEnabled) == "boolean" then state.sfxEnabled = d.sfxEnabled end
+    -- 成就：进度取更大值、解锁取并集、已外发步数取更大值（避免换设备重复上报平台）。
+    for k, v in pairs(AsIntMap(d.achProgress)) do
+        local cur = state.achProgress[k] or 0
+        if v > cur then state.achProgress[k] = v end
+    end
+    for k in pairs(AsBoolMap(d.achUnlocked)) do state.achUnlocked[k] = true end
+    for k, v in pairs(AsIntMap(d.achPushed)) do
+        local cur = state.achPushed[k] or 0
+        if v > cur then state.achPushed[k] = v end
+    end
     local cloudSignTotal = math.max(0, AsInt(d.signInTotal))
     state.signInTotal = math.max(state.signInTotal, cloudSignTotal)
     print("[PlayerData] cloud merged parts=" .. state.parts)
@@ -910,6 +929,67 @@ end
 ---@return integer
 function PlayerData.GetStat(key)
     return state.stats[key] or 0
+end
+
+-- ============================================================================
+-- 成就（本地权威 + 幂等外发平台）
+-- 本地 `achProgress/achUnlocked` 是唯一权威；平台只做镜像，外发失败不影响本地。
+-- ============================================================================
+
+---@param id string
+---@return integer 当前进度
+function PlayerData.GetAchievementProgress(id)
+    return state.achProgress[id] or 0
+end
+
+---@param id string
+---@return boolean
+function PlayerData.IsAchievementUnlocked(id)
+    return state.achUnlocked[id] == true
+end
+
+---@return integer 已解锁成就数
+function PlayerData.AchievementCount()
+    local n = 0
+    for _ in pairs(state.achUnlocked) do n = n + 1 end
+    return n
+end
+
+---@param id string
+---@return integer 已外发平台的步数（幂等外发用）
+function PlayerData.GetAchievementPushed(id)
+    return state.achPushed[id] or 0
+end
+
+-- 记录一次成就进度。`absolute=true` 表示 value 是绝对值（取 max），否则按增量累加。
+-- `total` 为达成所需步数（1 表示单步成就）。返回是否**本次新达成**（true = 刚解锁）。
+---@param id string
+---@param value integer
+---@param total integer
+---@param absolute boolean|nil
+---@return boolean newlyUnlocked
+function PlayerData.SetAchievementProgress(id, value, total, absolute)
+    total = math.max(1, math.floor(total or 1))
+    value = math.max(0, math.floor(value or 0))
+    local cur = state.achProgress[id] or 0
+    local next_ = absolute and math.max(cur, value) or (cur + value)
+    if next_ > total then next_ = total end
+    state.achProgress[id] = next_
+    if state.achUnlocked[id] then return false end
+    if next_ >= total then
+        state.achUnlocked[id] = true
+        print("[PlayerData] achievement unlocked: " .. id)
+        return true
+    end
+    return false
+end
+
+-- 标记「已外发到平台的步数」，用于幂等外发（只上报新增部分）。
+---@param id string
+---@param steps integer
+function PlayerData.MarkAchievementPushed(id, steps)
+    local cur = state.achPushed[id] or 0
+    if steps > cur then state.achPushed[id] = steps end
 end
 
 ---@param value integer

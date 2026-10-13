@@ -3631,6 +3631,8 @@ function Game.GetSnapshot()
     s.wavesPerStage = StageCatalog.WAVES_PER_STAGE
     s.stageSubtitle = StageCatalog.GetLayoutSubtitle(stage)
     s.stageResult = stageResult
+    -- v0.13.62：本局是否击败过首领（成就「斩首行动」用；只在 ResetGame 复位）。
+    s.bossDefeated = bossDefeated
     -- v0.13.60：失败过渡（gameover 动画的计时基准 + 是否可复活）。
     s.defeatAt = Game._defeat.at
     s.defeatRevive = Game._defeat.revive

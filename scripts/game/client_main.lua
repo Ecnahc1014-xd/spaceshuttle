@@ -16,6 +16,7 @@ local MetaCatalog = require "MetaCatalog"
 local AircraftPixelData = require "AircraftPixelData"
 local StageCatalog = require "StageCatalog"
 local TalentCatalog = require "TalentCatalog"
+local AchievementCatalog = require "AchievementCatalog"
 local GameMode = require "GameMode"
 local NetClient = require "network.Client"
 local MetaUI = require "MetaUI"
@@ -25,6 +26,8 @@ local ItemShop = require "ui.ItemShop"
 local TalentTree = require "ui.TalentTree"
 local TestModePrompt = require "ui.TestModePrompt"
 local Settings = require "ui.Settings"
+local Achievements = require "ui.Achievements"
+local AchievementSystem = require "AchievementSystem"
 local StageTransition = require "ui.StageTransition"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
@@ -61,6 +64,11 @@ local CLOUD_META_KEY = "player_meta"
 local metaCloudSynced = false
 local metaRevision = 0
 local metaSaveInFlight = false
+-- 最高分云写合并：局内只累计待提交值，局末 / 回菜单 / 周期兜底才真正写一次，
+-- 避免「每击碎一块砖刷新最高分就写一次云」（云写配额 300 次/分钟）。
+local highScoreDirty = 0        -- 待提交的最高分（0 表示无待提交）
+local highScoreCommitCooldown = 0  -- 距下次允许提交的秒数（局内周期兜底）
+local HIGH_SCORE_COMMIT_INTERVAL = 15
 local RefreshMeta
 
 local function RefreshSnapshots()
@@ -75,24 +83,49 @@ end
 local function SaveHighScoreToCloud(score)
     local n = math.floor(tonumber(score) or 0)
     if n <= lastSavedHighScore then return end
-    lastSavedHighScore = n
     Presentation.SetCloudStatus("syncing")
     local okCall = pcall(function()
         clientCloud:SetInt(CLOUD_HIGH_SCORE_KEY, n, {
             ok = function()
+                -- 只有确认写入成功才抬高「已知云端最高分」，失败时保持原值以便重试。
+                lastSavedHighScore = math.max(lastSavedHighScore, n)
                 Presentation.SetCloudStatus("ok")
                 print("[Main] cloud high_score saved=" .. tostring(n))
             end,
             error = function(code, reason)
+                -- 写失败：重新标脏，等下一次提交重试（离线/配额超限不丢分）。
+                if n > highScoreDirty then highScoreDirty = n end
                 Presentation.SetCloudStatus("unavailable")
                 print("[Main] cloud save failed: " .. tostring(reason) .. " code=" .. tostring(code))
             end,
         })
     end)
     if not okCall then
+        if n > highScoreDirty then highScoreDirty = n end
         Presentation.SetCloudStatus("unavailable")
         print("[Main] clientCloud unavailable, keep local high score")
     end
+end
+
+-- 记录「待提交的最高分」：局内每次刷新只更新内存值，不立刻写云。
+local function MarkHighScoreDirty(score)
+    local n = math.floor(tonumber(score) or 0)
+    if n > highScoreDirty and n > lastSavedHighScore then
+        highScoreDirty = n
+    end
+end
+
+-- 提交待写的最高分（局末 / 回菜单 / 周期兜底调用）。
+-- 无论是否真有待提交值都重置冷却，避免菜单态每帧重试（配额超限时形成写风暴）。
+local function CommitHighScore()
+    highScoreCommitCooldown = HIGH_SCORE_COMMIT_INTERVAL
+    if highScoreDirty <= lastSavedHighScore then
+        highScoreDirty = 0
+        return
+    end
+    local pending = highScoreDirty
+    highScoreDirty = 0
+    SaveHighScoreToCloud(pending)
 end
 
 local function LoadHighScoreFromCloud()
@@ -335,6 +368,11 @@ local metaState = {
     codexUnlocked = 0,
     codexTotal = 0,
     codexClaimable = false,
+    -- 成就面板（v0.13.62）：列表 + 已解锁数 + 翻页下标。
+    achievements = {},
+    achUnlocked = 0,
+    achTotal = 0,
+    achPage = 1,
     rankList = {},
     rankLoading = false,
     rankTotal = 0,
@@ -466,6 +504,23 @@ RefreshMeta = function()
     metaState.aircraft = aircraftSilhouettes
     metaState.codexUnlocked = PlayerData.CodexCount()
     metaState.codexTotal = MetaCatalog.GetCodexTotal()
+
+    -- v0.13.62：成就面板数据（本地权威）——列表 + 已解锁数，供 Achievements 面板只读渲染。
+    local achList = {}
+    local achUnlockedCount = 0
+    for _, def in ipairs(AchievementCatalog.GetAll()) do
+        local unlocked = PlayerData.IsAchievementUnlocked(def.id)
+        if unlocked then achUnlockedCount = achUnlockedCount + 1 end
+        achList[#achList + 1] = {
+            id = def.id, title = def.title, desc = def.desc, steps = def.steps,
+            icon = def.icon, tone = def.tone,
+            progress = PlayerData.GetAchievementProgress(def.id),
+            unlocked = unlocked,
+        }
+    end
+    metaState.achievements = achList
+    metaState.achUnlocked = achUnlockedCount
+    metaState.achTotal = #achList
 
     -- 选关界面数据（v0.13.4）：逐关星级 + 已解锁范围。
     -- v0.13.13：关卡无限——只统计到「最高已解锁关」，列表随进度增长。
@@ -1079,6 +1134,21 @@ local function HandleMetaAction(action, index)
         OpenMetaScreen("tasks")
     elseif action == "open_rank" then
         OpenMetaScreen("rank")
+    elseif action == "open_achievements" then
+        -- 打开成就面板前重算一次（把最新统计折算进来 + 幂等外发）。
+        AchievementSystem.Refresh()
+        RefreshMeta()
+        metaState.achPage = 1
+        OpenMetaScreen("achievements")
+    elseif action == "show_platform_achievements" then
+        -- 跳平台原生成就页（能力不可用时提示）。
+        if not AchievementSystem.ShowPlatformAchievements() then
+            SetMetaToast("当前环境不支持平台成就页")
+        end
+    elseif action == "ach_next_page" then
+        local total = metaState.achTotal or 0
+        local pages = math.max(1, math.ceil(total / 8))
+        metaState.achPage = (metaState.achPage or 1) % pages + 1
     elseif action == "open_wheel" then
         OpenMetaScreen("wheel")
     elseif action == "open_pass" then
@@ -1539,6 +1609,9 @@ function ClientMain.Start(opts)
     Settings.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("settings", Settings.Draw, Settings.HitTest)
     MetaUI.RegisterScreen("reset_confirm", Settings.DrawConfirm, Settings.HitTestConfirm)
+    -- v0.13.62：成就面板同源注册（本地成就为权威，平台成就只做镜像）。
+    Achievements.Init(MetaUI.GetDeps())
+    MetaUI.RegisterScreen("achievements", Achievements.Draw, Achievements.HitTest)
 
     PlayerData.Load()
     -- v0.13.60：把存档里的音乐/音效开关作用到音频总控（AudioDirector 已在 Backend.Init 就绪）。
@@ -1546,6 +1619,8 @@ function ClientMain.Start(opts)
     RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
     -- 开局自动拥有初始车的「允许局内出场」节点（幂等；必须在 Load 之后）。
     PlayerData.EnsureAutoOwnedTalents(TalentCatalog.AUTO_OWNED)
+    -- v0.13.62：成就全量重算（覆盖旧档/云合并后补算 + 补发平台外发；幂等）。
+    AchievementSystem.Refresh()
     -- v0.13.5：天赋提供者——每次开局（选关/下一关/重开）Game 自动拉取最新解锁集合。
     Game.SetTalentProvider(function() return PlayerData.GetTalents() end)
     metaDate = os.date("%Y-%m-%d")
@@ -1693,8 +1768,18 @@ function HandleUpdate(eventType, eventData)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
-    if not GameMode.IsOffline() and snapshot.highScore and snapshot.highScore > lastSavedHighScore then
-        SaveHighScoreToCloud(snapshot.highScore)
+    -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及局内每
+    -- HIGH_SCORE_COMMIT_INTERVAL 秒的兜底才真正写一次云（配额 300 次/分钟）。
+    if not GameMode.IsOffline() then
+        if snapshot.highScore and snapshot.highScore > lastSavedHighScore then
+            MarkHighScoreDirty(snapshot.highScore)
+        end
+        highScoreCommitCooldown = highScoreCommitCooldown - dt
+        local leavingRun = snapshot.state == "gameover" or snapshot.state == "stagewin"
+            or snapshot.state == "menu"
+        if leavingRun or highScoreCommitCooldown <= 0 then
+            CommitHighScore()
+        end
     end
 
     -- 跨午夜时同步刷新菜单上的签到/任务/补给/转盘状态。
@@ -1731,6 +1816,10 @@ function HandleUpdate(eventType, eventData)
         end
         PlayerData.AddDailyProgress("reach_wave", math.floor(snapshot.wave or 1), true)
         if firstFinish then PlayerData.AddDailyProgress("play_runs", 1) end
+        -- v0.13.62：成就统计计数器（本地权威）——每局完成 +1、通关 +1、击败首领 +1。
+        if firstFinish then PlayerData.AddStat("runsTotal", 1) end
+        if snapshot.state == "stagewin" then PlayerData.AddStat("stageWins", 1) end
+        if snapshot.bossDefeated then PlayerData.AddStat("bossKills", 1) end
         PlayerData.SetHighScore(math.floor(snapshot.highScore or 0))
         if snapshot.state == "stagewin" and snapshot.stageResult then
             PlayerData.RecordStageResult(snapshot.stageResult.stage, snapshot.stageResult.stars)
@@ -1744,6 +1833,9 @@ function HandleUpdate(eventType, eventData)
             end
         end
         if bonus > 0 then PlayerData.AddParts(bonus) end
+        -- v0.13.62：结算后重算成就（所有统计已更新），并把新解锁外发平台（幂等）。
+        local newAch = AchievementSystem.Refresh()
+        if newAch > 0 then metaState.toast = string.format("解锁 %d 个成就！", newAch) end
         PlayerData.Save()
         SavePlayerDataToCloud()
         RefreshMeta()

@@ -3,6 +3,8 @@
 > AI 每次 POST-2 git commit 后自动追加到表头。最新版本在最上面。
 > 用户可直接说"回退到 vX.X.X"。
 
+| preload-corrupt-manifest（修复） | 2026-10-13 | **修「黑屏 + Module not found: Scene3DBackend」——构建清单与产物哈希错配**（平台报 20 条/6 类：`LoadPreloadResources` → `Download failed: 1 file(s) (Downloaded file is incomplete or corrupted)黑屏` → `Module not found: Scene3DBackend` → `Execute Lua function failed`）。**真因**：清单 `manifest-d8030526.json` 记 `Scene3DBackend.lua` 为 `hash=8d87062e, size=155296`，产物实为 **155424**（=源码）→ 运行时按 CRC32+size 校验判「incomplete or corrupted」→ `#blocking` 资源拿不到 → 黑屏。成因：**构建时有并发会话正在写该文件**（早段读中间态算哈希、后段复制最终态）。**修法**：①移出无引用垃圾参考图 `assets/image/OIP (1).webp`、`assets/image/下载 (3).webp`（+`.meta`，带空格/括号/中文名、无代码引用，被 `resources.json` 的 `**` 全量入包）；②重新构建（build 25，client=0f370e6e）。**验证**：全清单完整性校验 **217 文件全部存在、0 处 size 不匹配**（旧清单 1 处错配）；`Scene3DBackend.lua` 实测 `crc32=8d87062e` 与 hash 精确匹配；垃圾 webp 已消失（219→217）；本地真实启动零 `Module not found`/`Execute Lua function failed`/`LoadChunk failed`。官方多人 build + 预览上传 ✅。抗体 AB-295/296。 |
+
 
 
 

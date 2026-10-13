@@ -463,7 +463,7 @@ local function GetMenuBarLayout()
         fleet  = { x = 18, y = 532, w = 504, h = 84 },
         wallet = { x = 18, y = 632, w = 504, h = 62 },
         daily  = row(732, 80, 3),
-        grow   = row(842, 80, 4),
+        grow   = row(842, 80, 5),
     }
 end
 
@@ -547,6 +547,10 @@ local function GetGrowDefs(meta)
         { action = "open_codex", icon = "codex", label = "敌机图鉴",
           sub = string.format("收录 %d/%d", meta.codexUnlocked or 0, meta.codexTotal or 0),
           hot = meta.codexClaimable, tone = "free" },
+        -- v0.13.62：成就入口（本地成就为权威，平台成就只做镜像）。
+        { action = "open_achievements", icon = "premium_wheel_medal", label = "成就",
+          sub = string.format("%d/%d", meta.achUnlocked or 0, meta.achTotal or 0),
+          hot = false, tone = "free" },
         { action = "open_rank", icon = "rank", label = "排行榜",
           sub = "全服最高分", hot = false, tone = "free" },
     }

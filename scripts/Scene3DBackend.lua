@@ -1278,6 +1278,77 @@ local function DrawPullHint(ctx, game)
     nvgRestore(ctx)
 end
 
+-- 空仓长按加速提示。玩家手上没有待发车（activeBall == nil）时，敌方「目标线」
+-- （dangerY）与底部弹弓之间的那片空间是空的——在这块留白里打出「长按屏幕 加速全局」，
+-- 把等车回收的空窗期变成一个可用操作，同时把「空仓能干什么」讲清楚。
+-- 纯表现层，只读快照 canHoldSpeed / dangerY / slingX / slingY / elapsed，不触达规则层。
+-- ⚠️ 与新手手势提示（showPullHint）互斥：首局教学优先，避免两段提示叠在同一片区域。
+-- ⚠️ 挂 uiFx 表而非模块级 local：本文件顶层 local 已满 200（Lua 硬上限，超了
+-- LoadChunk failed 全屏黑），这是唯一安全的加法（见 AB-265/AB-268）。
+
+-- 几何纯函数（不画图）：绘制与探针共用同一来源，改一处两处同步。
+uiFx.holdHintLayout = function(game)
+    local out = { visible = false }
+    if not game or not game.canHoldSpeed or game.showPullHint then return out end
+    local _, dangerScreenY = ProjectGamePoint(0, game.dangerY)
+    local _, slingScreenY = ProjectGamePoint(game.slingX or DESIGN_W * 0.5,
+        game.slingY or (BOTTOM_DOCK_Y - 16))
+    -- 可用带 = 目标线之下 → 弹弓车上方留白。带太窄就整段不画（宁可不提示，也不压车）。
+    local topY = dangerScreenY + 44
+    local bottomLimit = slingScreenY - 96
+    if bottomLimit - topY < 104 then return out end
+    out.visible = true
+    out.cx = DESIGN_W * 0.5
+    out.ringY = topY + 26
+    out.topY = topY
+    out.bottomLimit = bottomLimit
+    return out
+end
+
+-- 挂 Backend 表（不加顶层 local）供探针按同一来源断言几何。
+Backend.HoldHintLayout = uiFx.holdHintLayout
+
+uiFx.holdHint = function(ctx, game)
+    local L = uiFx.holdHintLayout(game)
+    if not L.visible then return end
+
+    local cx, ringY = L.cx, L.ringY
+    -- 1.4s 一轮的按压脉冲（由 elapsed 派生，确定性非随机，暂停不抖）。
+    local t = (game.elapsed or 0) % 1.4
+    local pulse = t / 1.4
+
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, HUD_HEIGHT, DESIGN_W, BOTTOM_DOCK_Y - HUD_HEIGHT - 4)
+
+    -- 按压指示环：外环外扩淡出 + 内核常亮，读作「按住这里」。
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, ringY, 18 + 12 * pulse)
+    nvgStrokeColor(ctx, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], math.floor(190 * (1 - pulse))))
+    nvgStrokeWidth(ctx, 2.2)
+    nvgStroke(ctx)
+
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, ringY, 16)
+    nvgStrokeColor(ctx, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 120))
+    nvgStrokeWidth(ctx, 1.4)
+    nvgStroke(ctx)
+
+    nvgBeginPath(ctx)
+    nvgCircle(ctx, cx, ringY, 6.5)
+    nvgFillColor(ctx, nvgRGBA(C.cyan[1], C.cyan[2], C.cyan[3], 235))
+    nvgFill(ctx)
+
+    -- 文案随脉冲呼吸，但下限保持 78% —— 提示要一直读得清，不能闪到看不清。
+    local textAlpha = math.floor(255 * (0.78 + 0.22 * math.sin(pulse * math.pi * 2)))
+    DrawPixelText(ctx, cx, ringY + 30, "长按屏幕 加速全局", 17,
+        {C.cyan[1], C.cyan[2], C.cyan[3], textAlpha}, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawPixelText(ctx, cx, ringY + 54, "空仓时 2 倍速", 12,
+        {C.dim[1], C.dim[2], C.dim[3], math.floor(textAlpha * 0.8)},
+        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    nvgRestore(ctx)
+end
+
 -- ============================================================================
 -- v0.12.5：局内道具改右上角竖列（默认收起标签 ⇄ 展开三槽）。
 -- 视觉几何与命中判定共用 GetItemPanelLayout，禁止在 main.lua 另写常量。
@@ -2617,6 +2688,7 @@ local function RenderOverlay(game, presentation, meta)
             DrawAmmoSlots(vg_, game, presentation)
             DrawItemSlots(vg_, game)
             uiFx.battle.DrawEnchant(vg_, game, Backend.GetEnchantRect())
+            uiFx.holdHint(vg_, game)
             DrawPullHint(vg_, game)
         end) then
             RunOverlayStage("dock-fallback", function() DrawMinimalDockFallback(game) end)
