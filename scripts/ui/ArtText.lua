@@ -1,105 +1,105 @@
 -- ui/ArtText.lua
--- 艺术字标题（按钮 / 选项卡 / 分区标题）——AI 生成 + 0718-pixelimage-aigc 管线后处理的像素字标。
---
--- 为什么单独成模块：
---   ① `Scene3DBackend.lua` 顶层 local 已逼近 200 上限（AB-166），不能再往里塞图集句柄；
---   ② 字标要在后端（CTA / 暂停按钮）与 MetaUI（分区标题 / 商店分页标签）两处复用，
---      放独立模块只加一次 require，两边都拿得到；
---   ③ 句柄**懒加载**（首次 Draw 时才 nvgCreateImage）——与 `ui/DigitFont.lua` 同契约，
---      免去「后端暴露 vg」的访问器，也避免注入顺序问题（NanoVG 上下文是进程级单例，ctx 即 vg）。
---
--- 素材规格（走 0718 管线，见该 skill §5.1）：
---   · 母版高度 = 运行时显示高度（**1× 最近邻**，禁止非整数缩放，否则像素糊）；
---   · 宽度随字数浮动，逐图记录，绘制时居中（字标是「完整成品」不是 9-slice）；
---   · 两色母版：亮芯=白(255) + 近黑轮廓(16,19,31)。运行时用 `nvgImagePatternTinted`
---     **乘法染色**：乘 `C.ink` → 深字（配青/绿/金实心按钮）；乘 `C.cyan` → 青字（配深色底）。
---     一份素材同时适配「亮底深字」和「暗底亮字」，不必为每个语义各出一套图。
---
--- ⚠️ 全部为**可选资源**：任何一张加载失败只跳过该键，调用方回退到 zpix 文本绘制，
---    绝不让缺图影响启动或布局（同 v0.11.4 手势图 / v0.12.8 字标契约）。
+-- 金属艺术字共用模块。布局使用成品母版尺寸，不使用 DWP 占位纹理的尺寸。
+-- 图片下载完成后才注册 NanoVG 句柄；未就绪/缺图时调用方回退 zpix。
+-- 金属灰阶默认用白 tint 保留明暗，语义色由按钮底色和描边承载。
 
 local ArtText = {}
 
--- 键 → { path, h }。h = 母版高度 = 显示高度（1× 最近邻）。
+-- 换素材时同步更新实测母版尺寸；起始战斗字标保留用户成品。
 local SPECS = {
-    startbattle = { path = "image/ui_tt_startbattle.png", h = 44 },
-    daily       = { path = "image/ui_tt_daily.png",       h = 26 },
-    collect     = { path = "image/ui_tt_collect.png",     h = 26 },
-    vehicle     = { path = "image/ui_tt_vehicle.png",     h = 20 },
-    trail       = { path = "image/ui_tt_trail.png",       h = 20 },
-    resume      = { path = "image/ui_tt_resume.png",      h = 30 },
-    menu        = { path = "image/ui_tt_menu.png",        h = 30 },
-    stage       = { path = "image/ui_tt_stage.png",       h = 30 },
+    startbattle = { path = "image/ui_tt_startbattle.png", w = 407, h = 128 },
+    daily       = { path = "image/ui_tt_daily.png",       w = 88, h = 26 },
+    collect     = { path = "image/ui_tt_collect.png",     w = 77, h = 26 },
+    vehicle     = { path = "image/ui_tt_vehicle.png",     w = 71, h = 20 },
+    trail       = { path = "image/ui_tt_trail.png",       w = 82, h = 20 },
+    resume      = { path = "image/ui_tt_resume.png",      w = 87, h = 30 },
+    menu        = { path = "image/ui_tt_menu.png",        w = 128, h = 30 },
+    stage       = { path = "image/ui_tt_stage.png",       w = 99, h = 30 },
 }
 
 ---@type table<string, {img: integer, w: number, h: number}>
 local images_ = {}
 local loaded_ = false
+local lifetime_ = {}
 
-local function SpecCount()
-    local c = 0
-    for _ in pairs(SPECS) do c = c + 1 end
-    return c
+local function LoadImage(ctx, key, spec)
+    local ok, img = pcall(function()
+        return nvgCreateImage(ctx, spec.path, NVG_IMAGE_NEAREST)
+    end)
+    if not ok or type(img) ~= "number" or img <= 0 then
+        print("[ArtText] unavailable: " .. key)
+        return
+    end
+    local iw, ih = nvgImageSize(ctx, img)
+    -- 正数句柄或正数尺寸并不证明 DWP 真图就绪（可能仍是占位图）。
+    if iw ~= spec.w or ih ~= spec.h then
+        nvgDeleteImage(ctx, img)
+        print("[ArtText] size not ready: " .. key .. " actual=" .. tostring(iw)
+            .. "x" .. tostring(ih) .. " expected=" .. spec.w .. "x" .. spec.h)
+        return
+    end
+    images_[key] = { img = img, w = spec.w, h = spec.h }
+    print("[ArtText] ready: " .. key .. " " .. spec.w .. "x" .. spec.h)
 end
 
 local function LoadAll(ctx)
     loaded_ = true
-    local n = 0
+    local lifetime = lifetime_
     for key, spec in pairs(SPECS) do
-        local ok, img = pcall(function()
-            return nvgCreateImage(ctx, spec.path, NVG_IMAGE_NEAREST)
-        end)
-        if ok and type(img) == "number" and img > 0 then
-            -- 母版宽 = 高 × 内容纵横比；从图上读回真实宽高，避免手抄错。
-            local iw, ih = nvgImageSize(ctx, img)
-            if type(iw) == "number" and iw > 0 and type(ih) == "number" and ih > 0 then
-                images_[key] = { img = img, w = iw, h = ih }
-                n = n + 1
-            end
+        -- 官方异步接口等真实资源完成，不轮询下载、不每帧重建图片。
+        if type(cache.GetResourceAsync) == "function" then
+            local ok, err = pcall(function()
+                cache:GetResourceAsync("Texture2D", spec.path, function(resource)
+                    if lifetime ~= lifetime_ then return end
+                    if resource then
+                        LoadImage(ctx, key, spec)
+                    else
+                        print("[ArtText] download unavailable: " .. key)
+                    end
+                end)
+            end)
+            if not ok then print("[ArtText] async unavailable: " .. key .. " " .. tostring(err)) end
+        else
+            -- 本地工具运行时没有 DWP 扩展；仍校验母版尺寸，不能接受占位尺寸。
+            LoadImage(ctx, key, spec)
         end
     end
-    print("[ArtText] pixel titles loaded=" .. n .. "/" .. SpecCount())
 end
 
--- 公开预加载入口：宿主（Backend.Init）在拿到 vg 后调用一次，
--- 让 Has/Width/Height 从启动起就可靠。⚠️ 必须显式调用——`Has()` 本身不触发加载，
--- 否则「Has() 判 false → 走 zpix 回退」会在首次 Draw 之前一直成立（表现为
--- 「有时是艺术字、有时是文字」的间歇性错误）。
 ---@param ctx any
 function ArtText.Ensure(ctx)
     if not loaded_ then LoadAll(ctx) end
 end
 
 ---@param key string
----@return boolean 该键是否有可用图集
+---@return boolean
 function ArtText.Has(key)
     return images_[key] ~= nil
 end
 
----@return number 母版宽度（设计像素）；无图返回 0
+---@param key string
+---@return number
 function ArtText.Width(key)
-    local it = images_[key]
-    return it and it.w or 0
+    local spec = SPECS[key]
+    return spec and spec.w or 0
 end
 
----@return number 母版高度（设计像素）；无图返回 0
+---@param key string
+---@return number
 function ArtText.Height(key)
-    local it = images_[key]
-    return it and it.h or 0
+    local spec = SPECS[key]
+    return spec and spec.h or 0
 end
 
--- 画一张字标：以 `cx` 水平居中、`topY` 为顶。tint 为 0..255 的 {r,g,b}（可带 a）。
--- `scale` 缺省 1（母版原尺寸）；>1 放大铺满按钮。
--- `stretchX` 缺省 1；>1 **只横向拉伸**（字更宽，纵向不变）——用于「占满宽按钮」的观感。
--- 返回 true 表示画了；false 表示无图（调用方自行回退 zpix 文本）。
+-- 横向拉伸只改变绘制矩形，绝不修改素材像素。
 ---@param ctx any
 ---@param key string
 ---@param cx number
 ---@param topY number
----@param tint integer[]|nil 染色（默认白）
----@param alpha number|nil 0..1
----@param scale number|nil 缩放倍数（默认 1）
----@param stretchX number|nil 横向拉伸倍数（默认 1）
+---@param tint integer[]|nil
+---@param alpha number|nil
+---@param scale number|nil
+---@param stretchX number|nil
 ---@return boolean drawn
 function ArtText.Draw(ctx, key, cx, topY, tint, alpha, scale, stretchX)
     ArtText.Ensure(ctx)
@@ -121,14 +121,13 @@ function ArtText.Draw(ctx, key, cx, topY, tint, alpha, scale, stretchX)
     return true
 end
 
--- 在矩形内水平居中绘制（按钮 / 卡片内部用）。`centerY` 为期望的垂直中心。
 ---@param ctx any
 ---@param key string
----@param r table {x,y,w,h}
+---@param r table
 ---@param tint integer[]|nil
----@param yOffset number|nil 相对垂直中心的微调
----@param scale number|nil 缩放倍数（默认 1）
----@param stretchX number|nil 横向拉伸倍数（默认 1）
+---@param yOffset number|nil
+---@param scale number|nil
+---@param stretchX number|nil
 ---@return boolean drawn
 function ArtText.DrawCentered(ctx, key, r, tint, yOffset, scale, stretchX)
     ArtText.Ensure(ctx)
@@ -140,31 +139,28 @@ function ArtText.DrawCentered(ctx, key, r, tint, yOffset, scale, stretchX)
     return ArtText.Draw(ctx, key, r.x + r.w * 0.5, topY, tint, 1, s, stretchX)
 end
 
--- 计算「铺满高度」的缩放倍数：让字标高约等于 `targetH`，返回 缩放 + 宽 + 高。
 ---@param key string
 ---@param targetH number
 ---@return number scale, number w, number h
 function ArtText.FitHeight(key, targetH)
-    local it = images_[key]
-    if not it then return 1, 0, 0 end
-    local s = targetH / it.h
-    return s, it.w * s, it.h * s
+    local spec = SPECS[key]
+    if not spec then return 1, 0, 0 end
+    local s = targetH / spec.h
+    return s, spec.w * s, spec.h * s
 end
 
--- 计算「铺满宽度」的横向拉伸倍数：让字标宽约等于 `targetW`（配合 scale 用）。
 ---@param key string
 ---@param targetW number
----@param scale number 已确定的纵向缩放
+---@param scale number
 ---@return number stretchX
 function ArtText.FitWidth(key, targetW, scale)
-    local it = images_[key]
-    if not it then return 1 end
-    local baseW = it.w * (scale or 1)
+    local spec = SPECS[key]
+    if not spec then return 1 end
+    local baseW = spec.w * (scale or 1)
     if baseW <= 0 then return 1 end
     return targetW / baseW
 end
 
--- 仅供探针/验收：返回已加载的键数。
 ---@return integer
 function ArtText.LoadedCount()
     local c = 0
@@ -172,8 +168,13 @@ function ArtText.LoadedCount()
     return c
 end
 
--- 仅供探针：清空并允许重新加载（正常运行时不需要）。
-function ArtText._Reset()
+-- 宿主删除 ctx 前调用；使迟到下载回调失效，避免句柄跨 ctx 复用。
+---@param ctx any|nil
+function ArtText._Reset(ctx)
+    lifetime_ = {}
+    if ctx then
+        for _, it in pairs(images_) do nvgDeleteImage(ctx, it.img) end
+    end
     images_ = {}
     loaded_ = false
 end

@@ -1477,9 +1477,10 @@ local function TryPickUpgradeAt(uiX, uiY)
 end
 
 local function HandleGameOverPointerDown(uiX, uiY)
-    -- v0.13.60：失败过渡动画期间任意点击 = 跳过过渡，立即显示结算窗（不误触按钮）。
+    -- 过渡期吞掉点击；仅在跳过提示出现后允许跳过，不武装结算按钮。
     if StageTransition.IsActive(Game.GetSnapshot()) then
-        StageTransition.Skip()
+        reviveArmed, doubleArmed, restartArmed, menuArmed = false, false, false, false
+        StageTransition.Skip(Game.GetSnapshot())
         return true
     end
     local hit = RenderBackend.HitTestGameOverButton(uiX, uiY, Game.GetSnapshot())
@@ -1540,9 +1541,10 @@ end
 
 -- v0.13.4：胜利结算页（stagewin）松手确认。Down 只武装命中的按钮，Up 时才真正跳关/重开/回菜单。
 local function HandleStageWinPointerDown(uiX, uiY)
-    -- v0.13.57：过渡动画期间任意点击 = 跳过过渡，立即显示结算窗（不误触按钮）。
+    -- 与失败同门控：早期点击只消费，不跳过，也不武装隐藏按钮。
     if StageTransition.IsActive(Game.GetSnapshot()) then
-        StageTransition.Skip()
+        stageWinArmed = nil
+        StageTransition.Skip(Game.GetSnapshot())
         return true
     end
     local hit = RenderBackend.HitTestStageWinButton(uiX, uiY, Game.GetSnapshot())
@@ -2156,7 +2158,14 @@ function HandleKeyDown(eventType, eventData)
     local key = eventData:GetInt("Key")
     if key == KEY_SPACE or key == KEY_RETURN then
         if Game.IsGameOver() then
-            Game.RestartFromOver()
+            -- 重复按键与过渡期回车不能直接重开，跳过资格与鼠标/触摸一致。
+            if StageTransition.IsActive(Game.GetSnapshot()) then
+                if not eventData:GetBool("Repeat") then
+                    StageTransition.Skip(Game.GetSnapshot())
+                end
+            elseif not eventData:GetBool("Repeat") then
+                Game.RestartFromOver()
+            end
         elseif Game.IsStageWin() then
             -- v0.13.4：胜利结算页要求显式点按钮，回车不自动跳关/重开。
         elseif gameSnapshot and gameSnapshot.state == "menu" then

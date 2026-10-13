@@ -124,9 +124,10 @@ local function DrawStar(ctx, cx, cy, size, filled, accent, appear)
 end
 
 -- ---- 过渡窗口可见性（渲染与命中同源裁决）------------------------------------
--- 模块级状态只有这两个；不放后端，避免顶到 200 local 上限。
-local skip_ = false
-local seenAnimAt_ = nil
+-- 跳过资格从提示出现时才开放；开头的战斗连点不能吞掉整段动画。
+StageTransition.SKIP_AFTER = 1.55
+StageTransition.DEFEAT_SKIP_AFTER = 3.40
+local transition_ = { state = "", startAt = -1, lastElapsed = -1, skipped = false }
 
 -- v0.13.60：本模块现在服务**两态**——胜利（stagewin，读 stageResult.animAt）与
 -- 失败（gameover，读 defeatAt）。下面两个 helper 统一给出「本态过渡起点与时长」，
@@ -140,22 +141,36 @@ local function TransitionInfo(game)
         if not game.defeatAt then return nil, 0 end
         return game.defeatAt, StageTransition.DEFEAT_DURATION
     end
+    if game.state ~= "stagewin" then return nil, 0 end
     local r = game.stageResult
     if not r or not r.animAt then return nil, 0 end
     return r.animAt, StageTransition.DURATION
+end
+
+-- 不能仅以时间戳标识过渡：重开会重置 elapsed，两态也可能在同一秒结束。
+-- 每帧更新，即使没有结算窗口也能清掉上一场的跳过状态。
+---@param game table|nil
+function StageTransition.Update(game)
+    local startAt = TransitionInfo(game)
+    local state = game and game.state or ""
+    local elapsed = game and game.elapsed or 0
+    if not startAt or transition_.state ~= state or transition_.startAt ~= startAt
+        or elapsed < transition_.lastElapsed then
+        transition_.skipped = false
+    end
+    transition_.state = startAt and state or ""
+    transition_.startAt = startAt or -1
+    transition_.lastElapsed = elapsed
 end
 
 ---结算窗口是否应显示（过渡结束后为 true；无过渡数据时兜底为 true）。
 ---@param game table|nil
 ---@return boolean
 function StageTransition.WindowVisible(game)
+    StageTransition.Update(game)
     local startAt, dur = TransitionInfo(game)
     if not startAt then return true end
-    if seenAnimAt_ ~= startAt then
-        seenAnimAt_ = startAt
-        skip_ = false
-    end
-    if skip_ then return true end
+    if transition_.skipped then return true end
     return ((game.elapsed or 0) - startAt) >= dur
 end
 
@@ -166,9 +181,24 @@ function StageTransition.IsActive(game)
     return not StageTransition.WindowVisible(game)
 end
 
----跳过过渡（玩家点击时调用），立即显示结算窗口。
-function StageTransition.Skip()
-    skip_ = true
+---@param game table|nil
+---@return boolean
+function StageTransition.CanSkip(game)
+    if not StageTransition.IsActive(game) then return false end
+    local startAt = TransitionInfo(game)
+    local after = game.state == "gameover" and StageTransition.DEFEAT_SKIP_AFTER
+        or StageTransition.SKIP_AFTER
+    return (game.elapsed or 0) - startAt >= after
+end
+
+---仅接受本场过渡、提示出现之后的新点击；无快照的旧调用不能跳过下一场。
+---@param game table|nil
+---@return boolean
+function StageTransition.Skip(game)
+    if not StageTransition.CanSkip(game) then return false end
+    transition_.skipped = true
+    print("[StageTransition] skipped " .. game.state)
+    return true
 end
 
 ---当前过渡进度（秒）。非过渡期为 nil。供绘制与探针共用。
@@ -365,7 +395,7 @@ function StageTransition.Draw(ctx, game)
     end
 
     -- ⑭ 底部提示（过渡尾段）：告知即将进入结算。
-    local hp = seg(t, 1.55, 1.9)
+    local hp = seg(t, StageTransition.SKIP_AFTER, 1.9)
     if hp > 0 then
         nvgFontSize(ctx, 13)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -596,7 +626,7 @@ function StageTransition.DrawDefeat(ctx, game)
     if shakeOn then nvgRestore(ctx) end
 
     -- ⑫ 尾部提示（3.40s 起）。
-    local hp = seg(t, 3.40, 3.80)
+    local hp = seg(t, StageTransition.DEFEAT_SKIP_AFTER, 3.80)
     if hp > 0 then
         nvgFontSize(ctx, 13)
         nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)

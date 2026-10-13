@@ -1118,6 +1118,21 @@ local function WindowInput(x, y, startAt)
     return cx + (x - cx) / scale, cy + (y - cy) / scale
 end
 
+-- 输入可能在场景更新之后、覆盖层绘制之前跳过动画；两处同步同一可见性边沿。
+function uiFx.UpdateGameWindow(game)
+    local visible = (game.state == "gameover" or game.state == "stagewin"
+        or game.state == "levelup" or game.state == "paused")
+        and StageTransition.WindowVisible(game)
+    if visible and not uiFx.gameWindowVisible then
+        uiStateMotionEnter_ = uiClock_
+        if game.state == "gameover" or game.state == "stagewin" then
+            print("[Scene3DBackend] settlement window entered: " .. game.state)
+        end
+    end
+    uiFx.gameWindowVisible = visible
+    return visible
+end
+
 local function UpdateUiState(game, meta)
     AdvanceUiClock(game)
     if game.state ~= uiState_ then
@@ -1140,6 +1155,9 @@ local function UpdateUiState(game, meta)
             logoRollOffset_ = math.random(0, 3)
         end
     end
+    -- 每帧同步过渡生命周期，菜单/重开也必须清掉旧 skip 状态。
+    StageTransition.Update(game)
+    uiFx.UpdateGameWindow(game)
     if game.state == "gameover" or game.state == "levelup" or game.state == "paused"
         or game.state == "stagewin" then
         uiGameVisual_ = {game = CopyVisualState(game), meta = CopyVisualState(meta)}
@@ -2714,9 +2732,7 @@ local function RenderOverlay(game, presentation, meta)
         RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
     end
 
-    local currentWindow = (game.state == "gameover" or game.state == "levelup"
-        or game.state == "paused" or game.state == "stagewin")
-        and StageTransition.WindowVisible(game)
+    local currentWindow = uiFx.UpdateGameWindow(game)
     if uiGameLeaving_ and uiGameLeaving_.visual and not currentWindow then
         local old = uiGameLeaving_
         DrawAnimatedWindow("game-window-out", uiGameLeaveAt_, true, function()
@@ -3229,6 +3245,7 @@ function Backend.HitTestSupplyPopup(uiX, uiY, metaState)
 end
 
 function Backend.HitTestGameOverButton(uiX, uiY, game)
+    if not game or not uiFx.UpdateGameWindow(game) then return nil end
     uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
     local revive, double, restart, menu = GetGameOverButtonLayout(game or {})
     local function inside(btn)
@@ -3246,7 +3263,7 @@ end
 -- v0.13.4：胜利结算页命中（再战本关 / 下一关 / 回主菜单）。几何与 DrawStageWin 同源。
 function Backend.HitTestStageWinButton(uiX, uiY, game)
     -- 过渡动画期间结算窗尚未显示，任何按钮都不可点（点击由编排层用于「跳过」）。
-    if not StageTransition.WindowVisible(game) then return nil end
+    if not game or not uiFx.UpdateGameWindow(game) then return nil end
     uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
     local retry, nextBtn, menu = GetStageWinButtonLayout(game or {})
     local function inside(btn)

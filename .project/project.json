@@ -20,12 +20,36 @@
     "miniapp_id": "tapmcl8lq6jmqiv437"
   },
   "assets": {
-    "icon": "",
-    "screenshots": [],
-    "promotional_image": ""
+    "icon": "./game_material/ICON_2026-10-13T14-08-07_01.png",
+    "screenshots": [
+      "./game_material/release_screenshot_01.png",
+      "./game_material/SCREENSHOT_2026-10-13T14-08-07_02.png",
+      "./game_material/SCREENSHOT_2026-10-13T14-08-07_03.png"
+    ],
+    "promotional_image": "./game_material/PROMO_2026-10-13T14-08-07_01.jpg",
+    "source_screenshots": [
+      "_uploads/7c25b2064a8090810f248af7f5e5e8e8e52e207454a43edc26bc8626518a54ac.png",
+      "_uploads/9e387ebef3698b8ccc94a04c5f356391a75607daa660ab8c4a6632421b55557a.png",
+      "_uploads/81ebfdcb60d51dd029a84c2654d50de78bc8e2234153438a5b756175dd450b87.png",
+      "_uploads/8076149c0d95e5ddbb0f72d4d49e9262d177a907190890ab5f7841b061dca54a.png",
+      "_uploads/4f10fe70c518b498d6570e3b4cd09c01f7f91ae1b78ef7e08a25c82214a0eea6.png"
+    ],
+    "icon_url": "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/ICON_2026-10-13T14-08-07_01.png",
+    "screenshot_urls": [
+      "https://tapcode-sce.spark.xd.com/assets/game_material/p_q74c/release_screenshot_01.png",
+      "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/SCREENSHOT_2026-10-13T14-08-07_02.png",
+      "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/SCREENSHOT_2026-10-13T14-08-07_03.png"
+    ],
+    "promotional_image_url": "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/PROMO_2026-10-13T14-08-07_01.jpg",
+    "cover_horizontal": "./game_material/COVER_HORIZONTAL_2026-10-13T14-08-07_01.png",
+    "cover_horizontal_url": "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/COVER_HORIZONTAL_2026-10-13T14-08-07_01.png",
+    "cover_vertical": "./game_material/COVER_VERTICAL_2026-10-13T14-08-07_01.png",
+    "cover_vertical_url": "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/COVER_VERTICAL_2026-10-13T14-08-07_01.png",
+    "square_promotional_image": "./game_material/SQUARE_PROMO_2026-10-13T14-08-07_01.jpg",
+    "square_promotional_image_url": "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/SQUARE_PROMO_2026-10-13T14-08-07_01.jpg"
   },
   "metadata": {
-    "updated_at": "2026-09-16T07:05:31.529Z"
+    "updated_at": "2026-10-13T14:21:05.586Z"
   },
   "test_qrcode": {
     "url": "https://tapcode-sce.spark.xd.com/qrcode/p_q74c_1789542331371.png",

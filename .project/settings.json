@@ -26,6 +26,7 @@
       "match_info": {
         "desc_name": "free_match",
         "immediately_start": true,
+        "match_timeout": 0,
         "player_number": 1
       },
       "persistent_world": {
