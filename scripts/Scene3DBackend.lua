@@ -1290,16 +1290,20 @@ end
 uiFx.holdHintLayout = function(game)
     local out = { visible = false }
     if not game or not game.canHoldSpeed or game.showPullHint then return out end
-    local _, dangerScreenY = ProjectGamePoint(0, game.dangerY)
+    -- 玩家已经按住（待触发或已 2x）时不再提示——「长按加速」在按住时显示是多余的。
+    if game.holdSpeedPending or (game.timeScale or 1) ~= 1 then return out end
+    -- ⚠️ 空仓时的可见空场 = HUD 下方 → 弹弓车上方。
+    -- 不能用 dangerY 当上边界：DANGER_Y(900) 在弹弓 SLING_Y(850)【下方】（游戏 Y 向下为正），
+    -- 用它当上边界会让带高恒为负 → 提示永不显示（实测 bottomLimit-topY≈-173）。
     local _, slingScreenY = ProjectGamePoint(game.slingX or DESIGN_W * 0.5,
         game.slingY or (BOTTOM_DOCK_Y - 16))
-    -- 可用带 = 目标线之下 → 弹弓车上方留白。带太窄就整段不画（宁可不提示，也不压车）。
-    local topY = dangerScreenY + 44
+    -- 带太窄就整段不画（宁可不提示，也不压车）。
+    local topY = HUD_HEIGHT + 44
     local bottomLimit = slingScreenY - 96
     if bottomLimit - topY < 104 then return out end
     out.visible = true
     out.cx = DESIGN_W * 0.5
-    out.ringY = topY + 26
+    out.ringY = topY + math.floor((bottomLimit - topY) * 0.5)
     out.topY = topY
     out.bottomLimit = bottomLimit
     return out

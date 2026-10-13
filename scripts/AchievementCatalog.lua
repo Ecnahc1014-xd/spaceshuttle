@@ -16,6 +16,11 @@
 
 local AchievementCatalog = {}
 
+-- 动态上限：codex_all / talent_all 的 steps 必须等于「当前全量」，否则新增图鉴/天赋节点后
+-- 成就会永远无法达成（或提前解锁）。这里用运行时真实数量，不写死数字。
+local MetaCatalog = require "MetaCatalog"
+local TalentCatalog = require "TalentCatalog"
+
 ---@class AchievementDef
 ---@field id string 平台成就 ID（1..40，字母数字-_）
 ---@field title string 成就名称
@@ -46,7 +51,7 @@ local ACHIEVEMENTS = {
 
     -- —— 图鉴收集（绝对值：收录数）——
     { id = "codex_5",       title = "情报初集",   desc = "图鉴收录 5 种敌机",            steps = 5,     icon = "codex",             tone = "cyan" },
-    { id = "codex_all",     title = "全数收录",   desc = "图鉴收录全部敌机",             steps = 23,    icon = "codex",             tone = "warn" },
+    { id = "codex_all",     title = "全数收录",   desc = "图鉴收录全部敌机",             steps = MetaCatalog.GetCodexTotal(),  icon = "codex",             tone = "warn" },
 
     -- —— 高分 ——
     { id = "score_100k",    title = "十万火力",   desc = "单局最高分达到 100,000",       steps = 100000, icon = "record",           tone = "cyan" },
@@ -56,7 +61,7 @@ local ACHIEVEMENTS = {
     { id = "runs_10",       title = "老练车手",   desc = "完成 10 局战斗",               steps = 10,    icon = "home",              tone = "cyan" },
     { id = "runs_50",       title = "身经百战",   desc = "完成 50 局战斗",               steps = 50,    icon = "home",              tone = "warn" },
     { id = "talent_10",     title = "天赋觉醒",   desc = "解锁 10 个天赋节点",           steps = 10,    icon = "talent_xp",         tone = "cyan" },
-    { id = "talent_all",    title = "全能车手",   desc = "解锁全部天赋节点",             steps = 42,    icon = "talent_xp",         tone = "warn" },
+    { id = "talent_all",    title = "全能车手",   desc = "解锁全部天赋节点",             steps = #TalentCatalog.GetNodes(),    icon = "talent_xp",         tone = "warn" },
     { id = "stars_45",      title = "满星猎手",   desc = "累计获得 45 颗星",             steps = 45,    icon = "premium_wheel_medal", tone = "warn" },
 
     -- —— 商业化 / 收集 ——

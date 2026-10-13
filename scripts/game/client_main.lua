@@ -1835,7 +1835,8 @@ function HandleUpdate(eventType, eventData)
         if bonus > 0 then PlayerData.AddParts(bonus) end
         -- v0.13.62：结算后重算成就（所有统计已更新），并把新解锁外发平台（幂等）。
         local newAch = AchievementSystem.Refresh()
-        if newAch > 0 then metaState.toast = string.format("解锁 %d 个成就！", newAch) end
+        -- 用 SetMetaToast 而非直接赋 toast：后者不重置 metaToastTimer，提示会永久留在屏上。
+        if newAch > 0 then SetMetaToast(string.format("解锁 %d 个成就！", newAch)) end
         PlayerData.Save()
         SavePlayerDataToCloud()
         RefreshMeta()
