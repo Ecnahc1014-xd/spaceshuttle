@@ -12,6 +12,12 @@
 简述：开局缓入起始倍率随关卡下降（关1 60% → 关20 起 40%）；每关第一架不再恒贴最左。
 最后巩固：2026-10-13
 
+## 装饰原语实现层反哺（2026-10-13，visual-recipes-primitives 附记）
+- 用户「我要求最具体的绘制比如你这些流光纹理按钮也要反哺skill」——上一版只给**调用层**，用户要**原语本身的绘制代码**。
+- **产出**：`visual-recipes.md` 新增 **§11「装饰原语实现」（+377 行）**——`MicroGrid` / `DiagonalHatch` / `Halftone`（隔行错位 + 自适应步长 + 合并路径）/ `DotMatrix` / `CircuitTrace` / `CornerBrackets` / `DashRule` / `TicksBatch`·`Ticks`·`TopTicks` / `TickRing` / `Cross`·`CrossBatch` / `ScanBand`（流光）/ `GlassStrip` / `Screws` / 悬停加色光 / 按钮流光（斜扫光四边形）的**完整代码** + §11.0 性能契约 + §11.16 检查清单。原 §10 检查清单顺延 §12。
+- ⚠️ **AB-299（强化）**：反哺「具体绘制」要分**两层**——**调用层**（叠哪几层、在哪调）+ **实现层**（原语本身怎么画）；只给调用层会被判「不够具体」。**性能契约（合并单一路径 + 自适应步长）必须一起给**，否则复用时撑爆命令缓冲。
+- 验证：LSP 30 文件 0 Error（1407 诊断）；skill 纯文档无需 build；官方多人 build + 预览上传 ✅。
+
 ## 逐层绘制配方库反哺（2026-10-13，visual-recipes-skill 附记）
 - 用户「继续然后我要求最具体的绘制比如你这些流光纹理按钮也要反哺skill」——要的是**最具体的绘制层**（一个控件、一层的逐行画法），不是再写一遍「要贵」。
 - **产出**：`.agent/skills/dark-tech-game-editor-ui/references/visual-recipes.md`（**469 行新增**）——金属面板六层 / 按钮漆面与扫光 / 窗口壳 / 背景在动 / 艺术字乘法染色 / 像素图标 / 悬停加色光 / 氛围标量 / 非阻塞提示 + 10 条交付检查清单。每条 = 观感目标 + 层序代码 + 参数来源 + 踩过的坑 + 尺寸门槛。`SKILL.md` + `elements.md` 已接入。
@@ -607,3 +613,4 @@
 - 构建清单哈希错配修复（2026-10-13）：平台报「黑屏 + Module not found: Scene3DBackend」。真因：清单 `manifest-d8030526.json` 记 `Scene3DBackend.lua` 为 `hash=8d87062e,size=155296`，产物实为 155424（=源码）→ 下载校验判「incomplete or corrupted」→ `#blocking` 资源拿不到 → 黑屏。成因：构建时有并发会话在写该文件。修：移出无引用垃圾参考图（`OIP (1).webp`/`下载 (3).webp`）+ 重新构建（build 25）→ 新清单 217 文件 0 错配、crc32 精确匹配；本地真实启动零 Module not found。详见 CLAUDE.md 修复条目，抗体 AB-295/296。
 - 全量排查（2026-10-13）：机械检查（顶层 local 200 上限内 / LSP 0 Error / 清单完整性）+ 真渲染探针 + agent 深审三层。修 3 处真 bug：①空仓「长按加速」提示因游戏 Y 向下为正、把 dangerY 当上边界 → 带高恒负 → 永不显示；②长按时提示未隐藏（加 timeScale/holdSpeedPending 门控）；③成就 toast 直接赋值 metaState.toast 漏重置 metaToastTimer → 永久驻留（改 SetMetaToast）。加固 2 处写死步数（codex_all→GetCodexTotal、talent_all→#GetNodes）。agent 报 6 条仅 1 条成立（高分单调性/覆盖范围是误报）。详见 CLAUDE.md 修复条目，抗体 AB-297/298/299。
 - 成就并入战斗档案（2026-10-13）：用户「成就界面并入战斗档案任务，同时战斗档案任务也并入平台成就，并增加额外成就，列表变为上下翻页且被解锁的优先在顶端」（澄清：主菜单只留一个合并入口 / 里程碑做成平台成就条目）。做法：主菜单删「成就」卡（grow 5→4），档案屏加「战斗档案/成就」两页签（`GetPassTabs`/`GetPassBody`，档案内容改 `body` 定位，绘制与命中同改）；`ui/Achievements.lua` 取消独立屏、改由 `MetaUI.DrawPass` 调用，列表已解锁置顶 + 上下翻页；`AchievementCatalog` 加 `pass_lv3/lv5/lv6`（20→23）；里程碑条数 5→4（页签占位后第 5 条被底栏裁掉）。真渲染截图目视两页签。详见 CLAUDE.md 附记 achievement-into-pass，抗体 AB-301/302。
+- 最高分云写合并（2026-10-13）：对照 `@tianyi_multiplayer-game-skill` 检查云端存档 → 本项目属 skill 的「JSON/存档中继 + 私有实例」（M=0），合规；唯一实质问题=最高分**每刷新一次就写一次云**（一局上百次 `SetInt`）。修：局内只累计 `highScoreDirty`，**进入结算/菜单那一帧**提交 + **每 15 秒周期兜底**；`SaveHighScoreToCloud` 改「成功才确认」、失败重新标脏重试；`CommitHighScore` 每次调用都重置 15s 冷却（防持续态每帧重试）。真渲染 mock 探针：局内 140 帧 0 次写 / 进菜单提交 1 次（值 5000）/ 800 帧失败菜单态仅 3 次尝试（旧 ~800）。详见 CLAUDE.md 修复条目，抗体 AB-303/304/305。
