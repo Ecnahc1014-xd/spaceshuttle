@@ -3126,7 +3126,7 @@ end
 
 -- 游戏快照在 Update 结束后已经稳定；在本帧 3D 绘制之前同步场景与体素。
 -- NanoVGRender 晚于 3D Viewport，不能在其中才 RebuildGeometry，否则必然看到旧网格。
-function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
+function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, bowWaveDt)
     UpdateUiState(gameSnapshot, metaState)
     -- 共享时间只驱动循环动画；各控件的进入/退出与按压分别缓动。
     local dtAnim = math.min(0.05, math.max(0, gameSnapshot.elapsed - uiFx.anim))
@@ -3215,7 +3215,7 @@ function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
     -- v0.12.5：顶端通知条按快照 elapsed 差分计时（菜单/暂停也持续递减）。
     TickSystemBanner(gameSnapshot.elapsed or 0)
     Renderer3D.Render(gameSnapshot, presentationSnapshot,
-        metaState and metaState.selectedSkin, metaState and metaState.selectedTrail)
+        metaState and metaState.selectedSkin, metaState and metaState.selectedTrail, bowWaveDt)
 end
 
 function Backend.RenderOverlay(gameSnapshot, presentationSnapshot, metaState)

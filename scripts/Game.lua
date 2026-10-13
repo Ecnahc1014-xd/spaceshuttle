@@ -53,6 +53,7 @@ local BALANCE = {
     xpToNextGrowth = 1.26,          -- WO-02/P1：每级经验阈值指数乘子
     clearStreakBonusCap = 5,
     maxPull = MAX_PULL,
+    pullPositionScale = 0.6, -- 圆形输入保留全幅，待发车辆位移按比例缩短
     powerMin = 0.35,   -- 最小蓄力初速比例（轻拖也有基础射程）
     powerMax = 1.0,    -- 满蓄力初速比例
 }
@@ -2398,8 +2399,8 @@ end
 
 local function UpdateAiming()
     if aiming and activeBall then
-        activeBall.x = aimX
-        activeBall.y = aimY
+        activeBall.x = SLING_X + (aimX - SLING_X) * BALANCE.pullPositionScale
+        activeBall.y = SLING_Y + (aimY - SLING_Y) * BALANCE.pullPositionScale
     elseif activeBall and activeBall.onSling then
         activeBall.x = SLING_X
         activeBall.y = SLING_Y
@@ -3190,15 +3191,13 @@ end
 
 -- v0.10.15：全屏起手的相对拖拽。pull 为手指相对按下点的位移（不再相对固定弹弓点），
 -- 车辆视觉锚定 SLING 附近，手指在屏幕任意位置起手都不会遮挡车辆。
--- 向下位移单独钳制，避免拉弓时车辆被拖出屏幕底部 Dock。
-local PULL_MAX_DOWN_DY = DH - SLING_Y - 20
+-- 输入只受圆形半径限制；车辆位置由 UpdateAiming 按比例缩短。
 local function ClampPull(dx, dy)
     local distance = math.sqrt(dx * dx + dy * dy)
     if distance > MAX_PULL then
         dx = dx / distance * MAX_PULL
         dy = dy / distance * MAX_PULL
     end
-    if dy > PULL_MAX_DOWN_DY then dy = PULL_MAX_DOWN_DY end
     distance = math.sqrt(dx * dx + dy * dy)
     return dx, dy, distance
 end
@@ -3315,6 +3314,7 @@ function Game.PointerMove(px, py)
     local dx, dy = ClampPull(px - grabStartX, py - grabStartY)
     aimX = SLING_X + dx
     aimY = SLING_Y + dy
+    UpdateAiming()
 end
 
 function Game.PointerUp(px, py)
@@ -3334,6 +3334,9 @@ function Game.PointerUp(px, py)
     startArmed = false
     if not aiming then return end
     local dx, dy, distance = ClampPull(px - grabStartX, py - grabStartY)
+    aimX = SLING_X + dx
+    aimY = SLING_Y + dy
+    UpdateAiming()
     aiming = false
     if distance <= 15 then
         -- 死区内松手：待发车辆归位，不发射。

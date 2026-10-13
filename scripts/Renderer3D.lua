@@ -5,6 +5,9 @@ local Renderer3D = {}
 local VehicleGeometry = require "VehicleGeometry"
 local MetaCatalog = require "MetaCatalog"
 
+-- 可选视觉批次，不影响车辆、敌机与原拖尾初始化成功条件。
+local bowWave_ = {module = nil, ready = false}
+
 local selectedSkin_ = "default"
 
 local WORLD_SCALE = 0.018
@@ -2063,6 +2066,17 @@ function Renderer3D.Init(scene, voxelWorld)
 
     -- Box.mdl 仅用于可选碎片；飞散箱体已是程序化六面体，缺它绝不能导致整层初始化失败
     -- （否则 Backend.Init 返回 false，Start 不订阅 Update/NanoVGRender，表现为 UI 全黑且输入无响应）。
+    bowWave_.ready = false
+    local waveOk, waveErr = pcall(function()
+        bowWave_.module = require "VehicleBowWave"
+        bowWave_.ready = bowWave_.module.Init(scene_, BALL_COLORS) == true
+    end)
+    if not waveOk then
+        if bowWave_.module then pcall(bowWave_.module.Shutdown) end
+        bowWave_.module, bowWave_.ready = nil, false
+        print("[Renderer3D] optional bow wave Init failed: " .. tostring(waveErr))
+    end
+
     local initialized = voxelMaterial_ ~= nil and crateMaterial_ ~= nil
     initialized_ = initialized
     print("[Renderer3D] initialized, aircraft_crates=true, voxel_physics="
@@ -2088,6 +2102,7 @@ function Renderer3D.GetVehicleAnchor(x, y, marble)
 end
 
 local function ClearRunVisuals()
+    if bowWave_.ready then bowWave_.module.Clear(true) end
     ClearVoxelDebris()
     ClearTrailSamples()
     for id, record in pairs(enemyMeshes_) do
@@ -2115,7 +2130,8 @@ local function ClearRunVisuals()
     print("[Renderer3D][perf] new run: previous 3D objects cleared")
 end
 
-function Renderer3D.Render(game, presentation, skin, trail)
+-- bowWaveDt 可选：未乘 timeScale 的允许推进时间；广告冻结时显式传 0。
+function Renderer3D.Render(game, presentation, skin, trail, bowWaveDt)
     if not initialized_ then return end
     selectedSkin_ = skin or "default"
     trailStyle_ = MetaCatalog.GetTrailStyle(trail)
@@ -2161,6 +2177,16 @@ function Renderer3D.Render(game, presentation, skin, trail)
         SyncEjectedBoxes(presentation)
     end
     SyncVehicles(game, dt)
+    if bowWave_.ready then
+        local allowedDt = bowWaveDt
+        if allowedDt == nil then allowedDt = game.state == "playing" and dt or 0 end
+        local ok, result = pcall(bowWave_.module.Sync, game, vehicleRecords_, allowedDt)
+        if not ok or result == false then
+            pcall(bowWave_.module.Shutdown)
+            bowWave_.ready = false
+            if not ok then print("[Renderer3D] optional bow wave Sync disabled: " .. tostring(result)) end
+        end
+    end
     -- 粒子系先跑（它在光带之前把光带关掉，避免同帧两套都提交）。
     SyncTrailParticles(game, dt)
     SyncVehicleTrails(game, dt)
@@ -2218,7 +2244,14 @@ function Renderer3D.DebugTrailHeadGap()
     return out
 end
 
+function Renderer3D.DebugBowWave()
+    if bowWave_.module then return bowWave_.module.Debug() end
+    return {count = 0, vertices = 0, enabled = false, initialized = false}
+end
+
 function Renderer3D.Shutdown()
+    if bowWave_.module then pcall(bowWave_.module.Shutdown) end
+    bowWave_.ready = false
     ClearVoxelDebris()
     for _, record in pairs(vehicleRecords_) do RemoveNode(record.root) end
     for _, record in pairs(enemyMeshes_) do

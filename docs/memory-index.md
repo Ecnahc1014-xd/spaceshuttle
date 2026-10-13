@@ -10,7 +10,15 @@
 项目：货车大战飞机
 当前版本：0.13.62
 简述：开局缓入起始倍率随关卡下降（关1 60% → 关20 起 40%）；每关第一架不再恒贴最左。
-最后巩固：2026-10-13
+最后巩固：2026-10-14
+
+## 圆形拖拽与车头前方 3D 冲击波（2026-10-14，circle-drag-bow-wave）
+- 用户明确圆形拖拽与「车辆前方」冲击波。完整输入圆半径保留 150，实际车位用 0.6 倍（半径 90）；方向/力度/15 死区/初速公式不变，Move/最终 Up 即时同步出生点。倍率为助手拟值。
+- 新 `VehicleBowWave` LOCAL 动态批次：真实 bbox 与车辆平滑显示后的实际 root 世界变换绑定立体弧壳，白芯/弹种彩边；16 段、396 顶点/车、8 车/3168 顶点上限。Clear 后重绑材质、空批不 Commit、半成品 dirty 清理、异常停用至 Init、借用车辆不释放。只视觉，不扩大碰撞或伤害，原拖尾/附魔/胜败过渡保留。
+- 允许玩法 dt 经 client→Backend→Renderer→波壳，广告 0、顿帧 gameDt、timeScale 只乘一次，暂停等模态隐藏冻结；旧四参兼容，Backend 零新增顶层 local。
+- 圆形规则两次各 91 案例/4821 断言、输入处理器两次各 9/131、三项波壳几何生命周期各 3273、Renderer 36、pipeline 11、真实 base_hit 处理器 hitStop 77 全 PASS，正式本批五源码与冻结版指纹一致；最终主会话 hitStop 复跑 77/77、exit0。模拟 eventData/合成领域事件不冒称 OS 输入或自然越线。
+- LSP 32 文件 0 Error（1329 Warning/118 Hint）；官方多人 1.0.2/build1 与预览上传成功，client c045182f/server6ad1f2a9 清单 221/222 条 size+CRC32 零错配，新模块已打包。
+- 独立 Forward 六车实图可辨，但主游戏 HDR/手机手感/FPS/全 DPR/真广告 SDK/用户审美待验；环境噪音保留。POST-1/2 执行；POST-3 AB-309/310/311 执行，persona/preferences 均跳过无新跨项目偏好。只提交本人 hunk/记录，保留并发 ArtText/发布配置/RT；未改展示版本。
 
 ## XHR 96 次报告只读取证（2026-10-13，xhr-report-96）
 - `fcb250f9/24772cad` 经公开 stable 1.33.14/manifest49920946/version.json 精确核验为**引擎身份**，不是游戏包哈希。源URL：`https://tapcode-sce.spark.xd.com/src/engine/assets/BNghoXJZYBHd9d6Ij4FLlfFu-212defa1.json`（125B、CRC32 212defa1）。

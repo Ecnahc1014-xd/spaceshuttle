@@ -1781,7 +1781,7 @@ function HandleUpdate(eventType, eventData)
     RenderBackend.TickAudio(dt, snapshot, frameEvents)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
-    RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState)
+    RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, adFreeze and 0 or gameDt)
     -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及每
     -- HIGH_SCORE_COMMIT_INTERVAL 秒的兜底才真正写一次云（配额 300 次/分钟）。
     -- ⚠️ 结算/菜单是「持续态」——只在**进入**这些态的那一帧提交一次，不能每帧提交，

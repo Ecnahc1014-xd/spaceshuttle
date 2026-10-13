@@ -4,6 +4,15 @@
 
 ## 当前状态
 
+- 附记: circle-drag-bow-wave（2026-10-14，**完整圆形拖拽 + 车头前方真 3D 冲击波**；不改展示版本）：
+  - 用户要求「手感操控优化，从发射拖拽范围变为圆形，和车辆之前增加3d冲击波开始做起」，位置明确「车辆前方」。本批仅改 Game/Renderer3D/Backend/client_main 并新增 `VehicleBowWave.lua`（含 `.meta`），保留原拖尾、附魔光环与胜败过渡，不改伤害、碰撞半径、成长、初速公式、回收条件或服务端职责。
+  - **圆形输入与车位分离**：删除半径钳制后的 `dy<=90` 削平限制；完整输入半径仍 150、方向仍 −pull、死区仍 15、力度仍用完整向量。`pullPositionScale=0.6` 将实际车位位移缩成半径 90，避免下拉满幅把待发车拖出画布。PointerMove 与最终 PointerUp 同帧更新 aim/车位，释放出生点不再落后一帧。0.6 为助手拟值，非用户指定或已认可。
+  - **车前立体弧壳**：独立 LOCAL 动态 CustomGeometry 单批次，16 段/396 顶点每车/最多 8 车（3168 顶点）；真实车型 bbox 定车鼻与半宽，白热内核/弹种彩边，UnlitVCol 可辨性兜底。局部厚度 0.12、半高 0.05、最小间隙 0.16、宽比 1.1、0.9s 前向脉冲均为助手参数。在 SyncVehicles 之后用实际 `root:LocalToWorld` 与世界旋转绑定，跟随平滑显示朝向而非速度目标角；批次节点世界恒等，反射/非等比/剪切安全跳过。
+  - **生命周期与时钟**：有效几何 Commit 后重绑材质；空批禁用且不 Commit；dirty 覆盖半成品清理，Sync 失败释放并停用直到 Init，不每帧重试，不释放借用车辆。`UpdateScene→Renderer.Render` 增可选允许玩法 dt 尾参，广告传 0、顿帧传 gameDt，波壳模块只乘一次 timeScale；暂停/升级/结算隐藏冻结、新局复位。Backend 零新增顶层 local，旧四参 Renderer 调用兼容。
+  - **验证**：圆形规则两次各 91 案例/4821 断言全 PASS；真实输入处理器两次各 9 案例/131 断言全 PASS（eventData 模拟，非手机 OS 输入）；冻结波壳 phase0/phase0.45/生命周期三次各 3273 断言 PASS、Renderer 36/36、广告/暂停/真实长按 2× 11/11；真实 Presentation `base_hit` 处理器顿帧专项 77/77，主会话最终同源码复跑仍 77/77、exit0。五源码 SHA256 与冻结测试版一致，目标 Lua/overlay/LoadChunk/空顶点错误 0；环境既有 HDR/无音频/无体素噪音不计脚本错误。
+  - LSP **32 文件 0 Error**（1329 Warning/118 Hint）；官方多人 **1.0.2/build1** 成功并上传预览，client `c045182f` / server `6ad1f2a9`，清单 **221/222 项 size+CRC32 全部匹配**，新模块 uuid `6cd4fc94d3da47d48bb16c` 已入包；未手写 dist。独立 Forward 六车型实图可辨，两相位原图差异 11481 像素；不等于主游戏 HDR/手机 FPS/全 DPR/真广告 SDK/用户审美已验收，手感与最终观感待 Preview。
+  - **POST 判定**：POST-1 执行状态/索引，persona 跳过（具体需求无新跨项目偏好）；POST-2 执行版本附记与本人片段独立提交；POST-3 执行 AB-309/310/311，随行 persona/preferences 跳过（无新偏好）。保留并发 ArtText、发布配置、RT/Reset 与初始未跟踪文件，不代提交；构建冻结窗口已释放，后续记录不代表并发新版本验收。
+
 - 调查: xhr-report-96（2026-10-13，**96 次 `XMLHttpRequest response: {}` 尚未定位，不冒称修复**；无游戏代码/配置改动）：
   - 用户报告 `fcb250f9 (HEAD@24772cad)`、2026-10-13 15:14:12.632 首条、15:36:07.413 生成。公开 stable→引擎 **1.33.14 / manifest49920946**；`src/engine/assets/BNghoXJZYBHd9d6Ij4FLlfFu-212defa1.json` 返回相同 binary_hash/commit_hash/branch，125B CRC32=212defa1。**两哈希是引擎身份，不是游戏包哈希，不能据此判旧包**。
   - 本轮只读校验当前 **build33**（client6007d810/server7e6e8b39）清单 **220/221 项 size+CRC32 零错配**，sources仅engine-res、adopt空；不支持重现此前清单损坏/official pin 两条根因。
