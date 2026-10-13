@@ -12,6 +12,14 @@
 简述：开局缓入起始倍率随关卡下降（关1 60% → 关20 起 40%）；每关第一架不再恒贴最左。
 最后巩固：2026-10-13
 
+## 胜败过渡防误跳与结算入场（2026-10-13，end-transition-input-fix）
+- 用户「胜利和战败动画被跳过」。只改 StageTransition/client_main/Backend，动画内容与胜利 2.15s、战败 4.0s 总时长不变。
+- `transition_` 按 state/startAt/elapsed 回卷/离开过渡复位 skip；提示出现后才允许跳过（胜利1.55s/战败3.40s为助手选定门控）。早期鼠标/触摸只消费，清 armed 防同次 Up 点按钮；战败重复回车不跳过/重开，过渡中回车不直接重开。
+- `uiFx.UpdateGameWindow` 在首次真实可见时启动窗口入场，Update/Render/HitTest 同源、下一 Update 不重复置零；覆盖输入先于 Render 的闪现边界，零新增 Backend 顶层 local。
+- 同一真渲染时序探针修前56 PASS/4 FAIL，修后 **60/60 PASS、exit0**，目标 Lua/overlay/load/空顶点错误0；实际 Draw win75/defeat151，生产/冻结三脚本一致。LSP31文件0 Error；官方多人 build32/预览上传成功，client6007d810/server7e6e8b39 清单220/221文件 size+CRC32零错配。
+- 边界：模拟 eventData 驱动真实处理器、强制结算非自然完整打一关；无手机动画实图/FPS/全DPR验收。早期探针显式ClientMain.Stop退出139未定位，最终不显式调用，不计Stop/Start通过。
+- POST-1/2执行；persona跳过（无新偏好）；POST-3执行AB-307/308，随行persona/preferences跳过。保留并发ArtText/发布配置，不改展示版本。
+
 ## 装饰原语实现层反哺（2026-10-13，visual-recipes-primitives 附记）
 - 用户「我要求最具体的绘制比如你这些流光纹理按钮也要反哺skill」——上一版只给**调用层**，用户要**原语本身的绘制代码**。
 - **产出**：`visual-recipes.md` 新增 **§11「装饰原语实现」（+377 行）**——`MicroGrid` / `DiagonalHatch` / `Halftone`（隔行错位 + 自适应步长 + 合并路径）/ `DotMatrix` / `CircuitTrace` / `CornerBrackets` / `DashRule` / `TicksBatch`·`Ticks`·`TopTicks` / `TickRing` / `Cross`·`CrossBatch` / `ScanBand`（流光）/ `GlassStrip` / `Screws` / 悬停加色光 / 按钮流光（斜扫光四边形）的**完整代码** + §11.0 性能契约 + §11.16 检查清单。原 §10 检查清单顺延 §12。
