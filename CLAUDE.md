@@ -4,6 +4,14 @@
 
 ## 当前状态
 
+- 附记: opening-vehicle-selection（2026-10-14，**新档四车首阶 + 每关两轮车型三选一**；不改展示版本）：
+  - 用户要求新存档四车天赋首阶默认解锁，每关额外两次只出车辆解锁卡的三选一。实现不再固定赠送加速车：第一轮四种取三，第二轮排除首选、展示剩余三种；两辆不同车型，首选待发、次选备弹，无隐藏第三辆。候选排列为助手方案，非另行用户确认参数。
+  - **规则与存档**：`Game._opening` 借用 levelup 模态，但轮次/已选列表独立于 XP、pendingLevelUps、upgradePicks/stacks；两选结束才启动原3秒 intro。选关/下一关/再战/重开覆盖，复活不重选；第三车解锁/扩容/回收照旧。`PlayerData.NewState` 默认 normal_1/ice_1/speed_1/giant_1，第二阶仍锁；成功旧本地档不强制迁移、AUTO_OWNED仍旧两项。无本地档先默认四节点再旧云并集可能保留四节点，不声称严格新账号识别；ResetAll/读取失败回退同默认。
+  - **界面与输入**：显示开局选车/第1或2轮/已选车型，opening隐藏且禁止命中重抽广告与保留，正常经验升级恢复旧操作区。两轮同为levelup，openingRound参与窗口身份；Update/Render/HitTest共用幂等入场起点及WindowInput逆变换，Shutdown复位。保留暗科技卡片/字体/折行/既有效果与并发蓄力，Game/Backend零新增顶层local，仅改本人三Lua。
+  - **验证**：规则4组69873断言、存档mock5组132、真实公共API战斗1组1844，全PASS，最终与复跑六进程exit0；64种子/576次两轮覆盖12有序车型组合、298次不含speed。实战1760帧/73发射/135击碎/69回收/4经验升级，第三车21发、扩容后43回收。UI run5真实处理器159/159、旧胜败边沿64/64（共223）exit0，目标Lua/overlay/load/空顶点错误0；三张真实TakeScreenShot/SavePNG已逐张内部目视两轮与普通升级，opening两图差8018像素。输入eventData/存档File/广告拦截为模拟，不等于OS/SDK；早期错误断言及额外稳态首轮截图两次失败保留、不计PASS。
+  - LSP32文件0Error（1334Warning/118Hint）；此前最终官方多人1.0.2/build4与预览上传成功，client49840fdc/server1a234278，222/223项size+CRC32全匹配、三本人Lua包内同源码，规则六模块/UI87文件冻结一致，独立静态审查无确定缺陷。收尾三源码SHA仍与正式冻结一致、diff-check通过；续接后的Python全清单重查exit1无输出/日志读取失败原因未定位，不冒称重查通过、不据此判包损坏或重建。未改验收后生产Lua，纯POST不重复build。
+  - **POST判定**：POST-1状态/索引与项目persona规则演进执行；POST-2版本附记及本人三Lua/记录独立提交；POST-3 AB-317/318执行，随行persona/preferences跳过（无新跨项目偏好）。保留c89aa98蓄力及AB315/316、配置/初始未跟踪文件，不代提交；手机手感/FPS/全DPR/主HDR/真实SDK/用户审美待Preview，历史XHR96/233未定位状态不变。
+
 - 附记: launch-charge（2026-10-14，**拖拽收缩圈 + 满蓄金色车前冲击波与 1.5 倍伤害**；不改展示版本）：
   - 用户要求起手大圈跟随拖拽处匀速缩到0，发射消散，归零后发射车前波壳染金且伤害×1.5。实现暂用1.2s/半径240设计像素/0.22s消散（助手拟值，不是用户确认参数）。圈心走真实ScreenToUi指针，不锚车辆/虚拟aim、不随世界震屏；旧二参输入回退玩法投影。原圆形相对拖拽、方向/初速/死区/回收、拖尾/附魔/胜败过渡保留。
   - **规则**：Game._launchCharge使用允许inputDt且单帧最多0.05，独立于hitStop与空仓倍速；暂停/失焦/广告/升级等取消。Up先仅CancelHoldSpeed，发射锁定实例chargeBoosted后清手势；死区不发射。新车false，分裂/附魔追加子车只继承布尔，不累乘；GetMarbleDamage在附魔后暴击前统一×1.5，圆域/连锁/爆炸同入口，炸弹/DOT不增强。Game/Backend零新增顶层local。
