@@ -5,6 +5,9 @@ local AircraftData = require "AircraftPixelData"
 
 local VisualCatalog = {}
 
+-- 蓄力圈：设计空间匀速归零，不随世界透视/震屏移动；参数是表现层拟值。
+VisualCatalog.LAUNCH_CHARGE = { radius = 240, releaseSeconds = 0.22 }
+
 local BALL_STYLES = {
     normal = {
         displayRadius = 9,

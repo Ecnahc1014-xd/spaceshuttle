@@ -4,6 +4,9 @@
 local VisualCatalog = require "VisualCatalog"
 
 local Presentation = {}
+-- 一份可复用释放回声；位置是实际指针，寿命只由表现时间推进。
+Presentation._chargeRelease = { life = 0, maxLife = VisualCatalog.LAUNCH_CHARGE.releaseSeconds, progress = 0, x = 0, y = 0,
+    uiX = nil, uiY = nil, boosted = false }
 
 local screenShake = 0
 local waveBannerTimer = 0
@@ -73,7 +76,7 @@ local FEEDBACK_MAP = {
     enemy_cleared = {"clearBanner"},
     enemy_destroyed = {"clearImpact"},
     base_hit = {"baseShake"},
-    marble_launched = {"launchFlash"},
+    marble_launched = {"launchFlash", "chargeRelease"},
     normal_split = {"splitSpark"},
     speed_dash = {"dashSpark"},
     -- v0.13.55「动能穿刺」：加速车穿透一块时的瞬时反馈。
@@ -280,6 +283,7 @@ end
 -- HandleEvent 按 FEEDBACK_MAP 分派，新增反馈只需补充映射 + 处理函数。
 local FEEDBACK_HANDLERS = {
     fullReset = function(event)
+        Presentation._chargeRelease.life = 0
         screenShake = 0
         waveBannerTimer = 0
         waveBannerBoss = false
@@ -399,6 +403,15 @@ local FEEDBACK_HANDLERS = {
         local rowTag = event.rows and event.rows > 1 and ("x" .. event.rows .. "行 ") or ""
         SpawnFloatText(event.x, event.y - 34,
             rowTag .. "防线 -" .. tostring(dmg), {255, 110, 80}, 1.05)
+    end,
+    chargeRelease = function(event)
+        if event.chargeProgress == nil then return end
+        local r = Presentation._chargeRelease
+        r.life = r.maxLife
+        r.progress = event.chargeProgress
+        r.x, r.y = event.chargeX, event.chargeY
+        r.uiX, r.uiY = event.chargeUiX, event.chargeUiY
+        r.boosted = event.chargeBoosted == true
     end,
     launchFlash = function(event)
         -- 玩家点击发射：轻度反馈，2 粒随弹种颜色的小火花 + 偶尔一缕烟。
@@ -770,10 +783,12 @@ function Presentation.Init()
         speed = 0,
         giant = 0,
     }
+    Presentation._chargeRelease.life = 0
     print("[Presentation] visual state initialized")
 end
 
 function Presentation.Update(dt, gameSnapshot, events)
+    Presentation._chargeRelease.life = math.max(0, Presentation._chargeRelease.life - dt)
     if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
     if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
     if stageBannerTimer > 0 then stageBannerTimer = math.max(0, stageBannerTimer - dt) end
@@ -804,6 +819,7 @@ end
 
 function Presentation.GetSnapshot()
     return {
+        chargeRelease = Presentation._chargeRelease,
         screenShake = screenShake,
         hitStop = hitStop,    -- P12：主循环读取，对玩法 dt 打折实现顿帧
         waveBannerTimer = waveBannerTimer,    -- A2：波次横幅入场计时（秒，1.8 起递减）

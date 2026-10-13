@@ -7,6 +7,7 @@
 ---@field alive boolean
 ---@field onSling boolean
 ---@field ballType string
+---@field chargeBoosted boolean|nil
 ---@class BowWaveGame
 ---@field state string
 ---@field introTimer number|nil
@@ -174,11 +175,13 @@ local function EmitCar(marble, record, box)
     local he = record.heading and math.abs((heading - record.heading + 180) % 360 - 180) or 0
     local d = { id = marble.id, noseGap = math.huge, widthRatio = outer * math.sin(HALF_ANGLE) / hw,
         anchor = root:LocalToWorld(Vector3(nose, 0, zc)), heading = heading, headingError = he, transforms = 1 } ---@type BowWaveCarDebug
-    local rgb = S.colors[marble.ballType] or { 0.24, 0.80, 0.91 }
+    local rgb = marble.chargeBoosted and { 1.0, 0.72, 0.16 }
+        or S.colors[marble.ballType] or { 0.24, 0.80, 0.91 }
     local pulse = 0.92 + 0.08 * math.sin(S.phase * 4)
     local dark = Color(rgb[1] * 0.55, rgb[2] * 0.55, rgb[3] * 0.55, 1)
     local side = Color(rgb[1] * 0.95, rgb[2] * 0.95, rgb[3] * 0.95, 1)
-    local bright = Color(pulse, pulse, pulse, 1)
+    local bright = marble.chargeBoosted and Color(pulse, pulse * 0.90, pulse * 0.56, 1)
+        or Color(pulse, pulse, pulse, 1)
     local rim = Color(rgb[1] * pulse, rgb[2] * pulse, rgb[3] * pulse, 1)
     -- 顶面内侧白热核、外侧弹种色边；仍是同一 section 的顶点 RGB。
     local function TopColor(v)

@@ -1125,12 +1125,18 @@ function uiFx.UpdateGameWindow(game)
     local visible = (game.state == "gameover" or game.state == "stagewin"
         or game.state == "levelup" or game.state == "paused")
         and StageTransition.WindowVisible(game)
-    if visible and not uiFx.gameWindowVisible then
+    local openingRound = game.state == "levelup" and game.openingSelection and game.openingRound or nil
+    if visible and (not uiFx.gameWindowVisible
+        or (openingRound and openingRound ~= uiFx.openingRound)) then
         uiStateMotionEnter_ = uiClock_
-        if game.state == "gameover" or game.state == "stagewin" then
+        if openingRound then
+            print("[Scene3DBackend] opening window round=" .. openingRound)
+        elseif game.state == "gameover" or game.state == "stagewin" then
             print("[Scene3DBackend] settlement window entered: " .. game.state)
         end
     end
+    -- 两轮同处 levelup；轮次也是窗口身份，绘制/更新/命中共同消费一次入场边沿。
+    uiFx.openingRound = openingRound
     uiFx.gameWindowVisible = visible
     return visible
 end
@@ -2035,13 +2041,15 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
             C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- 锁定角标移到右上（避让顶部图标）
-    DrawPixelText(ctx, x + cardW - 6, y + 7, choice.held and "保留" or "锁定", 14,
-        choice.held and C.warn or C.cyanDim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    -- 开局选车不提供保留角标；正常经验升级维持原交互。
+    if not choice.opening then
+        DrawPixelText(ctx, x + cardW - 6, y + 7, choice.held and "保留" or "锁定", 14,
+            choice.held and C.warn or C.cyanDim, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+    end
     DrawPixelText(ctx, x + cardW * 0.5, y + 86, choice.name or "强化", 22, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawPixelText(ctx, x + cardW * 0.5, y + 114,
-        (choice.kind == "word" and "特殊效果 · " or "") .. rare.tag, 16, accent,
+        choice.opening and "开局车型" or ((choice.kind == "word" and "特殊效果 · " or "") .. rare.tag), 16, accent,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, x + 14, y + 136, cardW - 28, 6, C.cyanDim)
 
@@ -2108,7 +2116,7 @@ local function DrawUpgradeCard(ctx, index, choice, cx, cy, cardW, cardH)
     local stacks = choice.stacks or 0
     local maxText = choice.maxStacks and choice.maxStacks >= 90 and "∞" or tostring(choice.maxStacks or "-")
     DrawPixelText(ctx, x + cardW * 0.5, y + cardH - 22,
-        "已选 " .. tostring(stacks) .. " / " .. maxText, 14, C.dim,
+        choice.opening and "点选加入本局" or ("已选 " .. tostring(stacks) .. " / " .. maxText), 14, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
 
@@ -2189,15 +2197,27 @@ local function DrawLevelUp(ctx, game, presentation)
     local choices = game.upgradeChoices or {}
     local layout = GetUpgradePanelLayout(game)
 
-    DrawPixelText(ctx, 24, 106, "升级", 18, C.cyan)
-    DrawPixelText(ctx, game.width - 24, 106,
-        string.format("%d 选一", math.min(3, #choices)), 18, C.warn,
-        NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 130, "选择一项强化", 30, C.text,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 168,
-        string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 17, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    if game.openingSelection then
+        DrawPixelText(ctx, 24, 106, "开局选车", 18, C.cyan)
+        DrawPixelText(ctx, game.width - 24, 106,
+            string.format("第 %d / %d 轮", game.openingRound or 1, game.openingTotal or 2), 18, C.warn,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, game.width * 0.5, 130, "选择本关出战车辆", 30, C.text,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, game.width * 0.5, 168,
+            game.openingFirstVehicle and ("已选：" .. (SLOT_NAMES[game.openingFirstVehicle] or "") .. "车")
+                or "选出两辆不同车型", 17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    else
+        DrawPixelText(ctx, 24, 106, "升级", 18, C.cyan)
+        DrawPixelText(ctx, game.width - 24, 106,
+            string.format("%d 选一", math.min(3, #choices)), 18, C.warn,
+            NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, game.width * 0.5, 130, "选择一项强化", 30, C.text,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, game.width * 0.5, 168,
+            string.format("当前等级 %d    点一张卡片继续", game.playerLevel), 17, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
 
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
@@ -2219,9 +2239,9 @@ local function DrawLevelUp(ctx, game, presentation)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    DrawUpgradeActions(ctx, game, layout)
+    if not game.openingSelection then DrawUpgradeActions(ctx, game, layout) end
 
-    DrawPixelText(ctx, 24, layout.hintY, "战斗已暂停", 16, C.dim)
+    DrawPixelText(ctx, 24, layout.hintY, game.openingSelection and "选择后开始战斗" or "战斗已暂停", 16, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
     local hintColor = C.warn
     local hintSize = 16
@@ -2796,6 +2816,9 @@ local function RenderOverlay(game, presentation, meta)
             function() MetaUI.DrawSupplyPopup(vg_, DESIGN_W, meta) end)
     end
     ApplyOverlayDesignTransform()
+    RunOverlayStage("launch-charge", function()
+        uiFx.charge.Draw(vg_, game, presentation, ProjectGamePoint, C)
+    end)
     RunOverlayStage("system-banner", function() DrawSystemBanner(vg_) end)
 
     local endOk, endErr = pcall(nvgEndFrame, vg_)
@@ -2879,6 +2902,7 @@ function Backend.Init()
     UpdateScreenMetrics()
     uiFx.surface = require "ui.PremiumSurface"
     uiFx.impact = require "ui.CombatImpact"
+    uiFx.charge = require "ui.LaunchCharge"
     -- 音频总控：8bit 太空公路风格 BGM + 领域事件音效（可选资源，缺文件静默跳过）。
     uiFx.audio = require "AudioDirector"
     -- v0.11.0 商业化：把游戏 UI 的令牌与绘制原语注入元层界面，保证两处风格同源。
@@ -3056,6 +3080,7 @@ function Backend.Shutdown()
     metaScreen_, metaScreenLeaving_, metaSupplyLeaving_ = nil, nil, nil
     metaSupply_, metaVisual_ = false, nil
     uiClock_, uiLastElapsed_ = 0, nil
+    uiFx.openingRound, uiFx.gameWindowVisible = nil, false
     lastGame_, lastPresentation_, lastMeta_ = nil, nil, nil
     if vg_ then
         ArtText._Reset(vg_)
@@ -3305,15 +3330,18 @@ end
 ---@return string|nil kind
 ---@return integer|nil index
 function Backend.HitTestUpgradePanel(uiX, uiY, game)
+    if not game or not uiFx.UpdateGameWindow(game) then return nil end
     uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
-    local layout = GetUpgradePanelLayout(game or {})
+    local layout = GetUpgradePanelLayout(game)
     local function inside(rect)
         return uiX >= rect.x and uiX <= rect.x + rect.w
             and uiY >= rect.y and uiY <= rect.y + rect.h
     end
 
-    if inside(layout.rerollFree) then return "reroll_free", nil end
-    if inside(layout.rerollAd) then return "reroll_ad", nil end
+    if not game.openingSelection then
+        if inside(layout.rerollFree) then return "reroll_free", nil end
+        if inside(layout.rerollAd) then return "reroll_ad", nil end
+    end
 
     local choices = (game and game.upgradeChoices) or {}
     local cardTop = layout.cy - layout.cardH * 0.5
@@ -3321,7 +3349,7 @@ function Backend.HitTestUpgradePanel(uiX, uiY, game)
         local cx = layout.startX + (i - 1) * (layout.cardW + layout.gap)
         local choice = choices[i]
         -- 左上「锁定/保留」角标先于卡体判定。
-        if choice and inside(GetHoldBadgeRect(cx, cardTop, layout.cardW)) then
+        if choice and not game.openingSelection and inside(GetHoldBadgeRect(cx, cardTop, layout.cardW)) then
             return "hold", i
         end
         if math.abs(uiX - cx) <= layout.cardW * 0.5 + 4

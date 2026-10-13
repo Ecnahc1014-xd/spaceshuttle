@@ -1942,7 +1942,7 @@ function HandleMouseDown(eventType, eventData)
         return
     end
     metaPointerConsumed = false
-    Game.PointerDown(x, y)
+    Game.PointerDown(x, y, pointerX, pointerY)
 end
 
 function HandleMouseUp(eventType, eventData)
@@ -1992,7 +1992,8 @@ function HandleMouseUp(eventType, eventData)
     end
     if MenuMetaBlocksRelease() then return end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
-    Game.PointerUp(x, y)
+    local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+    Game.PointerUp(x, y, uiX, uiY)
 end
 
 function HandleMouseMove(eventType, eventData)
@@ -2019,7 +2020,7 @@ function HandleMouseMove(eventType, eventData)
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
         or IsMetaCapturing() or metaPointerConsumed then return end
     local x, y = RenderBackend.ScreenToGame(sx, sy)
-    Game.PointerMove(x, y)
+    Game.PointerMove(x, y, hx, hy)
 end
 
 function HandleTouchBegin(eventType, eventData)
@@ -2079,7 +2080,7 @@ function HandleTouchBegin(eventType, eventData)
         return
     end
     metaPointerConsumed = false
-    Game.PointerDown(x, y)
+    Game.PointerDown(x, y, pointerX, pointerY)
 end
 
 function HandleTouchMove(eventType, eventData)
@@ -2101,7 +2102,7 @@ function HandleTouchMove(eventType, eventData)
     if Game.IsLevelUp() or Game.IsGameOver() or Game.IsStageWin()
         or IsMetaCapturing() or metaPointerConsumed then return end
     local x, y = RenderBackend.ScreenToGame(tsx, tsy)
-    Game.PointerMove(x, y)
+    Game.PointerMove(x, y, thx, thy)
 end
 
 function HandleTouchEnd(eventType, eventData)
@@ -2150,7 +2151,8 @@ function HandleTouchEnd(eventType, eventData)
     end
     if MenuMetaBlocksRelease() then return end
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
-    Game.PointerUp(x, y)
+    local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+    Game.PointerUp(x, y, uiX, uiY)
 end
 
 function HandleKeyDown(eventType, eventData)

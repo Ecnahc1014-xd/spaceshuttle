@@ -60,7 +60,8 @@ local function NewState()
         codex = {},
         stageStars = {},
         maxStage = 1,
-        talents = {},
+        -- 新档只默认开放四车首阶资格；专属强化仍需各自第二阶天赋。
+        talents = { normal_1 = true, ice_1 = true, speed_1 = true, giant_1 = true },
         skins = { default = true },
         selectedSkin = "default",
         trails = { classic = true },

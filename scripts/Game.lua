@@ -9,6 +9,20 @@ local EnchantCatalog = require "EnchantCatalog"
 local Game = {}
 -- 空手长按只缩放战斗模拟，不改变表现时钟；收表避免增加主块 local 槽位。
 Game._holdSpeed = { down = false, active = false, time = 0, threshold = 0.35, epoch = 0 }
+-- 发射蓄力独立于拉量/初速，使用允许输入时间，不受空手倍速或顿帧倍率影响。
+---@class LaunchChargeState
+---@field time number
+---@field total number
+---@field x number
+---@field y number
+---@field uiX number|nil
+---@field uiY number|nil
+---@type LaunchChargeState
+Game._launchCharge = { time = 0, total = 1.2, x = 0, y = 0, uiX = nil, uiY = nil }
+function Game.ClearLaunchCharge()
+    Game._launchCharge.time = 0
+    Game._launchCharge.uiX, Game._launchCharge.uiY = nil, nil
+end
 -- v0.13.58：局内附魔卡状态（收进一张表，不新增顶层 local，AB-166）。
 --   card    = 当前持有的附魔卡（EnchantDef），nil 表示空手
 --   pending = 已使用但当前没有待发车时，顺延给「下一个预备发射的车」的附魔卡
@@ -18,6 +32,8 @@ Game._enchant = { card = nil, pending = nil, lastWave = 0 }
 --   at     = 进入 gameover 的时刻（elapsed），过渡动画的计时基准
 --   revive = 本局是否还能复活（决定动画里是否出现「可复活」提示）
 Game._defeat = { at = nil, revive = false }
+-- 两轮开局选车借用 levelup 输入/窗口，计数独立于经验升级，不增加主块 local。
+Game._opening = { active = false, round = 0, total = 2, selected = {} }
 
 local DW = 540
 local DH = 960
@@ -532,6 +548,7 @@ local function CreateMarble(ballType, words)
         giantPiercing = false,
         giantPiercePending = false, -- 冷却中只保留反弹资格，不代表已经可以贯穿
         giantAreaCooldown = 0,
+        chargeBoosted = false,
         -- v0.13.55 动能穿刺：本弹剩余穿透次数（每次穿透不反弹、直接吃下块）。
         pierceLeft = BALL_TUNING.speedPierce,
         words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
@@ -712,6 +729,7 @@ end
 
 function Game.CancelPointer()
     Game.CancelHoldSpeed()
+    Game.ClearLaunchCharge()
     aiming = false
     startArmed = false
     if activeBall then
@@ -750,9 +768,13 @@ ResetGame = function(startStage)
     stageResult = nil
     Game._defeat.at = nil
     Game._defeat.revive = false
+    Game._opening.active = false
+    Game._opening.round = 0
+    Game._opening.selected = {}
     elapsed = 0
     veggies = {}
     marbles = {}
+    Game.ClearLaunchCharge()
     aiming = false
     hasLaunched = false
     startArmed = false
@@ -851,14 +873,15 @@ end
 local function StartGameAt(stageNum)
     previousHighScore = highScore
     ResetGame(stageNum)
-    gameState = "playing"
-    -- v0.13.24：进入「进关准备期」——不立刻刷怪，先放一段准备动画，
-    -- 期间玩法冻结（弹珠/敌机/波次都不推进），给玩家「关卡开始」的过渡感。
-    introTimer = INTRO_SECONDS
-    EnsureNextWavePlan()
-    -- v0.13.24：关号播报改由「进关准备期」过渡界面承担（对所有关卡统一），
-    -- 原 stage_started 横幅会与过渡界面重复，故不再发出。
-    print("[Game] game started at stage " .. stage .. " (intro " .. INTRO_SECONDS .. "s)")
+    -- 先选两辆不同车型，选完才装填并启动原三秒准备期；不再固定送加速车。
+    activeBall = nil
+    ballQueue = {}
+    unlockedBalls = {}
+    Game._opening.active = true
+    Game._opening.round = 1
+    gameState = "levelup"
+    RollUpgradeChoices({})
+    print("[Game] opening selection stage=" .. stage .. " round=1/2")
 end
 
 local function StartGame()
@@ -1553,6 +1576,7 @@ GainXp = function(amount)
     if pendingLevelUps > 0 then
         -- v0.10.24：与 Pause 一致，进入升级面板时取消进行中的拖拽并让待发车归位，
         -- 防止选完强化回到 playing 后残留旧 aiming/grabStart。
+        Game.ClearLaunchCharge()
         aiming = false
         if activeBall then
             activeBall.x = SLING_X
@@ -1572,6 +1596,23 @@ end
 
 ---@param opts RollUpgradeOpts|nil
 RollUpgradeChoices = function(opts)
+    if Game._opening.active then
+        -- 专用池只取四张既有解锁卡；旧档也能选车，不伪造永久天赋或生命加成。
+        -- 第一轮四种取三，第二轮剩余三种全部展示；无重复/占位/重抽保底副作用。
+        local available = {}
+        for _, u in ipairs(UPGRADE_POOL) do
+            if u.unlockBallType and not unlockedBalls[u.unlockBallType] then
+                available[#available + 1] = u
+            end
+        end
+        upgradeChoices = {}
+        for _ = 1, math.min(PANEL_CARD_COUNT, #available) do
+            local index = RandomInt(1, #available)
+            upgradeChoices[#upgradeChoices + 1] = table.remove(available, index)
+        end
+        print("[Game] opening candidates round=" .. Game._opening.round .. " count=" .. #upgradeChoices)
+        return
+    end
     -- WO-09/P5：加权抽卡 + 叠加上限 + 稀有保底 + 同次候选去重。
     -- v0.11.0：支持自定义候选数与广告「卡池升格」的稀有保底。
     opts = opts or {}
@@ -1685,6 +1726,32 @@ end
 function Game.PickUpgrade(index)
     if gameState ~= "levelup" or not upgradeChoices then return false end
     local choice = upgradeChoices[index]
+    if Game._opening.active then
+        if not choice or not choice.unlockBallType or unlockedBalls[choice.unlockBallType] then return false end
+        local opening = Game._opening
+        unlockedBalls[choice.unlockBallType] = true
+        opening.selected[#opening.selected + 1] = choice.unlockBallType
+        upgradeChoices = nil
+        Emit("upgrade_picked", { id = choice.id, name = choice.name, stacks = 1 })
+        print("[Game] opening picked round=" .. opening.round .. " vehicle=" .. choice.unlockBallType)
+        if #opening.selected < opening.total then
+            opening.round = opening.round + 1
+            RollUpgradeChoices({})
+        else
+            opening.active = false
+            -- 首选待发、次选备弹；保持基础容量+解锁追加的库存口径，不藏第三辆车。
+            activeBall = CreateMarble(opening.selected[1], CollectActiveWords())
+            ballQueue = { opening.selected[2] }
+            for i, ballType in ipairs(BALL_ORDER) do
+                if ballType == opening.selected[2] then ballCycleIndex = i; break end
+            end
+            gameState = "playing"
+            introTimer = INTRO_SECONDS
+            EnsureNextWavePlan()
+            print("[Game] opening complete ready=" .. opening.selected[1] .. " spare=" .. opening.selected[2])
+        end
+        return true
+    end
     if not choice or not CanOfferUpgrade(choice) then return false end
 
     local stacks = upgradeStacks[choice.id] or 0
@@ -1732,6 +1799,7 @@ function Game.GetUpgradeChoices()
             stacks = upgradeStacks[c.id] or 0, maxStacks = c.maxStacks,
             tradeoff = c.tradeoff,
             held = heldUpgradeId == c.id,
+            opening = Game._opening.active,
         })
     end
     return list
@@ -1744,19 +1812,19 @@ end
 
 ---@return boolean
 function Game.CanFreeReroll()
-    return gameState == "levelup" and not upgradeRerollFreeUsed
+    return gameState == "levelup" and not Game._opening.active and not upgradeRerollFreeUsed
 end
 
 ---@return boolean
 function Game.CanReroll()
-    return gameState == "levelup" and upgradeChoices ~= nil
+    return gameState == "levelup" and not Game._opening.active and upgradeChoices ~= nil
 end
 
 -- 锁住一张已有候选卡，下一次升级（或本次重抽）固定保留在首位；再次点击解除。
 ---@param index integer
 ---@return boolean ok
 function Game.ToggleHeldUpgrade(index)
-    if gameState ~= "levelup" or not upgradeChoices then return false end
+    if gameState ~= "levelup" or Game._opening.active or not upgradeChoices then return false end
     local choice = upgradeChoices[index]
     if not choice then return false end
     heldUpgradeId = (heldUpgradeId == choice.id) and nil or choice.id
@@ -1768,7 +1836,7 @@ end
 ---@param mode string "free" | "ad_rare"
 ---@return boolean ok
 function Game.RerollUpgrades(mode)
-    if gameState ~= "levelup" or not upgradeChoices then return false end
+    if gameState ~= "levelup" or Game._opening.active or not upgradeChoices then return false end
     if mode == "free" then
         if upgradeRerollFreeUsed then return false end
         upgradeRerollFreeUsed = true
@@ -2139,6 +2207,8 @@ local function CreateSplitMarble(source, angle, originBrick)
     marble.enchant = source.enchant
     marble.enchantPierce = source.enchantPierce
     marble.enchantIsChild = true
+    -- 同次发射的分裂/附魔追加子车继承资格，不累乘；回收后的新待发车默认 false。
+    marble.chargeBoosted = source.chargeBoosted == true
     nextMarbleId = nextMarbleId + 1
     return marble
 end
@@ -2251,6 +2321,8 @@ local function GetMarbleDamage(marble, def)
     if marble.enchant and marble.enchant.damageMul then
         base = base * marble.enchant.damageMul
     end
+    -- 仅增强本次车辆伤害；圆域/连锁/爆炸都从此入口取值，不在 DamageBrick 再乘。
+    if marble.chargeBoosted then base = base * 1.5 end
     -- 暴击只影响本次结算，不改弹珠状态；表现层消费 crit_hit 出飘字。
     return ApplyCrit(base, marble)
 end
@@ -2352,6 +2424,7 @@ local function LaunchMarble(dx, dy, power)
     local speedScale = BALANCE.powerMin + (BALANCE.powerMax - BALANCE.powerMin) * powerRatio
     -- v0.13.28：「玻璃巨炮」的发射初速倍率——低难度砖块 1 血时伤害是溢出，但更快的弹道立刻有感。
     local speed = def.speed * speedScale * BALL_TUNING.launchSpeedMul
+    activeBall.chargeBoosted = Game._launchCharge.time >= Game._launchCharge.total
     activeBall.vx = -dx / length * speed
     activeBall.vy = -dy / length * speed
     activeBall.speed = speed
@@ -2364,7 +2437,12 @@ local function LaunchMarble(dx, dy, power)
         ballType = activeBall.ballType,
         x = activeBall.x,
         y = activeBall.y,
+        chargeBoosted = activeBall.chargeBoosted,
+        chargeProgress = Game._launchCharge.time / Game._launchCharge.total,
+        chargeX = Game._launchCharge.x, chargeY = Game._launchCharge.y,
+        chargeUiX = Game._launchCharge.uiX, chargeUiY = Game._launchCharge.uiY,
     })
+    print("[Game] launch charge id=" .. activeBall.id .. " boosted=" .. tostring(activeBall.chargeBoosted))
     -- v0.13.58：附魔「三连」——发射时额外扇形射出同型车（继承附魔与词条，共享同一发射方向）。
     local triple = activeBall.enchant and activeBall.enchant.tripleShot or 0
     for k = 1, triple do
@@ -3030,6 +3108,7 @@ UpdateEnemies = function(dt)
             baseHp = 0
             gameState = "gameover"
             Game.CancelHoldSpeed()
+            Game.ClearLaunchCharge()
             aiming = false
             startArmed = false
             if score > highScore then highScore = score end
@@ -3131,6 +3210,7 @@ UpdateWaveLogic = function(dt)
             partsEarned = partsEarned + stageResult.bonusParts * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
             if score > highScore then highScore = score end
             nextWavePlan = nil
+            Game.ClearLaunchCharge()
             aiming = false
             if activeBall then activeBall.x, activeBall.y = SLING_X, SLING_Y end
             for i = #veggies, 1, -1 do
@@ -3222,6 +3302,7 @@ end
 function Game.Update(dt, inputDt)
     elapsed = elapsed + dt
     if gameState ~= "playing" then
+        Game.ClearLaunchCharge()
         if Game._holdSpeed.down or Game._holdSpeed.active then Game.CancelHoldSpeed() end
         -- 非战斗态只保留时钟，供暂停/升级/菜单表现动画使用。
         return
@@ -3246,6 +3327,15 @@ function Game.Update(dt, inputDt)
                 print("[Game] empty-hand hold -> 2x")
             end
         end
+    end
+    if aiming and activeBall then
+        local c = Game._launchCharge
+        local before = c.time
+        c.time = math.min(c.total, c.time + math.min(0.05, math.max(0, inputDt or dt)))
+        if c.total - c.time <= 1e-9 then c.time = c.total end
+        if before < c.total and c.time == c.total then print("[Game] launch charge ready") end
+    else
+        Game.ClearLaunchCharge()
     end
     -- elapsed、准备动画只推进原始规则时间；其余战斗计时统一使用模拟时间。
     -- 已开启后不因补车退出，只由松手、真实发射或生命周期取消。
@@ -3272,25 +3362,15 @@ function Game.IsLevelUp()
     return gameState == "levelup"
 end
 
-function Game.PointerDown(px, py)
-    if gameState == "menu" then
-        -- v0.13.4：菜单不再直接开局——开始按钮由编排层路由到选关界面，
-        -- 玩法层在菜单态不接收任何指针输入。
-        return
-    end
-    if gameState == "gameover" or gameState == "stagewin" then
-        -- 结算/胜利页按钮由编排层按 UI 几何分发，规则层不接收玩法 PointerDown。
-        return
-    end
+function Game.PointerDown(px, py, uiX, uiY)
+    if gameState == "menu" then return end
+    if gameState == "gameover" or gameState == "stagewin" then return end
     startArmed = false
-    -- v0.10.24：移动端无键盘，暂停态点按任意处恢复（桌面端仍可用 P/ESC）。
     if gameState == "paused" then
         Game.Resume()
         return
     end
-    if gameState ~= "playing" then return end
-
-    -- 空手起手只武装长按；补车后本次手势不会自动转为拉弓或发射。
+    if gameState ~= "playing" or aiming then return end
     if not activeBall then
         if Game.CanHoldSpeed() then
             Game._holdSpeed.down = true
@@ -3300,55 +3380,50 @@ function Game.PointerDown(px, py)
     end
     if introTimer > 0 then return end
 
-    -- 全屏任意位置起手：记录按下点，拉弓量按相对位移计算，
-    -- 车辆只在弹弓点附近移动，手指不再遮挡车辆。
+    -- 相对拉弓仍走玩法坐标；绝对指针坐标只随快照传给表现层。
+    Game.ClearLaunchCharge()
+    Game._launchCharge.x, Game._launchCharge.y = px, py
+    Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
     aiming = true
     grabStartX = px
     grabStartY = py
     aimX = SLING_X
     aimY = SLING_Y
+    print("[Game] launch charge started")
 end
 
-function Game.PointerMove(px, py)
-    if not aiming then return end
+function Game.PointerMove(px, py, uiX, uiY)
+    if not aiming or gameState ~= "playing" then return end
+    Game._launchCharge.x, Game._launchCharge.y = px, py
+    Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
     local dx, dy = ClampPull(px - grabStartX, py - grabStartY)
     aimX = SLING_X + dx
     aimY = SLING_Y + dy
     UpdateAiming()
 end
 
-function Game.PointerUp(px, py)
-    -- 空手手势没有 aiming，也必须在任何早退之前恢复原速。
+function Game.PointerUp(px, py, uiX, uiY)
+    -- 只取消空手倍速；本发蓄力须保留到 LaunchMarble 锁定资格之后。
     Game.CancelHoldSpeed()
-    -- v0.10.24：菜单在松手确认时才开局。结算页按钮由编排层分发。
-    if gameState == "menu" then
-        if startArmed then
-            startArmed = false
-            StartGame()
-        end
-        return
-    end
-    if gameState == "gameover" or gameState == "stagewin" then
+    if gameState ~= "playing" or not aiming then
+        Game.ClearLaunchCharge()
         return
     end
     startArmed = false
-    if not aiming then return end
+    Game._launchCharge.x, Game._launchCharge.y = px, py
+    Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
     local dx, dy, distance = ClampPull(px - grabStartX, py - grabStartY)
     aimX = SLING_X + dx
     aimY = SLING_Y + dy
     UpdateAiming()
     aiming = false
     if distance <= 15 then
-        -- 死区内松手：待发车辆归位，不发射。
-        if activeBall then
-            activeBall.x = SLING_X
-            activeBall.y = SLING_Y
-        end
+        if activeBall then activeBall.x, activeBall.y = SLING_X, SLING_Y end
+        Game.ClearLaunchCharge()
         return
     end
-    if activeBall then
-        LaunchMarble(dx, dy, distance / BALANCE.maxPull)
-    end
+    if activeBall then LaunchMarble(dx, dy, distance / BALANCE.maxPull) end
+    Game.ClearLaunchCharge()
 end
 
 function Game.HandleAction(action, pressed)
@@ -3507,6 +3582,7 @@ function Game.Pause()
         Game.CancelPointer()
         -- v0.10.24：暂停时取消进行中的拖拽并让待发车归位，
         -- 避免恢复瞬间带着旧蓄力/残留 aiming 状态。
+        Game.ClearLaunchCharge()
         aiming = false
         if activeBall then
             activeBall.x = SLING_X
@@ -3548,6 +3624,7 @@ function Game.DebugForceGameOver()
     baseHp = 0
     gameState = "gameover"
     Game.CancelHoldSpeed()
+    Game.ClearLaunchCharge()
     aiming = false
     startArmed = false
     if score > highScore then highScore = score end
@@ -3647,6 +3724,10 @@ function Game.GetSnapshot()
     s.canHoldSpeed = Game.CanHoldSpeed()
     s.holdSpeedPending = Game._holdSpeed.down and not Game._holdSpeed.active
     s.pointerEpoch = Game._holdSpeed.epoch
+    s.chargeActive = gameState == "playing" and aiming and activeBall ~= nil
+    s.chargeProgress = s.chargeActive and Game._launchCharge.time / Game._launchCharge.total or 0
+    s.chargeX, s.chargeY = Game._launchCharge.x, Game._launchCharge.y
+    s.chargeUiX, s.chargeUiY = Game._launchCharge.uiX, Game._launchCharge.uiY
     s.playerLevel = playerLevel
     s.xp = xp
     s.xpToNext = xpToNext
@@ -3672,6 +3753,10 @@ function Game.GetSnapshot()
     end
     s.activeWords = words
     s.upgradeChoices = Game.GetUpgradeChoices()
+    s.openingSelection = Game._opening.active
+    s.openingRound = Game._opening.round
+    s.openingTotal = Game._opening.total
+    s.openingFirstVehicle = Game._opening.selected[1]
     s.veggies = veggies
     s.marbles = marbles
     s.aiming = aiming
