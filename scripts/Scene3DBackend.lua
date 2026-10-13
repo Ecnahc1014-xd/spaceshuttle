@@ -152,6 +152,8 @@ CleanupFailedInit = function()
     if uiFx.surface then uiFx.surface.Shutdown() end
     if uiFx.battle then uiFx.battle.Shutdown() end
     if vg_ then
+        ArtText._Reset(vg_)
+        DigitFont._Reset(vg_)
         nvgDelete(vg_)
         vg_ = nil
     end
@@ -2865,6 +2867,8 @@ function Backend.Init()
         uiFx.controls = {}
         Renderer3D.Shutdown()
         if vg_ then
+            ArtText._Reset(vg_)
+            DigitFont._Reset(vg_)
             nvgDelete(vg_)
             vg_ = nil
         end
@@ -2899,6 +2903,7 @@ function Backend.Init()
         anim = Backend.GetAnimPhase,
         controlFx = Backend.GetControlFx,
         measure = MeasurePixelWidth,
+        pixelScale = function() return scale_ * dpr_ end,
         stage = uiFx.surface.Stage,
         button = function(ctx, rect, color, glow)
             uiFx.surface.Button(ctx, rect, color, glow, uiFx.anim)
@@ -2987,6 +2992,8 @@ function Backend.Init()
     local fontId = nvgCreateFont(vg_, "zpix", "Fonts/Zpix.ttf")
     if fontId == -1 then
         print("[Scene3DBackend] ERROR: failed to load Fonts/Zpix.ttf")
+        ArtText._Reset(vg_)
+        DigitFont._Reset(vg_)
         nvgDelete(vg_)
         vg_ = nil
         nvgFontZpix_ = -1
@@ -3051,6 +3058,8 @@ function Backend.Shutdown()
     uiClock_, uiLastElapsed_ = 0, nil
     lastGame_, lastPresentation_, lastMeta_ = nil, nil, nil
     if vg_ then
+        ArtText._Reset(vg_)
+        DigitFont._Reset(vg_)
         nvgDelete(vg_)
         vg_ = nil
     end

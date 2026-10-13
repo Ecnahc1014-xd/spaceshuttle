@@ -110,4 +110,13 @@ function DigitFont.DrawNumber(ctx, value, cx, topY, h, color)
     return true
 end
 
+-- 宿主先释放本模块句柄，再销毁共享 NanoVG 上下文。
+function DigitFont._Reset(ctx)
+    if ctx then
+        for _, img in pairs(digitImages_) do nvgDeleteImage(ctx, img) end
+    end
+    digitImages_ = {}
+    ensureDone_ = false
+end
+
 return DigitFont

@@ -60,7 +60,7 @@ local function LoadAll(ctx)
             end)
             if not ok then print("[ArtText] async unavailable: " .. key .. " " .. tostring(err)) end
         else
-            -- 本地工具运行时没有 DWP 扩展；仍校验母版尺寸，不能接受占位尺寸。
+            -- 没有异步资源扩展的运行时仍校验母版尺寸，不能接受占位尺寸。
             LoadImage(ctx, key, spec)
         end
     end

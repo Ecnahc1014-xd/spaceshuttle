@@ -4,6 +4,15 @@
 
 ## 当前状态
 
+- 修复/调查: clarity-rt-xhr233（2026-10-14，**展台自适应物理 RT + 艺术字就绪/生命周期；233 次 XHR 未定位**；不改展示版本）：
+  - 用户要求以固定 512×288 展台 RT 为模糊主因修复，并追查「开始战斗缩水」及 233 次 XHR。仅改 MetaUI/Backend/VehicleShowcase/ArtText/DigitFont，保留六车显示大小、灯光、白轮廓、透明、30Hz、原特效与圆形拖拽/车前波壳 dt 链；不改战斗规则、正交投影或服务端。
+  - **展台**：Update/Draw 共用矩形，尺寸预算乘 `scale_*dpr_`，16:9 contain 后预留3%弹动，64px分档，512×288至1920×1080；同生命周期只升档，隐藏/拖尾商店页不更新。新 RT 先准备成功，再释放旧 NVG 包装/解绑旧surface/Dispose旧纹理；增长失败保旧、停止逐帧重试，Shutdown复位。3%/64/1920为助手策略，不是用户参数。1080×1920首页896×504，1440×2560首页1216×684；超上限仍可能放大。
+  - **艺术字**：八图布局改用实测成品母版，用户CTA原图407×128、绘制300.96×67不变。GetResourceAsync真实资源回调后注册并核对尺寸，拒绝正数占位；失败保持zpix回退，不每帧重试。lifetime token拒绝旧ctx迟到回调；Backend四处nvgDelete前Reset ArtText/DigitFont。手机那次具体占位尺寸未取得，不将风险封堵冒称手机根因复现。
+  - **验证**：最终生产七源码与冻结副本SHA一致；八项真实Runtime回归exit0：尺寸39断言、换档真实Draw95帧/2次分配、故障注入只尝试1/释放候选1、Backend生命周期14、初始化失败6、首页Art8/CTA300.96、图集mock14、延迟完成真实NanoVG。八项目标Lua/overlay/load/空顶点错误0。最终同帧Forward对照512→1024实图已目视轮圈/线条更清楚，实际TakeScreenShot帧15、exit0；不代表手机或主HDR战场验收。最初组合命令探针启动前退出，不计PASS；首轮700帧战斗超时，不计PASS。最终缩短280帧仍走真实HandleUpdate/进关/发射并保留正向断言，exit0、state=playing/enemies=1/launched=true，波壳实际396顶点，目标脚本错误0；未证明700帧长跑或手机输入。
+  - LSP32文件0 Error（1332 Warning/118 Hint）；官方多人1.0.2/build2预览上传成功，client50e957f7/server26ca8616，两清单221/222项size+CRC32全匹配，五修改脚本包内与源码一致；未手写dist。独立只读审查无确定缺陷，仅静态/算式证据。
+  - **XHR233未修**：报告首条2026-10-13 14:22:08.171、生成14:22:27.324，fcb250f9/24772cad为引擎身份。公共loader的formatError将对象JSON.stringify，标准Error不可枚举message/stack丢为{}，原console.error保留完整参数；这只证明诊断细节丢失，不解释原异常。原手机同会话请求URL/方法/状态/响应类型/initiator/message/stack缺失，公共引擎发行包未找到精确catch；不重复盲扫、不禁云、不屏蔽错误、不拿本地离线或成功业务替代消除验证。96与233报告独立记录，未部署宿主报告器修改。
+  - **POST判定**：POST-1状态/索引执行，persona跳过无新跨项目偏好；POST-2版本附记与本人五脚本独立提交；POST-3执行AB-312/313/314，随行persona/preferences跳过无新偏好。手机清晰度/实际新包加载/FPS/全DPR/用户审美待Preview；保留发布配置与初始未跟踪文件，不代提交。
+
 - 附记: circle-drag-bow-wave（2026-10-14，**完整圆形拖拽 + 车头前方真 3D 冲击波**；不改展示版本）：
   - 用户要求「手感操控优化，从发射拖拽范围变为圆形，和车辆之前增加3d冲击波开始做起」，位置明确「车辆前方」。本批仅改 Game/Renderer3D/Backend/client_main 并新增 `VehicleBowWave.lua`（含 `.meta`），保留原拖尾、附魔光环与胜败过渡，不改伤害、碰撞半径、成长、初速公式、回收条件或服务端职责。
   - **圆形输入与车位分离**：删除半径钳制后的 `dy<=90` 削平限制；完整输入半径仍 150、方向仍 −pull、死区仍 15、力度仍用完整向量。`pullPositionScale=0.6` 将实际车位位移缩成半径 90，避免下拉满幅把待发车拖出画布。PointerMove 与最终 PointerUp 同帧更新 aim/车位，释放出生点不再落后一帧。0.6 为助手拟值，非用户指定或已认可。

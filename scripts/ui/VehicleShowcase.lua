@@ -4,8 +4,9 @@
 local VehicleGeometry = require "VehicleGeometry"
 local VehicleShowcase = {}
 
-local WIDTH, HEIGHT = 512, 288
-local ASPECT = WIDTH / HEIGHT
+local MIN_WIDTH, MAX_WIDTH = 512, 1920
+local ASPECT = 16 / 9
+local SIZE_STEP = 64
 local FRAME_INTERVAL = 1 / 30
 local KEYS = {default = true, arctic = true, crimson = true, jade = true, obsidian = true, rally = true}
 
@@ -39,6 +40,10 @@ local KEYS = {default = true, arctic = true, crimson = true, jade = true, obsidi
 ---@field sectionVertices integer[]
 ---@field orthoSize number
 ---@field flipY boolean
+---@field width integer
+---@field height integer
+---@field allocations integer
+---@field allocationBlocked boolean
 local state = {
     scene = nil, vehicle = nil, geometry = nil, cameraNode = nil, camera = nil,
     texture = nil, surface = nil, viewport = nil, materials = {}, outlineMaterial = nil,
@@ -46,6 +51,7 @@ local state = {
     ready = false, failed = false, error = "", key = "default", visible = false,
     dirty = true, timer = 0, phase = 0, yaw = 0, updates = 0, builds = 0,
     vertices = 0, sectionVertices = {}, orthoSize = 0, flipY = false,
+    width = 0, height = 0, allocations = 0, allocationBlocked = false,
 } --[[@as VehicleShowcaseState]]
 
 local function ReleaseImage()
@@ -53,6 +59,62 @@ local function ReleaseImage()
         pcall(nvgDeleteVideo, state.imageContext, state.image)
     end
     state.image, state.imageContext = 0, nil
+end
+
+-- 输入是最终物理显示矩形，不是设计尺寸；16:9 contain 与 Draw 使用同一比例。
+-- 预留窗口弹动的 3% 放大，以 64px 分档；上限 1920×1080 控制移动端显存。
+---@param physicalW number|nil
+---@param physicalH number|nil
+---@return integer width, integer height
+function VehicleShowcase.ResolveSize(physicalW, physicalH)
+    local w, h = physicalW or 0, physicalH or 0
+    if w ~= w or h ~= h or w <= 0 or h <= 0 then return MIN_WIDTH, 288 end
+    local containedW = math.min(w, h * ASPECT)
+    local width = math.min(MAX_WIDTH, math.max(MIN_WIDTH,
+        math.ceil(containedW * 1.03 / SIZE_STEP) * SIZE_STEP))
+    return width, math.floor(width * 9 / 16)
+end
+
+local function ResizeTarget(width, height)
+    if state.texture and width <= state.width then return true end
+    if state.allocationBlocked then return false end
+    -- 先准备新 RT。分配失败保留旧图，不每帧重试；初次分配失败由 Init 降级。
+    ---@type Texture2D|nil
+    local texture = nil
+    local ok, reason = pcall(function()
+        texture = Texture2D:new()
+        texture:SetNumLevels(1)
+        assert(texture:SetSize(width, height, Graphics:GetRGBAFormat(), TEXTURE_RENDERTARGET),
+            "RT allocation failed")
+        texture:SetFilterMode(FILTER_BILINEAR)
+        local surface = assert(texture:GetRenderSurface(), "RT surface unavailable")
+        surface:SetViewport(0, state.viewport)
+        surface:SetUpdateMode(SURFACE_MANUALUPDATE)
+    end)
+    if not ok then
+        if texture then
+            pcall(function()
+                local surface = texture:GetRenderSurface()
+                if surface then surface:SetNumViewports(0) end
+                texture:Dispose()
+            end)
+        end
+        if not state.texture then error(reason) end
+        state.allocationBlocked = true
+        print("[VehicleShowcase] RT growth unavailable, keeping " .. state.width .. "x" .. state.height
+            .. ": " .. tostring(reason))
+        return false
+    end
+    -- 旧图片包装 → 旧 surface 解绑 → 旧纹理；不动场景、几何、相机或取景。
+    ReleaseImage()
+    if state.surface then state.surface:SetNumViewports(0) end
+    if state.texture then state.texture:Dispose() end
+    state.texture, state.surface = texture, texture:GetRenderSurface()
+    state.width, state.height = width, height
+    state.allocations = state.allocations + 1
+    state.dirty = true
+    print("[VehicleShowcase] RT=" .. width .. "x" .. height .. " levels=1")
+    return true
 end
 
 local function ReleaseResources()
@@ -196,8 +258,10 @@ local function BuildVehicle(key)
 end
 
 --- 可显式初始化，也可由首次可见 Update 懒初始化。失败后不逐帧重试，Shutdown 可复位。
+---@param width integer|nil
+---@param height integer|nil
 ---@return boolean
-function VehicleShowcase.Init()
+function VehicleShowcase.Init(width, height)
     if state.ready then return true end
     if state.failed then return false end
     local ok, reason = pcall(function()
@@ -252,11 +316,6 @@ function VehicleShowcase.Init()
         state.geometry.castShadows = false
         BuildVehicle(state.key)
 
-        local texture = Texture2D:new()
-        state.texture = texture
-        texture:SetNumLevels(1)
-        assert(texture:SetSize(WIDTH, HEIGHT, Graphics:GetRGBAFormat(), TEXTURE_RENDERTARGET), "RT allocation failed")
-        texture:SetFilterMode(FILTER_BILINEAR)
         local viewport = Viewport:new(scene, state.camera)
         state.viewport = viewport
         viewport:SetRenderPath(forward)
@@ -272,11 +331,9 @@ function VehicleShowcase.Init()
             end
         end
         assert(clears > 0, "Forward path has no clear command")
-        state.surface = assert(texture:GetRenderSurface(), "RT surface unavailable")
-        state.surface:SetViewport(0, viewport)
-        state.surface:SetUpdateMode(SURFACE_MANUALUPDATE)
+        ResizeTarget(width or MIN_WIDTH, height or 288)
         state.ready = true
-        print("[VehicleShowcase] ready: Forward 512x288 transparent, local studio")
+        print("[VehicleShowcase] ready: Forward transparent, adaptive local studio")
     end)
     if not ok then return Fail(reason) end
     return true
@@ -285,8 +342,10 @@ end
 ---@param dt number
 ---@param visible boolean
 ---@param vehicleKey string|nil
+---@param physicalW number|nil
+---@param physicalH number|nil
 ---@return boolean
-function VehicleShowcase.Update(dt, visible, vehicleKey)
+function VehicleShowcase.Update(dt, visible, vehicleKey, physicalW, physicalH)
     local wasVisible = state.visible
     state.visible = visible == true
     if not state.visible then
@@ -295,8 +354,11 @@ function VehicleShowcase.Update(dt, visible, vehicleKey)
     end
     local key = KEYS[vehicleKey or "default"] and (vehicleKey or "default") or "default"
     if not state.ready then state.key = key end
-    if not VehicleShowcase.Init() then return false end
+    local width, height = VehicleShowcase.ResolveSize(physicalW, physicalH)
+    if not VehicleShowcase.Init(width, height) then return false end
     local ok, reason = pcall(function()
+        -- 同次生命周期只升档，避免首页/商店切换和临界尺寸抖动反复分配。
+        ResizeTarget(width, height)
         if state.key ~= key then BuildVehicle(key) end
         if not wasVisible then state.dirty = true end
         local elapsed = math.max(0, math.min(dt or 0, 0.25))
@@ -334,8 +396,8 @@ function VehicleShowcase.Draw(ctx, x, y, w, h)
             assert(state.image > 0, "nvgCreateVideo failed")
         end
         -- 目标纹理 16:9 等比 contain，避免宿主展台矩形比例不同把实车拉扁。
-        local scale = math.min(w / WIDTH, h / HEIGHT)
-        local dw, dh = WIDTH * scale, HEIGHT * scale
+        local scale = math.min(w / state.width, h / state.height)
+        local dw, dh = state.width * scale, state.height * scale
         local dx, dy = x + (w - dw) * 0.5, y + (h - dh) * 0.5
         nvgSave(ctx)
         saved = true
@@ -366,6 +428,8 @@ function VehicleShowcase.Shutdown()
     state.dirty, state.timer, state.phase, state.yaw = true, 0, 0, 0
     state.updates, state.builds, state.vertices, state.orthoSize = 0, 0, 0, 0
     state.flipY = false
+    state.width, state.height, state.allocations = 0, 0, 0
+    state.allocationBlocked = false
     state.center, state.corners, state.sectionVertices = Vector3(0, 0, 0), {}, {}
 end
 
@@ -377,7 +441,8 @@ function VehicleShowcase.GetDiagnostics()
         key = state.key, ready = state.ready, failed = state.failed, error = state.error,
         visible = state.visible, image = state.image, imageHandle = state.image,
         updates = state.updates, builds = state.builds, vertices = state.vertices,
-        sectionVertices = counts, width = WIDTH, height = HEIGHT,
+        sectionVertices = counts, width = state.width, height = state.height,
+        allocations = state.allocations, allocationBlocked = state.allocationBlocked,
         yaw = state.yaw, orthoSize = state.orthoSize,
         renderPath = "EngineRes/RenderPaths/Forward.xml", localScene = state.scene ~= nil,
         flipY = state.flipY, aspectRatio = state.camera and state.camera:GetAspectRatio() or 0,

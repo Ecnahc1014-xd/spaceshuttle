@@ -111,6 +111,7 @@ local trailIndex = 1
 ---@field measure fun(ctx:any, s:string, size:number):number 设计空间实测文字宽度
 ---@field stage fun(ctx:any,r:table,phase:number) 绘制程序化技术展台
 ---@field button fun(ctx:any,r:table,color:table,glow:number)
+---@field pixelScale (fun():number)|nil 设计单位对应物理像素倍率，包含 DPR
 ---@field fit fun(ctx:any,text:string,size:number,width:number,minimum:number):number, boolean
 
 ---@type MetaUiDeps
@@ -140,8 +141,10 @@ function MetaUI.Update(dt, meta, gameState)
     local skin = MetaCatalog.GetSkins()[showroom.index] or MetaCatalog.GetSkins()[1]
     showroom.key = screen == "shop" and skin.key or (meta and meta.selectedSkin or "default")
     local visible = gameState == "menu" and not (meta and meta.supplyOpen)
-        and (screen == "" or screen == "shop")
-    VehicleShowcase.Update(dt, visible, showroom.key)
+        and (screen == "" or (screen == "shop" and shopTab == "vehicle"))
+    local rect = MetaUI.GetVehicleStageRect(screen, 540)
+    local pixelScale = D and D.pixelScale and D.pixelScale() or 1
+    VehicleShowcase.Update(dt, visible, showroom.key, rect.w * pixelScale, rect.h * pixelScale)
 end
 
 function MetaUI.PreviewVehicle(index)
@@ -577,7 +580,7 @@ end
 function MetaUI.DrawHomeVehicle(ctx, w, meta)
     local C = Colors()
     local skin = MetaCatalog.GetSkin(meta and meta.selectedSkin or "default") or MetaCatalog.GetSkins()[1]
-    DrawVehicleStage(ctx, {x = 18, y = 180, w = w - 36, h = 238}, true)
+    DrawVehicleStage(ctx, MetaUI.GetVehicleStageRect("", w), true)
     D.text(ctx, 34, 198, "当前车型", 15, C.dim)
     D.text(ctx, w - 34, 195, skin.name, 22, C.text, NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
     D.text(ctx, w * 0.5, 399, skin.desc, 15, C.text, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
@@ -1084,6 +1087,15 @@ end
 -- 商城面板（零件兑换车型 + 免费广告礼包；真实内购走钻石商店）
 -- ============================================================================
 
+-- Update 的物理尺寸预算与两处实际 Draw 共用几何，不在绘制帧内分配 RT。
+function MetaUI.GetVehicleStageRect(screen, w)
+    if screen == "shop" then
+        local content = GetShellLayout(w)
+        return {x = content.x, y = content.y + 56, w = content.w, h = 216}
+    end
+    return {x = 18, y = 180, w = w - 36, h = 238}
+end
+
 local function GetShopLayout(w)
     local content, close = GetShellLayout(w)
     -- 顶行：左侧紧凑分页标签 + 右侧当前项名称/序号（两者同行不重叠）。
@@ -1091,7 +1103,7 @@ local function GetShopLayout(w)
     -- 保证两行免费补给（giftRowY + 2×56）仍落在 content 底之内。
     return {
         content = content, close = close, titleY = content.y + 8,
-        stage = {x = content.x, y = content.y + 56, w = content.w, h = 216},
+        stage = MetaUI.GetVehicleStageRect("shop", w),
         rowY = content.y + 300, rowH = 68, rowStep = 74,
         purchase = {x = content.x + content.w - 182, y = content.y + 452, w = 180, h = 50},
         giftTitleY = content.y + 512, giftRowY = content.y + 538,
