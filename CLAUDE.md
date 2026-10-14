@@ -4,6 +4,16 @@
 
 ## 当前状态
 
+- 附记: split-child-dim（2026-10-14，**分裂/三连子车改灰暗 + 降渲染层级**；沿用展示0.13.63，不抢并发版本）：
+  - 用户「分裂产生的车既然不是正式的车那就变成灰色的暗淡的而且显示图层要低」——只改 `Renderer3D.lua`，不动玩法/伤害/分裂数量/拖尾/附魔/金色强化/暗科技 UI。
+  - **识别子车**：无需改规则层——`Game.lua` 里所有非正式车（`CreateSplitMarble` 分裂车、`LaunchMarble` 的三连附加车）都带 `isPrimary = false`，且 `GetSnapshot` 的 `s.marbles` 是**原始引用**（字段可见）。`SyncVehicles.SyncOne` 取 `isChild = marble.isPrimary == false`。
+  - **灰暗**：新增 `GetVehicleChildMaterials()`——中性灰调色板（body `{0.30,0.32,0.37}`、side/金属/灯同系灰）+ 压低的金属度，不再随弹种配色；`GetVehicleChildOutlineMaterial()` 把轮廓壳由**白亮**改**暗灰**并压低自发光（`0.05/0.055/0.065`）。⚠️ 子车轮子用**专属灰 `p.wheel`**，不复用 `WHEEL_COLOR`——`CreateMaterial` 按颜色缓存，复用会拿到正式车同一 `Material`，改它的 render order 会连正式车轮一起沉。
+  - **低层级**：`VEHICLE_CHILD_ORDER = 64`，子车**全部 6 段 + 轮廓**统一 `SetRenderOrder(64)`；正式车保持默认。⚠️ **关键坑**：Urho3D 材质 render order **默认是 128（不是 0）**，值越小越早绘制=层级越低；**传负数会回绕成 246**（实测 `SetRenderOrder(-10)` → `GetRenderOrder()` 返回 `246`，反而更靠上）。所以子车取 **64（< 128）**。
+  - **重建门控**：`record` 新增 `isChild`；`SyncVehicles` 的 elseif 条件加 `or record.isChild ~= isChild`，保证同一 id 在「正式↔子车」间切换时重建几何（防御性，正常 id 不复用）。
+  - 验证：LSP **36 文件 0 Error**（1402 Warning/119 Hint）；官方多人 build + 预览上传 ✅。真渲染 `probe_child` **ALL PASS、exit0**：真实 `client_main` 路径（含两轮开局选车）注入三连附魔发射 → `maxChildCount=2`、`childOrder=64.0`、`normalOrder=128.0`、子车 body `{0.30,0.32,0.37}`；目标 Lua/overlay/LoadChunk/空顶点错误 0。
+  - 边界：**主 HDR 中央 3D 仍黑（本环境既有）**，`childOrder=64<128` 只证明数据层材质真的下沉，**真机观感（子车是否够灰够暗、层级是否肉眼可辨）待 Preview**；手机 FPS/全 DPR/真实 SDK/用户审美未验收。纹理禁压缩未完成、XHR96/233 未定位状态不变。
+  - **POST 判定**：POST-1 状态/索引执行，persona 跳过（无新跨项目偏好）；POST-2 本人 Renderer3D 独立提交；POST-3 AB-328/329 执行，随行 persona/preferences 同理由跳过。保留并发 Game.lua/opening/ArtText/成就/纹理与发布配置、初始未跟踪文件，不代提交。
+
 - 附记: charge-anchor-shell（2026-10-14，**青圈圆心改锚车辆 + 40% 全息外套 + V 形半透明冲击波**；沿用展示0.13.63，不抢并发版本）：
   - 用户三点要求：①巨大青色圈以**车辆位置**为圆心；②全息爆发后一层**透明度 40%、比车稍大**的幻影壳**套在车上**（上一批 0.10 已按新值改为 0.40）；③车前**冲击波改为 V 字形、高质量半透明贴图**。只改 Game/Presentation/VisualCatalog/VehicleChargeFx/VehicleBowWave/ui.LaunchCharge，不动伤害/初速/回收/拖尾/附魔/金色强化与暗科技 UI。
   - **圈心改锚车辆**：`Game.GetSnapshot` 新增 `s.chargeCarX/chargeCarY`（= `chargeActive` 时 `activeBall.x/y`，否则 nil）；`marble_launched` 补 `carX/carY`。`ui/LaunchCharge` 圆心**优先** `project(chargeCarX, chargeCarY)`（与后端同一玩法投影 = 车辆屏幕中心），指针坐标降为旧调用回退；释放回声同样优先车辆坐标。车辆中心在玩法平面 z=0，用玩法投影即可，无需额外深度平面。
@@ -1485,6 +1495,8 @@
 - 🔴 **AB-325：UI 覆盖层的「圈心」锚点要么走与后端同一投影函数、要么锚 3D 物体的世界坐标——别用「指针坐标」当默认（charge-anchor-shell）**：用户要「青圈以车辆为圆心」，而旧实现圆心直接用 `game.chargeUiX/chargeUiY`（**指针**设计坐标）。**关键判据**：玩法对象在玩法平面 z=0 上时，其屏幕中心 = `project(marble.x, marble.y)`（与后端 `ProjectGamePoint` 同一函数）；直接投影车辆权威坐标即可，**不需要**额外的深度平面（那是 overlay 贴 z≠0 物体时才需要，见 v0.13.15b）。**做法**：快照暴露 `chargeCarX/chargeCarY`（= `activeBall.x/y`，非蓄力时 nil），UI 端**优先**用它投影，指针坐标降为旧调用回退——这样「锚车」与「锚指针」在数据层就分开了。**验收探针要挑「车辆坐标 ≠ 指针坐标」的场景**（本项目车 (270,850) vs 指针 (200,600)），断言圆心等于**车辆投影点**，否则两者相近时锚错也测不出。
 - ⚠️ **AB-326：给「爆发残像」再加一层「贴身外壳」时，两者的运动语义要分开——残像冻结基准+扩散，外壳逐帧跟随源车（charge-anchor-shell）**：本项目的两层全息残像是**冻结爆发瞬间的真实显示变换**再沿确定轨迹扩散（AB-323/324），而用户新要的「套在车上的幻影壳」必须**逐帧取源车当前 world transform** 并等比放大（`shellScale`），随 TTL 淡出、源车回收即隐藏。**别把外壳做成第三层残像**——残像会离开车体，外壳必须贴着车。**做法**：同一模块里外壳用独立批次（独立材质/几何），`Sync` 里 `SetWorldTransform(源车当前变换 × grow)`；`Debug()` 增 `shellVisible` 供探针断言「确实启用了」。（货车大战飞机/charge-anchor-shell）
 - ⚠️ **AB-327：把「顶点色几何特效」改成「半透明贴图特效」时，通道要成套换——`DiffAlpha` 只读纹理 alpha、不读顶点 rgb（VehicleBowWave）**：本项目冲击波原走 `NoTextureUnlitVCol` + 顶点色（颜色在 `DefineColor`）。要「高质量半透明贴图」时必须同时换三件：①Technique `NoTextureUnlitVCol` → **`DiffAlpha`**；②新增程序化 `Texture2D` 并 `SetTexture(TU_DIFFUSE)`（`DiffAlpha` 的 alpha 来自**纹理**，顶点 rgb 被忽略）；③颜色/透明度改走 **`MatDiffColor`**（`Color(r,g,b,a)`），顶点色可留但无效、顶点 UV 必须真的写（`DefineTexCoord`）。⚠️ 只换 Technique 不换贴图 = 全透明或全不透明；只加贴图不改 Technique = 贴图被忽略。**验收**：探针读 `Debug().material==true` + `actualVertices>0` 证明「批次启用且材质绑定」，但**贴图观感必须 Preview 目视**（本环境 3D 层恒黑）。（货车大战飞机/charge-anchor-shell）
+- 🔴 **AB-328：Urho3D 材质 render order 默认是 128（不是 0），要「降低层级」必须设**小于 128** 的值——传负数会回绕成 246（反而更靠上）**（split-child-dim 实测）：本项目要把「分裂/三连子车」沉到正式车之下，首版按「默认 0、负值更早绘制」设 `SetRenderOrder(-10)` → 探针读 `GetRenderOrder()` 得到 **246**（无符号回绕），子车反而**比正式车更靠上**。**判据**：Urho3D `Material::SetRenderOrder` 是 **uint8**，默认 **128**，**值越小越先绘制**（层级越低）；安全区间是 **0..127** 低于默认、**129..255** 高于默认；**不要传负数**。**做法**：降层级取一个明确的 `<128` 常量（本项目 64），并用探针断言 `childOrder < 128` **且** `normalOrder == 128`（把默认值也断进去，否则默认值是多少完全靠猜）。⚠️ 改共享缓存材质前先确认**没有别的部件复用同一 Material**（`CreateMaterial` 按颜色 key 缓存——本项目子车轮若复用 `WHEEL_COLOR` 会连带把正式车轮一起沉下去）。（货车大战飞机/split-child-dim）
+- ⚠️ **AB-329：「非正式单位」的灰暗/低层级要落在**表现层**，识别标志走规则层已有的字段，别新造规则状态**（split-child-dim）：用户要「分裂车（不是正式车）变灰暗 + 低层级」——**不要**在 `Game.lua` 加新标志，规则层早已把「非正式车」标成 **`isPrimary = false`**（`CreateSplitMarble` 分裂车、`LaunchMarble` 三连附加车都是），且 `GetSnapshot().marbles` 是**原始引用**（自定义字段渲染层可直接读）。**做法**：`SyncVehicles` 取 `isChild = marble.isPrimary == false` → 换灰材质 + `SetRenderOrder`；材质/几何**只在表现层**（`Renderer3D`）改，规则层的伤害/数量/初速/回收一律不动。⚠️ 材质集合按 `isChild` 分两套（正式/子车），`record` 记 `isChild` 并在变化时重建几何。（货车大战飞机/split-child-dim）
 
 ## 本批次新增避雷（v0.13.24 数字贴图 + 进关过渡）
 - ⚠️ **「给选关数字做贴图」要按高度归一，不能按包围盒等比**（v0.13.24）：数字 0–9 的字形宽高比不同（1 窄、8 宽），若各自等比缩放，节点上的数字会**高低不齐**。正确做法：后处理统一缩到**同一字形高度**（本项目 GLYPH_H=26），宽度随字形浮动，逐字记宽度表用于多位数排版（否则等宽留白会让「11」中间空一条）。

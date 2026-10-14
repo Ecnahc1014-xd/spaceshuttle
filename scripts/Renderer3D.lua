@@ -946,7 +946,7 @@ local function GetVehicleChildMaterials()
         CreateGlassMaterial(p.glass),
         CreateMaterial({0.55, 0.58, 0.62}, 0.05, 0.40),
     }
-    -- 整台子车（含玻璃）统一沉到更低渲染层级；玻璃原本是 180，这里一并压到负值。
+    -- 整台子车（含玻璃）统一沉到更低渲染层级；玻璃原本是 180，这里一并压到 VEHICLE_CHILD_ORDER。
     for i = 1, #cached do cached[i]:SetRenderOrder(VEHICLE_CHILD_ORDER) end
     vehicleMaterialSets_.__child = cached
     return cached

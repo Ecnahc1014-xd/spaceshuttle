@@ -75,6 +75,8 @@ local BALANCE = {
     pullPositionScale = 0.6, -- 圆形输入保留全幅，待发车辆位移按比例缩短
     powerMin = 0.35,   -- 最小蓄力初速比例（轻拖也有基础射程）
     powerMax = 1.0,    -- 满蓄力初速比例
+    -- 拖拽蓄力期间全局减速 80%：玩法时间放慢到 20%，松手/取消立即恢复。
+    dragTimeScale = 0.2,
 }
 
 local BALL_TYPES = {
@@ -3366,7 +3368,9 @@ function Game.Update(dt, inputDt)
     end
     -- elapsed、准备动画只推进原始规则时间；其余战斗计时统一使用模拟时间。
     -- 已开启后不因补车退出，只由松手、真实发射或生命周期取消。
-    dt = dt * (Game._holdSpeed.active and 2 or 1)
+    -- 拖拽蓄力时全局减速（BALANCE.dragTimeScale），松手即恢复；与空手 2 倍速互斥（蓄力时必有车，不共存）。
+    local dragSlow = (aiming and activeBall) and BALANCE.dragTimeScale or 1
+    dt = dt * (Game._holdSpeed.active and 2 or 1) * dragSlow
     UpdateAiming()
     partsBoostTime = math.max(0, partsBoostTime - dt)
     UpdateMarbles(dt)
@@ -3747,7 +3751,12 @@ function Game.GetSnapshot()
     s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil) or false
     s.stageTotal = StageCatalog.STAGE_SOFT_CAP
     s.elapsed = elapsed
-    s.timeScale = gameState == "playing" and Game._holdSpeed.active and 2 or 1
+    -- 表现层统一时钟倍率：拖拽蓄力优先（全局减速），否则空手长按 2 倍速。
+    -- 各特效模块（波壳/附魔球）只乘一次，暂停/广告由 allowedDt=0 冻结。
+    s.timeScale = gameState == "playing"
+        and ((aiming and activeBall) and BALANCE.dragTimeScale
+            or (Game._holdSpeed.active and 2 or 1))
+        or 1
     s.canHoldSpeed = Game.CanHoldSpeed()
     s.holdSpeedPending = Game._holdSpeed.down and not Game._holdSpeed.active
     s.pointerEpoch = Game._holdSpeed.epoch
