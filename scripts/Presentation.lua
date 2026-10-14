@@ -7,6 +7,63 @@ local Presentation = {}
 -- 一份可复用释放回声；位置是实际指针，寿命只由表现时间推进。
 Presentation._chargeRelease = { life = 0, maxLife = VisualCatalog.LAUNCH_CHARGE.releaseSeconds, progress = 0, x = 0, y = 0,
     uiX = nil, uiY = nil, boosted = false }
+-- 只保存标量，不持有复用的规则快照或车辆对象；epoch 区分同车取消后再次起手。
+Presentation._chargeHologram = { life = 0, maxLife = VisualCatalog.CHARGE_HOLOGRAM.seconds,
+    serial = 0, vehicleId = -1, gestureId = -1, epoch = -1, fired = false, released = false, lastElapsed = -1 }
+
+function Presentation.ResetChargeHologram()
+    local c = Presentation._chargeHologram
+    c.life, c.vehicleId, c.gestureId, c.epoch, c.fired, c.released, c.lastElapsed =
+        0, -1, -1, -1, false, false, -1
+end
+
+function Presentation.UpdateChargeHologram(dt, game, events)
+    local c = Presentation._chargeHologram
+    c.life = math.max(0, c.life - math.max(0, dt))
+    if not game or game.state ~= "playing" or (game.introTimer or 0) > 0 then
+        Presentation.ResetChargeHologram()
+        return
+    end
+    local now = game.elapsed or 0
+    if now < c.lastElapsed then Presentation.ResetChargeHologram() end
+    c.lastElapsed = now
+    local m = game.activeBall
+    local epoch = game.pointerEpoch or 0
+    -- 发射事实只锁定一次；源车回收或下一车起手后，冻结在世界中的残像仍播完 TTL。
+    if c.life > 0 and not c.released then
+        for _, event in ipairs(events or {}) do
+            if event.type == "marble_launched" and event.id == c.vehicleId and event.chargeBoosted then
+                c.released = true
+                break
+            end
+        end
+        if not c.released then
+            for _, car in ipairs(game.marbles or {}) do
+                if car.id == c.vehicleId and car.alive and car.chargeBoosted then
+                    c.released = true
+                    break
+                end
+            end
+        end
+        if not c.released and not (game.chargeActive and m and m.id == c.vehicleId and epoch == c.epoch) then
+            c.life = 0
+        end
+    end
+    if game.chargeActive and m then
+        if c.gestureId ~= m.id or c.epoch ~= epoch then
+            c.gestureId, c.epoch, c.fired = m.id, epoch, false
+        end
+        if (game.chargeProgress or 0) >= 1 and not c.fired then
+            c.serial, c.fired = c.serial + 1, true
+            c.vehicleId, c.life, c.released = m.id, c.maxLife, false
+            print("[Presentation] full charge hologram #" .. tostring(c.serial))
+        elseif (game.chargeProgress or 0) < 1 then
+            c.fired = false
+        end
+    else
+        c.fired, c.gestureId, c.epoch = false, -1, -1
+    end
+end
 
 local screenShake = 0
 local waveBannerTimer = 0
@@ -284,6 +341,7 @@ end
 local FEEDBACK_HANDLERS = {
     fullReset = function(event)
         Presentation._chargeRelease.life = 0
+        Presentation.ResetChargeHologram()
         screenShake = 0
         waveBannerTimer = 0
         waveBannerBoss = false
@@ -784,10 +842,12 @@ function Presentation.Init()
         giant = 0,
     }
     Presentation._chargeRelease.life = 0
+    Presentation.ResetChargeHologram()
     print("[Presentation] visual state initialized")
 end
 
 function Presentation.Update(dt, gameSnapshot, events)
+    Presentation.UpdateChargeHologram(dt, gameSnapshot, events)
     Presentation._chargeRelease.life = math.max(0, Presentation._chargeRelease.life - dt)
     if screenShake > 0 then screenShake = math.max(0, screenShake - dt) end
     if waveBannerTimer > 0 then waveBannerTimer = math.max(0, waveBannerTimer - dt) end
@@ -820,6 +880,7 @@ end
 function Presentation.GetSnapshot()
     return {
         chargeRelease = Presentation._chargeRelease,
+        chargeHologram = Presentation._chargeHologram,
         screenShake = screenShake,
         hitStop = hitStop,    -- P12：主循环读取，对玩法 dt 打折实现顿帧
         waveBannerTimer = waveBannerTimer,    -- A2：波次横幅入场计时（秒，1.8 起递减）

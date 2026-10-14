@@ -33,7 +33,10 @@ Game._enchant = { card = nil, pending = nil, lastWave = 0 }
 --   revive = 本局是否还能复活（决定动画里是否出现「可复活」提示）
 Game._defeat = { at = nil, revive = false }
 -- 两轮开局选车借用 levelup 输入/窗口，计数独立于经验升级，不增加主块 local。
-Game._opening = { active = false, round = 0, total = 2, selected = {} }
+Game._opening = {
+    active = false, round = 0, total = 2, selected = {}, phase = nil, timer = 0.0,
+    durations = { briefing = 0.95, select = 0.32, between = 0.65, ready = 1.05 },
+}
 
 local DW = 540
 local DH = 960
@@ -771,6 +774,8 @@ ResetGame = function(startStage)
     Game._opening.active = false
     Game._opening.round = 0
     Game._opening.selected = {}
+    Game._opening.phase = nil
+    Game._opening.timer = 0
     elapsed = 0
     veggies = {}
     marbles = {}
@@ -879,9 +884,11 @@ local function StartGameAt(stageNum)
     unlockedBalls = {}
     Game._opening.active = true
     Game._opening.round = 1
+    Game._opening.phase = "briefing"
+    Game._opening.timer = Game._opening.durations.briefing
     gameState = "levelup"
     RollUpgradeChoices({})
-    print("[Game] opening selection stage=" .. stage .. " round=1/2")
+    print("[Game] opening briefing stage=" .. stage .. " round=1/2")
 end
 
 local function StartGame()
@@ -1727,6 +1734,7 @@ function Game.PickUpgrade(index)
     if gameState ~= "levelup" or not upgradeChoices then return false end
     local choice = upgradeChoices[index]
     if Game._opening.active then
+        if Game._opening.phase ~= "select" or Game._opening.timer > 0 then return false end
         if not choice or not choice.unlockBallType or unlockedBalls[choice.unlockBallType] then return false end
         local opening = Game._opening
         unlockedBalls[choice.unlockBallType] = true
@@ -1734,22 +1742,9 @@ function Game.PickUpgrade(index)
         upgradeChoices = nil
         Emit("upgrade_picked", { id = choice.id, name = choice.name, stacks = 1 })
         print("[Game] opening picked round=" .. opening.round .. " vehicle=" .. choice.unlockBallType)
-        if #opening.selected < opening.total then
-            opening.round = opening.round + 1
-            RollUpgradeChoices({})
-        else
-            opening.active = false
-            -- 首选待发、次选备弹；保持基础容量+解锁追加的库存口径，不藏第三辆车。
-            activeBall = CreateMarble(opening.selected[1], CollectActiveWords())
-            ballQueue = { opening.selected[2] }
-            for i, ballType in ipairs(BALL_ORDER) do
-                if ballType == opening.selected[2] then ballCycleIndex = i; break end
-            end
-            gameState = "playing"
-            introTimer = INTRO_SECONDS
-            EnsureNextWavePlan()
-            print("[Game] opening complete ready=" .. opening.selected[1] .. " spare=" .. opening.selected[2])
-        end
+        -- 阶段确认不写经验升级账本，既有选中音效/反馈仍保留。
+        opening.phase = #opening.selected < opening.total and "between" or "ready"
+        opening.timer = opening.durations[opening.phase]
         return true
     end
     if not choice or not CanOfferUpgrade(choice) then return false end
@@ -3304,7 +3299,37 @@ function Game.Update(dt, inputDt)
     if gameState ~= "playing" then
         Game.ClearLaunchCharge()
         if Game._holdSpeed.down or Game._holdSpeed.active then Game.CancelHoldSpeed() end
-        -- 非战斗态只保留时钟，供暂停/升级/菜单表现动画使用。
+        if gameState == "levelup" and Game._opening.active then
+            local opening = Game._opening
+            opening.timer = math.max(0, opening.timer - math.min(0.05, math.max(0, dt)))
+            if opening.timer < 1e-9 then opening.timer = 0 end
+            if opening.timer == 0 and opening.phase ~= "select" then
+                if opening.phase == "ready" then
+                    opening.active = false
+                    opening.phase = nil
+                    -- 首选待发、次选备弹；确认完成后才开始完整三秒准备期。
+                    activeBall = CreateMarble(opening.selected[1], CollectActiveWords())
+                    ballQueue = { opening.selected[2] }
+                    for i, ballType in ipairs(BALL_ORDER) do
+                        if ballType == opening.selected[2] then ballCycleIndex = i; break end
+                    end
+                    gameState = "playing"
+                    introTimer = INTRO_SECONDS
+                    EnsureNextWavePlan()
+                    print("[Game] opening complete ready=" .. opening.selected[1]
+                        .. " spare=" .. opening.selected[2])
+                else
+                    if opening.phase == "between" then
+                        opening.round = opening.round + 1
+                        RollUpgradeChoices({})
+                    end
+                    opening.phase = "select"
+                    opening.timer = opening.durations.select
+                    print("[Game] opening selection round=" .. opening.round .. "/2")
+                end
+            end
+        end
+        -- 非战斗态只推进开局流程与时钟；切入 playing 的本帧也不消耗 intro。
         return
     end
 
@@ -3757,6 +3782,10 @@ function Game.GetSnapshot()
     s.openingRound = Game._opening.round
     s.openingTotal = Game._opening.total
     s.openingFirstVehicle = Game._opening.selected[1]
+    s.openingSecondVehicle = Game._opening.selected[2]
+    s.openingPhase = Game._opening.phase
+    s.openingTimer = Game._opening.timer
+    s.openingPhaseTotal = Game._opening.durations[Game._opening.phase] or 0
     s.veggies = veggies
     s.marbles = marbles
     s.aiming = aiming

@@ -4,6 +4,16 @@
 
 ## 当前状态
 
+- 附记: charge-hologram-three-orbs（2026-10-14，**满蓄青色描边/双层全息爆发 + 每车三颗等距附魔球**；不抢并发展示版本）：
+  - 用户要求跟手巨大青圈、满蓄描边变色/全息幻影、附魔减少为三个等距环绕球；原文颜色词不明确，本批暂按青色描边，不声称另获颜色确认。圈心原有真实ScreenToUi链已正确，不重复修改；保留满蓄金色车前波壳与单次×1.5伤害、拖尾及既有UI。两残像/0.65秒/0.65米为助手拟值。
+  - **表现分层**：Presentation以pointerEpoch/gestureId识别满蓄边沿，serial/vehicleId标识爆发，真实marble_launched或强化飞行快照只锁一次released；已释放后不再依赖源车存活，防下一辆Down/源车自然回收截断TTL，未发射取消仍清。VehicleChargeFx新serial捕获实际显示root世界变换，两层真实车型残像沿确定轨迹扩散；轮廓临时换槽6材质，取消/重建/删除前恢复，不修改共享白材质。
+  - **三球**：VehicleEnchantOrbs替换旧十粒aura，每车严格3颗真实3D球相差120°，各配同心halo，无卫星碎粒；四车最多12球/4320顶点，单车1080。蓝紫金稀有度、稳定id初相，允许玩法dt且timeScale只乘一次，暂停/intro隐藏冻结。独立LOCAL动态批次，空批不Commit、Clear后重绑、故障停用至Init，自有资源释放、不释放借用车。只改本人五Lua/两meta，Game/Backend零新增顶层local。
+  - **验证**：上游专项9组41断言PASS、旧版同探针9FAIL；三球两次各36907断言，描边/全息79952与79959断言全PASS/exit0，独立Forward实图内部目视可见三球/青边/双残像。最终合并输入13案例188断言、规则32/789及10/529、整链run6 63/63全PASS/exit0，目标Lua/overlay/load/空顶点错误0；245实际Update/245绘制帧/504Renderer调用，93脚本前后SHA同生产、358引用assets无变更。整链实际金波396顶点/全暖金；两种源车自然回收后life仍约0.20/0.30、双残像继续至自然过期。输入eventData/广告状态模拟不等于OS/SDK；规则副本Presentation较旧仅证明Game规则，最终FX由输入/run6/专项覆盖。
+  - **失败与边界**：早期opening fixture/intro等待探针错误、run4错误恒定中心断言、run6启动前Python预检失败均保留不计PASS；冻结初始变换不等于扩散平均中心恒定，修探针不改正确动画。九张实际TakeScreenShot/SavePNG成功，但主HDR中央3D仍黑，不称主HDR/手机FPS/全DPR/用户审美验收；历史XHR96/233未定位不变。最新本会话LSP36文件0Error（1410Warning/119Hint）、diff-check通过；官方串行build及包校验待协调窗口，不提前记成功。
+  - **POST判定**：POST-1状态/索引执行，persona跳过（无新跨项目用户偏好）；POST-2版本记录执行、本人代码独立提交待构建；POST-3 AB323/324执行，随行persona/preferences跳过同理由。保留并发opening/ArtText/成就/纹理XML与发布配置/初始未跟踪资源，不代提交。
+  - **AB-323**：独立残像的上游TTL与下游冻结基准须一致；真实释放事实锁一次，后续源对象回收/下一手势不能截断已释放反馈；回归自然回收、下一辆Down、同帧释放回收与未释放取消。
+  - **AB-324**：冻结初始变换不等于动画中心恒定；测试按规定世界轨迹与实际显示变换核验，断言错误只改探针并保留失败，独立Forward/截图API不冒称主HDR/手机验收。
+
 - 附记: opening-vehicle-selection（2026-10-14，**新档四车首阶 + 每关两轮车型三选一**；不改展示版本）：
   - 用户要求新存档四车天赋首阶默认解锁，每关额外两次只出车辆解锁卡的三选一。实现不再固定赠送加速车：第一轮四种取三，第二轮排除首选、展示剩余三种；两辆不同车型，首选待发、次选备弹，无隐藏第三辆。候选排列为助手方案，非另行用户确认参数。
   - **规则与存档**：`Game._opening` 借用 levelup 模态，但轮次/已选列表独立于 XP、pendingLevelUps、upgradePicks/stacks；两选结束才启动原3秒 intro。选关/下一关/再战/重开覆盖，复活不重选；第三车解锁/扩容/回收照旧。`PlayerData.NewState` 默认 normal_1/ice_1/speed_1/giant_1，第二阶仍锁；成功旧本地档不强制迁移、AUTO_OWNED仍旧两项。无本地档先默认四节点再旧云并集可能保留四节点，不声称严格新账号识别；ResetAll/读取失败回退同默认。

@@ -12,6 +12,14 @@
 简述：新档默认四车型首阶；每关两轮三选一自选两辆，首选待发/次选备弹，独立经验升级；保留蓄力金波，手机与历史XHR边界不变。
 最后巩固：2026-10-14
 
+## 满蓄全息与三球附魔（2026-10-14，charge-hologram-three-orbs）
+- 巨大青圈继续用既有真实UI指针圆心，不重复改输入链；满蓄暂按青色描边（原文颜色词不明确），两层真实车型全息爆发，0.65秒/0.65米为助手拟值；原金色车前波与单次×1.5、拖尾/UI保持。
+- Presentation分手势gestureId/epoch与爆发serial/vehicleId，真实释放事件或强化飞行快照只锁一次released，之后独立TTL；修源车回收/下一辆Down提前截断。VehicleChargeFx捕获实际显示root世界基准、沿确定轨迹扩散，槽6临时材质独立且重建/清理前恢复共享白边。
+- VehicleEnchantOrbs替换旧10粒aura：每车严格3颗实体球/同心halo、相差120°，蓝紫金，最多四车12球4320顶点；稳定id相位，允许玩法dt、倍率一次，暂停/intro隐藏冻结。LOCAL动态批次、自有资源清理、空批不Commit、失败停用至Init，不改Game。
+- 最终输入13案例188断言、基础规则32/789、增量10/529、整链run6 63/63均PASS/exit0，目标错误0；245Update/245绘制/504Renderer、93脚本前后同生产/358引用assets无变更，金波实际396顶点全暖金；两种自然回收后幻影仍播完TTL。规则副本Presentation较旧只作Game回归，FX由最终输入/run6/专项证明。
+- 上游9组41断言PASS（旧版9FAIL），三球两次36907、描边/全息79952及79959全PASS；独立Forward实图可辨。九张整链截图API成功但主HDR中央仍黑，不代表主HDR/手机FPS/全DPR/真实OS/广告SDK/审美验收；旧探针/截图/预检失败保留不计PASS。
+- 本会话LSP36文件0Error（1410Warning/119Hint）与diff-check通过；官方串行构建/包体校验待协调放行，不提前记成功。POST-1索引/状态执行、persona无新偏好跳过；POST-2版本记录与本人五Lua/两meta独立提交待build；POST-3 AB323/324执行，随行persona/preferences跳过。并发opening/ArtText/成就/XML/config和初始媒体保留，历史XHR96/233未定位不变。
+
 ## 每关两轮开局选车（2026-10-14，opening-vehicle-selection）
 - 新默认档四首阶normal_1/ice_1/speed_1/giant_1，第二阶仍锁；成功旧本地档不强制赠送，旧AUTO_OWNED不扩。无本地档先默认再旧云并集可能保留四节点，ResetAll/读取失败回退同默认，不声称严格新账号迁移。
 - 每关两轮只出车型解锁卡：第一轮四取三、次轮剩三，不固定送speed；首选待发、次选备弹，无第三车。opening账本独立XP/pending/picks/stacks，选完才原3秒intro；选关/下一关/再战/重开覆盖，复活不重选，正常升级/第三车/扩容/回收保持。

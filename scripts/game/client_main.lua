@@ -35,6 +35,11 @@ local SysNotif = require "urhox-libs.System.SystemNotification"
 local ClientMain = {}
 -- 业务手势与后端视觉使用同一主指针；0 是合法 TouchID。
 ClientMain._pointer = { source = "", touchId = -1, state = "", epoch = 0, focused = true }
+-- 请求槽跨 Stop/Start 保留到真实终态，避免旧写尚未结束就启动新写。
+ClientMain._highScore = {
+    active = false, lifetime = {}, request = nil, readRequest = nil,
+    readReady = false, retained = 0,
+}
 
 -- 钻石商品价格缓存：sku -> 元（来自 Shop.getProducts()，离线/未开通时为空）
 ---@type table<string, number>
@@ -84,29 +89,47 @@ local function GetScreenCoordinates(eventData)
 end
 
 local function SaveHighScoreToCloud(score)
+    local state = ClientMain._highScore
     local n = math.floor(tonumber(score) or 0)
-    if n <= lastSavedHighScore then return end
+    if GameMode.IsOffline() or not state.active or state.request
+        or state.readRequest or not state.readReady
+        or n <= lastSavedHighScore then return end
+    local request = { lifetime = state.lifetime, score = n, done = false }
+    state.request = request
     Presentation.SetCloudStatus("syncing")
-    local okCall = pcall(function()
+    local function finish(success, reason)
+        if request.done then return end
+        request.done = true
+        if state.request == request then state.request = nil end
+        -- 旧会话终态仅释放旧请求槽，不确认新会话分数、不污染新界面。
+        if not state.active or request.lifetime ~= state.lifetime then return end
+        if success then
+            lastSavedHighScore = math.max(lastSavedHighScore, request.score)
+            if highScoreDirty <= lastSavedHighScore then highScoreDirty = 0 end
+            Presentation.SetCloudStatus("ok")
+            print("[Main] cloud high_score saved=" .. tostring(request.score))
+        else
+            highScoreDirty = math.max(highScoreDirty, request.score)
+            Presentation.SetCloudStatus("unavailable")
+            print("[Main] cloud save failed: " .. tostring(reason))
+        end
+        -- 异步回调不递归发请求；下一次受控周期/状态边沿再提交更高值。
+        highScoreCommitCooldown = HIGH_SCORE_COMMIT_INTERVAL
+    end
+    local okCall, errCall = pcall(function()
         clientCloud:SetInt(CLOUD_HIGH_SCORE_KEY, n, {
-            ok = function()
-                -- 只有确认写入成功才抬高「已知云端最高分」，失败时保持原值以便重试。
-                lastSavedHighScore = math.max(lastSavedHighScore, n)
-                Presentation.SetCloudStatus("ok")
-                print("[Main] cloud high_score saved=" .. tostring(n))
-            end,
+            ok = function() finish(true) end,
             error = function(code, reason)
-                -- 写失败：重新标脏，等下一次提交重试（离线/配额超限不丢分）。
-                if n > highScoreDirty then highScoreDirty = n end
-                Presentation.SetCloudStatus("unavailable")
-                print("[Main] cloud save failed: " .. tostring(reason) .. " code=" .. tostring(code))
+                finish(false, tostring(reason) .. " code=" .. tostring(code))
             end,
+            timeout = function() finish(false, "timeout") end,
         })
     end)
-    if not okCall then
-        if n > highScoreDirty then highScoreDirty = n end
+    if not okCall and not request.done then
+        -- 提交抛错也可能已有请求入队：保留请求槽，不能凭异常再发重叠写。
+        highScoreDirty = math.max(highScoreDirty, n)
         Presentation.SetCloudStatus("unavailable")
-        print("[Main] clientCloud unavailable, keep local high score")
+        print("[Main] cloud submission uncertain, retain request slot: " .. tostring(errCall))
     end
 end
 
@@ -118,49 +141,72 @@ local function MarkHighScoreDirty(score)
     end
 end
 
+-- 首次云读成功前禁止覆盖写；读取失败由同一 15 秒节流窗口重读。
+local function LoadHighScoreFromCloud()
+    local state = ClientMain._highScore
+    if GameMode.IsOffline() or not state.active then
+        Presentation.SetCloudStatus("unavailable")
+        return
+    end
+    -- 跨生命周期旧写未结束时先不读，避免读到 H 后旧写 L 才落地。
+    if state.request or state.readRequest then return end
+    local request = { lifetime = state.lifetime, done = false }
+    state.readRequest = request
+    Presentation.SetCloudStatus("syncing")
+    local function finish(success, iscores, reason)
+        if request.done then return end
+        request.done = true
+        if state.readRequest == request then state.readRequest = nil end
+        if not state.active or request.lifetime ~= state.lifetime then return end
+        highScoreCommitCooldown = HIGH_SCORE_COMMIT_INTERVAL
+        if not success then
+            state.readReady = false
+            Presentation.SetCloudStatus("unavailable")
+            print("[Main] cloud high_score read failed; retain local score: " .. tostring(reason))
+            return
+        end
+        local cloudScore = 0
+        if iscores and iscores[CLOUD_HIGH_SCORE_KEY] ~= nil then
+            cloudScore = math.floor(tonumber(iscores[CLOUD_HIGH_SCORE_KEY]) or 0)
+        end
+        lastSavedHighScore = math.max(lastSavedHighScore, cloudScore)
+        Game.ApplyCloudHighScore(cloudScore)
+        state.readReady = true
+        Presentation.SetCloudStatus("ok")
+        RefreshSnapshots()
+        print("[Main] cloud high_score loaded=" .. tostring(cloudScore))
+    end
+    local okCall, errCall = pcall(function()
+        clientCloud:Get(CLOUD_HIGH_SCORE_KEY, {
+            ok = function(_, iscores) finish(true, iscores) end,
+            error = function(code, reason)
+                finish(false, nil, tostring(reason) .. " code=" .. tostring(code))
+            end,
+            timeout = function() finish(false, nil, "timeout") end,
+        })
+    end)
+    if not okCall and not request.done then
+        -- 抛错不证明请求未入队；保留读槽，迟到真实终态仍可收尾。
+        Presentation.SetCloudStatus("unavailable")
+        print("[Main] cloud read submission uncertain, retain request slot: " .. tostring(errCall))
+    end
+end
+
 -- 提交待写的最高分（局末 / 回菜单 / 周期兜底调用）。
 -- 无论是否真有待提交值都重置冷却，避免菜单态每帧重试（配额超限时形成写风暴）。
 local function CommitHighScore()
     highScoreCommitCooldown = HIGH_SCORE_COMMIT_INTERVAL
+    local state = ClientMain._highScore
+    if GameMode.IsOffline() or not state.active or state.request or state.readRequest then return end
+    if not state.readReady then
+        LoadHighScoreFromCloud()
+        return
+    end
     if highScoreDirty <= lastSavedHighScore then
         highScoreDirty = 0
         return
     end
-    local pending = highScoreDirty
-    highScoreDirty = 0
-    SaveHighScoreToCloud(pending)
-end
-
-local function LoadHighScoreFromCloud()
-    if GameMode.IsOffline() then
-        Presentation.SetCloudStatus("unavailable")
-        print("[Main] offline: skip cloud high score")
-        return
-    end
-    Presentation.SetCloudStatus("syncing")
-    local okCall = pcall(function()
-        clientCloud:Get(CLOUD_HIGH_SCORE_KEY, {
-            ok = function(_, iscores)
-                local cloudScore = 0
-                if iscores and iscores[CLOUD_HIGH_SCORE_KEY] ~= nil then
-                    cloudScore = math.floor(tonumber(iscores[CLOUD_HIGH_SCORE_KEY]) or 0)
-                end
-                lastSavedHighScore = math.max(lastSavedHighScore, cloudScore)
-                Game.ApplyCloudHighScore(cloudScore)
-                Presentation.SetCloudStatus("ok")
-                RefreshSnapshots()
-                print("[Main] cloud high_score loaded=" .. tostring(cloudScore))
-            end,
-            error = function(code, reason)
-                Presentation.SetCloudStatus("unavailable")
-                print("[Main] cloud load failed: " .. tostring(reason) .. " code=" .. tostring(code))
-            end,
-        })
-    end)
-    if not okCall then
-        Presentation.SetCloudStatus("unavailable")
-        print("[Main] clientCloud unavailable at start")
-    end
+    SaveHighScoreToCloud(highScoreDirty)
 end
 
 -- v0.11.0 商业化：玩家元数据（零件/图鉴/签到/任务）云同步。
@@ -1633,8 +1679,7 @@ function ClientMain.Start(opts)
     RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
     -- 开局自动拥有初始车的「允许局内出场」节点（幂等；必须在 Load 之后）。
     PlayerData.EnsureAutoOwnedTalents(TalentCatalog.AUTO_OWNED)
-    -- v0.13.62：成就全量重算（覆盖旧档/云合并后补算 + 补发平台外发；幂等）。
-    AchievementSystem.Refresh()
+    -- 成就重算放在网络降级判定之后，离线启动不向平台外发。
     -- v0.13.5：天赋提供者——每次开局（选关/下一关/重开）Game 自动拉取最新解锁集合。
     Game.SetTalentProvider(function() return PlayerData.GetTalents() end)
     metaDate = os.date("%Y-%m-%d")
@@ -1679,13 +1724,25 @@ function ClientMain.Start(opts)
         end
     end
 
+    AchievementSystem.Init()
+    AchievementSystem.Refresh()
     local width, height = RenderBackend.GetDesignSize()
     designWidth_ = width
+    local highScoreState = ClientMain._highScore
+    local initialHighScore = math.max(math.floor(PlayerData.GetHighScore()), highScoreState.retained,
+        highScoreState.request and highScoreState.request.score or 0)
     Game.Init({
         width = width, height = height, seed = os.time(),
-        highScore = PlayerData.GetHighScore(),
+        highScore = initialHighScore,
     })
     Presentation.Init()
+    highScoreState.lifetime = {}
+    highScoreState.active = true
+    highScoreState.readReady = false
+    lastSavedHighScore = 0
+    highScoreDirty = initialHighScore
+    highScoreCommitCooldown = HIGH_SCORE_COMMIT_INTERVAL
+    prevHighScoreState_ = nil
     RefreshSnapshots()
     RefreshMeta()
     LoadHighScoreFromCloud()
@@ -1709,6 +1766,19 @@ function ClientMain.Start(opts)
 end
 
 function ClientMain.Stop()
+    local highScoreState = ClientMain._highScore
+    if highScoreState.active then
+        -- 停止前保全已产生的分数；本地写失败也不能丢掉同 Lua 生命周期的待写值。
+        highScoreState.retained = math.max(highScoreState.retained, highScoreDirty,
+            math.floor(Game.GetSnapshot().highScore or 0),
+            highScoreState.request and highScoreState.request.score or 0)
+        local ok, err = pcall(PlayerData.SetHighScore, highScoreState.retained)
+        if not ok then print("[Main] local high_score save failed; retained in memory: " .. tostring(err)) end
+    end
+    AchievementSystem.Shutdown()
+    highScoreState.active = false
+    highScoreState.readReady = false
+    highScoreState.lifetime = {}
     ClientMain.CancelInput()
     ClientMain._pointer.focused = false
     UnsubscribeFromEvent("InputFocus")
@@ -1744,6 +1814,7 @@ function HandleUpdate(eventType, eventData)
     local inputDt = math.max(0, eventData:GetFloat("TimeStep"))
     local dt = math.min(inputDt, 0.05)
     AdService.Update(dt)
+    AchievementSystem.Update(dt)
     if not GameMode.IsOffline() then NetClient.Update(dt) end
     -- v0.13.56：第 1 关「测试模式」询问确认后，在菜单态进入目标关。
     -- 放在玩法更新之前，保证本帧就切到目标关，不闪一帧菜单。
@@ -1781,7 +1852,7 @@ function HandleUpdate(eventType, eventData)
     RenderBackend.TickAudio(dt, snapshot, frameEvents)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
-    RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, adFreeze and 0 or gameDt)
+    RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, adFreeze and 0 or gameDt, dt)
     -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及每
     -- HIGH_SCORE_COMMIT_INTERVAL 秒的兜底才真正写一次云（配额 300 次/分钟）。
     -- ⚠️ 结算/菜单是「持续态」——只在**进入**这些态的那一帧提交一次，不能每帧提交，
@@ -1795,7 +1866,8 @@ function HandleUpdate(eventType, eventData)
         local enteredEndState = state ~= prevHighScoreState_
             and (state == "gameover" or state == "stagewin" or state == "menu")
         prevHighScoreState_ = state
-        if enteredEndState or highScoreCommitCooldown <= 0 then
+        -- 云读尚未成功时，状态边沿不能绕过失败后的 15 秒退避。
+        if highScoreCommitCooldown <= 0 or (enteredEndState and ClientMain._highScore.readReady) then
             CommitHighScore()
         end
     end

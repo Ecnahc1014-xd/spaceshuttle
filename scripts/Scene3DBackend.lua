@@ -473,7 +473,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.60"
+local BUILD_VERSION = "0.13.63"
 local GAME_TITLE = "货车大战飞机"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "货车大战飞机"
@@ -1125,6 +1125,7 @@ function uiFx.UpdateGameWindow(game)
     local visible = (game.state == "gameover" or game.state == "stagewin"
         or game.state == "levelup" or game.state == "paused")
         and StageTransition.WindowVisible(game)
+        and (not game.openingSelection or uiFx.opening.IsSelecting(game))
     local openingRound = game.state == "levelup" and game.openingSelection and game.openingRound or nil
     if visible and (not uiFx.gameWindowVisible
         or (openingRound and openingRound ~= uiFx.openingRound)) then
@@ -2202,11 +2203,14 @@ local function DrawLevelUp(ctx, game, presentation)
         DrawPixelText(ctx, game.width - 24, 106,
             string.format("第 %d / %d 轮", game.openingRound or 1, game.openingTotal or 2), 18, C.warn,
             NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
-        DrawPixelText(ctx, game.width * 0.5, 130, "选择本关出战车辆", 30, C.text,
+        DrawPixelText(ctx, game.width * 0.5, 130,
+            game.openingRound == 1 and "选择首发车辆" or "选择备弹车辆", 30, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         DrawPixelText(ctx, game.width * 0.5, 168,
-            game.openingFirstVehicle and ("已选：" .. (SLOT_NAMES[game.openingFirstVehicle] or "") .. "车")
-                or "选出两辆不同车型", 17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            game.openingRound == 1 and "先选一辆，作为本关第一发"
+                or "再选一辆不同车型，组成双车阵容", 17, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        uiFx.opening.DrawSteps(ctx, game)
     else
         DrawPixelText(ctx, 24, 106, "升级", 18, C.cyan)
         DrawPixelText(ctx, game.width - 24, 106,
@@ -2241,7 +2245,8 @@ local function DrawLevelUp(ctx, game, presentation)
 
     if not game.openingSelection then DrawUpgradeActions(ctx, game, layout) end
 
-    DrawPixelText(ctx, 24, layout.hintY, game.openingSelection and "选择后开始战斗" or "战斗已暂停", 16, C.dim)
+    DrawPixelText(ctx, 24, layout.hintY, game.openingSelection
+        and (game.openingRound == 1 and "还需选择两辆" or "选好即可出战") or "战斗已暂停", 16, C.dim)
     local hintPulse = presentation and presentation.upgradeHintPulse or 0
     local hintColor = C.warn
     local hintSize = 16
@@ -2755,7 +2760,8 @@ local function RenderOverlay(game, presentation, meta)
     end
 
     local currentWindow = uiFx.UpdateGameWindow(game)
-    if uiGameLeaving_ and uiGameLeaving_.visual and not currentWindow then
+    if uiGameLeaving_ and uiGameLeaving_.visual and not currentWindow
+        and not uiGameLeaving_.visual.game.openingSelection then
         local old = uiGameLeaving_
         DrawAnimatedWindow("game-window-out", uiGameLeaveAt_, true, function()
             local oldGame = old.visual.game
@@ -2773,6 +2779,11 @@ local function RenderOverlay(game, presentation, meta)
             else DrawPaused(vg_, game, meta, presentation) end
         end, "game")
     end
+
+    RunOverlayStage("opening-transition", function()
+        ApplyOverlayDesignTransform()
+        uiFx.opening.Draw(vg_, game)
+    end)
 
     -- v0.13.57：关卡结束 → 结算窗口的过渡动画。画在结算窗之上（过渡期间结算窗
     -- 尚未弹出），星级越高越华丽；结束后自身淡出，玩家可点击跳过。
@@ -2903,6 +2914,10 @@ function Backend.Init()
     uiFx.surface = require "ui.PremiumSurface"
     uiFx.impact = require "ui.CombatImpact"
     uiFx.charge = require "ui.LaunchCharge"
+    uiFx.opening = require "ui.OpeningTransition"
+    uiFx.opening.Init({ C = C, text = DrawPixelText, panel = DrawMachinedPanel,
+        rect = DrawRect, icon = DrawIcon, backdrop = DrawModalBackdrop,
+        names = SLOT_NAMES, colors = SLOT_COLORS })
     -- 音频总控：8bit 太空公路风格 BGM + 领域事件音效（可选资源，缺文件静默跳过）。
     uiFx.audio = require "AudioDirector"
     -- v0.11.0 商业化：把游戏 UI 的令牌与绘制原语注入元层界面，保证两处风格同源。
@@ -3160,10 +3175,11 @@ end
 
 -- 游戏快照在 Update 结束后已经稳定；在本帧 3D 绘制之前同步场景与体素。
 -- NanoVGRender 晚于 3D Viewport，不能在其中才 RebuildGeometry，否则必然看到旧网格。
-function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, bowWaveDt)
+function Backend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, bowWaveDt, uiDt)
     UpdateUiState(gameSnapshot, metaState)
     -- 共享时间只驱动循环动画；各控件的进入/退出与按压分别缓动。
     local dtAnim = math.min(0.05, math.max(0, gameSnapshot.elapsed - uiFx.anim))
+    ArtText.Tick(uiDt or dtAnim)
     uiFx.anim = gameSnapshot.elapsed
     if uiFx.battle then uiFx.battle.Update(gameSnapshot, dtAnim) end
     uiFx.epoch = uiFx.epoch + 1
@@ -3331,6 +3347,8 @@ end
 ---@return integer|nil index
 function Backend.HitTestUpgradePanel(uiX, uiY, game)
     if not game or not uiFx.UpdateGameWindow(game) then return nil end
+    if game.openingSelection and (not uiFx.opening.CanPick(game)
+        or uiClock_ - uiStateMotionEnter_ < WINDOW_IN) then return nil end
     uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
     local layout = GetUpgradePanelLayout(game)
     local function inside(rect)

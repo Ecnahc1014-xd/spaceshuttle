@@ -7,6 +7,7 @@ local MetaCatalog = require "MetaCatalog"
 
 -- 可选视觉批次，不影响车辆、敌机与原拖尾初始化成功条件。
 local bowWave_ = {module = nil, ready = false}
+local vehicleFx_ = {charge = nil, orbs = nil, chargeReady = false, orbsReady = false}
 
 local selectedSkin_ = "default"
 
@@ -60,13 +61,6 @@ local particleSets_ = nil    -- {spark=..., shard=..., smoke=...}
 local particleSetActive_ = {spark = false, shard = false, smoke = false}
 local particleMaterials_ = nil
 local particleNodes_ = nil
--- v0.13.58：附魔环绕粒子（真 3D BillboardSet，锚车辆世界锚点）。
--- ⚠️ DiffAlpha 不读 billboard 顶点 rgb（颜色必须烘焙进纹理），故**每档稀有度一个 BillboardSet**
---    （各带自己稀有度色的软圆纹理），而不是一个 set 靠顶点色区分。
-local enchantAuraSets_ = nil          -- {common=..., rare=..., epic=...}
-local enchantAuraActive_ = {common = false, rare = false, epic = false}
-local enchantAuraNodes_ = nil
-local enchantAuraMaterials_ = nil
 local aimLineSet_ = nil
 local aimLineActive_ = false
 local aimLineNode_ = nil
@@ -93,16 +87,6 @@ local initialized_ = false
 -- v0.10.21：粒子分三类，各用一个 BillboardSet（每类独立槽位预算，共 3 draw call）。
 -- spark/shard/smoke 都是小而稀疏的点缀；软圆与三角纹理程序化生成。
 local PARTICLE_SLOTS = { spark = 64, shard = 40, smoke = 28 }
-
--- v0.13.58：附魔车环绕粒子 = **真 3D BillboardSet**（不是 2D overlay 光环）。
--- 用户指出「2D 界面和 3D 界面并不完全平行」——46° 斜俯视正交下，overlay 手工投影的光环
--- 与真实 3D 车会因 z 差在屏幕 Y 上分离。故改为挂在车辆世界锚点上的 3D 粒子环。
-local ENCHANT_AURA_SLOTS = 40          -- 每帧最多环绕粒子数（同屏全部附魔车共享）
-local ENCHANT_AURA_PER_VEHICLE = 10    -- 每辆附魔车的粒子数
-local ENCHANT_AURA_VEHICLE_LIMIT = 4   -- 同屏最多几辆附魔车带环
-local ENCHANT_AURA_RARITY = {
-    common = {0.36, 0.59, 1.00}, rare = {0.69, 0.43, 1.00}, epic = {1.00, 0.77, 0.28},
-}
 
 
 -- 车辆尾迹（3D BillboardSet，每弹种一个批次）
@@ -993,6 +977,11 @@ local function SyncVehicles(game, dt)
             record = CreateVehicleRecord(marble.id, marble, initialHeading)
             vehicleRecords_[marble.id] = record
         elseif record.ballType ~= marble.ballType or record.skin ~= selectedSkin_ then
+            -- 重建会重新绑定共享白轮廓；先还原并作废借用缓存，避免青材质被当作原材质反复缓存。
+            if record.chargeOriginalOutline then
+                record.geometry:SetMaterial(6, record.chargeOriginalOutline)
+                record.chargeOriginalOutline = nil
+            end
             record.ballType = marble.ballType
             record.skin = selectedSkin_
             RebuildVehicleGeometry(record.geometry, marble.ballType)
@@ -1023,6 +1012,10 @@ local function SyncVehicles(game, dt)
 
     for id, record in pairs(vehicleRecords_) do
         if not active[id] then
+            if record.chargeOriginalOutline then
+                record.geometry:SetMaterial(6, record.chargeOriginalOutline)
+                record.chargeOriginalOutline = nil
+            end
             RemoveNode(record.root)
             vehicleRecords_[id] = nil
         end
@@ -1310,67 +1303,36 @@ local function SyncParticles(presentation)
     end
 end
 
--- v0.13.58：附魔车环绕粒子（真 3D）。粒子绕车辆世界锚点在 **3D 空间**里转圈，
--- 因此与车永远对齐（不像 2D overlay 会因 46° 斜俯视的 z 投影而分离）。
--- 相位由 game.elapsed 派生（确定性，非逐帧随机）。只画，不参与命中。
-local function SyncEnchantAura(game)
-    if not enchantAuraSets_ then return end
-    local used = { common = 0, rare = 0, epic = 0 }
-    local phase = (game.elapsed or 0) * 2.6
-    -- 收集附魔车（待发 + 飞行）。
-    local cars = {}
-    if game.activeBall and game.activeBall.enchant then cars[#cars + 1] = game.activeBall end
-    for _, m in ipairs(game.marbles or {}) do
-        if m.alive and m.enchant and not m.onSling then cars[#cars + 1] = m end
-    end
-    for ci = 1, math.min(#cars, ENCHANT_AURA_VEHICLE_LIMIT) do
-        local m = cars[ci]
-        local rarity = m.enchant.rarity or "common"
-        if not enchantAuraSets_[rarity] then rarity = "common" end
-        local center = GetVehicleAnchorWorld(m)
-        -- 环半径锚车辆权威半径（世界米）。
-        local rr = math.max(0.05, m.radius * WORLD_SCALE * 1.5)
-        local spin = phase + ci * 1.7   -- 各车相位错开
-        for k = 1, ENCHANT_AURA_PER_VEHICLE do
-            if used[rarity] < ENCHANT_AURA_SLOTS then
-                used[rarity] = used[rarity] + 1
-                local bb = enchantAuraSets_[rarity]:GetBillboard(used[rarity] - 1)
-                local ang = spin + k * math.pi * 2 / ENCHANT_AURA_PER_VEHICLE
-                -- 3D 环绕：XZ 平面转圈 + 轻微 Y 起伏（绕车体，不是屏幕椭圆）。
-                local bob = math.sin(phase * 2.0 + k) * rr * 0.35
-                bb.enabled = true
-                bb.position = Vector3(
-                    center.x + math.cos(ang) * rr,
-                    center.y + bob,
-                    center.z + math.sin(ang) * rr)
-                local sz = math.max(0.012, rr * 0.34)
-                bb.size = Vector2(sz, sz)
-                bb.rotation = ang
-                bb.color = Color(1, 1, 1, 1)
-            end
-        end
-    end
-    for rarity, set in pairs(enchantAuraSets_) do
-        if used[rarity] > 0 or enchantAuraActive_[rarity] then
-            for i = used[rarity] + 1, ENCHANT_AURA_SLOTS do
-                set:GetBillboard(i - 1).enabled = false
-            end
-            set:Commit()
-        end
-        enchantAuraActive_[rarity] = used[rarity] > 0
+-- 两模块各自停用到下次 Init；清理必须先于车辆删除，蓄力模块还要还原借用的轮廓材质。
+function vehicleFx_.StopCharge()
+    vehicleFx_.chargeReady = false
+    if vehicleFx_.charge then
+        local ok, err = pcall(vehicleFx_.charge.Shutdown, vehicleRecords_)
+        if not ok then print("[Renderer3D] optional charge Shutdown failed: " .. tostring(err)) end
     end
 end
 
--- 诊断（只读）：本帧**实际启用**的附魔环绕粒子数（供探针自证 3D 数据通路）。
-function Renderer3D.DebugEnchantAuraCount()
-    if not enchantAuraSets_ then return -1 end
-    local n = 0
-    for _, set in pairs(enchantAuraSets_) do
-        for i = 0, ENCHANT_AURA_SLOTS - 1 do
-            if set:GetBillboard(i).enabled then n = n + 1 end
-        end
+function vehicleFx_.StopOrbs()
+    vehicleFx_.orbsReady = false
+    if vehicleFx_.orbs then
+        local ok, err = pcall(vehicleFx_.orbs.Shutdown)
+        if not ok then print("[Renderer3D] optional enchant orbs Shutdown failed: " .. tostring(err)) end
     end
-    return n
+end
+
+-- 诊断只读；未就绪（含异常停用）返回零预算，旧计数 API 保持可用。
+function Renderer3D.DebugEnchantOrbs()
+    if vehicleFx_.orbsReady then return vehicleFx_.orbs.Debug() end
+    return {initialized = false, count = 0, orbs = 0, halos = 0, vertices = 0, cars = {}}
+end
+
+function Renderer3D.DebugChargeFx()
+    if vehicleFx_.chargeReady then return vehicleFx_.charge.Debug() end
+    return {initialized = false, visible = 0, serial = -1, vehicleId = -1, skin = ""}
+end
+
+function Renderer3D.DebugEnchantAuraCount()
+    return Renderer3D.DebugEnchantOrbs().orbs or 0
 end
 
 
@@ -1921,6 +1883,10 @@ local function CreateCrateMaterial()
     return material
 end
 function Renderer3D.Init(scene, voxelWorld)
+    -- 重入 Init 时先借现存记录还原轮廓，再让模块处置上一代自有材质。
+    vehicleFx_.StopCharge()
+    vehicleFx_.StopOrbs()
+    vehicleFx_.charge, vehicleFx_.orbs = nil, nil
     scene_ = scene
     voxelWorld_ = voxelWorld
     voxelPhysicsEnabled_ = voxelWorld ~= nil
@@ -1971,22 +1937,6 @@ function Renderer3D.Init(scene, voxelWorld)
     particleSets_ = { spark = sparkSet, shard = shardSet, smoke = smokeSet }
     particleMaterials_ = { sparkMat, shardMat, smokeMat }
     particleNodes_ = { sparkNode, shardNode, smokeNode }
-
-    -- v0.13.58：附魔环绕粒子——每档稀有度一个 BillboardSet（颜色烘焙进软圆纹理）。
-    do
-        local sets, mats, nodes = {}, {}, {}
-        for _, rarity in ipairs({"common", "rare", "epic"}) do
-            local c = ENCHANT_AURA_RARITY[rarity]
-            local tex = CreateSoftCircleTexture(c[1], c[2], c[3], 1.0, 0.0)
-            local set, mat, node = CreateParticleSet(
-                "EnchantAura_" .. rarity, ENCHANT_AURA_SLOTS, tex)
-            sets[rarity], mats[#mats + 1], nodes[#nodes + 1] = set, mat, node
-        end
-        enchantAuraSets_ = sets
-        enchantAuraMaterials_ = mats
-        enchantAuraNodes_ = nodes
-        enchantAuraActive_ = { common = false, rare = false, epic = false }
-    end
 
     -- v0.10.22：直瞄线用青色软圆纹理 + DiffAlpha（颜色烘焙，软边半透明）。
     aimLineNode_ = scene:CreateChild("AimLine")
@@ -2077,6 +2027,29 @@ function Renderer3D.Init(scene, voxelWorld)
         print("[Renderer3D] optional bow wave Init failed: " .. tostring(waveErr))
     end
 
+    do
+        local ok, result = pcall(function()
+            vehicleFx_.charge = require "VehicleChargeFx"
+            return vehicleFx_.charge.Init(scene_)
+        end)
+        vehicleFx_.chargeReady = ok and result == true
+        if not vehicleFx_.chargeReady then
+            vehicleFx_.StopCharge()
+            print("[Renderer3D] optional charge Init failed: " .. tostring(result))
+        end
+    end
+    do
+        local ok, result = pcall(function()
+            vehicleFx_.orbs = require "VehicleEnchantOrbs"
+            return vehicleFx_.orbs.Init(scene_)
+        end)
+        vehicleFx_.orbsReady = ok and result == true
+        if not vehicleFx_.orbsReady then
+            vehicleFx_.StopOrbs()
+            print("[Renderer3D] optional enchant orbs Init failed: " .. tostring(result))
+        end
+    end
+
     local initialized = voxelMaterial_ ~= nil and crateMaterial_ ~= nil
     initialized_ = initialized
     print("[Renderer3D] initialized, aircraft_crates=true, voxel_physics="
@@ -2102,6 +2075,20 @@ function Renderer3D.GetVehicleAnchor(x, y, marble)
 end
 
 local function ClearRunVisuals()
+    if vehicleFx_.chargeReady then
+        local ok, result = pcall(vehicleFx_.charge.Clear, vehicleRecords_)
+        if not ok or result == false then
+            vehicleFx_.StopCharge()
+            print("[Renderer3D] optional charge Clear disabled: " .. tostring(result))
+        end
+    end
+    if vehicleFx_.orbsReady then
+        local ok, result = pcall(vehicleFx_.orbs.Clear, true)
+        if not ok or result == false then
+            vehicleFx_.StopOrbs()
+            print("[Renderer3D] optional enchant orbs Clear disabled: " .. tostring(result))
+        end
+    end
     if bowWave_.ready then bowWave_.module.Clear(true) end
     ClearVoxelDebris()
     ClearTrailSamples()
@@ -2177,9 +2164,24 @@ function Renderer3D.Render(game, presentation, skin, trail, bowWaveDt)
         SyncEjectedBoxes(presentation)
     end
     SyncVehicles(game, dt)
+    -- 与波壳复用允许玩法时间；timeScale 仅由各模块内部应用一次。
+    local allowedDt = bowWaveDt
+    if allowedDt == nil then allowedDt = game.state == "playing" and dt or 0 end
+    if vehicleFx_.chargeReady then
+        local ok, result = pcall(vehicleFx_.charge.Sync, game, presentation, vehicleRecords_, selectedSkin_)
+        if not ok or result == false then
+            vehicleFx_.StopCharge()
+            print("[Renderer3D] optional charge Sync disabled: " .. tostring(result))
+        end
+    end
+    if vehicleFx_.orbsReady then
+        local ok, result = pcall(vehicleFx_.orbs.Sync, game, vehicleRecords_, allowedDt)
+        if not ok or result == false then
+            vehicleFx_.StopOrbs()
+            print("[Renderer3D] optional enchant orbs Sync disabled: " .. tostring(result))
+        end
+    end
     if bowWave_.ready then
-        local allowedDt = bowWaveDt
-        if allowedDt == nil then allowedDt = game.state == "playing" and dt or 0 end
         local ok, result = pcall(bowWave_.module.Sync, game, vehicleRecords_, allowedDt)
         if not ok or result == false then
             pcall(bowWave_.module.Shutdown)
@@ -2192,7 +2194,6 @@ function Renderer3D.Render(game, presentation, skin, trail, bowWaveDt)
     SyncVehicleTrails(game, dt)
     SyncDebris(presentation)
     SyncParticles(presentation)
-    SyncEnchantAura(game)
     SyncAimLine(game)
 end
 
@@ -2250,6 +2251,9 @@ function Renderer3D.DebugBowWave()
 end
 
 function Renderer3D.Shutdown()
+    vehicleFx_.StopCharge()
+    vehicleFx_.StopOrbs()
+    vehicleFx_.charge, vehicleFx_.orbs = nil, nil
     if bowWave_.module then pcall(bowWave_.module.Shutdown) end
     bowWave_.ready = false
     ClearVoxelDebris()
@@ -2276,20 +2280,6 @@ function Renderer3D.Shutdown()
     particleSetActive_ = {spark = false, shard = false, smoke = false}
     particleMaterials_ = nil
     particleNodes_ = nil
-    -- v0.13.58：附魔环绕粒子清理。
-    if enchantAuraNodes_ then
-        for _, node in ipairs(enchantAuraNodes_) do RemoveNode(node) end
-    end
-    if enchantAuraSets_ then
-        for _, set in pairs(enchantAuraSets_) do DisposeComponent(set) end
-    end
-    if enchantAuraMaterials_ then
-        for _, mat in ipairs(enchantAuraMaterials_) do mat:Dispose() end
-    end
-    enchantAuraSets_ = nil
-    enchantAuraMaterials_ = nil
-    enchantAuraNodes_ = nil
-    enchantAuraActive_ = {common = false, rare = false, epic = false}
     if aimLineNode_ then RemoveNode(aimLineNode_) end
     if aimLineSet_ then DisposeComponent(aimLineSet_) end
     if aimLineMaterial_ then aimLineMaterial_:Dispose() end

@@ -7,6 +7,8 @@ local VisualCatalog = {}
 
 -- 蓄力圈：设计空间匀速归零，不随世界透视/震屏移动；参数是表现层拟值。
 VisualCatalog.LAUNCH_CHARGE = { radius = 240, releaseSeconds = 0.22 }
+-- 满蓄全息爆发：两层真实车型残像，参数为表现层拟值，不改变发射强化。
+VisualCatalog.CHARGE_HOLOGRAM = { seconds = 0.65, copies = 2, spread = 0.65 }
 
 local BALL_STYLES = {
     normal = {
