@@ -4,6 +4,14 @@
 
 ## 当前状态
 
+- 附记: charge-anchor-shell（2026-10-14，**青圈圆心改锚车辆 + 满蓄后贴身全息外套**；沿用展示0.13.63，不抢并发版本）：
+  - 用户两点要求：①巨大青色圈以**车辆位置**为圆心（不再锚手指拖拽处）；②全息幻影爆发后，额外有一层**很浅透明度、比车稍大**的幻影壳**套在车上**。本批只改 Game/Presentation/VisualCatalog/VehicleChargeFx/ui.LaunchCharge 五文件，不动伤害/初速/回收/拖尾/附魔/金色波壳与既有暗科技 UI。
+  - **圈心改锚车辆**：`Game.GetSnapshot` 新增 `s.chargeCarX/chargeCarY`（= `chargeActive` 时 `activeBall.x/y`，玩法坐标，否则 nil）；`marble_launched` 事件补 `carX/carY`（发射瞬间车辆权威位置）。`ui/LaunchCharge` 圆心**优先**用 `project(chargeCarX, chargeCarY)`（与后端同一玩法投影 → 车辆屏幕中心），**指针坐标降为旧调用回退**；释放回声同样优先 `carX/carY`。车辆中心在玩法平面 z=0，故用玩法投影即可，无需额外深度平面。
+  - **贴身全息外套**：`VehicleChargeFx` 新增第 3 个批次 `ChargeHologramShell`（同型真实网格、`PBRNoTextureAlpha` 半透明），逐帧取**源车当前实际显示变换**（worldPosition/Rotation/Scale）×`shellScale`(1.06) 等比放大套在车上，`shellAlpha`(0.10) 起随 TTL `(1-t)^1.2` 淡出；源车回收即隐藏。两残像仍是冻结基准 + 扩散，外套是**跟随源车**，二者独立。`VisualCatalog.CHARGE_HOLOGRAM` 增 `shellScale/shellAlpha`（助手拟值）。`Debug()` 增 `shellVisible`。
+  - 验证：LSP **36 文件 0 Error**（1402 Warning/119 Hint）；官方多人 build + 预览上传 ✅。**真渲染探针 `probe_chargeshell` 12/12 PASS、exit0**：车辆坐标 (270,850) 与指针 (200,600) 不同 → **圆心等于车辆投影点（非指针）**；满蓄爆发期 `chargeHologram.life>0` 且 `shellVisible>0`（外套确实套在车上）；释放回声带 `carX/carY`；目标 Lua/overlay/LoadChunk/空顶点错误 0。探针走真实 `client_main` 路径（含两轮开局选车）。
+  - 边界：**主 HDR 中央 3D 仍黑（本环境既有）**，`shellVisible>0` 只证明外套批次真实启用，**外套真机观感（透明度是否够浅、放大是否合适）待 Preview 目视**；手机 FPS/全 DPR/真实 SDK/用户审美未验收。纹理禁压缩未完成、XHR96/233 未定位状态不变。
+  - **POST 判定**：POST-1 状态/索引执行，persona 跳过（无新跨项目偏好）；POST-2 本人五 Lua 独立提交；POST-3 AB-325 执行，随行 persona/preferences 同理由跳过。保留并发 opening/ArtText/成就/纹理与发布配置、初始未跟踪文件，不代提交。
+
 - 附记: opening-transition（2026-10-14，**两轮开局选车的自动承接动画与文字提示**；沿用展示0.13.63）：
   - 用户反馈「开局机制突兀，需要有过渡动画和文字提示」；只补选车前后承接，不改上一批四车首阶、两轮三选一、两辆库存或正常经验升级。流程为briefing「两辆车，一起出战」→首发选择→between「首发已就位」→备弹选择→ready「出战阵容已就绪」→原完整3秒准备。自动衔接，无新增必须点击的确认按钮；0.95/0.65/1.05秒承接与每轮0.32秒保护为助手拟值，固定阶段合计3.29秒不含玩家选卡停留，非用户确认参数。
   - **规则**：Game._opening增加phase/timer/durations，仍借levelup冻结；只有select且timer归零允许PickUpgrade，选中事件保留原音效/反馈，账本独立XP/pending/picks/stacks。计时单帧最多0.05秒、微小尾数归零，大dt不跨多个阶段；ready结束本帧return，intro保持精确3秒且未刷敌。首选待发、次选备弹，不藏第三车；选关/下一关/再战/重开均重新承接，复活不重选，第三车/扩容/回收保持。
@@ -1463,6 +1471,10 @@
 4. 自测：项目是什么？上次做了什么？下一步？不够清楚就多读文件
 5. 如有 likely_next_task → 预加载相关文件
 6. 详细规则见 memory-system skill（`**/skills/memory-system/SKILL.md`）
+
+## 本批次新增避雷（charge-anchor-shell 青圈锚车 + 贴身全息外套）
+- 🔴 **AB-325：UI 覆盖层的「圈心」锚点要么走与后端同一投影函数、要么锚 3D 物体的世界坐标——别用「指针坐标」当默认（charge-anchor-shell）**：用户要「青圈以车辆为圆心」，而旧实现圆心直接用 `game.chargeUiX/chargeUiY`（**指针**设计坐标）。**关键判据**：玩法对象在玩法平面 z=0 上时，其屏幕中心 = `project(marble.x, marble.y)`（与后端 `ProjectGamePoint` 同一函数）；直接投影车辆权威坐标即可，**不需要**额外的深度平面（那是 overlay 贴 z≠0 物体时才需要，见 v0.13.15b）。**做法**：快照暴露 `chargeCarX/chargeCarY`（= `activeBall.x/y`，非蓄力时 nil），UI 端**优先**用它投影，指针坐标降为旧调用回退——这样「锚车」与「锚指针」在数据层就分开了。**验收探针要挑「车辆坐标 ≠ 指针坐标」的场景**（本项目车 (270,850) vs 指针 (200,600)），断言圆心等于**车辆投影点**，否则两者相近时锚错也测不出。
+- ⚠️ **AB-326：给「爆发残像」再加一层「贴身外壳」时，两者的运动语义要分开——残像冻结基准+扩散，外壳逐帧跟随源车（charge-anchor-shell）**：本项目的两层全息残像是**冻结爆发瞬间的真实显示变换**再沿确定轨迹扩散（AB-323/324），而用户新要的「套在车上的幻影壳」必须**逐帧取源车当前 world transform** 并等比放大（`shellScale`），随 TTL 淡出、源车回收即隐藏。**别把外壳做成第三层残像**——残像会离开车体，外壳必须贴着车。**做法**：同一模块里外壳用独立批次（独立材质/几何），`Sync` 里 `SetWorldTransform(源车当前变换 × grow)`；`Debug()` 增 `shellVisible` 供探针断言「确实启用了」。（货车大战飞机/charge-anchor-shell）
 
 ## 本批次新增避雷（v0.13.24 数字贴图 + 进关过渡）
 - ⚠️ **「给选关数字做贴图」要按高度归一，不能按包围盒等比**（v0.13.24）：数字 0–9 的字形宽高比不同（1 窄、8 宽），若各自等比缩放，节点上的数字会**高低不齐**。正确做法：后处理统一缩到**同一字形高度**（本项目 GLYPH_H=26），宽度随字形浮动，逐字记宽度表用于多位数排版（否则等宽留白会让「11」中间空一条）。

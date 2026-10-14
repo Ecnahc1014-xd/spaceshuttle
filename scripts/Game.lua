@@ -2436,6 +2436,8 @@ local function LaunchMarble(dx, dy, power)
         chargeProgress = Game._launchCharge.time / Game._launchCharge.total,
         chargeX = Game._launchCharge.x, chargeY = Game._launchCharge.y,
         chargeUiX = Game._launchCharge.uiX, chargeUiY = Game._launchCharge.uiY,
+        -- 发射瞬间的车辆权威位置：释放回声的圈心与蓄力圈连续（同一车辆坐标）。
+        carX = activeBall.x, carY = activeBall.y,
     })
     print("[Game] launch charge id=" .. activeBall.id .. " boosted=" .. tostring(activeBall.chargeBoosted))
     -- v0.13.58：附魔「三连」——发射时额外扇形射出同型车（继承附魔与词条，共享同一发射方向）。
@@ -3753,6 +3755,10 @@ function Game.GetSnapshot()
     s.chargeProgress = s.chargeActive and Game._launchCharge.time / Game._launchCharge.total or 0
     s.chargeX, s.chargeY = Game._launchCharge.x, Game._launchCharge.y
     s.chargeUiX, s.chargeUiY = Game._launchCharge.uiX, Game._launchCharge.uiY
+    -- 青圈圆心锚定待发车权威位置（玩法坐标）；表现层用同一玩法投影即得车辆屏幕中心，
+    -- 不再锚指针。无蓄力时置 nil，由表现层回退旧指针路径。
+    s.chargeCarX = s.chargeActive and activeBall.x or nil
+    s.chargeCarY = s.chargeActive and activeBall.y or nil
     s.playerLevel = playerLevel
     s.xp = xp
     s.xpToNext = xpToNext

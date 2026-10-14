@@ -30,12 +30,22 @@ function M.Draw(ctx, game, presentation, project, colors)
     if not active and (not release or release.life <= 0) then return end
     local x, y, radius, fade, color, phase
     if active then
-        x, y = game.chargeUiX, game.chargeUiY
+        -- 圆心锚定待发车权威位置；车辆中心即玩法平面 z=0 上的 (marble.x, marble.y)，
+        -- 用同一玩法投影即得车辆屏幕中心。指针坐标仅作旧调用回退。
+        x, y = nil, nil
+        if game.chargeCarX ~= nil and game.chargeCarY ~= nil then
+            x, y = project(game.chargeCarX, game.chargeCarY)
+        end
+        if x == nil or y == nil then x, y = game.chargeUiX, game.chargeUiY end
         if x == nil or y == nil then x, y = project(game.chargeX, game.chargeY) end
         radius = M.Radius(game.chargeProgress)
         fade, color, phase = 1, colors.cyan, game.elapsed or 0
     else
-        x, y = release.uiX, release.uiY
+        x, y = nil, nil
+        if release.carX ~= nil and release.carY ~= nil then
+            x, y = project(release.carX, release.carY)
+        end
+        if x == nil or y == nil then x, y = release.uiX, release.uiY end
         if x == nil or y == nil then x, y = project(release.x, release.y) end
         local t = math.max(0, math.min(1, 1 - release.life / release.maxLife))
         radius = M.Radius(release.progress) + t * 24

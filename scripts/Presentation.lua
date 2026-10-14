@@ -6,7 +6,7 @@ local VisualCatalog = require "VisualCatalog"
 local Presentation = {}
 -- 一份可复用释放回声；位置是实际指针，寿命只由表现时间推进。
 Presentation._chargeRelease = { life = 0, maxLife = VisualCatalog.LAUNCH_CHARGE.releaseSeconds, progress = 0, x = 0, y = 0,
-    uiX = nil, uiY = nil, boosted = false }
+    uiX = nil, uiY = nil, carX = nil, carY = nil, boosted = false }
 -- 只保存标量，不持有复用的规则快照或车辆对象；epoch 区分同车取消后再次起手。
 Presentation._chargeHologram = { life = 0, maxLife = VisualCatalog.CHARGE_HOLOGRAM.seconds,
     serial = 0, vehicleId = -1, gestureId = -1, epoch = -1, fired = false, released = false, lastElapsed = -1 }
@@ -469,6 +469,8 @@ local FEEDBACK_HANDLERS = {
         r.progress = event.chargeProgress
         r.x, r.y = event.chargeX, event.chargeY
         r.uiX, r.uiY = event.chargeUiX, event.chargeUiY
+        -- 释放回声的圈心与蓄力圈共用车辆权威位置，保证发射前后圆心连续。
+        r.carX, r.carY = event.carX, event.carY
         r.boosted = event.chargeBoosted == true
     end,
     launchFlash = function(event)

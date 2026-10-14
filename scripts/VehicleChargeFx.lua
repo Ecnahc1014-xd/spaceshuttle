@@ -18,6 +18,7 @@ local M = {}
 ---@field scene Scene|nil
 ---@field outline Material|nil
 ---@field copies ChargeFxCopy[]
+---@field shell ChargeFxCopy|nil
 ---@field serial number
 ---@field vehicleId number
 ---@field skin string
@@ -25,10 +26,12 @@ local M = {}
 ---@field rotation Quaternion
 ---@field scale Vector3
 ---@field visible integer
+---@field shellVisible integer
 ---@field nodes Node[]
 ---@field materials Material[]
 ---@field bound table<number, ChargeFxRecord>
-local S = { copies = {}, nodes = {}, materials = {}, bound = {}, serial = -1, vehicleId = -1, skin = "", visible = 0,
+local S = { copies = {}, shell = nil, nodes = {}, materials = {}, bound = {}, serial = -1, vehicleId = -1, skin = "",
+    visible = 0, shellVisible = 0,
     position = Vector3(), rotation = Quaternion(), scale = Vector3(1, 1, 1) } --[[@as ChargeFxState]]
 
 ---@param records table<number, ChargeFxRecord>|nil
@@ -48,7 +51,8 @@ function M.Clear(records)
     if records then M.Restore(records) end
     S.bound = {}
     for _, copy in ipairs(S.copies) do pcall(function() copy.node.enabled = false end) end
-    S.visible, S.serial, S.vehicleId = 0, -1, -1
+    if S.shell then pcall(function() S.shell.node.enabled = false end) end
+    S.visible, S.shellVisible, S.serial, S.vehicleId = 0, 0, -1, -1
 end
 ---@param records table<number, ChargeFxRecord>|nil
 function M.Shutdown(records)
@@ -57,7 +61,7 @@ function M.Shutdown(records)
         pcall(function() node:Remove(); node:Dispose() end)
     end
     for _, mat in ipairs(S.materials) do pcall(function() mat:Dispose() end) end
-    S.copies, S.nodes, S.materials = {}, {}, {}
+    S.copies, S.shell, S.nodes, S.materials = {}, nil, {}, {}
     if S.outline then pcall(function() S.outline:Dispose() end) end
     S.outline, S.scene, S.skin = nil, nil, ""
 end
@@ -91,6 +95,20 @@ function M.Init(scene)
             mat:SetShaderParameter("Roughness", Variant(0.2))
             S.copies[#S.copies + 1] = {node = node, geometry = geometry, material = mat}
         end
+        -- 贴身外套：一层比车略大、极浅透明的同型幻影壳，套在车上跟随实际显示变换。
+        local shellNode = scene:CreateChild("ChargeHologramShell", LOCAL)
+        S.nodes[#S.nodes + 1] = shellNode
+        shellNode.enabled = false
+        local shellGeom = shellNode:CreateComponent("CustomGeometry", LOCAL)
+        shellGeom.castShadows = false
+        local shellMat = Material()
+        S.materials[#S.materials + 1] = shellMat
+        shellMat:SetTechnique(0, alpha)
+        shellMat:SetShaderParameter("MatDiffColor", Variant(Color(0.3, 0.92, 1, 0.10)))
+        shellMat:SetShaderParameter("MatEmissiveColor", Variant(Color(0.05, 0.5, 0.68, 1)))
+        shellMat:SetShaderParameter("Metallic", Variant(0.2))
+        shellMat:SetShaderParameter("Roughness", Variant(0.18))
+        S.shell = {node = shellNode, geometry = shellGeom, material = shellMat}
     end)
     if not ok then
         print("[VehicleChargeFx] Init failed: " .. tostring(err))
@@ -141,14 +159,19 @@ function M.Sync(game, presentation, records, skin)
     local echo = presentation.chargeHologram
     if not playing or not echo or echo.life <= 0 then
         for _, copy in ipairs(S.copies) do copy.node.enabled = false end
-        S.visible = 0
+        if S.shell then S.shell.node.enabled = false end
+        S.visible, S.shellVisible = 0, 0
         return true
     end
+    -- 外套跟随源车：只有源车仍在场时才套在车上，源车回收后外套随之消失。
+    local shellRecord = records[echo.vehicleId]
+    local shellOn = shellRecord ~= nil
     if S.serial ~= echo.serial then
         local record = records[echo.vehicleId]
         if not record then
             for _, copy in ipairs(S.copies) do copy.node.enabled = false end
-            S.visible = 0
+            if S.shell then S.shell.node.enabled = false end
+            S.visible, S.shellVisible = 0, 0
             return true
         end
         S.serial, S.vehicleId = echo.serial, echo.vehicleId
@@ -162,6 +185,11 @@ function M.Sync(game, presentation, records, skin)
                 local mats = {copy.material, copy.material, copy.material,
                     copy.material, copy.material, copy.material}
                 VehicleGeometry.Build(copy.geometry, skin, mats, copy.material)
+            end
+            if S.shell then
+                local shellMats = {S.shell.material, S.shell.material, S.shell.material,
+                    S.shell.material, S.shell.material, S.shell.material}
+                VehicleGeometry.Build(S.shell.geometry, skin, shellMats, S.shell.material)
             end
             S.skin = skin
         end
@@ -181,10 +209,29 @@ function M.Sync(game, presentation, records, skin)
         copy.node.enabled = opacity > 0.001
         if copy.node.enabled then S.visible = S.visible + 1 end
     end
+    -- 贴身外套：逐帧取源车当前实际显示变换，等比放大一点点套在车上，随 TTL 淡出。
+    S.shellVisible = 0
+    if S.shell then
+        if shellOn and shellRecord.root then
+            local sp = shellRecord.root.worldPosition
+            local sr = shellRecord.root.worldRotation
+            local ss = shellRecord.root.worldScale
+            local grow = VisualCatalog.CHARGE_HOLOGRAM.shellScale
+            S.shell.node:SetWorldTransform(sp,
+                Quaternion(sr.w, sr.x, sr.y, sr.z),
+                Vector3(ss.x * grow, ss.y * grow, ss.z * grow))
+            local shellOpacity = VisualCatalog.CHARGE_HOLOGRAM.shellAlpha * (1 - t) ^ 1.2
+            S.shell.material:SetShaderParameter("MatDiffColor", Variant(Color(0.3, 0.92, 1, shellOpacity)))
+            S.shell.node.enabled = shellOpacity > 0.001
+            if S.shell.node.enabled then S.shellVisible = 1 end
+        else
+            S.shell.node.enabled = false
+        end
+    end
     return true
 end
 function M.Debug()
-    return {initialized = S.scene ~= nil, visible = S.visible, serial = S.serial,
-        vehicleId = S.vehicleId, skin = S.skin}
+    return {initialized = S.scene ~= nil, visible = S.visible, shellVisible = S.shellVisible,
+        serial = S.serial, vehicleId = S.vehicleId, skin = S.skin}
 end
 return M
