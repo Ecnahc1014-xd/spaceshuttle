@@ -4,13 +4,23 @@
 
 ## 当前状态
 
+- 版本: 0.13.63（2026-10-14，**高分/平台成就/艺术字异步加固；纹理禁压缩未完成**）：
+  - **高分**：client_main先读云高分再允许写，全局Get/Set单在途；成功只确认本请求分数，失败/timeout保脏并15秒退避，首menu边沿不绕过读失败退避。Stop取规则/dirty/在途/retained最大值尝试本地保存，Start恢复；旧回调只释放旧槽，不污染新生命周期。提交throw或无终态保槽，不凭本地计时猜远端未执行；可能长期停发，非跨设备原子max/exactly-once，retained不跨页面/进程，Save返回false透传与清档全链未在本轮完整重审。
+  - **成就**：离线不派发，全局单在途、每ID每Lua会话最多尝试一次；仅normal/ID/operation/currentStep匹配的SDK listener成功才写achPushed并保存。attempted墓碑跨Shutdown/Init，无终态不释放；throw/false/未知Shutdown/SDK变更或注销异常停止当前会话派发。不新增achUncertain、不迁移旧虚假确认，不声称真实SDK或跨刷新exactly-once。
+  - **艺术字**：每图最多三次总尝试，明确失败后0.5/1秒退避，无回调保持waiting；资源与NVG尺寸双检、ctx/lifetime隔离，Ensure幂等，Tick由独立UI dt驱动，Backend仅可选第五尾参兼容旧调用。八图母版、CTA用户原图407×128及显示300.96×67不变，不重生图、不灰度量化、不删暗科技效果。
+  - **纹理失败与撤回**：实验把71组.png.xml改为同stem.xml，使cooker实际读取非法none，build1的213项全部Unknown compress format:none。无可信合法跳过/无损配置，已逐字节核对142个XML/meta同HEAD，只撤回本人改名，PNG/UUID不变；受跟踪纹理无diff。build2恢复原实际策略，213结果15成功/198因cooking limit跳过/none错误0；71图默认5KTX1 ASTC6×6+66PNG，Windows4KTX1 BC7+67PNG。**禁压缩仍未完成**，不把总build成功、PNG扩展名或fallback冒称禁压缩成功。
+  - **验证**：最终高分14独立进程/10业务组共38205检查、37707驱动帧PASS/exit0；旧P1/P2/P3及错误fixture日志保留。主循环run3 6案例1273断言、446Update/Backend/Tick、280发射后更新PASS；成就mock36/123、ArtText mock15/540与真实离线资源8/105两次PASS。五加固/接线源码同集成副本，菜单真实读回已内部目视，CTA实际pattern同300.96×67；单模块Art截图失败不称目视。mock云/SDK/eventData不等于真实服务/手机。
+  - **正式构建**：展示0.13.63/包1.0.3为助手选值。本人官方build1与build2预览上传成功；build2 client eb402919/server8e4fd346/engine ef9e23e2，client234/server235产物（含各9Windows变体）全size/CRC32匹配，45/46 Lua及225/226 meta同源，451冻结前后无变，证据/home/Maker/four-hardening-package-integrity-1.0.3-build2.json。显式LSP36文件0Error（1410Warning/119Hint）；build2内置daemon不可用跳过gate，不能冒称内部gate通过。并发FX/opening后续串行构建由对应会话另记，不将本条固定build2当永久latest。
+  - **边界与POST**：XHR233仍缺同会话请求/异常证据，与三项加固无因果证明；不禁云、不滤错、不称平台错误消失。手机FPS/全DPR/主HDR/真实SDK/用户审美待验。POST-1状态/索引执行，persona跳过（无新增跨项目偏好）；POST-2本人三Lua/Backend三处/版本及记录精确提交；POST-3 AB319–321执行，随行persona/preferences同理由跳过。保留并发FX/opening与其POST、settings/发布媒体/初始未跟踪文件，不代提交；纯POST不重复构建。
+
 - 附记: charge-hologram-three-orbs（2026-10-14，**满蓄青色描边/双层全息爆发 + 每车三颗等距附魔球**；不抢并发展示版本）：
   - 用户要求跟手巨大青圈、满蓄描边变色/全息幻影、附魔减少为三个等距环绕球；原文颜色词不明确，本批暂按青色描边，不声称另获颜色确认。圈心原有真实ScreenToUi链已正确，不重复修改；保留满蓄金色车前波壳与单次×1.5伤害、拖尾及既有UI。两残像/0.65秒/0.65米为助手拟值。
   - **表现分层**：Presentation以pointerEpoch/gestureId识别满蓄边沿，serial/vehicleId标识爆发，真实marble_launched或强化飞行快照只锁一次released；已释放后不再依赖源车存活，防下一辆Down/源车自然回收截断TTL，未发射取消仍清。VehicleChargeFx新serial捕获实际显示root世界变换，两层真实车型残像沿确定轨迹扩散；轮廓临时换槽6材质，取消/重建/删除前恢复，不修改共享白材质。
   - **三球**：VehicleEnchantOrbs替换旧十粒aura，每车严格3颗真实3D球相差120°，各配同心halo，无卫星碎粒；四车最多12球/4320顶点，单车1080。蓝紫金稀有度、稳定id初相，允许玩法dt且timeScale只乘一次，暂停/intro隐藏冻结。独立LOCAL动态批次，空批不Commit、Clear后重绑、故障停用至Init，自有资源释放、不释放借用车。只改本人五Lua/两meta，Game/Backend零新增顶层local。
-  - **验证**：上游专项9组41断言PASS、旧版同探针9FAIL；三球两次各36907断言，描边/全息79952与79959断言全PASS/exit0，独立Forward实图内部目视可见三球/青边/双残像。最终合并输入13案例188断言、规则32/789及10/529、整链run6 63/63全PASS/exit0，目标Lua/overlay/load/空顶点错误0；245实际Update/245绘制帧/504Renderer调用，93脚本前后SHA同生产、358引用assets无变更。整链实际金波396顶点/全暖金；两种源车自然回收后life仍约0.20/0.30、双残像继续至自然过期。输入eventData/广告状态模拟不等于OS/SDK；规则副本Presentation较旧仅证明Game规则，最终FX由输入/run6/专项覆盖。
-  - **失败与边界**：早期opening fixture/intro等待探针错误、run4错误恒定中心断言、run6启动前Python预检失败均保留不计PASS；冻结初始变换不等于扩散平均中心恒定，修探针不改正确动画。九张实际TakeScreenShot/SavePNG成功，但主HDR中央3D仍黑，不称主HDR/手机FPS/全DPR/用户审美验收；历史XHR96/233未定位不变。最新本会话LSP36文件0Error（1410Warning/119Hint）、diff-check通过；官方串行build及包校验待协调窗口，不提前记成功。
-  - **POST判定**：POST-1状态/索引执行，persona跳过（无新跨项目用户偏好）；POST-2版本记录执行、本人代码独立提交待构建；POST-3 AB323/324执行，随行persona/preferences跳过同理由。保留并发opening/ArtText/成就/纹理XML与发布配置/初始未跟踪资源，不代提交。
+  - **验证**：上游专项9组41断言PASS、旧版同探针9FAIL；三球两次各36907断言，描边/全息79952与79959断言全PASS/exit0，独立Forward实图内部目视可见三球/青边/双残像。最终合并输入13案例188断言、规则32/789及10/529、整链run6与最终client合并run7各63/63全PASS/exit0，目标Lua/overlay/load/空顶点错误0；run7为245实际Update/245绘制帧/504Renderer调用，93脚本前后SHA同生产、358引用assets无变更，client SHA为0bb25ebab78398183c58f2cd4aa1bb5ce714600b4e401214b705605d441fbab1。整链实际金波396顶点/全暖金；run7两种源车自然回收时life均0.30、双残像仍可见并继续至自然过期，run6原图未覆盖。输入eventData/广告状态模拟不等于OS/SDK；规则副本Presentation较旧仅证明Game规则，最终FX由输入/run7/专项覆盖。
+  - **正式构建**：本人亲自官方多人1.0.3/build3预览上传成功，client dc3efb5e/server604cd420；225/226清单条目含各14平台变体，共239/240实际产物全size+CRC32匹配。随后并发会话官方build4上传成功，本人独立亲验最终719559df/d0ded454：225/226条目含各19平台变体，共244/245实际产物零错配，45/46 Lua逐字节同生产、五FX同run7，两新模块meta UUID正确入包；证据/home/Maker/vehiclefx-integration-20261014/evidence/{run7,build3,build4}_verification.json。未手写dist，不把peer build4调用说成本人调用。
+  - **失败与边界**：早期opening fixture/intro等待探针错误、run4错误恒定中心断言、run6启动前Python预检失败均保留不计PASS；冻结初始变换不等于扩散平均中心恒定，修探针不改正确动画。build3校验首轮exit1空输出未定位、次轮误认fs_path含scripts前缀使Lua核对失败，改资源根相对路径并补平台变体后才正式PASS，不据错误探针判包损坏。run7九张实际TakeScreenShot/SavePNG成功，但主HDR中央3D仍黑，不称主HDR/手机FPS/全DPR/用户审美验收；纹理禁压缩未完成、历史XHR96/233未定位不变。最新本会话LSP36文件0Error（1410Warning/119Hint）、diff-check通过。
+  - **POST判定**：POST-1状态/索引执行，persona跳过（无新跨项目用户偏好）；POST-2版本记录及本人五Lua/两meta独立提交执行；POST-3 AB323/324执行，随行persona/preferences跳过同理由。保留并发opening/ArtText/成就/纹理XML与发布配置/初始未跟踪资源，不代提交；验收后无生产Lua/assets修改，纯POST不重复build。
   - **AB-323**：独立残像的上游TTL与下游冻结基准须一致；真实释放事实锁一次，后续源对象回收/下一手势不能截断已释放反馈；回归自然回收、下一辆Down、同帧释放回收与未释放取消。
   - **AB-324**：冻结初始变换不等于动画中心恒定；测试按规定世界轨迹与实际显示变换核验，断言错误只改探针并保留失败，独立Forward/截图API不冒称主HDR/手机验收。
 
