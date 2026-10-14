@@ -4,6 +4,16 @@
 
 ## 当前状态
 
+- 附记: opening-transition（2026-10-14，**两轮开局选车的自动承接动画与文字提示**；沿用展示0.13.63）：
+  - 用户反馈「开局机制突兀，需要有过渡动画和文字提示」；只补选车前后承接，不改上一批四车首阶、两轮三选一、两辆库存或正常经验升级。流程为briefing「两辆车，一起出战」→首发选择→between「首发已就位」→备弹选择→ready「出战阵容已就绪」→原完整3秒准备。自动衔接，无新增必须点击的确认按钮；0.95/0.65/1.05秒承接与每轮0.32秒保护为助手拟值，固定阶段合计3.29秒不含玩家选卡停留，非用户确认参数。
+  - **规则**：Game._opening增加phase/timer/durations，仍借levelup冻结；只有select且timer归零允许PickUpgrade，选中事件保留原音效/反馈，账本独立XP/pending/picks/stacks。计时单帧最多0.05秒、微小尾数归零，大dt不跨多个阶段；ready结束本帧return，intro保持精确3秒且未刷敌。首选待发、次选备弹，不藏第三车；选关/下一关/再战/重开均重新承接，复活不重选，第三车/扩容/回收保持。
+  - **表现与输入**：新ui/OpeningTransition只借宿主ctx/字体/令牌/原语，无新帧、上下文、字体、图片或RT；淡入/微缩/侧滑展示首发备弹、进度条及合批刻度，保留暗科技金属纹路。Backend七处opening接线、零新增Game/Backend顶层local；非select不画或命中卡窗，select还等真实首次可见WINDOW_IN，Update/Render/HitTest同源幂等计时与WindowInput逆变换。轮次仍参与同levelup身份，opening旧窗残影不遮ready/intro；正常升级保留/重抽广告恢复，承接连点不越轮或误射。
+  - **验证**：正式规则11案例170505断言PASS，四CLI exit0（phase5/2382、64种子选车4/69873、公共战斗1/1844、自然normal上限1/96406）。战斗1760帧73发射135击碎69回收4升级，8种子自然分裂32000帧峰值≤15。最终merged-run3 UI610/guard42/胜败64共716/716 PASS，三exit0，真实ArtText.Tick153/53/269次；93脚本复制前后/结束同生产，最终client SHA0bb25ebab78398183c58f2cd4aa1bb5ce714600b4e401214b705605d441fbab1。目标Lua/overlay/load/空顶点错误0，四张实际TakeScreenShot/SavePNG图逐张内部目视briefing/between/ready/select2，标题/双车/三卡完整；模拟eventData/广告拦截非手机OS/SDK。
+  - **正式构建**：本人亲自官方多人1.0.3/build4构建及预览上传成功，client719559df/serverd0ded454/engine ef9e23e2；225/226清单条目含各19平台变体，共244/245实际产物全size+CRC32匹配，45/46 Lua逐字节同生产，OpeningTransition UUID eb01ba2acf6dc96f334d90正确入包。证据/home/Maker/opening-transition-build4-verification-20261014.json；最新LSP36文件0Error（1410Warning/119Hint）、diff-check通过，提交前四本人文件SHA仍同冻结。纯POST不改生产Lua/assets、不重复build。
+  - **失败与边界**：旧规则helper对nil候选、guard旧快照断言、隔离缺Tick与早期Python空输出/patch分段失败保留不计PASS；最终合并走真实Tick，修探针不改正确生产。无音频/体素/本地HDR噪音单列，四张overlay实图不等于主HDR3D或手机FPS/全DPR/手感/审美验收。纹理禁压缩未完成、历史XHR96/233未定位不变，不拿本批通过代替平台错误消失。
+  - **POST判定**：POST-1状态/索引执行，persona跳过（本轮无新跨项目用户偏好）；POST-2本人Game/Backend七hunk/新模块meta与四份记录精确独立提交；POST-3 AB322执行，随行persona/preferences同理由跳过。保留4e108e7/62d7f9a及其记录、初始发布配置/媒体/未跟踪文件，不代提交。
+  - **AB-322**：自动承接阶段与可交互选择阶段分离，规则计时和实际可见窗口入场双保护；切入玩法本帧不吞准备时间，同状态多轮共用真实可见身份与幂等Update/Render/HitTest。回归输入→Render→Update、重复Down/多指/旧Up、完整intro及正常升级恢复，alpha/隐藏控件不能替代规则保护。
+
 - 版本: 0.13.63（2026-10-14，**高分/平台成就/艺术字异步加固；纹理禁压缩未完成**）：
   - **高分**：client_main先读云高分再允许写，全局Get/Set单在途；成功只确认本请求分数，失败/timeout保脏并15秒退避，首menu边沿不绕过读失败退避。Stop取规则/dirty/在途/retained最大值尝试本地保存，Start恢复；旧回调只释放旧槽，不污染新生命周期。提交throw或无终态保槽，不凭本地计时猜远端未执行；可能长期停发，非跨设备原子max/exactly-once，retained不跨页面/进程，Save返回false透传与清档全链未在本轮完整重审。
   - **成就**：离线不派发，全局单在途、每ID每Lua会话最多尝试一次；仅normal/ID/operation/currentStep匹配的SDK listener成功才写achPushed并保存。attempted墓碑跨Shutdown/Init，无终态不释放；throw/false/未知Shutdown/SDK变更或注销异常停止当前会话派发。不新增achUncertain、不迁移旧虚假确认，不声称真实SDK或跨刷新exactly-once。

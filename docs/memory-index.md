@@ -12,6 +12,14 @@
 简述：高分先读后写/单在途/Stop保分，成就异步成功确认与离线门控，ArtText有限退避恢复；纹理禁压缩未完成，XHR233未定位，原图/CTA尺寸/既有效果不变。
 最后巩固：2026-10-14
 
+## 两轮开局选车自动承接（2026-10-14，opening-transition）
+- briefing0.95秒说明两车出战，首发选择后between0.65秒提示再选不同备弹，次选后ready1.05秒展示完整阵容，自动接原完整3秒intro；每轮规则保护0.32秒。均为助手拟值，固定阶段3.29秒不含玩家选卡时间，无新增确认按钮。
+- Game._opening阶段计时只在非playing开局推进，单帧钳0.05、微小尾数归零；select且timer0才可选，ready转playing本帧return不耗intro。不污染XP/pending/picks/stacks，首选待发次选备弹，无第三车；进关/next/retry/restart重选、revive不重选，正常升级/扩容/第三车/回收保持。
+- 新OpeningTransition复用宿主ctx/字体/令牌/金属原语，无新资源所有权；淡入微缩侧滑双车卡与合批刻度。Backend七hunk零新增主块local，非select卡窗不可见/不可命中，实际WINDOW_IN与规则计时双保护，同轮次身份/Update-Render-HitTest幂等/WindowInput逆变换，opening旧残影不遮ready/intro；普通保留与重抽恢复。
+- 正式规则11案例170505断言、四CLI exit0；最终merged-run3 UI610+guard42+胜败64共716/716 PASS、三exit0，真实Tick153/53/269；93脚本全程同生产，client最终0bb25e。四TakeScreenShot/SavePNG图briefing/between/ready/select2已逐张内部目视，目标脚本错误0。旧nil候选helper/旧快照/隔离缺Tick/早期空输出/patch失败保留不计PASS；模拟输入/广告非OS/SDK。
+- 本人亲自官方1.0.3/build4预览上传成功719559df/d0ded454，225/226清单条目含19平台变体，共244/245实际产物size+CRC全对，45/46Lua同生产，UUID eb01ba2acf6dc96f334d90入包正确；证据/home/Maker/opening-transition-build4-verification-20261014.json。LSP36文件0Error（1410W/119H）、diff-check通过、收尾本人四SHA同冻结，验收后无生产Lua/assets修改、纯POST不重复build。
+- POST-1状态/索引、POST-2本人四代码/meta及四记录独立提交、POST-3 AB322执行；persona/随行persona/preferences无新偏好跳过。保留4e108e7/62d7f9a与初始config/媒体；纹理禁压缩未完成、XHR96/233未定位，手机FPS/DPR/主HDR/手感/真实SDK/审美待Preview。
+
 ## 三项异步加固与纹理阻塞（2026-10-14，four-hardening）
 - 高分先Get成功再Set，读写全局单在途，成功仅确认本请求；失败15秒退避且首menu不绕过，Stop最大值retained/尝试本地保存、Start恢复，旧callback隔离。throw/无终态保槽可能长期停发，非跨设备原子max/exactly-once，保留不跨页面/进程。
 - 成就离线门控、每ID每Lua会话最多尝试一次、仅匹配SDK listener成功确认achPushed；未知终态/Shutdown/SDK切换保守停发，不新增持久不确定账本，不迁移历史错误确认。ArtText每图三次/0.5与1秒明确失败退避，UI Tick独立玩法时钟，ctx/lifetime与尺寸双检；CTA原图407×128/显示300.96×67不变。
@@ -23,9 +31,10 @@
 - 巨大青圈继续用既有真实UI指针圆心，不重复改输入链；满蓄暂按青色描边（原文颜色词不明确），两层真实车型全息爆发，0.65秒/0.65米为助手拟值；原金色车前波与单次×1.5、拖尾/UI保持。
 - Presentation分手势gestureId/epoch与爆发serial/vehicleId，真实释放事件或强化飞行快照只锁一次released，之后独立TTL；修源车回收/下一辆Down提前截断。VehicleChargeFx捕获实际显示root世界基准、沿确定轨迹扩散，槽6临时材质独立且重建/清理前恢复共享白边。
 - VehicleEnchantOrbs替换旧10粒aura：每车严格3颗实体球/同心halo、相差120°，蓝紫金，最多四车12球4320顶点；稳定id相位，允许玩法dt、倍率一次，暂停/intro隐藏冻结。LOCAL动态批次、自有资源清理、空批不Commit、失败停用至Init，不改Game。
-- 最终输入13案例188断言、基础规则32/789、增量10/529、整链run6 63/63均PASS/exit0，目标错误0；245Update/245绘制/504Renderer、93脚本前后同生产/358引用assets无变更，金波实际396顶点全暖金；两种自然回收后幻影仍播完TTL。规则副本Presentation较旧只作Game回归，FX由最终输入/run6/专项证明。
-- 上游9组41断言PASS（旧版9FAIL），三球两次36907、描边/全息79952及79959全PASS；独立Forward实图可辨。九张整链截图API成功但主HDR中央仍黑，不代表主HDR/手机FPS/全DPR/真实OS/广告SDK/审美验收；旧探针/截图/预检失败保留不计PASS。
-- 本会话LSP36文件0Error（1410Warning/119Hint）与diff-check通过；官方串行构建/包体校验待协调放行，不提前记成功。POST-1索引/状态执行、persona无新偏好跳过；POST-2版本记录与本人五Lua/两meta独立提交待build；POST-3 AB323/324执行，随行persona/preferences跳过。并发opening/ArtText/成就/XML/config和初始媒体保留，历史XHR96/233未定位不变。
+- 最终输入13案例188断言、基础规则32/789、增量10/529、整链run6与最终client合并run7各63/63均PASS/exit0，目标错误0；run7为245Update/245绘制/504Renderer、93脚本前后同生产/358引用assets无变更，最终client SHA为0bb25ebab78398183c58f2cd4aa1bb5ce714600b4e401214b705605d441fbab1。金波实际396顶点全暖金；run7两种源车自然回收时life均0.30、两层幻影仍可见至自然TTL结束。规则副本Presentation较旧只作Game回归，FX由最终输入/run7/专项证明。
+- 上游9组41断言PASS（旧版9FAIL），三球两次36907、描边/全息79952及79959全PASS；独立Forward实图可辨。run7九张整链截图API成功但主HDR中央仍黑，不代表主HDR/手机FPS/全DPR/真实OS/广告SDK/审美验收，run6原图未覆盖；旧探针/截图/预检失败保留不计PASS。
+- 本会话LSP36文件0Error（1410Warning/119Hint）与diff-check通过；本人官方多人1.0.3/build3预览成功，dc3efb5e/604cd420，239/240实际产物全size+CRC匹配。并发会话官方build4预览成功，本人独立亲验最终719559df/d0ded454：225/226清单条目含19变体，共244/245产物零错配；45/46Lua同生产、五FX同run7、两新meta正确入包。证据位于/home/Maker/vehiclefx-integration-20261014/evidence/的run7/build3/build4_verification.json；build3首轮校验exit1未定位、次轮错误fs_path前缀断言保留，修校验脚本后才PASS，不据此判包损坏。
+- POST-1索引/状态执行、persona无新偏好跳过；POST-2版本记录与本人五Lua/两meta独立提交执行；POST-3 AB323/324执行，随行persona/preferences跳过。并发opening/ArtText/成就/XML/config和初始媒体保留；纹理禁压缩未完成、历史XHR96/233未定位不变。验收后无生产Lua/assets变更，纯POST不重复build。
 
 ## 每关两轮开局选车（2026-10-14，opening-vehicle-selection）
 - 新默认档四首阶normal_1/ice_1/speed_1/giant_1，第二阶仍锁；成功旧本地档不强制赠送，旧AUTO_OWNED不扩。无本地档先默认再旧云并集可能保留四节点，ResetAll/读取失败回退同默认，不声称严格新账号迁移。
