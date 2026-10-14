@@ -10,7 +10,7 @@ VisualCatalog.LAUNCH_CHARGE = { radius = 240, releaseSeconds = 0.22 }
 -- 满蓄全息爆发：两层真实车型残像，参数为表现层拟值，不改变发射强化。
 -- shell*：爆发后套在车上、比车略大的极浅全息外套，跟随车辆实际显示变换。
 VisualCatalog.CHARGE_HOLOGRAM = { seconds = 0.65, copies = 2, spread = 0.65,
-    shellScale = 1.06, shellAlpha = 0.10 }
+    shellScale = 1.06, shellAlpha = 0.40 }
 
 local BALL_STYLES = {
     normal = {

@@ -36,6 +36,7 @@
 ---@field node Node|nil
 ---@field geometry CustomGeometry|nil
 ---@field material Material|nil
+---@field texture Texture2D|nil
 ---@field colors table<string, number[]>
 ---@field cars BowWaveCarDebug[]
 ---@field count integer
@@ -62,8 +63,35 @@ local S = {
 }
 local M = {}
 local SEGMENTS, MAX_CARS = 16, 8
-local HALF_ANGLE, THICKNESS, HALF_HEIGHT, GAP = 1.05, 0.12, 0.05, 0.16
+-- V 形冲击波：中央折角朝车头前方，两翼后掠并展开到车体半宽之外。
+local V_DEPTH, V_SPREAD, THICKNESS, HALF_HEIGHT, GAP = 0.34, 1.12, 0.12, 0.05, 0.16
 local PER_CAR = SEGMENTS * 24 + 12
+
+-- V 字形冲击波贴图：横截面软边 + 沿波长热核。DiffAlpha 只读纹理 alpha（不读顶点
+-- rgb），颜色由 MatDiffColor 承载，故这里是灰阶 + alpha 剖面。
+local function CreateBowWaveTexture()
+    local N = 64
+    local image = Image()
+    image:SetSize(N, N, 4)
+    for y = 0, N - 1 do
+        local v = y / (N - 1)
+        local band = math.sin(math.pi * v) ^ 0.7
+        local core = math.max(0, 1 - math.abs(v - 0.5) / 0.16) ^ 1.6
+        for x = 0, N - 1 do
+            local u = x / (N - 1)
+            -- 沿 V 长：中央折角最亮，两翼渐弱，叠一条细热核。
+            local along = 0.55 + 0.45 * (1 - math.abs(2 * u - 1))
+            local a = math.max(0, math.min(1, band * along * 0.85 + core * 0.6))
+            local g = 0.55 + 0.45 * core
+            image:SetPixel(x, y, Color(g, g, g, a))
+        end
+    end
+    local tex = Texture2D:new()
+    tex:SetData(image, false)
+    tex:SetSRGB(true)
+    return tex
+end
+
 ---@param x number
 ---@return boolean
 local function Finite(x)
@@ -93,6 +121,8 @@ function M.Shutdown()
     S.node, S.geometry = nil, nil
     if S.material then S.material:Dispose() end
     S.material = nil
+    if S.texture then S.texture:Dispose() end
+    S.texture = nil
     S.colors, S.firstSubmit = {}, false
 end
 ---@param scene Scene
@@ -101,13 +131,15 @@ end
 function M.Init(scene, colors)
     M.Shutdown()
     local ok, err = pcall(function()
-        -- 引擎实际 XML：Unlit + VERTEXCOLOR，不受灯光/环境衰减且保留弹种顶点色。
-        local tech = cache:GetResource("Technique", "Techniques/NoTextureUnlitVCol.xml")
-        assert(tech, "NoTextureUnlitVCol unavailable")
+        -- 半透明带纹理：DiffAlpha 只读纹理 alpha，颜色走 MatDiffColor（顶点 rgb 无效）。
+        local tech = cache:GetResource("Technique", "Techniques/DiffAlpha.xml")
+        assert(tech, "DiffAlpha unavailable")
+        S.texture = CreateBowWaveTexture()
         S.material = Material()
         S.material:SetTechnique(0, tech)
         S.material:SetCullMode(CULL_NONE)
-        S.material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+        S.material:SetTexture(TU_DIFFUSE, S.texture)
+        S.material:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 0.55)))
         S.node = scene:CreateChild("VehicleBowWave", LOCAL)
         S.node.enabled = false
         S.node:SetWorldTransform(Vector3(0, 0, 0), Quaternion(), Vector3(1, 1, 1))
@@ -143,7 +175,7 @@ local function Valid(root, box)
         if not Finite(n) then return false end
     end
     local hw = math.max(math.abs(lo.y), math.abs(hi.y))
-    if hi.x <= lo.x or hi.y <= lo.y or hi.z <= lo.z or hw * 1.1 / math.sin(HALF_ANGLE) <= THICKNESS + 1e-6 then return false end
+    if hi.x <= lo.x or hi.y <= lo.y or hi.z <= lo.z or hw <= 1e-6 then return false end
     -- 只接受正值等比世界变换；反射、剪切、非等比缩放安全跳过。
     local scale = root:GetSignedWorldScale()
     if scale.x <= 1e-6 or math.abs(scale.x - scale.y) > scale.x * 1e-5 or math.abs(scale.x - scale.z) > scale.x * 1e-5 then return false end
@@ -164,37 +196,42 @@ local function EmitCar(marble, record, box)
     local nose = box.max.x
     local hw = math.max(math.abs(box.min.y), math.abs(box.max.y))
     local zc = (box.min.z + box.max.z) * 0.5
-    local inner = hw * 1.1 / math.sin(HALF_ANGLE) - THICKNESS
-    local outer = inner + THICKNESS
-    -- 周期位移在车鼻前平滑往返，不改变宽度或进入最小间隙。
-    local forward = 0.05 * (1 - math.cos(S.phase * (2 * math.pi / 0.9)))
-    local cx = nose + GAP + forward - inner * math.cos(HALF_ANGLE)
+    -- V 形中线：中央折角在车头正前 (nose+GAP+depth)，两翼后掠回落到 nose+GAP。
+    local halfW = hw * V_SPREAD
+    local baseX = nose + GAP
+    local tipX = baseX + V_DEPTH
     local rotation = root:GetWorldRotation()
     local axis = rotation * Vector3(1, 0, 0)
     local heading = math.deg(math.atan(axis.y, axis.x))
     local he = record.heading and math.abs((heading - record.heading + 180) % 360 - 180) or 0
-    local d = { id = marble.id, noseGap = math.huge, widthRatio = outer * math.sin(HALF_ANGLE) / hw,
-        anchor = root:LocalToWorld(Vector3(nose, 0, zc)), heading = heading, headingError = he, transforms = 1 } ---@type BowWaveCarDebug
+    local d = { id = marble.id, noseGap = math.huge, widthRatio = V_SPREAD,
+        anchor = root:LocalToWorld(Vector3(tipX, 0, zc)), heading = heading, headingError = he, transforms = 1 } ---@type BowWaveCarDebug
     local rgb = marble.chargeBoosted and { 1.0, 0.72, 0.16 }
-        or S.colors[marble.ballType] or { 0.24, 0.80, 0.91 }
-    local pulse = 0.92 + 0.08 * math.sin(S.phase * 4)
-    local dark = Color(rgb[1] * 0.55, rgb[2] * 0.55, rgb[3] * 0.55, 1)
-    local side = Color(rgb[1] * 0.95, rgb[2] * 0.95, rgb[3] * 0.95, 1)
-    local bright = marble.chargeBoosted and Color(pulse, pulse * 0.90, pulse * 0.56, 1)
-        or Color(pulse, pulse, pulse, 1)
-    local rim = Color(rgb[1] * pulse, rgb[2] * pulse, rgb[3] * pulse, 1)
-    -- 顶面内侧白热核、外侧弹种色边；仍是同一 section 的顶点 RGB。
-    local function TopColor(v)
-        local dx = v.x - cx
-        local radius = math.sqrt(dx * dx + v.y * v.y)
-        return radius > (inner + outer) * 0.5 and rim or bright
+        or S.colors[marble.ballType]
+    local r1 = rgb and (rgb[1] --[[@as number]]) or 0.24
+    local g1 = rgb and (rgb[2] --[[@as number]]) or 0.80
+    local b1 = rgb and (rgb[3] --[[@as number]]) or 0.91
+    -- 周期位移在车鼻前平滑往返，不改变宽度或进入最小间隙。
+    local forward = 0.05 * (1 - math.cos(S.phase * (2 * math.pi / 0.9)))
+    local b = Color(r1, g1, b1, 1)
+    ---@param s number
+    ---@return number
+    local function CentreX(s) return baseX + forward + V_DEPTH * (1 - math.abs(s)) end
+    ---@param s number
+    ---@return Vector3[]
+    local function Cross(s)
+        local x = CentreX(s)
+        return {
+            Vector3(x, s * halfW, zc - HALF_HEIGHT),
+            Vector3(x + THICKNESS, s * halfW, zc - HALF_HEIGHT),
+            Vector3(x + THICKNESS, s * halfW, zc + HALF_HEIGHT),
+            Vector3(x, s * halfW, zc + HALF_HEIGHT),
+        }
     end
-    ---@param theta number
+    ---@param s number
     ---@return Vector3[], Vector3[]
-    local function Ring(theta)
-        local c, s = math.cos(theta), math.sin(theta)
-        local p = { Vector3(cx + inner * c, inner * s, zc - HALF_HEIGHT), Vector3(cx + outer * c, outer * s, zc - HALF_HEIGHT),
-            Vector3(cx + outer * c, outer * s, zc + HALF_HEIGHT), Vector3(cx + inner * c, inner * s, zc + HALF_HEIGHT) }
+    local function Ring(s)
+        local p = Cross(s)
         local w = {} ---@type Vector3[]
         for i, v in ipairs(p) do
             d.noseGap = math.min(d.noseGap, v.x - nose)
@@ -204,56 +241,52 @@ local function EmitCar(marble, record, box)
         return p, w
     end
     ---@param a Vector3
-    ---@param b Vector3
+    ---@param bb Vector3
     ---@param c Vector3
     ---@param wa Vector3
     ---@param wb Vector3
     ---@param wc Vector3
     ---@param expected Vector3
     ---@param color Color
-    ---@param top boolean|nil
-    local function Triangle(a, b, c, wa, wb, wc, expected, color, top)
-        if (b - a):CrossProduct(c - a):DotProduct(expected) < 0 then
-            b, c, wb, wc = c, b, wc, wb
+    local function Triangle(a, bb, c, wa, wb, wc, expected, color)
+        if (bb - a):CrossProduct(c - a):DotProduct(expected) < 0 then
+            bb, c, wb, wc = c, bb, wc, wb
         end
-        local n = (b - a):CrossProduct(c - a):Normalized()
+        local n = (bb - a):CrossProduct(c - a):Normalized()
         local wn = rotation * n
         geom:DefineVertex(wa)
         geom:DefineNormal(wn)
-        geom:DefineColor(top and TopColor(a) or color)
+        geom:DefineColor(color)
         geom:DefineTexCoord(Vector2(0, 0))
         geom:DefineVertex(wb)
         geom:DefineNormal(wn)
-        geom:DefineColor(top and TopColor(b) or color)
-        geom:DefineTexCoord(Vector2(0, 0))
+        geom:DefineColor(color)
+        geom:DefineTexCoord(Vector2(1, 0))
         geom:DefineVertex(wc)
         geom:DefineNormal(wn)
-        geom:DefineColor(top and TopColor(c) or color)
-        geom:DefineTexCoord(Vector2(0, 0))
+        geom:DefineColor(color)
+        geom:DefineTexCoord(Vector2(0, 1))
     end
     ---@param p Vector3[]
     ---@param w Vector3[]
     ---@param expected Vector3
     ---@param color Color
-    ---@param top boolean|nil
-    local function Quad(p, w, expected, color, top)
-        Triangle(p[1], p[2], p[3], w[1], w[2], w[3], expected, color, top)
-        Triangle(p[1], p[3], p[4], w[1], w[3], w[4], expected, color, top)
+    local function Quad(p, w, expected, color)
+        Triangle(p[1], p[2], p[3], w[1], w[2], w[3], expected, color)
+        Triangle(p[1], p[3], p[4], w[1], w[3], w[4], expected, color)
     end
-    local prev, wp = Ring(-HALF_ANGLE)
-    Quad(prev, wp, Vector3(-math.sin(-HALF_ANGLE), math.cos(-HALF_ANGLE), 0) * -1, side)
+    -- 沿 s=-1（右翼尖）到 s=+1（左翼尖）铺 V 形带，中点即中央折角。
+    local prev, wp = Ring(-1)
     for i = 1, SEGMENTS do
-        local theta = -HALF_ANGLE + i * (2 * HALF_ANGLE / SEGMENTS)
-        local cur, wc = Ring(theta)
-        local mid = theta - HALF_ANGLE / SEGMENTS
-        local radial = Vector3(math.cos(mid), math.sin(mid), 0)
-        Quad({ prev[2], cur[2], cur[3], prev[3] }, { wp[2], wc[2], wc[3], wp[3] }, radial, side)
-        Quad({ prev[1], prev[4], cur[4], cur[1] }, { wp[1], wp[4], wc[4], wc[1] }, radial * -1, dark)
-        Quad({ prev[1], cur[1], cur[2], prev[2] }, { wp[1], wc[1], wc[2], wp[2] }, Vector3(0, 0, -1), bright, true)
-        Quad({ prev[4], prev[3], cur[3], cur[4] }, { wp[4], wp[3], wc[3], wc[4] }, Vector3(0, 0, 1), dark)
+        local s = -1 + i * (2 / SEGMENTS)
+        local cur, wc = Ring(s)
+        local frontN = Vector3(0, 0, -1)
+        Quad({ prev[2], cur[2], cur[3], prev[3] }, { wp[2], wc[2], wc[3], wp[3] }, frontN, b)
+        Quad({ prev[1], prev[4], cur[4], cur[1] }, { wp[1], wp[4], wc[4], wc[1] }, Vector3(0, 0, 1), b)
+        Quad({ prev[1], cur[1], cur[2], prev[2] }, { wp[1], wc[1], wc[2], wp[2] }, frontN, b)
+        Quad({ prev[4], prev[3], cur[3], cur[4] }, { wp[4], wp[3], wc[3], wc[4] }, Vector3(0, 0, 1), b)
         prev, wp = cur, wc
     end
-    Quad(prev, wp, Vector3(-math.sin(HALF_ANGLE), math.cos(HALF_ANGLE), 0), side)
     return d
 end
 ---@param game BowWaveGame

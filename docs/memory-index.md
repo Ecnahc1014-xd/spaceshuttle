@@ -13,11 +13,12 @@
 最后巩固：2026-10-14
 
 ## 青圈锚车与贴身全息外套（2026-10-14，charge-anchor-shell）
-- 用户要求青圈圆心改为**车辆位置**（不再锚手指），并在全息爆发后加一层**很浅透明度、比车略大**的幻影壳**套在车上**。只改 Game/Presentation/VisualCatalog/VehicleChargeFx/ui.LaunchCharge，不动伤害/初速/回收/拖尾/附魔/金色波壳与暗科技 UI。
+- 用户要求青圈圆心改为**车辆位置**（不再锚手指）；全息爆发后加一层**透明度 40%、比车略大**的幻影壳**套在车上**；车前**冲击波改为 V 字形、高质量半透明贴图**。只改 Game/Presentation/VisualCatalog/VehicleChargeFx/VehicleBowWave/ui.LaunchCharge，不动伤害/初速/回收/拖尾/附魔/金色强化与暗科技 UI。
 - 圈心：快照增 `chargeCarX/chargeCarY`（=chargeActive 时 activeBall.x/y，否则 nil），`marble_launched` 补 `carX/carY`；LaunchCharge 圆心**优先** `project(chargeCarX,chargeCarY)`（同后端玩法投影=车辆屏幕中心），指针坐标降为旧调用回退；释放回声同样优先车辆坐标。车辆中心在玩法平面 z=0，用玩法投影即可，无需深度平面。
-- 外套：VehicleChargeFx 新增第 3 批次 ChargeHologramShell（同型真实网格、PBRNoTextureAlpha），逐帧取源车当前实际显示变换 ×shellScale(1.06) 套在车上，shellAlpha(0.10) 随 TTL `(1-t)^1.2` 淡出，源车回收即隐藏；两残像仍冻结基准+扩散，与外壳独立。Debug 增 shellVisible。shellScale/shellAlpha 为助手拟值。
-- 验证：LSP36文件0Error（1402W/119H）；官方多人 build + 预览上传成功。真渲染 probe_chargeshell **12/12 PASS、exit0**：车(270,850)≠指针(200,600)→**圆心=车辆投影点**；爆发期 life>0 且 shellVisible>0；释放回声带 carX/carY；目标 Lua/overlay/LoadChunk/空顶点错误 0；探针走真实 client_main（含两轮开局选车）。
-- 边界：主HDR中央3D仍黑（本环境既有），shellVisible>0 仅证外套批次启用，**真机观感待 Preview**；手机FPS/全DPR/真SDK/审美未验收。纹理禁压缩未完成、XHR96/233未定位不变。POST-1状态/索引、POST-2本人五Lua独立提交、POST-3 AB-325/326执行；persona及随行偏好无新跨项目事实跳过。保留并发 opening/ArtText/成就/纹理与初始未跟踪文件，不代提交。
+- 外套：VehicleChargeFx 第 3 批次 ChargeHologramShell（同型真实网格、PBRNoTextureAlpha），逐帧取源车当前实际显示变换 ×shellScale(1.06) 套在车上，**shellAlpha 0.40** 随 TTL `(1-t)^1.2` 淡出，源车回收即隐藏；两残像仍冻结基准+扩散，与外壳独立。Debug 增 shellVisible。
+- V 形冲击波：VehicleBowWave 由「车前弧壳（HALF_ANGLE 扇形+NoTextureUnlitVCol 顶点色）」改为 V 字形——中线 `CentreX(s)=baseX+forward+V_DEPTH*(1-|s|)`（中央折角在车头正前最远、两翼后掠回落到车鼻前 GAP），厚 THICKNESS、半高 HALF_HEIGHT、展宽 V_SPREAD(1.12×车半宽)。材质改 **DiffAlpha + 程序化 V 形贴图**（CreateBowWaveTexture：横截面软边+沿 V 长中央折角最亮的细热核），颜色走 MatDiffColor（DiffAlpha 只读纹理 alpha、不读顶点 rgb），alpha 0.55 做高质量半透明；顶点写 UV(0/1) 供采样。Valid 删 HALF_ANGLE 门控改 hw<=1e-6；PER_CAR 仍 396、预算 8车/3168 不变；Shutdown 释放自有贴图。
+- 验证：LSP36文件0Error（1393W/119H）；官方多人 build + 预览上传成功。真渲染 probe_chargeshell **8/8 PASS、exit0**：车(270,850)≠指针(200,600)→**圆心=车辆投影点**；shellAlpha==0.40；爆发期 shellVisible>0；V 形波壳蓄力真实提交 count=1/vertices=396/actualVerts=384、**材质绑定 true**；目标 Lua/overlay/LoadChunk/空顶点错误 0；探针走真实 client_main（含两轮开局选车）。
+- 边界：主HDR中央3D仍黑（本环境既有），shellVisible>0/材质绑定仅证批次启用与数据通路，**V 形观感与 40% 透明度待 Preview**；手机FPS/全DPR/真SDK/审美未验收。纹理禁压缩未完成、XHR96/233未定位不变。POST-1状态/索引、POST-2本人六Lua独立提交、POST-3 AB-325/326/327执行；persona及随行偏好无新跨项目事实跳过。保留并发 opening/ArtText/成就/纹理与初始未跟踪文件，不代提交。
 
 ## 两轮开局选车自动承接（2026-10-14，opening-transition）
 - briefing0.95秒说明两车出战，首发选择后between0.65秒提示再选不同备弹，次选后ready1.05秒展示完整阵容，自动接原完整3秒intro；每轮规则保护0.32秒。均为助手拟值，固定阶段3.29秒不含玩家选卡时间，无新增确认按钮。

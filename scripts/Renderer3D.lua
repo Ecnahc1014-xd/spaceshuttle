@@ -38,6 +38,19 @@ local crateMaterial_ = nil
 local vehicleMaterialSets_ = {}
 local materialCache_ = {}
 local vehicleOutlineMaterial_ = nil -- 车辆白色轮廓壳，跨弹种/车型共享
+local vehicleChildOutlineMaterial_ = nil -- 子车（分裂/三连）用的暗灰轮廓壳
+-- 分裂/三连产生的车不是正式车：统一灰暗 + 更低渲染层级，与母车区分。
+-- 层级常量同时驱动灰材质与暗灰轮廓，保证整台子车（含轮廓）一致沉到母车之下。
+-- ⚠️ Urho3D 材质 render order 默认是 128（不是 0），值越小越早绘制=层级越低；
+--    传负数会回绕成 246（反而更靠上）。故子车取 64（< 128），正式车保持默认 128。
+local VEHICLE_CHILD_ORDER = 64
+local VEHICLE_CHILD_PALETTE = {
+    body = {0.30, 0.32, 0.37}, side = {0.42, 0.44, 0.50},
+    accent = {0.50, 0.52, 0.58}, glass = {0.10, 0.13, 0.17},
+    -- 轮子必须用子车专属灰，不能复用 WHEEL_COLOR：CreateMaterial 按颜色缓存，
+    -- 复用会拿到正式车同一个 Material，改它的 render order 会连正式车轮一起沉下去。
+    wheel = {0.11, 0.12, 0.15},
+}
 local enemyMeshes_ = {}
 local vehicleRecords_ = {}
 local debrisNodes_ = {}
@@ -920,9 +933,48 @@ local function GetVehicleOutlineMaterial()
     return material
 end
 
-local function RebuildVehicleGeometry(geometry, ballType)
-    VehicleGeometry.Build(geometry, selectedSkin_, GetVehicleMaterials(ballType),
-        GetVehicleOutlineMaterial())
+local function GetVehicleChildMaterials()
+    -- 子车（分裂/三连）整台灰暗：中性灰面 + 压低的金属度，不再随弹种配色，读起来像“非正式车”。
+    local cached = vehicleMaterialSets_.__child
+    if cached then return cached end
+    local p = VEHICLE_CHILD_PALETTE
+    cached = {
+        CreateMaterial(p.body, 0.28, 0.55),
+        CreateMaterial(p.side, 0.22, 0.60),
+        CreateMaterial(p.wheel, 0.0, 0.88),
+        CreateMaterial({0.30, 0.32, 0.36}, 0.55, 0.34),
+        CreateGlassMaterial(p.glass),
+        CreateMaterial({0.55, 0.58, 0.62}, 0.05, 0.40),
+    }
+    -- 整台子车（含玻璃）统一沉到更低渲染层级；玻璃原本是 180，这里一并压到负值。
+    for i = 1, #cached do cached[i]:SetRenderOrder(VEHICLE_CHILD_ORDER) end
+    vehicleMaterialSets_.__child = cached
+    return cached
+end
+
+local function GetVehicleChildOutlineMaterial()
+    -- 子车轮廓不用白亮壳，改暗灰；再压低自发光，让“低层级”在深空暗场里也成立。
+    if vehicleChildOutlineMaterial_ then return vehicleChildOutlineMaterial_ end
+    local material = Material:new()
+    material:SetTechnique(0,
+        cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
+    material:SetShaderParameter("MatDiffColor", Variant(Color(0.30, 0.32, 0.36, 1.0)))
+    material:SetShaderParameter("Metallic", Variant(0.0))
+    material:SetShaderParameter("Roughness", Variant(0.62))
+    material:SetShaderParameter("MatEmissiveColor", Variant(Color(0.05, 0.055, 0.065, 1.0)))
+    material:SetRenderOrder(VEHICLE_CHILD_ORDER)
+    vehicleChildOutlineMaterial_ = material
+    return material
+end
+
+local function RebuildVehicleGeometry(geometry, ballType, isChild)
+    if isChild then
+        VehicleGeometry.Build(geometry, selectedSkin_, GetVehicleChildMaterials(),
+            GetVehicleChildOutlineMaterial())
+    else
+        VehicleGeometry.Build(geometry, selectedSkin_, GetVehicleMaterials(ballType),
+            GetVehicleOutlineMaterial())
+    end
 end
 
 local function MoveAngleToward(current, target, maxStep)
@@ -949,16 +1001,17 @@ local function GetVehicleTargetHeading(game, marble)
     return nil
 end
 
-local function CreateVehicleRecord(id, marble, initialHeading)
+local function CreateVehicleRecord(id, marble, initialHeading, isChild)
     local root = scene_:CreateChild("Vehicle_" .. tostring(id))
     local geometry = root:CreateComponent("CustomGeometry")
     geometry.castShadows = false
-    RebuildVehicleGeometry(geometry, marble.ballType)
+    RebuildVehicleGeometry(geometry, marble.ballType, isChild)
     return {
         root = root,
         geometry = geometry,
         ballType = marble.ballType,
         skin = selectedSkin_,
+        isChild = isChild,
         heading = initialHeading,
         targetHeading = initialHeading,
     }
@@ -970,13 +1023,16 @@ local function SyncVehicles(game, dt)
     local active = {}
     local function SyncOne(marble)
         active[marble.id] = true
+        -- isPrimary == false 即子车（分裂 / 附魔三连），两者都不是正式车。
+        local isChild = marble.isPrimary == false
         local targetHeading = GetVehicleTargetHeading(game, marble)
         local record = vehicleRecords_[marble.id]
         if not record then
             local initialHeading = targetHeading or -90
-            record = CreateVehicleRecord(marble.id, marble, initialHeading)
+            record = CreateVehicleRecord(marble.id, marble, initialHeading, isChild)
             vehicleRecords_[marble.id] = record
-        elseif record.ballType ~= marble.ballType or record.skin ~= selectedSkin_ then
+        elseif record.ballType ~= marble.ballType or record.skin ~= selectedSkin_
+            or record.isChild ~= isChild then
             -- 重建会重新绑定共享白轮廓；先还原并作废借用缓存，避免青材质被当作原材质反复缓存。
             if record.chargeOriginalOutline then
                 record.geometry:SetMaterial(6, record.chargeOriginalOutline)
@@ -984,7 +1040,8 @@ local function SyncVehicles(game, dt)
             end
             record.ballType = marble.ballType
             record.skin = selectedSkin_
-            RebuildVehicleGeometry(record.geometry, marble.ballType)
+            record.isChild = isChild
+            RebuildVehicleGeometry(record.geometry, marble.ballType, isChild)
         end
 
         if targetHeading then record.targetHeading = targetHeading end
@@ -1806,6 +1863,29 @@ function Renderer3D.DebugTrailParticleCount()
         end
     end
     return total
+end
+
+-- 诊断用（只读）：子车（分裂/三连）灰暗材质与低层级的真实生效证据。
+-- 返回 {childCount, childOrder, childBody, normalOrder}：
+-- childCount = 当前渲染为子车的车辆数；childOrder = 子车 body 材质的 render order；
+-- childBody = 子车 body 的配色（灰暗调色板，权威来源）；normalOrder = 正式车 body 的 render order（应为 0）。
+function Renderer3D.DebugSplitChildVehicles()
+    local childCount = 0
+    for _, record in pairs(vehicleRecords_) do
+        if record.isChild then childCount = childCount + 1 end
+    end
+    local childOrder = nil
+    local childMats = vehicleMaterialSets_.__child
+    if childMats and childMats[1] then childOrder = childMats[1]:GetRenderOrder() end
+    local normalOrder = nil
+    local normalMats = vehicleMaterialSets_.normal
+    if normalMats and normalMats[1] then normalOrder = normalMats[1]:GetRenderOrder() end
+    return {
+        childCount = childCount,
+        childOrder = childOrder,
+        childBody = VEHICLE_CHILD_PALETTE.body,
+        normalOrder = normalOrder,
+    }
 end
 
 local function SyncAimLine(game)

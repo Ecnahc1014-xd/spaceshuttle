@@ -4,7 +4,16 @@
 
 ## 当前状态
 
-- 附记: charge-anchor-shell（2026-10-14，**青圈圆心改锚车辆 + 满蓄后贴身全息外套**；沿用展示0.13.63，不抢并发版本）：
+- 附记: charge-anchor-shell（2026-10-14，**青圈圆心改锚车辆 + 40% 全息外套 + V 形半透明冲击波**；沿用展示0.13.63，不抢并发版本）：
+  - 用户三点要求：①巨大青色圈以**车辆位置**为圆心；②全息爆发后一层**透明度 40%、比车稍大**的幻影壳**套在车上**（上一批 0.10 已按新值改为 0.40）；③车前**冲击波改为 V 字形、高质量半透明贴图**。只改 Game/Presentation/VisualCatalog/VehicleChargeFx/VehicleBowWave/ui.LaunchCharge，不动伤害/初速/回收/拖尾/附魔/金色强化与暗科技 UI。
+  - **圈心改锚车辆**：`Game.GetSnapshot` 新增 `s.chargeCarX/chargeCarY`（= `chargeActive` 时 `activeBall.x/y`，否则 nil）；`marble_launched` 补 `carX/carY`。`ui/LaunchCharge` 圆心**优先** `project(chargeCarX, chargeCarY)`（与后端同一玩法投影 = 车辆屏幕中心），指针坐标降为旧调用回退；释放回声同样优先车辆坐标。车辆中心在玩法平面 z=0，用玩法投影即可，无需额外深度平面。
+  - **40% 贴身外套**：`VehicleChargeFx` 第 3 批次 `ChargeHologramShell`（同型真实网格 + `PBRNoTextureAlpha`），逐帧取源车当前实际显示变换 ×`shellScale`(1.06) 套在车上，`shellAlpha` **0.40** 随 TTL `(1-t)^1.2` 淡出，源车回收即隐藏；两残像仍冻结基准+扩散，与外套独立。
+  - **V 形半透明冲击波**：`VehicleBowWave` 由「车前弧壳（`HALF_ANGLE` 扇形 + `NoTextureUnlitVCol` 顶点色）」改为 **V 字形**——中线 `CentreX(s)=baseX+forward+V_DEPTH*(1-|s|)`（中央折角在车头正前最远、两翼后掠回落到车鼻前 `GAP`），横截面厚 `THICKNESS`、半高 `HALF_HEIGHT`、展宽 `V_SPREAD`（=1.12×车半宽，翼尖超出车体）。材质改 **`DiffAlpha` + 程序化 V 形贴图**（`CreateBowWaveTexture`：横截面软边 + 沿 V 长中央折角最亮的细热核），颜色走 `MatDiffColor`（`DiffAlpha` 只读纹理 alpha、不读顶点 rgb），`MatDiffColor` alpha 0.55 做高质量半透明；顶点仍写 `DefineTexCoord`(0/1) 供纹理采样。`Valid()` 删除 `HALF_ANGLE` 宽度门控，改 `hw<=1e-6` 拒绝。`PER_CAR` 仍 396、预算 8 车/3168 不变；`Shutdown` 释放自有贴图。
+  - 验证：LSP **36 文件 0 Error**（1393 Warning/119 Hint）；官方多人 build + 预览上传 ✅。真渲染 `probe_chargeshell` **8/8 PASS、exit0**：车(270,850)≠指针(200,600)→**圆心=车辆投影点**；`shellAlpha==0.40`；爆发期 `shellVisible>0`；V 形波壳蓄力时真实提交 `count=1/vertices=396/actualVerts=384`、**材质绑定 true**（半透明带纹理）；目标 Lua/overlay/LoadChunk/空顶点错误 0。探针走真实 `client_main`（含两轮开局选车）。
+  - 边界：**主 HDR 中央 3D 仍黑（本环境既有）**，`shellVisible>0`/材质绑定只证批次启用与数据通路，**V 形观感与 40% 透明度是否合适待 Preview 目视**；手机 FPS/全 DPR/真实 SDK/审美未验收。纹理禁压缩未完成、XHR96/233 未定位不变。
+  - **POST 判定**：POST-1 状态/索引执行，persona 跳过（无新跨项目偏好）；POST-2 本人六 Lua 独立提交；POST-3 AB-325/326/327 执行，随行 persona/preferences 同理由跳过。保留并发 opening/ArtText/成就/纹理与发布配置、初始未跟踪文件，不代提交。
+
+- 附记: charge-hologram-shell（2026-10-14，**青圈锚车 + 贴身全息外套**；已并入上条，保留历史）：
   - 用户两点要求：①巨大青色圈以**车辆位置**为圆心（不再锚手指拖拽处）；②全息幻影爆发后，额外有一层**很浅透明度、比车稍大**的幻影壳**套在车上**。本批只改 Game/Presentation/VisualCatalog/VehicleChargeFx/ui.LaunchCharge 五文件，不动伤害/初速/回收/拖尾/附魔/金色波壳与既有暗科技 UI。
   - **圈心改锚车辆**：`Game.GetSnapshot` 新增 `s.chargeCarX/chargeCarY`（= `chargeActive` 时 `activeBall.x/y`，玩法坐标，否则 nil）；`marble_launched` 事件补 `carX/carY`（发射瞬间车辆权威位置）。`ui/LaunchCharge` 圆心**优先**用 `project(chargeCarX, chargeCarY)`（与后端同一玩法投影 → 车辆屏幕中心），**指针坐标降为旧调用回退**；释放回声同样优先 `carX/carY`。车辆中心在玩法平面 z=0，故用玩法投影即可，无需额外深度平面。
   - **贴身全息外套**：`VehicleChargeFx` 新增第 3 个批次 `ChargeHologramShell`（同型真实网格、`PBRNoTextureAlpha` 半透明），逐帧取**源车当前实际显示变换**（worldPosition/Rotation/Scale）×`shellScale`(1.06) 等比放大套在车上，`shellAlpha`(0.10) 起随 TTL `(1-t)^1.2` 淡出；源车回收即隐藏。两残像仍是冻结基准 + 扩散，外套是**跟随源车**，二者独立。`VisualCatalog.CHARGE_HOLOGRAM` 增 `shellScale/shellAlpha`（助手拟值）。`Debug()` 增 `shellVisible`。
@@ -1475,6 +1484,7 @@
 ## 本批次新增避雷（charge-anchor-shell 青圈锚车 + 贴身全息外套）
 - 🔴 **AB-325：UI 覆盖层的「圈心」锚点要么走与后端同一投影函数、要么锚 3D 物体的世界坐标——别用「指针坐标」当默认（charge-anchor-shell）**：用户要「青圈以车辆为圆心」，而旧实现圆心直接用 `game.chargeUiX/chargeUiY`（**指针**设计坐标）。**关键判据**：玩法对象在玩法平面 z=0 上时，其屏幕中心 = `project(marble.x, marble.y)`（与后端 `ProjectGamePoint` 同一函数）；直接投影车辆权威坐标即可，**不需要**额外的深度平面（那是 overlay 贴 z≠0 物体时才需要，见 v0.13.15b）。**做法**：快照暴露 `chargeCarX/chargeCarY`（= `activeBall.x/y`，非蓄力时 nil），UI 端**优先**用它投影，指针坐标降为旧调用回退——这样「锚车」与「锚指针」在数据层就分开了。**验收探针要挑「车辆坐标 ≠ 指针坐标」的场景**（本项目车 (270,850) vs 指针 (200,600)），断言圆心等于**车辆投影点**，否则两者相近时锚错也测不出。
 - ⚠️ **AB-326：给「爆发残像」再加一层「贴身外壳」时，两者的运动语义要分开——残像冻结基准+扩散，外壳逐帧跟随源车（charge-anchor-shell）**：本项目的两层全息残像是**冻结爆发瞬间的真实显示变换**再沿确定轨迹扩散（AB-323/324），而用户新要的「套在车上的幻影壳」必须**逐帧取源车当前 world transform** 并等比放大（`shellScale`），随 TTL 淡出、源车回收即隐藏。**别把外壳做成第三层残像**——残像会离开车体，外壳必须贴着车。**做法**：同一模块里外壳用独立批次（独立材质/几何），`Sync` 里 `SetWorldTransform(源车当前变换 × grow)`；`Debug()` 增 `shellVisible` 供探针断言「确实启用了」。（货车大战飞机/charge-anchor-shell）
+- ⚠️ **AB-327：把「顶点色几何特效」改成「半透明贴图特效」时，通道要成套换——`DiffAlpha` 只读纹理 alpha、不读顶点 rgb（VehicleBowWave）**：本项目冲击波原走 `NoTextureUnlitVCol` + 顶点色（颜色在 `DefineColor`）。要「高质量半透明贴图」时必须同时换三件：①Technique `NoTextureUnlitVCol` → **`DiffAlpha`**；②新增程序化 `Texture2D` 并 `SetTexture(TU_DIFFUSE)`（`DiffAlpha` 的 alpha 来自**纹理**，顶点 rgb 被忽略）；③颜色/透明度改走 **`MatDiffColor`**（`Color(r,g,b,a)`），顶点色可留但无效、顶点 UV 必须真的写（`DefineTexCoord`）。⚠️ 只换 Technique 不换贴图 = 全透明或全不透明；只加贴图不改 Technique = 贴图被忽略。**验收**：探针读 `Debug().material==true` + `actualVertices>0` 证明「批次启用且材质绑定」，但**贴图观感必须 Preview 目视**（本环境 3D 层恒黑）。（货车大战飞机/charge-anchor-shell）
 
 ## 本批次新增避雷（v0.13.24 数字贴图 + 进关过渡）
 - ⚠️ **「给选关数字做贴图」要按高度归一，不能按包围盒等比**（v0.13.24）：数字 0–9 的字形宽高比不同（1 窄、8 宽），若各自等比缩放，节点上的数字会**高低不齐**。正确做法：后处理统一缩到**同一字形高度**（本项目 GLYPH_H=26），宽度随字形浮动，逐字记宽度表用于多位数排版（否则等宽留白会让「11」中间空一条）。
