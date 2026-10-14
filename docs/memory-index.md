@@ -12,6 +12,12 @@
 简述：高分先读后写/单在途/Stop保分，成就异步成功确认与离线门控，ArtText有限退避恢复；纹理禁压缩未完成，XHR233未定位，原图/CTA尺寸/既有效果不变。
 最后巩固：2026-10-14
 
+## 全息外套放大到 1.5 倍（2026-10-14，shell-scale-1.5）
+- 用户「全息幻影为 .5 倍大小」——原话「透明度40% + 比车稍微大一点 + .5 倍大小」，取**最合理读数 1.5 倍**（比车大一半）：0.5× 会比车小（与「稍微大一点」矛盾）、5× 远超「稍微」。**已按 1.5 实现**；若本意是别的倍数，改 `VisualCatalog.CHARGE_HOLOGRAM.shellScale` 一处即可（助手判断，非用户确认参数）。
+- 改动仅两处：①shellScale 1.06 → **1.5**；②VehicleChargeFx.Debug() 增只读诊断 shellScaleRatio/shellAlphaNow（不改表现行为，供探针断言「外套实际世界缩放=源车×1.5」）。外套其余逻辑（逐帧跟随源车显示变换、shellAlpha 0.40、TTL (1-t)^1.2 淡出、源车回收即隐藏）不变。
+- 验证：LSP36文件0Error（1393W/119H）；官方多人 build + 预览上传成功。真渲染 probe_shellscale **5/5 PASS、exit0**：shellScale==1.5、shellAlpha==0.40、爆发期 shellVisible>0、**外套世界缩放/源车世界缩放=1.5000**（精确1.5倍）；目标 Lua/overlay/LoadChunk 错误 0；探针走真实 client_main（含两轮开局选车）。
+- 边界：主HDR3D恒黑，**1.5 倍是否合适（过小/过大/遮关键读点）待 Preview**；手机FPS/全DPR/真SDK/审美未验收。纹理禁压缩未完成、XHR96/233未定位不变。POST-1状态/索引、POST-2本人 VisualCatalog/VehicleChargeFx 独立提交、POST-3 AB-332/333执行；persona及随行偏好无新跨项目事实跳过。保留并发子车灰暗/拖拽减速/opening/ArtText/成就/纹理与初始未跟踪文件，不代提交。
+
 ## 拖拽全局减速（2026-10-14，drag-slowmo）
 - 用户要求「拖拽时全局减速80%」。复用既有 timeScale 链路、零新增顶层 local：`BALANCE.dragTimeScale=0.2`；`Game.Update` 的 dt 倍率改 `dt * (空手2倍 or 1) * (拖拽0.2 or 1)`；快照 `s.timeScale` 优先级改「拖拽蓄力 > 空手长按」。各特效模块（波壳/附魔球）**天然只乘一次**、零改动；`elapsed` 仍按真实时间推进（不冻结 UI/震屏/表现衰减），只放慢玩法与依赖 timeScale 的特效。拖拽蓄力时必有待发车、空手2倍速要求空手，二者不共存。
 - 验证：LSP36文件0Error（1393W/119H）；官方多人 build + 预览上传成功。真渲染 probe_dragslow **6/6 PASS、exit0**：未拖拽 timeScale=1 / 拖拽 timeScale=0.2 / **同一敌机同段真实帧下落 slow/fast ratio=0.200（精确5倍）** / 发射松手恢复1 / 死区松手也恢复1；目标 Lua/overlay/LoadChunk 错误 0；探针走真实 client_main（含两轮开局选车）。

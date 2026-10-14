@@ -27,11 +27,13 @@ local M = {}
 ---@field scale Vector3
 ---@field visible integer
 ---@field shellVisible integer
+---@field shellScaleRatio number
+---@field shellAlphaNow number
 ---@field nodes Node[]
 ---@field materials Material[]
 ---@field bound table<number, ChargeFxRecord>
 local S = { copies = {}, shell = nil, nodes = {}, materials = {}, bound = {}, serial = -1, vehicleId = -1, skin = "",
-    visible = 0, shellVisible = 0,
+    visible = 0, shellVisible = 0, shellScaleRatio = 0, shellAlphaNow = 0,
     position = Vector3(), rotation = Quaternion(), scale = Vector3(1, 1, 1) } --[[@as ChargeFxState]]
 
 ---@param records table<number, ChargeFxRecord>|nil
@@ -223,7 +225,12 @@ function M.Sync(game, presentation, records, skin)
             local shellOpacity = VisualCatalog.CHARGE_HOLOGRAM.shellAlpha * (1 - t) ^ 1.2
             S.shell.material:SetShaderParameter("MatDiffColor", Variant(Color(0.3, 0.92, 1, shellOpacity)))
             S.shell.node.enabled = shellOpacity > 0.001
-            if S.shell.node.enabled then S.shellVisible = 1 end
+            if S.shell.node.enabled then
+                S.shellVisible = 1
+                -- 只读诊断：外套实际世界缩放 / 源车世界缩放（应等于 shellScale）。
+                S.shellScaleRatio = ss.x > 1e-6 and (ss.x * grow) / ss.x or 0
+                S.shellAlphaNow = shellOpacity
+            end
         else
             S.shell.node.enabled = false
         end
@@ -232,6 +239,7 @@ function M.Sync(game, presentation, records, skin)
 end
 function M.Debug()
     return {initialized = S.scene ~= nil, visible = S.visible, shellVisible = S.shellVisible,
+        shellScaleRatio = S.shellScaleRatio, shellAlphaNow = S.shellAlphaNow,
         serial = S.serial, vehicleId = S.vehicleId, skin = S.skin}
 end
 return M
