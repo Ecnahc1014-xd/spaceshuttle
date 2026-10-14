@@ -22,6 +22,10 @@ local VEHICLE_COLLISION_FILL = 0.98
 -- 车体真实半宽 / 碰撞半径 = 视觉缩放(0.98×1.12/1.84) × 车体最宽半宽(局部 0.675，见 VehicleGeometry)。
 -- 尾迹宽度必须锚定这个值，不能用碰撞半径——碰撞圆比车体宽约 2.5 倍。
 local VEHICLE_HALF_FACTOR = VEHICLE_COLLISION_FILL * 1.12 / VEHICLE_PLANAR_RADIUS * 0.675
+-- 拖尾整体不透明度：所有拖尾（光带 + 粒子）统一乘这个系数。1.0 = 原不透明，
+-- 0.30 = 透明度提高 70%（用户「全部拖尾不透明度降低 70%」）。
+-- 光带走顶点色 alpha + 克隆 DiffVCol 改 BLEND_ALPHA；粒子走 billboard 顶点 alpha。
+local TRAIL_OPACITY = 0.30
 local VEHICLE_LOCAL_CENTER_Z = -0.40
 local VEHICLE_TURN_SPEED = 420.0
 
@@ -1406,6 +1410,10 @@ local AIM_LINE_COLOR = Color(0.30, 0.90, 1.0, 1)
 -- ⚠️ 法线带 z 分量是「截面扭转」的关键——把横截面绕切线转出平面，才是真三维螺旋
 -- （只改平面内的 (nx,ny) 只会让光带在同一个平面里歪斜，看着仍是平的）。
 local function EmitTrailQuad(verts, a, b, ndx, ndy, ndz, w0, w1, c0, c1, o0, o1, az, bz)
+    -- 统一压低不透明度：顶点 alpha = TRAIL_OPACITY（材质 base pass 已改 BLEND_ALPHA）。
+    -- 在此一处改写所有层（主体/柔光/芯）的 alpha，避免逐调用点散改。
+    c0 = Color(c0.r, c0.g, c0.b, TRAIL_OPACITY)
+    c1 = Color(c1.r, c1.g, c1.b, TRAIL_OPACITY)
     local p1 = Vector3(a.x + ndx * (w0 + o0), a.y + ndy * (w0 + o0), az + ndz * (w0 + o0))
     local p2 = Vector3(a.x + ndx * (o0 - w0), a.y + ndy * (o0 - w0), az + ndz * (o0 - w0))
     local p3 = Vector3(b.x + ndx * (o1 - w1), b.y + ndy * (o1 - w1), bz + ndz * (o1 - w1))
@@ -1835,8 +1843,9 @@ local function SyncTrailParticles(game, dt)
             bb.position = Vector3(p.x + dx, p.y + dy, p.z)
             bb.size = Vector2(size, size)
             bb.rotation = p.angle + p.spin * p.age
-            -- DiffAlpha 不读顶点 rgb；保留白顶点，颜色已在纹理里。
-            bb.color = Color(1, 1, 1, 1)
+            -- DiffAlpha 不读顶点 rgb；颜色已在纹理里。alpha 走顶点 → 统一压低不透明度
+            -- （顶点 alpha 乘到纹理 alpha 上，故贴图本体与顶点色都不必改）。
+            bb.color = Color(1, 1, 1, TRAIL_OPACITY)
         end
     end
     for _, bt in ipairs(TRAIL_TYPES) do
@@ -1863,6 +1872,36 @@ function Renderer3D.DebugTrailParticleCount()
         end
     end
     return total
+end
+
+-- 诊断用（只读）：拖尾整体不透明度的真实生效证据。
+-- 返回 {opacity, ribbonBlend, particleAlpha}：
+-- opacity = TRAIL_OPACITY 常量；ribbonBlend = 光带材质 base pass 的 BlendMode（应为 BLEND_ALPHA=3）；
+-- particleAlpha = 粒子 billboard 顶点 alpha（取任意已建 set 的槽 0）。
+function Renderer3D.DebugTrailOpacity()
+    local ribbonBlend = nil
+    if trailMaterial_ then
+        local pass = trailMaterial_:GetPass(0, "base")
+        if pass then ribbonBlend = pass:GetBlendMode() end
+    end
+    local particleAlpha = nil
+    if trailParticleSets_ then
+        for _, byStyle in pairs(trailParticleSets_) do
+            for _, rec in pairs(byStyle) do
+                for i = 0, TRAIL_PARTICLE_SLOTS - 1 do
+                    local bb = rec.set:GetBillboard(i)
+                    if bb.enabled then particleAlpha = bb.color.a break end
+                end
+                if particleAlpha then break end
+            end
+            if particleAlpha then break end
+        end
+    end
+    return {
+        opacity = TRAIL_OPACITY,
+        ribbonBlend = ribbonBlend,
+        particleAlpha = particleAlpha,
+    }
 end
 
 -- 诊断用（只读）：子车（分裂/三连）灰暗材质与低层级的真实生效证据。
@@ -2043,7 +2082,18 @@ function Renderer3D.Init(scene, voxelWorld)
     -- 用默认背面剔除会把整条光带剔掉（v0.13.22 首版「什么都没有」的真因）。
     -- 独立材质，避免污染与敌机棱线共享的 voxelMaterial_。
     trailMaterial_ = Material:new()
-    trailMaterial_:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
+    -- DiffVCol 的 base pass 默认 BLEND_REPLACE（不透明）→ 顶点 alpha 被忽略。
+    -- 拖尾要半透明必须克隆一份 technique 把 base pass 改成 BLEND_ALPHA
+    -- （克隆而非改共享资源，避免污染敌机/飞散箱共用的 DiffVCol）。
+    do
+        local baseTech = cache:GetResource("Technique", "Techniques/DiffVCol.xml")
+        local alphaTech = baseTech and baseTech:Clone("TrailAlphaVCol") or baseTech
+        if alphaTech then
+            local pass = alphaTech:GetPass("base")
+            if pass then pass:SetBlendMode(BLEND_ALPHA) end
+        end
+        trailMaterial_:SetTechnique(0, alphaTech)
+    end
     trailMaterial_:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
     trailMaterial_:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
     -- 深空场景很暗：细长几何纯漫反射几乎看不见（v0.11.1 基准线踩过同一个坑）。

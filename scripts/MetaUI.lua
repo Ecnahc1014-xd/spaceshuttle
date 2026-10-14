@@ -14,6 +14,9 @@ local showroom = { index = 1, screen = "", key = "default" }
 -- 商店分页：车型 / 拖尾。拖尾有独立的预览下标（与车型下标互不干扰）。
 local shopTab = "vehicle"
 local trailIndex = 1
+-- 商店拖尾预览与实机同步的「整体不透明度」——与 Renderer3D.TRAIL_OPACITY 同值
+-- （项目契约：预览里看到的差异 = 实机差异）。1.0=原不透明，0.30=透明度 +70%。
+local TRAIL_PREVIEW_OPACITY = 0.30
 
 -- 元层界面状态：由编排层（main.lua）组装，本模块只读。
 ---@class MetaTaskView
@@ -1172,7 +1175,7 @@ local function DrawTrailParticlePreview(ctx, r, style, base, phase)
         local grow = 1 + pGrow * (1 - lifeT)
         local shrink = lifeT < 0.3 and (lifeT / 0.3) or 1
         local sz = math.max(1.2, pSize * half * 0.42 * (0.7 + 0.6 * g) * grow * shrink)
-        local alpha = math.floor(40 + 190 * lifeT * lifeT)
+        local alpha = math.floor((40 + 190 * lifeT * lifeT) * TRAIL_PREVIEW_OPACITY)
         local mul = 0.72 + 0.5 * lifeT
         D.rect(ctx, xa - sz * 0.5, cy + driftY - sz * 0.5, sz, sz,
             {math.min(255, math.floor(base[1] * mul * 255)),
@@ -1183,7 +1186,7 @@ local function DrawTrailParticlePreview(ctx, r, style, base, phase)
     local coreR = baseHalf * (style.particle == 1 and pSize * 0.55 or 4)
     D.rect(ctx, x0 - coreR, cy - coreR, coreR * 2, coreR * 2,
         {math.min(255, math.floor(base[1] * 255)), math.min(255, math.floor(base[2] * 255)),
-         math.min(255, math.floor(base[3] * 255)), 210}, coreR)
+         math.min(255, math.floor(base[3] * 255)), math.floor(210 * TRAIL_PREVIEW_OPACITY)}, coreR)
     D.text(ctx, r.x + r.w * 0.5, r.y + 10, "尾迹预览", 15, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 end
@@ -1261,7 +1264,8 @@ local function DrawTrailPreview(ctx, r, trailKey)
         local yc = cy + wob + twist * 5.0 * (1 - t) * math.sin(twist * (i - 1) * 2.2 + phase * 0.8)
         -- ① 外层柔光：宽而暗，垫在主体下（不超车体半宽）。
         if glow > 1.0 then
-            local gA = math.floor((60 + 70 * f) * math.max(0.05, 0.34 + ns * 0.4) / 0.34)
+            local gA = math.floor((60 + 70 * f) * math.max(0.05, 0.34 + ns * 0.4) / 0.34
+                * TRAIL_PREVIEW_OPACITY)
             local gw = math.min(half * glow, baseHalf)
             if twin then
                 local spread = baseHalf * railSpread * (t ^ railTaper)
@@ -1272,7 +1276,7 @@ local function DrawTrailPreview(ctx, r, trailKey)
             end
         end
         -- ② 主体 + ③ 高亮芯。
-        local alpha = math.floor(90 + 165 * f)
+        local alpha = math.floor((90 + 165 * f) * TRAIL_PREVIEW_OPACITY)
         if twin then
             local spread = baseHalf * railSpread * (t ^ railTaper)
             D.rect(ctx, rx, yc - spread - railHalf, rw, railHalf * 2, rgba(f, t, alpha), 0)

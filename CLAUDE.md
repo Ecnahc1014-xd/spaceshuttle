@@ -4,6 +4,16 @@
 
 ## 当前状态
 
+- 附记: trail-opacity（2026-10-14，**全部拖尾整体不透明度降到 30%（透明度 +70%）**；沿用展示0.13.63，不抢并发版本）：
+  - 用户「全部拖尾不透明度降低70%，变得透明」——所有拖尾（光带系 + 粒子系）统一乘一个不透明度系数。只改 `Renderer3D.lua`（3D 实机拖尾）+ `MetaUI.lua`（商店拖尾 2D 预览，按「预览=实机」契约同步），不动玩法/宽度/形态/样式差异/规则层。
+  - **单一常量**：`Renderer3D.TRAIL_OPACITY = 0.30`（1.0=原不透明，0.30=透明度 +70%）；`MetaUI.TRAIL_PREVIEW_OPACITY = 0.30`（同值，注释互指）。
+  - **光带（`DiffVCol`，原本不透明）**：`DiffVCol` 的 base pass 默认 `BLEND_REPLACE` → **顶点 alpha 被忽略**，只改顶点 alpha 不会透明。修法：`baseTech:Clone("TrailAlphaVCol")` 克隆一份 technique，`alphaTech:GetPass("base"):SetBlendMode(BLEND_ALPHA)`（**克隆而非改共享资源**——敌机/飞散箱也用 `DiffVCol`，直接改会连它们一起变透明）；顶点 alpha 在 `EmitTrailQuad` **一处**统一写 `TRAIL_OPACITY`（覆盖主体/柔光/芯所有层，避免逐调用点散改）。
+  - **粒子（`DiffAlpha`，本就混合）**：`bb.color = Color(1,1,1,TRAIL_OPACITY)`——顶点 alpha 乘到纹理 alpha 上，故贴图本体与顶点色都不用改。
+  - **2D 预览同步**：`DrawTrailPreview`（光带）与 `DrawTrailParticlePreview`（粒子）的 alpha 一律乘 `TRAIL_PREVIEW_OPACITY`（主体/柔光/芯/灼核四处）。
+  - 验证：LSP **36 文件 0 Error**（1399 Warning/119 Hint）；官方多人 build + 预览上传 ✅。真渲染 `probe_trailopacity` **ALL PASS、exit0**（交替渲染 classic/comet 两种通道）：`opacity=0.30`、`ribbonBlend=3.0`（= BLEND_ALPHA）、`ribbonVerts=162`（改混合模式未破坏几何）、`particleAlpha=0.30`；目标 Lua/overlay/LoadChunk/空顶点错误 0。
+  - 边界：**主 HDR 中央 3D 仍黑（本环境既有）**，探针只证「混合模式/顶点 alpha 真的生效 + 几何仍提交」，**真机观感（30% 是否够透、是否看得清）待 Preview**；手机 FPS/全 DPR/真实 SDK/用户审美未验收。纹理禁压缩未完成、XHR96/233 未定位状态不变。
+  - **POST 判定**：POST-1 状态/索引执行，persona 跳过（无新跨项目偏好）；POST-2 本人 Renderer3D/MetaUI 独立提交；POST-3 AB-330/331 执行，随行 persona/preferences 同理由跳过。保留并发 Game.lua/opening/ArtText/成就/纹理与发布配置、初始未跟踪文件，不代提交。
+
 - 附记: shell-scale-1.5（2026-10-14，**全息外套放大到 1.5 倍**；沿用展示0.13.63，不抢并发版本）：
   - 用户要求「全息幻影为 .5 倍大小」——原话「透明度40% + 比车稍微大一点 + .5 倍大小」三处并列，取**最合理读数 1.5 倍**（比车大一半）：`0.5×` 会比车**小**（与「稍微大一点」矛盾）、`5×` 远超「稍微」。**已按 1.5 实现**；若用户本意是别的倍数，改 `VisualCatalog.CHARGE_HOLOGRAM.shellScale` 一处即可（助手判断，非用户确认参数）。
   - 改动仅两处：①`VisualCatalog.CHARGE_HOLOGRAM.shellScale` 1.06 → **1.5**；②`VehicleChargeFx.Debug()` 增只读诊断 `shellScaleRatio`/`shellAlphaNow`（**不改表现行为**，供探针断言「外套实际世界缩放 = 源车 ×1.5」）。外套其余逻辑（逐帧跟随源车显示变换、`shellAlpha` 0.40、TTL `(1-t)^1.2` 淡出、源车回收即隐藏）不变。
@@ -1511,6 +1521,10 @@
 - ⚠️ **AB-327：把「顶点色几何特效」改成「半透明贴图特效」时，通道要成套换——`DiffAlpha` 只读纹理 alpha、不读顶点 rgb（VehicleBowWave）**：本项目冲击波原走 `NoTextureUnlitVCol` + 顶点色（颜色在 `DefineColor`）。要「高质量半透明贴图」时必须同时换三件：①Technique `NoTextureUnlitVCol` → **`DiffAlpha`**；②新增程序化 `Texture2D` 并 `SetTexture(TU_DIFFUSE)`（`DiffAlpha` 的 alpha 来自**纹理**，顶点 rgb 被忽略）；③颜色/透明度改走 **`MatDiffColor`**（`Color(r,g,b,a)`），顶点色可留但无效、顶点 UV 必须真的写（`DefineTexCoord`）。⚠️ 只换 Technique 不换贴图 = 全透明或全不透明；只加贴图不改 Technique = 贴图被忽略。**验收**：探针读 `Debug().material==true` + `actualVertices>0` 证明「批次启用且材质绑定」，但**贴图观感必须 Preview 目视**（本环境 3D 层恒黑）。（货车大战飞机/charge-anchor-shell）
 - 🔴 **AB-328：Urho3D 材质 render order 默认是 128（不是 0），要「降低层级」必须设**小于 128** 的值——传负数会回绕成 246（反而更靠上）**（split-child-dim 实测）：本项目要把「分裂/三连子车」沉到正式车之下，首版按「默认 0、负值更早绘制」设 `SetRenderOrder(-10)` → 探针读 `GetRenderOrder()` 得到 **246**（无符号回绕），子车反而**比正式车更靠上**。**判据**：Urho3D `Material::SetRenderOrder` 是 **uint8**，默认 **128**，**值越小越先绘制**（层级越低）；安全区间是 **0..127** 低于默认、**129..255** 高于默认；**不要传负数**。**做法**：降层级取一个明确的 `<128` 常量（本项目 64），并用探针断言 `childOrder < 128` **且** `normalOrder == 128`（把默认值也断进去，否则默认值是多少完全靠猜）。⚠️ 改共享缓存材质前先确认**没有别的部件复用同一 Material**（`CreateMaterial` 按颜色 key 缓存——本项目子车轮若复用 `WHEEL_COLOR` 会连带把正式车轮一起沉下去）。（货车大战飞机/split-child-dim）
 - ⚠️ **AB-329：「非正式单位」的灰暗/低层级要落在**表现层**，识别标志走规则层已有的字段，别新造规则状态**（split-child-dim）：用户要「分裂车（不是正式车）变灰暗 + 低层级」——**不要**在 `Game.lua` 加新标志，规则层早已把「非正式车」标成 **`isPrimary = false`**（`CreateSplitMarble` 分裂车、`LaunchMarble` 三连附加车都是），且 `GetSnapshot().marbles` 是**原始引用**（自定义字段渲染层可直接读）。**做法**：`SyncVehicles` 取 `isChild = marble.isPrimary == false` → 换灰材质 + `SetRenderOrder`；材质/几何**只在表现层**（`Renderer3D`）改，规则层的伤害/数量/初速/回收一律不动。⚠️ 材质集合按 `isChild` 分两套（正式/子车），`record` 记 `isChild` 并在变化时重建几何。（货车大战飞机/split-child-dim）
+
+## 本批次新增避雷（trail-opacity 拖尾整体透明度）
+- 🔴 **AB-334：要「不透明几何变半透明」时，只改顶点 alpha 没用——`DiffVCol` 的 base pass 默认 `BLEND_REPLACE`，必须克隆 technique 把 pass 改成 `BLEND_ALPHA`**（trail-opacity 实测）：本项目 3D 光带拖尾走 `Techniques/DiffVCol.xml`（消费顶点色），其 base pass 是**不透明**的 → 顶点 alpha 被**忽略**，只改 `Color(r,g,b,a)` 的 a 不会让它透明。**做法**：`cache:GetResource("Technique", …):Clone("TrailAlphaVCol")` 克隆一份，`alphaTech:GetPass("base"):SetBlendMode(BLEND_ALPHA)`（`BLEND_ALPHA = 3`），再 `material:SetTechnique(0, alphaTech)`。⚠️ **必须克隆、不能改共享资源**——敌机/飞散箱/瞄准线也用同一份 `DiffVCol`（`cache` 是进程级缓存，改的是同一对象），直接 `SetBlendMode` 会把它们一起变透明。**判据/验收**：`GetPass(0,"base"):GetBlendMode()` 应返回 `3`；探针要同时断「混合模式已改」**和**「几何仍提交顶点」（改 pass 不该破坏几何）。（货车大战飞机/trail-opacity）
+- ⚠️ **AB-335：「整体降低某属性」的改动要收敛到**一个常量 + 一个作用点**，并同步 2D 预览**（trail-opacity）：用户「全部拖尾不透明度降低 70%」——**别**逐个调用点手改 alpha，而是 ①定义一个常量（`TRAIL_OPACITY = 0.30`）②在**所有层汇聚的那个函数**里统一乘（本项目光带全经 `EmitTrailQuad`、粒子全经 billboard 提交那几行）③**同步 2D 商店预览**（项目契约「预览里看到的差异 = 实机差异」，`MetaUI` 里另建同值常量 `TRAIL_PREVIEW_OPACITY`，注释互指）。⚠️ 粒子通道（`DiffAlpha`，本就混合）与光带通道（`DiffVCol`，需改 pass）的**实现方式不同**——前者改顶点 alpha 即可，后者必须先改混合模式（见 AB-334）；「降透明度」要两条通道各验一次。（货车大战飞机/trail-opacity）
 
 ## 本批次新增避雷（shell-scale-1.5 全息外套尺寸）
 - ⚠️ **AB-332：用户给的「倍数」与相邻描述矛盾时，取最合理的那个读数、并在回复里点明你的解读（shell-scale-1.5）**：用户「透明度40% + 比车稍微大一点 + **.5 倍大小**」——`.5×` 会让外套**比车小**（与「稍微大一点」直接矛盾）、`5×` 远超「稍微」，只有 **1.5×（比车大一半）** 同时满足两句。**做法**：①按最合理解读实现（本项目取 1.5）；②**在回复首句说明这是你的解读**（「按 1.5 倍实现，若你指别的倍数我再改」），别把猜测写成用户确认；③把倍率放**单一常量**（`VisualCatalog.CHARGE_HOLOGRAM.shellScale`）——改口径只需改一处。（货车大战飞机/shell-scale-1.5）
