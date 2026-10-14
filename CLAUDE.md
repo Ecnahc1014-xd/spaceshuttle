@@ -4,6 +4,13 @@
 
 ## 当前状态
 
+- 附记: drag-slowmo（2026-10-14，**拖拽蓄力期间全局减速 80%**；沿用展示0.13.63，不抢并发版本）：
+  - 用户要求「拖拽时全局减速80%」。实现复用**既有 timeScale 链路**，零新增顶层 local：`BALANCE.dragTimeScale = 0.2`（拖拽时玩法时间放慢到 20%），`Game.Update` 的 dt 倍率改 `dt * (空手2倍 or 1) * (拖拽0.2 or 1)`；快照 `s.timeScale` 优先级改「拖拽蓄力 > 空手长按」，各特效模块（波壳/附魔球）**天然只乘一次**、无需改动。`elapsed` 仍按真实时间推进（不冻结 UI/震屏/表现衰减），只放慢玩法与依赖 timeScale 的特效。
+  - **互斥说明**：拖拽蓄力时必有待发车，空手 2 倍速（`CanHoldSpeed`）要求空手，二者不共存；dt 乘法写全两个因子只是保持与旧代码一致。
+  - 验证：LSP **36 文件 0 Error**（1393 Warning/119 Hint）；官方多人 build + 预览上传 ✅。真渲染 `probe_dragslow` **6/6 PASS、exit0**：未拖拽 `timeScale=1` / 拖拽 `timeScale=0.2` / **同一敌机同段真实帧下落 `slow/fast ratio=0.200`（精确 5 倍减速）** / 发射松手恢复 1 / 死区松手（未发射）也恢复 1；目标 Lua/overlay/LoadChunk 错误 0。探针走真实 `client_main`（含两轮开局选车）。
+  - 边界：本环境主 HDR 3D 恒黑，**真机手感（0.2 是否过慢、是否影响瞄准）待 Preview 目视**；手机 FPS/全 DPR/真实 SDK/审美未验收。纹理禁压缩未完成、XHR96/233 未定位不变。
+  - **POST 判定**：POST-1 状态/索引执行，persona 跳过（无新跨项目偏好）；POST-2 本人 Game.lua 独立提交；POST-3 AB-330 执行，随行 persona/preferences 同理由跳过。保留并发子车灰暗/opening/ArtText/成就/纹理与发布配置、初始未跟踪文件，不代提交。
+
 - 附记: split-child-dim（2026-10-14，**分裂/三连子车改灰暗 + 降渲染层级**；沿用展示0.13.63，不抢并发版本）：
   - 用户「分裂产生的车既然不是正式的车那就变成灰色的暗淡的而且显示图层要低」——只改 `Renderer3D.lua`，不动玩法/伤害/分裂数量/拖尾/附魔/金色强化/暗科技 UI。
   - **识别子车**：无需改规则层——`Game.lua` 里所有非正式车（`CreateSplitMarble` 分裂车、`LaunchMarble` 的三连附加车）都带 `isPrimary = false`，且 `GetSnapshot` 的 `s.marbles` 是**原始引用**（字段可见）。`SyncVehicles.SyncOne` 取 `isChild = marble.isPrimary == false`。
@@ -1497,6 +1504,10 @@
 - ⚠️ **AB-327：把「顶点色几何特效」改成「半透明贴图特效」时，通道要成套换——`DiffAlpha` 只读纹理 alpha、不读顶点 rgb（VehicleBowWave）**：本项目冲击波原走 `NoTextureUnlitVCol` + 顶点色（颜色在 `DefineColor`）。要「高质量半透明贴图」时必须同时换三件：①Technique `NoTextureUnlitVCol` → **`DiffAlpha`**；②新增程序化 `Texture2D` 并 `SetTexture(TU_DIFFUSE)`（`DiffAlpha` 的 alpha 来自**纹理**，顶点 rgb 被忽略）；③颜色/透明度改走 **`MatDiffColor`**（`Color(r,g,b,a)`），顶点色可留但无效、顶点 UV 必须真的写（`DefineTexCoord`）。⚠️ 只换 Technique 不换贴图 = 全透明或全不透明；只加贴图不改 Technique = 贴图被忽略。**验收**：探针读 `Debug().material==true` + `actualVertices>0` 证明「批次启用且材质绑定」，但**贴图观感必须 Preview 目视**（本环境 3D 层恒黑）。（货车大战飞机/charge-anchor-shell）
 - 🔴 **AB-328：Urho3D 材质 render order 默认是 128（不是 0），要「降低层级」必须设**小于 128** 的值——传负数会回绕成 246（反而更靠上）**（split-child-dim 实测）：本项目要把「分裂/三连子车」沉到正式车之下，首版按「默认 0、负值更早绘制」设 `SetRenderOrder(-10)` → 探针读 `GetRenderOrder()` 得到 **246**（无符号回绕），子车反而**比正式车更靠上**。**判据**：Urho3D `Material::SetRenderOrder` 是 **uint8**，默认 **128**，**值越小越先绘制**（层级越低）；安全区间是 **0..127** 低于默认、**129..255** 高于默认；**不要传负数**。**做法**：降层级取一个明确的 `<128` 常量（本项目 64），并用探针断言 `childOrder < 128` **且** `normalOrder == 128`（把默认值也断进去，否则默认值是多少完全靠猜）。⚠️ 改共享缓存材质前先确认**没有别的部件复用同一 Material**（`CreateMaterial` 按颜色 key 缓存——本项目子车轮若复用 `WHEEL_COLOR` 会连带把正式车轮一起沉下去）。（货车大战飞机/split-child-dim）
 - ⚠️ **AB-329：「非正式单位」的灰暗/低层级要落在**表现层**，识别标志走规则层已有的字段，别新造规则状态**（split-child-dim）：用户要「分裂车（不是正式车）变灰暗 + 低层级」——**不要**在 `Game.lua` 加新标志，规则层早已把「非正式车」标成 **`isPrimary = false`**（`CreateSplitMarble` 分裂车、`LaunchMarble` 三连附加车都是），且 `GetSnapshot().marbles` 是**原始引用**（自定义字段渲染层可直接读）。**做法**：`SyncVehicles` 取 `isChild = marble.isPrimary == false` → 换灰材质 + `SetRenderOrder`；材质/几何**只在表现层**（`Renderer3D`）改，规则层的伤害/数量/初速/回收一律不动。⚠️ 材质集合按 `isChild` 分两套（正式/子车），`record` 记 `isChild` 并在变化时重建几何。（货车大战飞机/split-child-dim）
+
+## 本批次新增避雷（drag-slowmo 拖拽全局减速）
+- ⚠️ **AB-330：给「拖拽/瞄准中」加全局减速时，复用既有 `timeScale` 链路、别另造冻结机制（drag-slowmo）**：本项目已有 `Game._holdSpeed.active → s.timeScale=2`（空手长按加速）与「各特效模块在 `Sync` 里只乘一次 `timeScale`」的契约。加「拖拽减速」只需①`BALANCE.dragTimeScale=0.2`；②`Game.Update` 的 dt 乘法补一个 `dragSlow` 因子；③快照 `s.timeScale` 改为**优先级**（拖拽蓄力 > 空手长按）。**特效模块零改动**——它们已经乘 `timeScale`，自动跟着慢。⚠️ **`elapsed` 不要跟着放慢**：它是真实时钟，UI/震屏/表现衰减依赖它，冻结会让 UI 卡顿；只放慢玩法 dt 与依赖 `timeScale` 的特效。（货车大战飞机/drag-slowmo）
+- ⚠️ **AB-331：「拖拽减速」的验收要测「玩法时间真的慢了」，不能只断言 `timeScale` 字段**：`s.timeScale` 只是**表现层字段**，玩法减速发生在 `Game.Update` 的 `dt` 乘法里。只断言 `timeScale==0.2` 会漏掉「dt 乘法没接上」的情况。**做法**：探针量**同一敌机、同一段真实帧数**下的下落位移比（本项目拖拽 30 帧 dy=1.542 vs 正常 7.711 → **ratio 0.200**，精确 5 倍）。⚠️ 采样要**锁定同一个 `enemy.id`**（编队会新增/淘汰，按列表首元素取会在切换时得到错误比值）。（货车大战飞机/drag-slowmo）
 
 ## 本批次新增避雷（v0.13.24 数字贴图 + 进关过渡）
 - ⚠️ **「给选关数字做贴图」要按高度归一，不能按包围盒等比**（v0.13.24）：数字 0–9 的字形宽高比不同（1 窄、8 宽），若各自等比缩放，节点上的数字会**高低不齐**。正确做法：后处理统一缩到**同一字形高度**（本项目 GLYPH_H=26），宽度随字形浮动，逐字记宽度表用于多位数排版（否则等宽留白会让「11」中间空一条）。

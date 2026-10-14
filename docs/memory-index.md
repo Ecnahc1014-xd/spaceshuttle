@@ -12,6 +12,11 @@
 简述：高分先读后写/单在途/Stop保分，成就异步成功确认与离线门控，ArtText有限退避恢复；纹理禁压缩未完成，XHR233未定位，原图/CTA尺寸/既有效果不变。
 最后巩固：2026-10-14
 
+## 拖拽全局减速（2026-10-14，drag-slowmo）
+- 用户要求「拖拽时全局减速80%」。复用既有 timeScale 链路、零新增顶层 local：`BALANCE.dragTimeScale=0.2`；`Game.Update` 的 dt 倍率改 `dt * (空手2倍 or 1) * (拖拽0.2 or 1)`；快照 `s.timeScale` 优先级改「拖拽蓄力 > 空手长按」。各特效模块（波壳/附魔球）**天然只乘一次**、零改动；`elapsed` 仍按真实时间推进（不冻结 UI/震屏/表现衰减），只放慢玩法与依赖 timeScale 的特效。拖拽蓄力时必有待发车、空手2倍速要求空手，二者不共存。
+- 验证：LSP36文件0Error（1393W/119H）；官方多人 build + 预览上传成功。真渲染 probe_dragslow **6/6 PASS、exit0**：未拖拽 timeScale=1 / 拖拽 timeScale=0.2 / **同一敌机同段真实帧下落 slow/fast ratio=0.200（精确5倍）** / 发射松手恢复1 / 死区松手也恢复1；目标 Lua/overlay/LoadChunk 错误 0；探针走真实 client_main（含两轮开局选车）。
+- 边界：主HDR3D恒黑，**真机手感（0.2 是否过慢/影响瞄准）待 Preview**；手机FPS/全DPR/真SDK/审美未验收。纹理禁压缩未完成、XHR96/233未定位不变。POST-1状态/索引、POST-2本人 Game.lua 独立提交、POST-3 AB-330/331执行；persona及随行偏好无新跨项目事实跳过。保留并发子车灰暗/opening/ArtText/成就/纹理与初始未跟踪文件，不代提交。
+
 ## 青圈锚车与贴身全息外套（2026-10-14，charge-anchor-shell）
 - 用户要求青圈圆心改为**车辆位置**（不再锚手指）；全息爆发后加一层**透明度 40%、比车略大**的幻影壳**套在车上**；车前**冲击波改为 V 字形、高质量半透明贴图**。只改 Game/Presentation/VisualCatalog/VehicleChargeFx/VehicleBowWave/ui.LaunchCharge，不动伤害/初速/回收/拖尾/附魔/金色强化与暗科技 UI。
 - 圈心：快照增 `chargeCarX/chargeCarY`（=chargeActive 时 activeBall.x/y，否则 nil），`marble_launched` 补 `carX/carY`；LaunchCharge 圆心**优先** `project(chargeCarX,chargeCarY)`（同后端玩法投影=车辆屏幕中心），指针坐标降为旧调用回退；释放回声同样优先车辆坐标。车辆中心在玩法平面 z=0，用玩法投影即可，无需深度平面。
