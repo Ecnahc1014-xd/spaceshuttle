@@ -50,12 +50,12 @@
     "square_promotional_image_url": "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/SQUARE_PROMO_2026-10-13T14-08-07_01.jpg"
   },
   "metadata": {
-    "updated_at": "2026-10-13T15:16:24.194Z",
+    "updated_at": "2026-10-15T23:47:56.009Z",
     "promo_dependent_hash": "a2a10fb10c416c45eb0ddadaa374b0b4"
   },
   "test_qrcode": {
-    "url": "https://tapcode-sce.spark.xd.com/qrcode/p_q74c_1789542331371.png",
-    "generated_at": "2026-09-16T07:05:31.529Z"
+    "url": "https://tapcode-sce.spark.xd.com/qrcode/p_q74c_1792108075907.png",
+    "generated_at": "2026-10-15T23:47:56.009Z"
   },
   "entry@client": "main.lua",
   "entry@server": "main.lua"
