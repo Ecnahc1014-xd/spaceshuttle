@@ -77,6 +77,8 @@ local BALANCE = {
     powerMax = 1.0,    -- 满蓄力初速比例
     -- 拖拽蓄力期间全局减速 80%：玩法时间放慢到 20%，松手/取消立即恢复。
     dragTimeScale = 0.2,
+    -- 蓄力达到此比例即视为「已完成」：发射时立刻补满，享受满蓄伤害与全息爆发。
+    chargeCompleteThreshold = 0.85,
 }
 
 local BALL_TYPES = {
@@ -554,6 +556,8 @@ local function CreateMarble(ballType, words)
         giantPiercePending = false, -- 冷却中只保留反弹资格，不代表已经可以贯穿
         giantAreaCooldown = 0,
         chargeBoosted = false,
+        -- v0.13.64：拖尾随存在时间变短用的「视觉年龄」；分裂子车继承母车当前值（继承长度）。
+        trailAge = 0,
         -- v0.13.55 动能穿刺：本弹剩余穿透次数（每次穿透不反弹、直接吃下块）。
         pierceLeft = BALL_TUNING.speedPierce,
         words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
@@ -2195,6 +2199,8 @@ local function CreateSplitMarble(source, angle, originBrick)
         isPrimary = false,
         generation = source.generation + 1,
         flightTime = 0,
+        -- 分裂继承母车当前拖尾年龄（「分裂行为继承长度」）：新子车不从 0 重新计时。
+        trailAge = source.trailAge or 0,
         ignoredBrick = originBrick,
         giantPiercing = false,
     }
@@ -2421,7 +2427,12 @@ local function LaunchMarble(dx, dy, power)
     local speedScale = BALANCE.powerMin + (BALANCE.powerMax - BALANCE.powerMin) * powerRatio
     -- v0.13.28：「玻璃巨炮」的发射初速倍率——低难度砖块 1 血时伤害是溢出，但更快的弹道立刻有感。
     local speed = def.speed * speedScale * BALL_TUNING.launchSpeedMul
-    activeBall.chargeBoosted = Game._launchCharge.time >= Game._launchCharge.total
+    -- v0.13.64：蓄力已达 85% 时发射 → 立刻补满，享受满蓄伤害与全息爆发（不必等到 100%）。
+    local charge = Game._launchCharge
+    if charge.total > 0 and charge.time / charge.total >= BALANCE.chargeCompleteThreshold then
+        charge.time = charge.total
+    end
+    activeBall.chargeBoosted = charge.time >= charge.total
     activeBall.vx = -dx / length * speed
     activeBall.vy = -dy / length * speed
     activeBall.speed = speed
@@ -2442,7 +2453,10 @@ local function LaunchMarble(dx, dy, power)
         carX = activeBall.x, carY = activeBall.y,
     })
     print("[Game] launch charge id=" .. activeBall.id .. " boosted=" .. tostring(activeBall.chargeBoosted))
-    -- v0.13.58：附魔「三连」——发射时额外扇形射出同型车（继承附魔与词条，共享同一发射方向）。
+    -- v0.13.58：附魔「三连」——发射时额外扇形射出同型车。
+    -- v0.13.64：副子弹**视为分裂弹**（isPrimary=false，灰暗渲染）但**功能与主弹相同**——
+    -- 继承词条（words）、附魔、穿透次数与拖尾年龄；清除 enchantIsChild，使它们与主弹一样
+    -- 可触发裂变等命中效果（数量由 maxConcurrent 上限兜底，不会无限递归）。
     local triple = activeBall.enchant and activeBall.enchant.tripleShot or 0
     for k = 1, triple do
         local sign = (k % 2 == 1) and 1 or -1
@@ -2458,6 +2472,10 @@ local function LaunchMarble(dx, dy, power)
         extra.isPrimary = false
         extra.enchant = activeBall.enchant
         extra.enchantPierce = activeBall.enchantPierce
+        extra.enchantIsChild = nil
+        local words = {}
+        for id in pairs(activeBall.words or {}) do words[id] = true end
+        extra.words = words
         table.insert(marbles, extra)
     end
     if triple > 0 then
@@ -2502,6 +2520,8 @@ UpdateMarbles = function(dt)
         local subDt = dt / steps
         local frameHitBricks = {}
         marble.flightTime = (marble.flightTime or 0) + dt
+        -- 拖尾视觉年龄：随存在时间增长（分裂子车继承母车当前值，故长度会延续）。
+        marble.trailAge = (marble.trailAge or 0) + dt
 
         for _ = 1, steps do
             if not marble.alive then break end
@@ -2525,6 +2545,7 @@ UpdateMarbles = function(dt)
             marble.y = marble.y + marble.vy * subDt
 
             -- WO-05/P4：反弹弹性由 ballType 决定（巨型更沉、加速更滑），默认 1.0。
+            -- v0.13.64：每次撞墙发一个回弹事件（带内法线），表现层据此播放回弹特效。
             local elastic = def.bounceElasticity or 1.0
             if marble.x - marble.radius < 0 then
                 marble.x = marble.radius
@@ -2532,12 +2553,16 @@ UpdateMarbles = function(dt)
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
+                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
+                    ballType = marble.ballType, nx = 1, ny = 0})
             elseif marble.x + marble.radius > DW then
                 marble.x = DW - marble.radius
                 marble.vx = -math.abs(marble.vx) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
+                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
+                    ballType = marble.ballType, nx = -1, ny = 0})
             end
             if marble.y - marble.radius < TOP_BOUND_Y then
                 marble.y = TOP_BOUND_Y + marble.radius
@@ -2545,6 +2570,8 @@ UpdateMarbles = function(dt)
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
+                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
+                    ballType = marble.ballType, nx = 0, ny = 1})
             end
 
             -- v0.10.28：先收集本步所有重叠格，再打最近的一格。
@@ -3762,6 +3789,8 @@ function Game.GetSnapshot()
     s.pointerEpoch = Game._holdSpeed.epoch
     s.chargeActive = gameState == "playing" and aiming and activeBall ~= nil
     s.chargeProgress = s.chargeActive and Game._launchCharge.time / Game._launchCharge.total or 0
+    -- 蓄力达到完成阈值（85%）即视作「满蓄」：表现层据此提前爆发全息（不必等 100%）。
+    s.chargeReady = s.chargeActive and s.chargeProgress >= BALANCE.chargeCompleteThreshold
     s.chargeX, s.chargeY = Game._launchCharge.x, Game._launchCharge.y
     s.chargeUiX, s.chargeUiY = Game._launchCharge.uiX, Game._launchCharge.uiY
     -- 青圈圆心锚定待发车权威位置（玩法坐标）；表现层用同一玩法投影即得车辆屏幕中心，

@@ -116,6 +116,12 @@ local TRAIL_BEHIND_Z = 0.16           -- 相对车辆锚点再远 0.16m，光带
 -- v0.13.22：光带从**车尾**拖出（用户要求「跟随车尾而不是体积中心」）。
 -- 车辆局部 +X 为车头、半长约 1.8 局部单位；沿 -朝向 后退 = 车尾。
 local TRAIL_TAIL_LOCAL = 1.75
+-- v0.13.64：拖尾随子弹存在时间（marble.trailAge）**越来越短**——存活越久，保留的采样段越少，
+-- 最终收成贴着车尾的一小截。分裂子车继承母车 trailAge，故「分裂行为继承长度」。
+local TRAIL_AGE_FULL = 0.35           -- 该年龄前保持完整长度
+local TRAIL_AGE_GONE = 4.5            -- 该年龄后长度收到底（只留最短的一小段）
+local TRAIL_AGE_MIN_FACTOR = 0.16     -- 最短保留比例（不归零，仍看得见一小截）
+local TRAIL_LIFETIME_MIN = 0.10       -- 最短时的采样存活时间（收短靠寿命，不动几何）
 
 -- v0.13.40：拖尾样式（皮肤商店可换）。几何参数由 MetaCatalog 单一定义
 -- （Renderer3D 生成 3D 光带、MetaUI 画 2D 预览共用一份），所有样式共用同一条
@@ -1512,6 +1518,16 @@ local function SyncVehicleTrails(game, dt)
         end
         -- 观感：整条尾迹再向下偏半个格子（游戏 Y 向下为正 → 世界 Y 减）。
         pos = Vector3(pos.x, pos.y - halfBrick * WORLD_SCALE, pos.z)
+        -- 拖尾长度随「子弹存在时间」收短：trailAge 越大，保留的采样越少、存活越短，
+        -- 最终收成贴着车尾的一小截（分裂子车继承母车 trailAge → 长度延续）。
+        local age = marble.trailAge or 0
+        local ageFactor = 1.0
+        if age > TRAIL_AGE_FULL then
+            local k = math.min(1, (age - TRAIL_AGE_FULL) / (TRAIL_AGE_GONE - TRAIL_AGE_FULL))
+            ageFactor = 1 - k * (1 - TRAIL_AGE_MIN_FACTOR)
+        end
+        local keep = math.max(2, math.floor(TRAIL_POINTS_PER_VEHICLE * ageFactor + 0.5))
+        local life = TRAIL_LIFETIME_MIN + (TRAIL_LIFETIME - TRAIL_LIFETIME_MIN) * ageFactor
         local track = trailSamples_[marble.id]
         if not track or track.ballType ~= ballType
             or (marble.flightTime or 0) < (track.flightTime or 0) then
@@ -1519,10 +1535,11 @@ local function SyncVehicleTrails(game, dt)
                 x = pos.x, y = pos.y, z = pos.z}
             trailSamples_[marble.id] = track
         end
+        track.keep, track.life = keep, life
         local points = track.points
         for i = #points, 1, -1 do
             points[i].age = points[i].age + dt
-            if points[i].age >= TRAIL_LIFETIME then table.remove(points, i) end
+            if points[i].age >= life then table.remove(points, i) end
         end
         local dx, dy = pos.x - track.x, pos.y - track.y
         if dx * dx + dy * dy > 4.0 then      -- >2m 瞬移（复活/传送）：清轨防拉丝
@@ -1534,7 +1551,7 @@ local function SyncVehicleTrails(game, dt)
         if track.clock >= TRAIL_SAMPLE_INTERVAL and dx * dx + dy * dy > 0.0004 then
             points[#points + 1] = {x = track.x, y = track.y, z = track.z,
                 age = 0, radius = marble.radius}
-            if #points > TRAIL_POINTS_PER_VEHICLE then table.remove(points, 1) end
+            if #points > keep then table.remove(points, 1) end
             track.clock = 0
         end
         track.x, track.y, track.z = pos.x, pos.y, pos.z
@@ -1783,6 +1800,8 @@ local function SyncTrailParticles(game, dt)
         local ballType = track.ballType
         if sets[ballType] then
             local vHalf = (track.radius or 20) * WORLD_SCALE * VEHICLE_HALF_FACTOR
+            -- 粒子系同样随存在时间收短：寿命按采样存活比例压缩（与光带同一 ageFactor）。
+            local lifeScale = track.life and (track.life / TRAIL_LIFETIME) or 1
             -- ⚠️ 只沿「上一帧发射点 → 当前车尾」这段**新走过的距离**发射，不能每帧重走整条轨迹
             -- （否则同一段被反复累加、粒子暴增 → 被槽位上限截断 → 车头附近的粒子被丢掉 = 「拖尾滞后」）。
             local hx, hy = track.x, track.y
@@ -1808,7 +1827,7 @@ local function SyncTrailParticles(game, dt)
                         x = ex + dx * u + nx * (off + jit),
                         y = ey + dy * u + ny * (off + jit),
                         z = track.z + TRAIL_BEHIND_Z,
-                        age = 0, life = pLife * (0.75 + 0.5 * h),
+                        age = 0, life = pLife * (0.75 + 0.5 * h) * lifeScale,
                         size = pSize * vHalf * (0.7 + 0.6 * g),
                         grow = pGrow, drift = pDrift * vHalf,
                         nx = nx, ny = ny,
@@ -2339,6 +2358,19 @@ function Renderer3D.DebugTrailVertexCount()
         end
     end
     return total, enabled
+end
+
+-- 诊断用（只读）：当前每辆车的拖尾采样点数与年龄（供探针证明「年龄越大长度越短」）。
+function Renderer3D.DebugTrailLengths()
+    local out = {}
+    for id, track in pairs(trailSamples_) do
+        out[#out + 1] = {
+            id = id, ballType = track.ballType,
+            points = #track.points, keep = track.keep or TRAIL_POINTS_PER_VEHICLE,
+            life = track.life or TRAIL_LIFETIME,
+        }
+    end
+    return out
 end
 
 -- 诊断用（只读）：当前帧每个弹种光带的前沿间隙——

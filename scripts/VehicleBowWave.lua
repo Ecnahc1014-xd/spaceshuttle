@@ -67,8 +67,9 @@ local SEGMENTS, MAX_CARS = 16, 8
 local V_DEPTH, V_SPREAD, THICKNESS, HALF_HEIGHT, GAP = 0.34, 1.12, 0.12, 0.05, 0.16
 local PER_CAR = SEGMENTS * 24 + 12
 
--- V 字形冲击波贴图：横截面软边 + 沿波长热核。DiffAlpha 只读纹理 alpha（不读顶点
--- rgb），颜色由 MatDiffColor 承载，故这里是灰阶 + alpha 剖面。
+-- V 字形冲击波贴图：横截面软边 + 沿波长热核。走 DiffVColUnlitAlpha（无光照 + 顶点色
+-- + 纹理 alpha），颜色由**顶点色 × MatDiffColor**承载，故纹理只做**白色 RGB + alpha 剖面**：
+-- 白 RGB 不会压暗弹种色，alpha 决定「软边 / 中央折角更亮」的半透明形态。
 local function CreateBowWaveTexture()
     local N = 64
     local image = Image()
@@ -82,8 +83,7 @@ local function CreateBowWaveTexture()
             -- 沿 V 长：中央折角最亮，两翼渐弱，叠一条细热核。
             local along = 0.55 + 0.45 * (1 - math.abs(2 * u - 1))
             local a = math.max(0, math.min(1, band * along * 0.85 + core * 0.6))
-            local g = 0.55 + 0.45 * core
-            image:SetPixel(x, y, Color(g, g, g, a))
+            image:SetPixel(x, y, Color(1, 1, 1, a))
         end
     end
     local tex = Texture2D:new()
@@ -131,9 +131,11 @@ end
 function M.Init(scene, colors)
     M.Shutdown()
     local ok, err = pcall(function()
-        -- 半透明带纹理：DiffAlpha 只读纹理 alpha，颜色走 MatDiffColor（顶点 rgb 无效）。
-        local tech = cache:GetResource("Technique", "Techniques/DiffAlpha.xml")
-        assert(tech, "DiffAlpha unavailable")
+        -- 半透明 + **无光照** + **顶点色**：DiffVColUnlitAlpha 让 V 形波壳读顶点色（弹种色/
+        -- 满蓄金）与纹理 alpha，且**不参与光照**——本作深空场景很暗，用带光照的 DiffAlpha
+        -- 会让 V 形波壳因 N·L≈0 变全黑（历史「冲击波完全没有显示」的真因）。
+        local tech = cache:GetResource("Technique", "Techniques/DiffVColUnlitAlpha.xml")
+        assert(tech, "DiffVColUnlitAlpha unavailable")
         S.texture = CreateBowWaveTexture()
         S.material = Material()
         S.material:SetTechnique(0, tech)

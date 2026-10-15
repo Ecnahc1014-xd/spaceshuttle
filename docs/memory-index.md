@@ -10,7 +10,17 @@
 项目：货车大战飞机
 当前版本：0.13.63
 简述：高分先读后写/单在途/Stop保分，成就异步成功确认与离线门控，ArtText有限退避恢复；纹理禁压缩未完成，XHR233未定位，原图/CTA尺寸/既有效果不变。
-最后巩固：2026-10-14
+最后巩固：2026-10-15
+
+## 六项需求（2026-10-15，six-req-2026-10-15）
+- 用户六项：①全息外套「发射后才会开始消散，3s 后消散完」；②蓄力达 85% 发射「立刻使它完成蓄力」；③「冲击波完全没有显示」（bug）；④拖尾「随子弹存在时间变长越来越短，分裂行为继承长度」；⑤附魔三连的两个副子弹「也视为分裂弹（功能保留本子弹相同）」；⑥「增加回弹特效」。
+- ① 外套独立寿命：`Presentation._chargeHologram` 增 `shellLife/shellMaxLife`（`VisualCatalog.CHARGE_HOLOGRAM.shellSeconds=3.0`），蓄力期常驻满值、**仅 released 后**递减；`VehicleChargeFx` shell 用 `shellLife`（不透明度 `shellAlpha*(1-shellT)`），残像 `life` 独立，两者都归零才隐藏。
+- ② `BALANCE.chargeCompleteThreshold=0.85`；`LaunchMarble` 里 `time/total>=0.85` 即 `time=total`（chargeBoosted）；快照 `s.chargeReady`，Presentation 据此提前爆发全息。
+- ③ **真因（本轮最高价值）**：上一批把 V 形波壳从**无光照** `NoTextureUnlitVCol` 改成**带光照** `DiffAlpha`（LitSolid，法线 ±Z）→ 深空场景 `N·L≈0` → 全黑。改 **`DiffVColUnlitAlpha`**（无光照+顶点色+纹理 alpha），纹理改白 RGB+alpha 剖面。独立 Forward 渲染四模式对照实图实锤（lit=暗灰不可见 / unlit·vcolalpha=亮青）。
+- ④ `Game.CreateMarble` 增 `trailAge`（随 dt 增；`CreateSplitMarble` 拷贝母车 age → 继承）；`Renderer3D.SyncVehicleTrails` 按 `trailAge` 算 `ageFactor`（0.35 前满长→4.5 收到 0.16）收 `keep`+`life`；粒子系同乘 `lifeScale`。新增只读 `DebugTrailLengths()`。
+- ⑤ 三连副弹 `extra.words={copy}`、`extra.enchantIsChild=nil`（功能同主弹，仍 `isPrimary=false` 灰暗）。
+- ⑥ 撞墙 `Emit("marble_bounce",{id,x,y,ballType,nx,ny})`；Presentation `marble_bounce→bounceImpact`（弹种色扩散环+火花+轻震）。
+- 验证：LSP 36 文件 0 Error（1404W/125H）；官方多人 build + 预览上传 ✅。真渲染探针（真实 client_main）：`probe_six` 15/15、`probe_bounce` 3/3、`probe_traillen` 2/2（keep 16→5）、`probe_rules` 4/4、`probe_split2` PASS；独立 Forward 实图对照 `/workspace/screenshots/bw/bw_verified.png`。主 HDR 3D 恒黑，冲击波可见性由独立 Forward 实图证明；3s/85%/收短比例为助手拟值；手机 FPS/全 DPR/真 SDK/审美未验收。
 
 ## 全息外套放大到 1.5 倍（2026-10-14，shell-scale-1.5）
 - 用户「全息幻影为 .5 倍大小」——原话「透明度40% + 比车稍微大一点 + .5 倍大小」，取**最合理读数 1.5 倍**（比车大一半）：0.5× 会比车小（与「稍微大一点」矛盾）、5× 远超「稍微」。**已按 1.5 实现**；若本意是别的倍数，改 `VisualCatalog.CHARGE_HOLOGRAM.shellScale` 一处即可（助手判断，非用户确认参数）。

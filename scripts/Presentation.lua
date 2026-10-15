@@ -8,18 +8,22 @@ local Presentation = {}
 Presentation._chargeRelease = { life = 0, maxLife = VisualCatalog.LAUNCH_CHARGE.releaseSeconds, progress = 0, x = 0, y = 0,
     uiX = nil, uiY = nil, carX = nil, carY = nil, boosted = false }
 -- 只保存标量，不持有复用的规则快照或车辆对象；epoch 区分同车取消后再次起手。
+-- life = 两层残像 TTL（爆发后 0.65s）；shellLife = 贴身外套寿命——**发射前常驻满值**，
+-- 发射后才开始按 shellSeconds(3s) 递减，故「发射后才会开始消散，3s 后消散完」。
 Presentation._chargeHologram = { life = 0, maxLife = VisualCatalog.CHARGE_HOLOGRAM.seconds,
+    shellLife = 0, shellMaxLife = VisualCatalog.CHARGE_HOLOGRAM.shellSeconds,
     serial = 0, vehicleId = -1, gestureId = -1, epoch = -1, fired = false, released = false, lastElapsed = -1 }
 
 function Presentation.ResetChargeHologram()
     local c = Presentation._chargeHologram
-    c.life, c.vehicleId, c.gestureId, c.epoch, c.fired, c.released, c.lastElapsed =
-        0, -1, -1, -1, false, false, -1
+    c.life, c.shellLife, c.vehicleId, c.gestureId, c.epoch, c.fired, c.released, c.lastElapsed =
+        0, 0, -1, -1, -1, false, false, -1
 end
 
 function Presentation.UpdateChargeHologram(dt, game, events)
     local c = Presentation._chargeHologram
-    c.life = math.max(0, c.life - math.max(0, dt))
+    local step = math.max(0, dt)
+    c.life = math.max(0, c.life - step)
     if not game or game.state ~= "playing" or (game.introTimer or 0) > 0 then
         Presentation.ResetChargeHologram()
         return
@@ -29,8 +33,8 @@ function Presentation.UpdateChargeHologram(dt, game, events)
     c.lastElapsed = now
     local m = game.activeBall
     local epoch = game.pointerEpoch or 0
-    -- 发射事实只锁定一次；源车回收或下一车起手后，冻结在世界中的残像仍播完 TTL。
-    if c.life > 0 and not c.released then
+    -- 发射事实只锁定一次；发射后外套才开始消散（不再受源车回收/下一车起手截断）。
+    if not c.released and c.shellLife > 0 then
         for _, event in ipairs(events or {}) do
             if event.type == "marble_launched" and event.id == c.vehicleId and event.chargeBoosted then
                 c.released = true
@@ -45,23 +49,30 @@ function Presentation.UpdateChargeHologram(dt, game, events)
                 end
             end
         end
-        if not c.released and not (game.chargeActive and m and m.id == c.vehicleId and epoch == c.epoch) then
-            c.life = 0
-        end
+    end
+    -- 外套只在「发射后」开始计时消散；蓄力未发射期间保持满值常驻。
+    if c.released then
+        c.shellLife = math.max(0, c.shellLife - step)
     end
     if game.chargeActive and m then
         if c.gestureId ~= m.id or c.epoch ~= epoch then
             c.gestureId, c.epoch, c.fired = m.id, epoch, false
         end
-        if (game.chargeProgress or 0) >= 1 and not c.fired then
+        -- 蓄力达到完成阈值（85%）即视作满蓄，立刻爆发全息（不必等到 100%）。
+        if game.chargeReady and not c.fired then
             c.serial, c.fired = c.serial + 1, true
             c.vehicleId, c.life, c.released = m.id, c.maxLife, false
+            c.shellLife = c.shellMaxLife
             print("[Presentation] full charge hologram #" .. tostring(c.serial))
-        elseif (game.chargeProgress or 0) < 1 then
+        elseif not game.chargeReady then
             c.fired = false
         end
     else
         c.fired, c.gestureId, c.epoch = false, -1, -1
+        -- 非蓄力中且**未发射**（取消/切车）→ 立刻清空；已发射则让外套继续淡出到 0。
+        if not c.released then
+            c.life, c.shellLife = 0, 0
+        end
     end
 end
 
@@ -134,6 +145,8 @@ local FEEDBACK_MAP = {
     enemy_destroyed = {"clearImpact"},
     base_hit = {"baseShake"},
     marble_launched = {"launchFlash", "chargeRelease"},
+    -- v0.13.64：车辆撞墙回弹——一圈沿内法线扩散的冲击环 + 少量火花。
+    marble_bounce = {"bounceImpact"},
     normal_split = {"splitSpark"},
     speed_dash = {"dashSpark"},
     -- v0.13.55「动能穿刺」：加速车穿透一块时的瞬时反馈。
@@ -493,6 +506,18 @@ local FEEDBACK_HANDLERS = {
             r0 = 8, r1 = 26,
             r = launchColor[1], g = launchColor[2], b = launchColor[3],
         }
+    end,
+    -- v0.13.64：撞墙回弹——沿内法线的一圈扩散环 + 少量弹种色火花，读作「撞上去弹回来」。
+    bounceImpact = function(event)
+        local color = VisualCatalog.GetBallStyle(event.ballType or "normal")
+        local rgb = color and color.color or {255, 240, 200}
+        shockRings[#shockRings + 1] = {
+            x = event.x, y = event.y, life = 0.26, maxLife = 0.26,
+            r0 = 5, r1 = 22,
+            r = rgb[1], g = rgb[2], b = rgb[3],
+        }
+        SpawnParticles(event.x, event.y, rgb, math.random(2, 4), "spark")
+        screenShake = math.max(screenShake, 0.05)
     end,
     splitSpark = function(event)
         SpawnParticles(event.x, event.y, {255, 230, 140}, math.random(2, 4), "spark")

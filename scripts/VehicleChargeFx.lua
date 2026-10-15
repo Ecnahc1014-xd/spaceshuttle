@@ -159,7 +159,11 @@ function M.Sync(game, presentation, records, skin)
         if not records[id] then S.bound[id] = nil end
     end
     local echo = presentation.chargeHologram
-    if not playing or not echo or echo.life <= 0 then
+    -- 外套（shellLife）独立于残像（life）：残像只活 0.65s，外套发射后还要淡出 3s。
+    -- 两者都归零才整体隐藏，否则外套会在残像到期时被误关。
+    local echoesOn = echo and echo.life > 0
+    local shellAlive = echo and (echo.shellLife or 0) > 0
+    if not playing or not echo or (not echoesOn and not shellAlive) then
         for _, copy in ipairs(S.copies) do copy.node.enabled = false end
         if S.shell then S.shell.node.enabled = false end
         S.visible, S.shellVisible = 0, 0
@@ -197,24 +201,30 @@ function M.Sync(game, presentation, records, skin)
         end
         print("[VehicleChargeFx] burst #" .. tostring(S.serial) .. " vehicle=" .. tostring(S.vehicleId))
     end
+    -- 两层残像：只活 0.65s，随自身 TTL 扩散+淡出（与外套相互独立）。
     local t = math.max(0, math.min(1, 1 - echo.life / echo.maxLife))
     local ease = 1 - (1 - t) ^ 3
     S.visible = 0
     for i, copy in ipairs(S.copies) do
-        local sign = i % 2 == 1 and -1 or 1
-        local distance = VisualCatalog.CHARGE_HOLOGRAM.spread * ease
-        local offset = S.rotation * Vector3(-distance * 0.18, sign * distance, -distance * 0.32)
-        local grow = 1 + ease * (0.08 + i * 0.04)
-        copy.node:SetWorldTransform(S.position + offset, S.rotation, S.scale * grow)
-        local opacity = (0.19 - (i - 1) * 0.045) * (1 - t) ^ 1.6
-        copy.material:SetShaderParameter("MatDiffColor", Variant(Color(0.12, 0.83, 1, opacity)))
-        copy.node.enabled = opacity > 0.001
-        if copy.node.enabled then S.visible = S.visible + 1 end
+        if not echoesOn then
+            copy.node.enabled = false
+        else
+            local sign = i % 2 == 1 and -1 or 1
+            local distance = VisualCatalog.CHARGE_HOLOGRAM.spread * ease
+            local offset = S.rotation * Vector3(-distance * 0.18, sign * distance, -distance * 0.32)
+            local grow = 1 + ease * (0.08 + i * 0.04)
+            copy.node:SetWorldTransform(S.position + offset, S.rotation, S.scale * grow)
+            local opacity = (0.19 - (i - 1) * 0.045) * (1 - t) ^ 1.6
+            copy.material:SetShaderParameter("MatDiffColor", Variant(Color(0.12, 0.83, 1, opacity)))
+            copy.node.enabled = opacity > 0.001
+            if copy.node.enabled then S.visible = S.visible + 1 end
+        end
     end
-    -- 贴身外套：逐帧取源车当前实际显示变换，等比放大一点点套在车上，随 TTL 淡出。
+    -- 贴身外套：逐帧取源车当前实际显示变换，等比放大一点点套在车上。
+    -- 蓄力未发射时保持满不透明度常驻；**发射后**才开始按 shellLife 在 3s 内淡出。
     S.shellVisible = 0
     if S.shell then
-        if shellOn and shellRecord.root then
+        if shellAlive and shellOn and shellRecord.root then
             local sp = shellRecord.root.worldPosition
             local sr = shellRecord.root.worldRotation
             local ss = shellRecord.root.worldScale
@@ -222,7 +232,8 @@ function M.Sync(game, presentation, records, skin)
             S.shell.node:SetWorldTransform(sp,
                 Quaternion(sr.w, sr.x, sr.y, sr.z),
                 Vector3(ss.x * grow, ss.y * grow, ss.z * grow))
-            local shellOpacity = VisualCatalog.CHARGE_HOLOGRAM.shellAlpha * (1 - t) ^ 1.2
+            local shellT = math.max(0, math.min(1, 1 - (echo.shellLife or 0) / (echo.shellMaxLife or 1)))
+            local shellOpacity = VisualCatalog.CHARGE_HOLOGRAM.shellAlpha * (1 - shellT)
             S.shell.material:SetShaderParameter("MatDiffColor", Variant(Color(0.3, 0.92, 1, shellOpacity)))
             S.shell.node.enabled = shellOpacity > 0.001
             if S.shell.node.enabled then
