@@ -6,6 +6,9 @@
     },
     "engine-res": {
       "tag": "stable"
+    },
+    "official-res": {
+      "tag": "stable"
     }
   },
   "build": {
