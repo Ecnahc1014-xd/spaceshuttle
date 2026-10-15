@@ -1841,6 +1841,12 @@ function HandleUpdate(eventType, eventData)
     end
     local adFreeze = adInFlight
         and gameSnapshot ~= nil and gameSnapshot.state == "playing"
+    -- v0.13.64：拖拽范围是「设计空间圆」的投影——每帧把当前投影缩放喂给规则层，
+    -- 使输入在设计坐标里按圆钳制、再换算成玩法位移（屏幕上的范围始终是圆）。
+    do
+        local _, _, psx, psy = RenderBackend.GetProjection()
+        Game.SetPullSpace(psx, psy)
+    end
     if not adFreeze then
         Game.Update(gameDt, inputDt)
     end

@@ -9,9 +9,11 @@ Presentation._chargeRelease = { life = 0, maxLife = VisualCatalog.LAUNCH_CHARGE.
     uiX = nil, uiY = nil, carX = nil, carY = nil, boosted = false }
 -- 只保存标量，不持有复用的规则快照或车辆对象；epoch 区分同车取消后再次起手。
 -- life = 两层残像 TTL（爆发后 0.65s）；shellLife = 贴身外套寿命——**发射前常驻满值**，
--- 发射后才开始按 shellSeconds(3s) 递减，故「发射后才会开始消散，3s 后消散完」。
+-- 发射后先按 shellHold(2s) 停留（不透明度保持满值），再按 shellFade(3s) 平滑淡出到 0，
+-- 故「发射后 2s 才开始消散，随后 3s 平滑消散完」。
 Presentation._chargeHologram = { life = 0, maxLife = VisualCatalog.CHARGE_HOLOGRAM.seconds,
-    shellLife = 0, shellMaxLife = VisualCatalog.CHARGE_HOLOGRAM.shellSeconds,
+    shellLife = 0, shellMaxLife = VisualCatalog.CHARGE_HOLOGRAM.shellHold + VisualCatalog.CHARGE_HOLOGRAM.shellFade,
+    shellFade = VisualCatalog.CHARGE_HOLOGRAM.shellFade,
     serial = 0, vehicleId = -1, gestureId = -1, epoch = -1, fired = false, released = false, lastElapsed = -1 }
 
 function Presentation.ResetChargeHologram()

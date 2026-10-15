@@ -64,8 +64,11 @@ local S = {
 local M = {}
 local SEGMENTS, MAX_CARS = 16, 8
 -- V 形冲击波：中央折角朝车头前方，两翼后掠并展开到车体半宽之外。
-local V_DEPTH, V_SPREAD, THICKNESS, HALF_HEIGHT, GAP = 0.34, 1.12, 0.12, 0.05, 0.16
-local PER_CAR = SEGMENTS * 24 + 12
+-- v0.13.64：整体放大 + 三层叠放（外层宽而淡 / 中层 / 内层窄而亮热核），不再是一条薄带。
+local V_DEPTH, V_SPREAD, THICKNESS, HALF_HEIGHT, GAP = 0.62, 1.90, 0.18, 0.12, 0.20
+-- 三层 V 带：每层 SEGMENTS 段、每段 4 面、每面 2 三角、每三角 3 顶点。
+local BANDS_PER_CAR = 3
+local PER_CAR = SEGMENTS * 24 * BANDS_PER_CAR + 12
 
 -- V 字形冲击波贴图：横截面软边 + 沿波长热核。走 DiffVColUnlitAlpha（无光照 + 顶点色
 -- + 纹理 alpha），颜色由**顶点色 × MatDiffColor**承载，故纹理只做**白色 RGB + alpha 剖面**：
@@ -164,7 +167,8 @@ function M.Init(scene, colors)
         return false
     end
     S.clearCalls, S.commits, S.faulted = 0, 0, false
-    print("[VehicleBowWave] initialized: LOCAL dynamic batch, budget=8/3168")
+    print(string.format("[VehicleBowWave] initialized: LOCAL dynamic batch, 3 bands, budget=%d cars/%d verts",
+        MAX_CARS, MAX_CARS * PER_CAR))
     return true
 end
 ---@param root Node
@@ -198,14 +202,12 @@ local function EmitCar(marble, record, box)
     local nose = box.max.x
     local hw = math.max(math.abs(box.min.y), math.abs(box.max.y))
     local zc = (box.min.z + box.max.z) * 0.5
-    -- V 形中线：中央折角在车头正前 (nose+GAP+depth)，两翼后掠回落到 nose+GAP。
-    local halfW = hw * V_SPREAD
-    local baseX = nose + GAP
-    local tipX = baseX + V_DEPTH
     local rotation = root:GetWorldRotation()
     local axis = rotation * Vector3(1, 0, 0)
     local heading = math.deg(math.atan(axis.y, axis.x))
     local he = record.heading and math.abs((heading - record.heading + 180) % 360 - 180) or 0
+    -- 中央折角最前端（外层）作为锚点。
+    local tipX = nose + GAP + V_DEPTH
     local d = { id = marble.id, noseGap = math.huge, widthRatio = V_SPREAD,
         anchor = root:LocalToWorld(Vector3(tipX, 0, zc)), heading = heading, headingError = he, transforms = 1 } ---@type BowWaveCarDebug
     local rgb = marble.chargeBoosted and { 1.0, 0.72, 0.16 }
@@ -214,34 +216,7 @@ local function EmitCar(marble, record, box)
     local g1 = rgb and (rgb[2] --[[@as number]]) or 0.80
     local b1 = rgb and (rgb[3] --[[@as number]]) or 0.91
     -- 周期位移在车鼻前平滑往返，不改变宽度或进入最小间隙。
-    local forward = 0.05 * (1 - math.cos(S.phase * (2 * math.pi / 0.9)))
-    local b = Color(r1, g1, b1, 1)
-    ---@param s number
-    ---@return number
-    local function CentreX(s) return baseX + forward + V_DEPTH * (1 - math.abs(s)) end
-    ---@param s number
-    ---@return Vector3[]
-    local function Cross(s)
-        local x = CentreX(s)
-        return {
-            Vector3(x, s * halfW, zc - HALF_HEIGHT),
-            Vector3(x + THICKNESS, s * halfW, zc - HALF_HEIGHT),
-            Vector3(x + THICKNESS, s * halfW, zc + HALF_HEIGHT),
-            Vector3(x, s * halfW, zc + HALF_HEIGHT),
-        }
-    end
-    ---@param s number
-    ---@return Vector3[], Vector3[]
-    local function Ring(s)
-        local p = Cross(s)
-        local w = {} ---@type Vector3[]
-        for i, v in ipairs(p) do
-            d.noseGap = math.min(d.noseGap, v.x - nose)
-            w[i] = root:LocalToWorld(v)
-            d.transforms = d.transforms + 1
-        end
-        return p, w
-    end
+    local forward = 0.06 * (1 - math.cos(S.phase * (2 * math.pi / 0.9)))
     ---@param a Vector3
     ---@param bb Vector3
     ---@param c Vector3
@@ -277,17 +252,63 @@ local function EmitCar(marble, record, box)
         Triangle(p[1], p[2], p[3], w[1], w[2], w[3], expected, color)
         Triangle(p[1], p[3], p[4], w[1], w[3], w[4], expected, color)
     end
-    -- 沿 s=-1（右翼尖）到 s=+1（左翼尖）铺 V 形带，中点即中央折角。
-    local prev, wp = Ring(-1)
-    for i = 1, SEGMENTS do
-        local s = -1 + i * (2 / SEGMENTS)
-        local cur, wc = Ring(s)
-        local frontN = Vector3(0, 0, -1)
-        Quad({ prev[2], cur[2], cur[3], prev[3] }, { wp[2], wc[2], wc[3], wp[3] }, frontN, b)
-        Quad({ prev[1], prev[4], cur[4], cur[1] }, { wp[1], wp[4], wc[4], wc[1] }, Vector3(0, 0, 1), b)
-        Quad({ prev[1], cur[1], cur[2], prev[2] }, { wp[1], wc[1], wc[2], wp[2] }, frontN, b)
-        Quad({ prev[4], prev[3], cur[3], cur[4] }, { wp[4], wp[3], wc[3], wc[4] }, Vector3(0, 0, 1), b)
-        prev, wp = cur, wc
+    -- 三层 V 带叠放：外层最宽最淡（冲击外缘）→ 内层最窄最亮（白热核）。
+    -- 每层各自缩放宽度/深度/厚度/半高，并沿前向略微错开，形成有纵深感的冲击波墙。
+    local BANDS = {
+        -- sHalf, sDepth, sThick, sHeight, bright, ahead
+        { 1.00, 1.00, 1.00, 1.00, 0.42, 0.10 },
+        { 0.68, 0.82, 0.92, 0.82, 0.78, 0.03 },
+        { 0.38, 0.62, 0.80, 0.66, 1.30, 0.00 },
+    }
+    for _, band in ipairs(BANDS) do
+        local sHalf, sDepth, sThick, sHeight, bright, ahead = band[1], band[2], band[3], band[4], band[5], band[6]
+        local halfW = hw * V_SPREAD * sHalf
+        local baseX = nose + GAP + ahead + forward
+        local depth = V_DEPTH * sDepth
+        local thick = THICKNESS * sThick
+        local hHalf = HALF_HEIGHT * sHeight
+        local cr = math.min(1, r1 * bright)
+        local cg = math.min(1, g1 * bright)
+        local cb = math.min(1, b1 * bright)
+        local col = Color(cr, cg, cb, 1)
+        ---@param s number
+        ---@return number
+        local function CentreX(s) return baseX + depth * (1 - math.abs(s)) end
+        ---@param s number
+        ---@return Vector3[]
+        local function Cross(s)
+            local x = CentreX(s)
+            return {
+                Vector3(x, s * halfW, zc - hHalf),
+                Vector3(x + thick, s * halfW, zc - hHalf),
+                Vector3(x + thick, s * halfW, zc + hHalf),
+                Vector3(x, s * halfW, zc + hHalf),
+            }
+        end
+        ---@param s number
+        ---@return Vector3[], Vector3[]
+        local function Ring(s)
+            local p = Cross(s)
+            local w = {} ---@type Vector3[]
+            for i, v in ipairs(p) do
+                d.noseGap = math.min(d.noseGap, v.x - nose)
+                w[i] = root:LocalToWorld(v)
+                d.transforms = d.transforms + 1
+            end
+            return p, w
+        end
+        -- 沿 s=-1（右翼尖）到 s=+1（左翼尖）铺 V 形带，中点即中央折角。
+        local prev, wp = Ring(-1)
+        for i = 1, SEGMENTS do
+            local s = -1 + i * (2 / SEGMENTS)
+            local cur, wc = Ring(s)
+            local frontN = Vector3(0, 0, -1)
+            Quad({ prev[2], cur[2], cur[3], prev[3] }, { wp[2], wc[2], wc[3], wp[3] }, frontN, col)
+            Quad({ prev[1], prev[4], cur[4], cur[1] }, { wp[1], wp[4], wc[4], wc[1] }, Vector3(0, 0, 1), col)
+            Quad({ prev[1], cur[1], cur[2], prev[2] }, { wp[1], wc[1], wc[2], wp[2] }, frontN, col)
+            Quad({ prev[4], prev[3], cur[3], cur[4] }, { wp[4], wp[3], wc[3], wc[4] }, Vector3(0, 0, 1), col)
+            prev, wp = cur, wc
+        end
     end
     return d
 end

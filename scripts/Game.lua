@@ -23,6 +23,18 @@ function Game.ClearLaunchCharge()
     Game._launchCharge.time = 0
     Game._launchCharge.uiX, Game._launchCharge.uiY = nil, nil
 end
+-- v0.13.64：拖拽范围是「2D 设计空间里一个直径圆」的投影，而不是 3D/玩法空间里的圆。
+--   输入在**设计(UI)坐标**里按圆钳制（半径 MAX_PULL 设计像素），再除以投影缩放换算成玩法
+--   位移——于是玩法平面上的范围是一个椭圆（= 屏幕圆的投影），手感始终是「屏幕上的圆」。
+--   sx/sy 由编排层从后端投影取得；缺省 1/1 时退化为玩法空间圆（探针/无相机场景）。
+--   uiX/uiY 记录设计坐标按下点，dist 记录本帧钳制后的设计像素拉距（供威力映射）。
+Game._pullSpace = { sx = 1, sy = 1, uiX = 0, uiY = 0, dist = 0 }
+---@param sx number
+---@param sy number
+function Game.SetPullSpace(sx, sy)
+    Game._pullSpace.sx = (sx and sx > 1e-6) and sx or 1
+    Game._pullSpace.sy = (sy and sy > 1e-6) and sy or 1
+end
 -- v0.13.58：局内附魔卡状态（收进一张表，不新增顶层 local，AB-166）。
 --   card    = 当前持有的附魔卡（EnchantDef），nil 表示空手
 --   pending = 已使用但当前没有待发车时，顺延给「下一个预备发射的车」的附魔卡
@@ -450,9 +462,6 @@ local ballCycleIndex = 0
 local aiming = false
 local aimX = SLING_X
 local aimY = SLING_Y
--- v0.10.15：全屏起手时记录手指按下点，拉弓量 = 当前点 - 按下点。
-local grabStartX = SLING_X
-local grabStartY = SLING_Y
 -- v0.10.24 遗留：菜单/结算松手确认的武装标志。v0.13.4 起菜单不再直接开局
 -- （改走选关界面），此处仅作死亡瞬间防误触的复位守卫。
 local startArmed = false
@@ -823,8 +832,6 @@ ResetGame = function(startStage)
     partsBoostTime = 0
     aimX = SLING_X
     aimY = SLING_Y
-    grabStartX = SLING_X
-    grabStartY = SLING_Y
     waveCooldown = 3.2    -- 开局短暂喘息；后续按关卡节奏刷新
     introTimer = 0
     nextWavePlan = nil
@@ -3297,16 +3304,7 @@ end
 
 -- v0.10.15：全屏起手的相对拖拽。pull 为手指相对按下点的位移（不再相对固定弹弓点），
 -- 车辆视觉锚定 SLING 附近，手指在屏幕任意位置起手都不会遮挡车辆。
--- 输入只受圆形半径限制；车辆位置由 UpdateAiming 按比例缩短。
-local function ClampPull(dx, dy)
-    local distance = math.sqrt(dx * dx + dy * dy)
-    if distance > MAX_PULL then
-        dx = dx / distance * MAX_PULL
-        dy = dy / distance * MAX_PULL
-    end
-    distance = math.sqrt(dx * dx + dy * dy)
-    return dx, dy, distance
-end
+-- v0.13.64：钳制改在**设计(UI)坐标**里做（见 PullToGameplay），故旧 ClampPull 已移除。
 
 function Game.Init(config)
     config = config or {}
@@ -3438,23 +3436,48 @@ function Game.PointerDown(px, py, uiX, uiY)
     end
     if introTimer > 0 then return end
 
-    -- 相对拉弓仍走玩法坐标；绝对指针坐标只随快照传给表现层。
+    -- v0.13.64：拉弓在**设计(UI)坐标**里钳制（屏幕上的圆），按下点也记设计坐标。
     Game.ClearLaunchCharge()
     Game._launchCharge.x, Game._launchCharge.y = px, py
     Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
     aiming = true
-    grabStartX = px
-    grabStartY = py
+    local pull = Game._pullSpace
+    pull.uiX = uiX or px
+    pull.uiY = uiY or py
+    pull.dist = 0
     aimX = SLING_X
     aimY = SLING_Y
     print("[Game] launch charge started")
+end
+
+-- v0.13.64：把设计空间的圆位移换算成玩法位移。
+--   ①在设计坐标里求 pull，按 MAX_PULL 半径圆钳制（屏幕上是正圆）；
+--   ②除以投影缩放 sx/sy → 玩法位移（玩法平面上的范围因此是「屏幕圆的投影」椭圆）；
+--   ③返回玩法 dx/dy 与本帧设计像素拉距 dist（供威力/蓄力映射）。
+---@param uiX number
+---@param uiY number
+---@return number dx
+---@return number dy
+---@return number dist
+local function PullToGameplay(uiX, uiY)
+    local pull = Game._pullSpace
+    local udx = (uiX or pull.uiX) - pull.uiX
+    local udy = (uiY or pull.uiY) - pull.uiY
+    local dist = math.sqrt(udx * udx + udy * udy)
+    if dist > MAX_PULL then
+        udx = udx / dist * MAX_PULL
+        udy = udy / dist * MAX_PULL
+        dist = MAX_PULL
+    end
+    pull.dist = dist
+    return udx / pull.sx, udy / pull.sy, dist
 end
 
 function Game.PointerMove(px, py, uiX, uiY)
     if not aiming or gameState ~= "playing" then return end
     Game._launchCharge.x, Game._launchCharge.y = px, py
     Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
-    local dx, dy = ClampPull(px - grabStartX, py - grabStartY)
+    local dx, dy = PullToGameplay(uiX, uiY)
     aimX = SLING_X + dx
     aimY = SLING_Y + dy
     UpdateAiming()
@@ -3470,11 +3493,12 @@ function Game.PointerUp(px, py, uiX, uiY)
     startArmed = false
     Game._launchCharge.x, Game._launchCharge.y = px, py
     Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
-    local dx, dy, distance = ClampPull(px - grabStartX, py - grabStartY)
+    local dx, dy, distance = PullToGameplay(uiX, uiY)
     aimX = SLING_X + dx
     aimY = SLING_Y + dy
     UpdateAiming()
     aiming = false
+    -- 死区按**设计像素**判定（15 设计像素），与投影缩放无关，保证手感一致。
     if distance <= 15 then
         if activeBall then activeBall.x, activeBall.y = SLING_X, SLING_Y end
         Game.ClearLaunchCharge()
@@ -3720,7 +3744,11 @@ local function ComputeAimLine()
     local pullX = aimX - SLING_X
     local pullY = aimY - SLING_Y
     local length = math.sqrt(pullX * pullX + pullY * pullY)
-    if length <= AIM_DEAD_ZONE then return nil end
+    if length <= 1e-4 then return nil end
+    -- v0.13.64：威力按**设计像素拉距**归一（Game._pullSpace.dist），与投影缩放无关；
+    -- 玩法长度可能因投影 >MAX_PULL，用它归一会让弱拉就显示满亮。
+    local uiDist = Game._pullSpace.dist or 0
+    if uiDist <= AIM_DEAD_ZONE then return nil end
     local dirX = -pullX / length
     local dirY = -pullY / length
     local radius = activeBall.radius or 0
@@ -3738,7 +3766,8 @@ local function ComputeAimLine()
     end
     if t == math.huge or t <= 0 then return nil end
     -- v0.10.23：输出归一化蓄力 (死区→满拉 映射到 0..1)，供渲染层做弱拉渐显。
-    local power01 = math.max(0, math.min(1, (length - AIM_DEAD_ZONE) / (MAX_PULL - AIM_DEAD_ZONE)))
+    -- v0.13.64：改用设计像素拉距 uiDist 归一，避免投影缩放影响「弱拉渐显」。
+    local power01 = math.max(0, math.min(1, (uiDist - AIM_DEAD_ZONE) / (MAX_PULL - AIM_DEAD_ZONE)))
     return {
         x1 = x0, y1 = y0,
         x2 = x0 + dirX * t, y2 = y0 + dirY * t,

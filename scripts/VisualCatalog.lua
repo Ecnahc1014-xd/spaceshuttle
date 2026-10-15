@@ -8,11 +8,12 @@ local VisualCatalog = {}
 -- 蓄力圈：设计空间匀速归零，不随世界透视/震屏移动；参数是表现层拟值。
 VisualCatalog.LAUNCH_CHARGE = { radius = 240, releaseSeconds = 0.22 }
 -- 满蓄全息爆发：两层真实车型残像，参数为表现层拟值，不改变发射强化。
--- shell*：爆发后套在车上、比车略大的极浅全息外套，跟随车辆实际显示变换。
--- shellScale 为外套相对源车的等比尺寸倍率（1.5 = 比车大一半）。
--- seconds 是残像 TTL；shellSeconds 是外套在**发射后**的消散时长（蓄力期间常驻不消散）。
+-- shell*：爆发后套在车上、比车稍大的全息外套，跟随车辆实际显示变换。
+-- shellScale 为外套相对源车的等比尺寸倍率（1.2 = 比车大 20%）。
+-- seconds 是残像 TTL；shellHold 是**发射后**开始消散前的停留（不透明度保持满值），
+-- shellFade 是随后平滑淡出到 0 的时长（蓄力期间常驻不消散）。
 VisualCatalog.CHARGE_HOLOGRAM = { seconds = 0.65, copies = 2, spread = 0.65,
-    shellScale = 1.5, shellAlpha = 0.40, shellSeconds = 3.0 }
+    shellScale = 1.2, shellAlpha = 0.80, shellHold = 2.0, shellFade = 3.0 }
 
 local BALL_STYLES = {
     normal = {

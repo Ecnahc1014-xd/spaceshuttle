@@ -12,6 +12,13 @@
 简述：高分先读后写/单在途/Stop保分，成就异步成功确认与离线门控，ArtText有限退避恢复；纹理禁压缩未完成，XHR233未定位，原图/CTA尺寸/既有效果不变。
 最后巩固：2026-10-15
 
+## 冲击波放大三层 + 外套 80%/1.2×/2s停留+3s消散 + 拖拽=设计空间圆投影（2026-10-15，bowwave-shell-drag-2026-10-15）
+- 用户三点：①「冲击波太小太简单」；②「全息幻影以现在 80% 不透明度、比车稍微大一点（20%）套在车上，发射后 2s 才会开始消散，之后 3s 平滑消散完」；③「发射拖车辆的圆形拖动范围不是指 3d 空间的圆形范围，而是 2d 空间对应直径圆形范围的投影」。
+- ① `VehicleBowWave` 放大 V 形参数（V_DEPTH 0.62/V_SPREAD 1.90/THICKNESS 0.18/HALF_HEIGHT 0.12/GAP 0.20）+ `EmitCar` 三层叠放（外层宽淡→内层窄亮白热核，`BANDS_PER_CAR=3`、`PER_CAR=1188`、预算 8 车/9504）。
+- ② `VisualCatalog.CHARGE_HOLOGRAM`：shellScale 1.2（比车大 20%）、shellAlpha 0.80、shellHold 2.0 + shellFade 3.0（替换 shellSeconds）。`Presentation._chargeHologram` 增 shellFade，shellMaxLife=5.0；`VehicleChargeFx` 不透明度 `alpha*min(1, shellLife/shellFade)`（>fade 段停留满值，≤fade 段平滑淡出）。
+- ③ 拖拽改在**设计(UI)坐标**里按 MAX_PULL 圆钳制（屏幕正圆），再 ÷投影缩放 → 玩法位移（玩法范围=屏幕圆的投影椭圆）。`Game._pullSpace`+`SetPullSpace`；`PullToGameplay(uiX,uiY)` 返回玩法 dx/dy + 设计像素 dist；死区/瞄准 power 都按设计像素。删除死 `ClampPull` 与只写不读 `grabStartX/Y`。车辆屏幕位移仍恒定 90 设计像素。
+- 验证：LSP 36 文件 0 Error（1412W/125H）；官方多人 build + 预览上传 ✅。真渲染 `probe_v3` 14/14 PASS（shellScale1.2/shellAlpha0.80/hold2fade3；外套 1.5s 停留、2.5s 淡出、5s 归零；vertexBudget=9504；设计 150 拉距→车辆玩法位移 135.0）；独立 Forward 实图三层 V 形可见 `/workspace/screenshots/bw/bw3_bands.png`（1164 顶点）。主 HDR 3D 恒黑，可见性由独立 Forward 实图证明；参数为助手拟值；手机 FPS/全 DPR/真 SDK/审美未验收。
+
 ## 六项需求（2026-10-15，six-req-2026-10-15）
 - 用户六项：①全息外套「发射后才会开始消散，3s 后消散完」；②蓄力达 85% 发射「立刻使它完成蓄力」；③「冲击波完全没有显示」（bug）；④拖尾「随子弹存在时间变长越来越短，分裂行为继承长度」；⑤附魔三连的两个副子弹「也视为分裂弹（功能保留本子弹相同）」；⑥「增加回弹特效」。
 - ① 外套独立寿命：`Presentation._chargeHologram` 增 `shellLife/shellMaxLife`（`VisualCatalog.CHARGE_HOLOGRAM.shellSeconds=3.0`），蓄力期常驻满值、**仅 released 后**递减；`VehicleChargeFx` shell 用 `shellLife`（不透明度 `shellAlpha*(1-shellT)`），残像 `life` 独立，两者都归零才隐藏。

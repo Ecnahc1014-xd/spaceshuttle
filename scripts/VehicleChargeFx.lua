@@ -232,8 +232,11 @@ function M.Sync(game, presentation, records, skin)
             S.shell.node:SetWorldTransform(sp,
                 Quaternion(sr.w, sr.x, sr.y, sr.z),
                 Vector3(ss.x * grow, ss.y * grow, ss.z * grow))
-            local shellT = math.max(0, math.min(1, 1 - (echo.shellLife or 0) / (echo.shellMaxLife or 1)))
-            local shellOpacity = VisualCatalog.CHARGE_HOLOGRAM.shellAlpha * (1 - shellT)
+            -- 发射后先停留 shellHold（不透明度保持满值），再按 shellFade 平滑淡出到 0。
+            -- opacity = min(1, shellLife / shellFade)：shellLife > shellFade 段为停留期。
+            local shellFade = echo.shellFade or (echo.shellMaxLife or 1)
+            local shellT = math.max(0, math.min(1, (echo.shellLife or 0) / shellFade))
+            local shellOpacity = VisualCatalog.CHARGE_HOLOGRAM.shellAlpha * shellT
             S.shell.material:SetShaderParameter("MatDiffColor", Variant(Color(0.3, 0.92, 1, shellOpacity)))
             S.shell.node.enabled = shellOpacity > 0.001
             if S.shell.node.enabled then
