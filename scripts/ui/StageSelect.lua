@@ -486,6 +486,7 @@ end
 ---@param meta table 需含 stageStars / maxStage / itemStock / itemPrices
 function StageSelect.Draw(ctx, w, meta)
     local C = Style()
+    local tips = require "ui.GameplayTips"
     local maxStage = math.max(1, meta.maxStage or 1)
     lastMaxStage_ = maxStage
     local L = GetLayout(w, maxStage)
@@ -615,8 +616,28 @@ function StageSelect.Draw(ctx, w, meta)
         end
     end
 
-    D.text(ctx, L.content.x + L.content.w * 0.5, L.content.y + L.content.h + 4,
-        "上下滑动查看关卡", 13, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    -- 关卡列表底部常驻提示：列表加载结束后仍保留一条可轮换的玩法信息。
+    local tipIndex = math.floor((D.anim and D.anim() or 0) / 4) % tips.Count() + 1
+    local tipY = 898
+    D.panel(ctx, 30, tipY, w - 60, 50, C.rail, C.cyanDim, 6)
+    D.text(ctx, 46, tipY + 8, "作战提示", 12, C.cyanDim)
+    D.text(ctx, 46, tipY + 25, tips.Get(tipIndex), 13, C.text)
+
+    -- 首次进入关卡列表时显示短暂的航线同步加载层，让提示在等待期间也可读。
+    if meta.stageSelectLoading then
+        local loadT = math.max(0, math.min(1, (meta.stageSelectLoadingTimer or 0) / 0.72))
+        D.rect(ctx, 0, 0, w, 960, { 4, 8, 16, 220 }, 0)
+        local panelW, panelH = w - 96, 214
+        local panelX, panelY = 48, 328
+        D.panel(ctx, panelX, panelY, panelW, panelH, C.rail, C.cyanDim, 8)
+        D.text(ctx, w * 0.5, panelY + 28, "航线同步中", 22, C.cyan,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, w * 0.5, panelY + 67, "正在整理关卡航线与补给信息", 14, C.dim,
+            NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        D.text(ctx, panelX + 22, panelY + 112, "提示", 13, C.cyanDim)
+        D.text(ctx, panelX + 22, panelY + 137, tips.Get(tipIndex + 1), 15, C.text)
+        D.progress(ctx, panelX + 22, panelY + 178, panelW - 44, 1 - loadT, C.cyan, 5)
+    end
 end
 
 -- ============================================================================
@@ -638,6 +659,7 @@ StageSelect.ITEM_ORDER = {
 ---@return string|nil action
 ---@return integer|nil index
 function StageSelect.HitTest(uiX, uiY, w, meta)
+    if meta.stageSelectLoading then return nil, nil end
     local maxStage = math.max(1, meta.maxStage or 1)
     local L = GetLayout(w, maxStage)
     if Inside(L.close, uiX, uiY) then return "close", nil end

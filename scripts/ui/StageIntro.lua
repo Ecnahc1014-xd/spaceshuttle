@@ -64,6 +64,7 @@ function StageIntro.Draw(ctx, game)
     local cx = w * 0.5
     local p = 1 - math.min(1, t / total)   -- 0→1 进度
     local remain = math.max(0, math.ceil(t))
+    local tips = require "ui.GameplayTips"
 
     -- ① 暗化遮罩（渐入：开场 0.25s 内到 0.82，收尾 0.35s 淡出）
     local a = math.min(1, (1 - t / total) / 0.12)
@@ -99,6 +100,16 @@ function StageIntro.Draw(ctx, game)
     -- ③ 大号关卡号（像素贴图）
     local numColor = { C.text[1], C.text[2], C.text[3], math.floor(255 * a) }
     DrawStageNumber(ctx, game.stage or 1, cx, py + 78, 96, numColor)
+
+    -- 在大号关卡号与倒计时之间保留一条可读的作战提示。
+    local tipBoxX, tipBoxY, tipBoxW, tipBoxH = px + 26, py + 180, pw - 52, 32
+    FillRect(ctx, tipBoxX, tipBoxY, tipBoxW, tipBoxH, { 14, 28, 42, math.floor(220 * a) }, 4)
+    StrokeRect(ctx, tipBoxX, tipBoxY, tipBoxW, tipBoxH,
+        { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], math.floor(150 * a) }, 4, 1)
+    nvgFontSize(ctx, 12)
+    nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    nvgFillColor(ctx, rgba({ C.text[1], C.text[2], C.text[3], math.floor(235 * a) }))
+    nvgText(ctx, cx, tipBoxY + 9, tips.Get((game.stage or 1) + 1), nil)
 
     -- ④ 倒计时条 + 跳秒数字
     local barW, barH = pw - 80, 10

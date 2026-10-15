@@ -31,6 +31,7 @@ local AchievementSystem = require "AchievementSystem"
 local StageTransition = require "ui.StageTransition"
 local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
+local PerformanceProbe = require "PerformanceProbe"
 
 local ClientMain = {}
 -- 业务手势与后端视觉使用同一主指针；0 是合法 TouchID。
@@ -401,6 +402,8 @@ local metaState = {
     gems = 0,
     highScore = 0,
     screen = nil,
+    stageSelectLoading = false,
+    stageSelectLoadingTimer = 0,
     -- 选关界面（v0.13.4）：星级 + 已解锁范围 + 关卡总数，供 StageSelect 只读渲染。
     stageStars = {},
     maxStage = 1,
@@ -788,6 +791,13 @@ end
 
 local function OpenMetaScreen(name)
     metaState.screen = name
+    if name == "stage_select" then
+        metaState.stageSelectLoading = true
+        metaState.stageSelectLoadingTimer = 0.72
+    else
+        metaState.stageSelectLoading = false
+        metaState.stageSelectLoadingTimer = 0
+    end
     if name == "rank" then FetchRankList() end
     RefreshMeta()
     -- v0.13.13：选关界面是无限爬塔——打开时默认定位在「最新（最高已解锁）关」。
@@ -1644,6 +1654,17 @@ function ClientMain.Start(opts)
     input.mouseVisible = true
 
     if not RenderBackend.Init() then return false end
+    PerformanceProbe.SetProvider(function()
+        local snapshot = Game.GetSnapshot()
+        return {
+            state = snapshot and snapshot.state or "unknown",
+            wave = snapshot and snapshot.wave or 0,
+            enemies = snapshot and #(snapshot.veggies or {}) or 0,
+            screen = tostring(graphics:GetWidth()) .. "x" .. tostring(graphics:GetHeight()),
+            dpr = graphics:GetDPR(),
+        }
+    end)
+    PerformanceProbe.Start({ reportInterval = 5.0, enabled = true })
     ClientMain._pointer.focused = true
     ClientMain.CancelInput()
 
@@ -1776,6 +1797,7 @@ function ClientMain.Stop()
         if not ok then print("[Main] local high_score save failed; retained in memory: " .. tostring(err)) end
     end
     AchievementSystem.Shutdown()
+    PerformanceProbe.Stop()
     highScoreState.active = false
     highScoreState.readReady = false
     highScoreState.lifetime = {}
@@ -1800,6 +1822,13 @@ end
 ---@param name string|nil
 function ClientMain.DebugOpenScreen(name)
     metaState.screen = name
+    if name == "stage_select" then
+        metaState.stageSelectLoading = true
+        metaState.stageSelectLoadingTimer = 0.72
+    else
+        metaState.stageSelectLoading = false
+        metaState.stageSelectLoadingTimer = 0
+    end
     RefreshMeta()
     RefreshSnapshots()
     -- 与 OpenMetaScreen 保持一致：打开选关即定位到最新关（无限爬塔）。
@@ -1813,6 +1842,14 @@ end
 function HandleUpdate(eventType, eventData)
     local inputDt = math.max(0, eventData:GetFloat("TimeStep"))
     local dt = math.min(inputDt, 0.05)
+    PerformanceProbe.BeginFrame(inputDt)
+    if metaState.stageSelectLoading then
+        metaState.stageSelectLoadingTimer = metaState.stageSelectLoadingTimer - dt
+        if metaState.stageSelectLoadingTimer <= 0 then
+            metaState.stageSelectLoadingTimer = 0
+            metaState.stageSelectLoading = false
+        end
+    end
     AdService.Update(dt)
     AchievementSystem.Update(dt)
     if not GameMode.IsOffline() then NetClient.Update(dt) end
@@ -1848,17 +1885,24 @@ function HandleUpdate(eventType, eventData)
         Game.SetPullSpace(psx, psy)
     end
     if not adFreeze then
+        PerformanceProbe.BeginPhase("game")
         Game.Update(gameDt, inputDt)
+        PerformanceProbe.EndPhase("game")
     end
     ClientMain.ValidatePointer()
     local snapshot = Game.GetSnapshot()
     local frameEvents = Game.DrainEvents()
+    PerformanceProbe.BeginPhase("presentation")
     Presentation.Update(dt, snapshot, frameEvents)
+    PerformanceProbe.EndPhase("presentation")
     -- 音频总控消费同一份领域事件（只读），并按其状态机切换 8bit BGM。
     RenderBackend.TickAudio(dt, snapshot, frameEvents)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
+    PerformanceProbe.BeginPhase("render")
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, adFreeze and 0 or gameDt, dt)
+    PerformanceProbe.EndPhase("render")
+    PerformanceProbe.EndFrame(inputDt)
     -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及每
     -- HIGH_SCORE_COMMIT_INTERVAL 秒的兜底才真正写一次云（配额 300 次/分钟）。
     -- ⚠️ 结算/菜单是「持续态」——只在**进入**这些态的那一帧提交一次，不能每帧提交，

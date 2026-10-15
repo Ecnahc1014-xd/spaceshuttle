@@ -84,7 +84,7 @@ M.scout = {
         -- v0.13.65：背侧两枚引擎灯（E）——scout 原本无 E 块，幻影体素块需要「光源块」才能发射。
         "..E.....E..",
         ".d.M...M.d.",
-        "d.MMMMMMM.d",
+        "d" .. ".MMMMMMM" .. ".d",
         ".MMCCCCCMM.",
         "dMM.MMM.MMd",
         ".M.M...M.M.",

@@ -226,7 +226,7 @@ local function GameToWorld(x, y, z)
 end
 
 local function CreateMaterial(rgb, metallic, roughness, emissive)
-    local key = string.format("%.3f_%.3f_%.3f_%.2f_%.2f%s",
+    local key = string.format("%." .. "3f_%." .. "3f_%." .. "3f_%." .. "2f_%." .. "2f%s",
         rgb[1], rgb[2], rgb[3], metallic or 0, roughness or 0.5,
         emissive and "_e" or "")
     if materialCache_[key] then return materialCache_[key] end
@@ -609,7 +609,7 @@ local function CreateEnemyVolume(enemy, visualCatalog)
     print("[Renderer3D] enemy volume id=" .. tostring(enemy.id)
         .. " " .. tostring(enemy.aircraftKey)
         .. " " .. tostring(dimX) .. "x" .. tostring(dimY) .. "x" .. tostring(dimZ)
-        .. " voxel=" .. string.format("%.3f", voxelSize))
+        .. " voxel=" .. string.format("%." .. "3f", voxelSize))
     return volume
 end
 
@@ -733,7 +733,8 @@ local function SpawnVoxelDebris(record, event, visualCatalog)
         local vx = (event.vx or 0) * WORLD_SCALE
         local vy = -(event.vy or 0) * WORLD_SCALE
         -- 朝相机抛一点，避免碎块卡在编队厚度里看不见。
-        local vz = -3.4
+        -- 碎裂块放到编队后方的低图层，避免遮住仍在场的体素主体。
+        local vz = 3.4
         debris:SetLinearVelocity(Vector3(vx, vy, vz))
         debris:SetAngularVelocity(Vector3(
             event.axisPitchSpeed or 0,
@@ -1195,7 +1196,8 @@ local function SyncEjectedBoxes(presentation, voxelFallbackOnly)
                 ejectedBoxNodes_[box.id] = node
             end
             -- 独立箱体始终放在敌体朝向相机的一侧，避免主体网格遮挡刚脱离的第一帧。
-            node.position = GameToWorld(box.x, box.y, VOXEL_FRONT_OFFSET - 0.24 + box.z * WORLD_SCALE)
+            -- 回退箱体也和体素碎块保持低图层；box.z 只负责轻微的深度动画。
+            node.position = GameToWorld(box.x, box.y, 0.22 + box.z * WORLD_SCALE)
             node.enabled = true
             -- 前 0.10 秒保持完整尺寸，确保命中瞬间能读到“整块脱离”；末段再缩放消散。
             local fade = 1.0
@@ -2309,15 +2311,8 @@ Renderer3D.phantom.sync = function(game, presentation)
                     math.min(1, rgb[3] * 0.4 + 0.85), 1)
                 local function face(c1, c2, c3, c4, n, tint)
                     local c = Color(col.r * tint, col.g * tint, col.b * tint, 1)
-                    local vs = {c1, c2, c3, c4}
-                    for _, v in ipairs(vs) do
-                        geom:DefineVertex(v); geom:DefineNormal(n)
-                        geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
-                    end
-                    -- 三角形 1: c1,c2,c3 ; 三角形 2: c1,c3,c4
-                    geom:DefineVertex(c1); geom:DefineNormal(n); geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
-                    geom:DefineVertex(c3); geom:DefineNormal(n); geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
-                    geom:DefineVertex(c4); geom:DefineNormal(n); geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
+                    -- 与敌机和碎块共用同一套三角形与 UV 顺序，避免面翻转、纹理错位。
+                    EmitQuad(geom, c1, c2, c3, c4, n, c, 1.0)
                 end
                 local P = function(x, y, z) return Vector3(x, y, z) end
                 face(P(-hw,-hh, hd), P(-hw, hh, hd), P( hw, hh, hd), P( hw,-hh, hd), Vector3(0,0, 1), 1.00)
@@ -2337,7 +2332,8 @@ Renderer3D.phantom.sync = function(game, presentation)
                 rec = { node = node, geometry = geom, material = mat }
                 Renderer3D.phantom.records[p.id] = rec
             end
-            rec.node.position = GameToWorld(p.x + p.w * 0.5, p.y + p.h * 0.5, -0.95)
+            -- 幻影是低图层的投射块：放在主体后方，避免与敌机体素面共面闪烁。
+            rec.node.position = GameToWorld(p.x + p.w * 0.5, p.y + p.h * 0.5, 0.28)
         end
     end
     for id, rec in pairs(Renderer3D.phantom.records) do

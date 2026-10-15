@@ -28,7 +28,7 @@ end
 --   位移——于是玩法平面上的范围是一个椭圆（= 屏幕圆的投影），手感始终是「屏幕上的圆」。
 --   sx/sy 由编排层从后端投影取得；缺省 1/1 时退化为玩法空间圆（探针/无相机场景）。
 --   uiX/uiY 记录设计坐标按下点，dist 记录本帧钳制后的设计像素拉距（供威力映射）。
-Game._pullSpace = { sx = 1, sy = 1, uiX = 0, uiY = 0, dist = 0 }
+Game._pullSpace = { sx = 1, sy = 1, uiX = 0, uiY = 0, dist = 0, gnorm = 0 }
 ---@param sx number
 ---@param sy number
 function Game.SetPullSpace(sx, sy)
@@ -64,7 +64,8 @@ local TOP_BOUND_Y = -135
 local BASE_BRICK_SIZE = 16
 local SLING_X = 270
 local SLING_Y = 850
-local MAX_PULL = 150
+-- v0.13.66：屏幕拖拽圆半径 = 原 150 设计像素的 85%（屏幕为准），玩法空间同步圆钳制。
+local MAX_PULL = 150 * 0.85
 local DANGER_Y = 900
 local BASE_HP = 100
 
@@ -89,6 +90,8 @@ local BALANCE = {
     xpToNextGrowth = 1.26,          -- WO-02/P1：每级经验阈值指数乘子
     clearStreakBonusCap = 5,
     maxPull = MAX_PULL,
+    -- v0.13.66：反弹碰撞箱 = 弹珠半径的 85%；伤害碰撞（命中/圆域/幻影击碎）仍用满半径。
+    bounceBoxScale = 0.85,
     pullPositionScale = 0.6, -- 圆形输入保留全幅，待发车辆位移按比例缩短
     powerMin = 0.35,   -- 最小蓄力初速比例（轻拖也有基础射程）
     powerMax = 1.0,    -- 满蓄力初速比例
@@ -1411,21 +1414,28 @@ local function SweptHitsBrick(px, py, cx, cy, radius, rx, ry, rw, rh)
 end
 
 local function CollideBrick(marble, rx, ry, rw, rh)
-    if not IntersectsBrick(marble, rx, ry, rw, rh) then return false end
+    -- v0.13.66：反弹碰撞箱 = 85% 半径；伤害圈（满半径）由调用方结算。
+    -- 只进伤害圈、未进反弹箱的擦边命中不反弹，车辆继续飞行。
+    local br = marble.radius * BALANCE.bounceBoxScale
+    local closestX = math.max(rx, math.min(marble.x, rx + rw))
+    local closestY = math.max(ry, math.min(marble.y, ry + rh))
+    local dx = marble.x - closestX
+    local dy = marble.y - closestY
+    if dx * dx + dy * dy >= br * br then return false end
 
     local centerX = rx + rw * 0.5
     local centerY = ry + rh * 0.5
-    local overlapX = math.abs(marble.x - centerX) / (rw * 0.5 + marble.radius)
-    local overlapY = math.abs(marble.y - centerY) / (rh * 0.5 + marble.radius)
+    local overlapX = math.abs(marble.x - centerX) / (rw * 0.5 + br)
+    local overlapY = math.abs(marble.y - centerY) / (rh * 0.5 + br)
 
     if overlapX >= overlapY then
         marble.vx = -marble.vx
-        if marble.x >= centerX then marble.x = rx + rw + marble.radius + 0.5
-        else marble.x = rx - marble.radius - 0.5 end
+        if marble.x >= centerX then marble.x = rx + rw + br + 0.5
+        else marble.x = rx - br - 0.5 end
     else
         marble.vy = -marble.vy
-        if marble.y >= centerY then marble.y = ry + rh + marble.radius + 0.5
-        else marble.y = ry - marble.radius - 0.5 end
+        if marble.y >= centerY then marble.y = ry + rh + br + 0.5
+        else marble.y = ry - br - 0.5 end
     end
     return true
 end
@@ -2583,31 +2593,34 @@ UpdateMarbles = function(dt)
 
             -- WO-05/P4：反弹弹性由 ballType 决定（巨型更沉、加速更滑），默认 1.0。
             -- v0.13.64：每次撞墙发一个回弹事件（带内法线），表现层据此播放回弹特效。
+            -- v0.13.66：撞墙反弹箱 = 85% 半径（伤害碰撞范围不变）。
             local elastic = def.bounceElasticity or 1.0
-            if marble.x - marble.radius < 0 then
-                marble.x = marble.radius
+            local bounceR = marble.radius * BALANCE.bounceBoxScale
+            if marble.x - bounceR < 0 then
+                marble.x = bounceR
                 marble.vx = math.abs(marble.vx) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
-                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
+                -- v0.13.66：回弹特效在墙面接触点发（x=0），不再用车辆圆心（否则效果悬在墙后屏幕内侧）。
+                Emit("marble_bounce", {id = marble.id, x = 0, y = marble.y,
                     ballType = marble.ballType, nx = 1, ny = 0})
-            elseif marble.x + marble.radius > DW then
-                marble.x = DW - marble.radius
+            elseif marble.x + bounceR > DW then
+                marble.x = DW - bounceR
                 marble.vx = -math.abs(marble.vx) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
-                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
+                Emit("marble_bounce", {id = marble.id, x = DW, y = marble.y,
                     ballType = marble.ballType, nx = -1, ny = 0})
             end
-            if marble.y - marble.radius < TOP_BOUND_Y then
-                marble.y = TOP_BOUND_Y + marble.radius
+            if marble.y - bounceR < TOP_BOUND_Y then
+                marble.y = TOP_BOUND_Y + bounceR
                 marble.vy = math.abs(marble.vy) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
-                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
+                Emit("marble_bounce", {id = marble.id, x = marble.x, y = TOP_BOUND_Y,
                     ballType = marble.ballType, nx = 0, ny = 1})
             end
 
@@ -2725,14 +2738,22 @@ UpdateMarbles = function(dt)
                             remaining = marble.enchantPierce })
                     end
                     if not pierced then
+                        -- v0.13.66：伤害先结算（满半径伤害圈不变），反弹用 85% 碰撞箱；
+                        -- 只进伤害圈的擦边命中不反弹，车辆保持本子步位移继续飞行。
+                        frameHitBricks[brick] = true
+                        DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
                         local resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
                         if not resolved then
+                            -- 扫掠命中的砖，子步终点可能已越过反弹箱：回到起点重试一次，
+                            -- 仍不命中则按擦边处理，恢复本子步位移。
                             marble.x = prevX
                             marble.y = prevY
                             resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
+                            if not resolved then
+                                marble.x = prevX + marble.vx * subDt
+                                marble.y = prevY + marble.vy * subDt
+                            end
                         end
-                        frameHitBricks[brick] = true
-                        DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
                     end
                 end
 
@@ -2874,7 +2895,7 @@ UpdateMarbles = function(dt)
         if marble.alive and marble.flightTime >= MAX_MARBLE_FLIGHT_TIME then
             marble.alive = false
             print("[Game][perf] expired marble id=" .. tostring(marble.id)
-                .. " flight=" .. string.format("%.1f", marble.flightTime))
+                .. " flight=" .. string.format("%." .. "1f", marble.flightTime))
         end
 
         if not marble.alive then
@@ -3658,15 +3679,18 @@ function Game.PointerDown(px, py, uiX, uiY)
     pull.uiX = uiX or px
     pull.uiY = uiY or py
     pull.dist = 0
+    pull.gnorm = 0
     aimX = SLING_X
     aimY = SLING_Y
     print("[Game] launch charge started")
 end
 
--- v0.13.64：把设计空间的圆位移换算成玩法位移。
---   ①在设计坐标里求 pull，按 MAX_PULL 半径圆钳制（屏幕上是正圆）；
---   ②除以投影缩放 sx/sy → 玩法位移（玩法平面上的范围因此是「屏幕圆的投影」椭圆）；
---   ③返回玩法 dx/dy 与本帧设计像素拉距 dist（供威力/蓄力映射）。
+-- v0.13.66：拖拽范围 =「屏幕正圆（半径 MAX_PULL）+ 玩法空间同步圆」。
+--   ①设计坐标求位移，按 MAX_PULL 圆钳制（屏幕为准：半径 85%×150 设计像素）；
+--   ②除以投影缩放 sx/sy 得玩法位移后，再按短轴半径圆钳制（长轴缩到短轴，
+--     玩法空间不再是宽>高的椭圆）；
+--   ③返回玩法 dx/dy、设计像素拉距 dist（死区判定）与归一化蓄力 gnorm
+--     （=玩法拉距/圆半径，方向无关、满拉恒 1，供威力/瞄准亮度映射）。
 ---@param uiX number
 ---@param uiY number
 ---@return number dx
@@ -3682,8 +3706,19 @@ local function PullToGameplay(uiX, uiY)
         udy = udy / dist * MAX_PULL
         dist = MAX_PULL
     end
+    local dx = udx / pull.sx
+    local dy = udy / pull.sy
+    -- 玩法圆半径 = 短轴（缩放较大的一轴对应较短的玩法范围）
+    local rShort = MAX_PULL / math.max(pull.sx, pull.sy)
+    local gdist = math.sqrt(dx * dx + dy * dy)
+    if gdist > rShort then
+        dx = dx / gdist * rShort
+        dy = dy / gdist * rShort
+        gdist = rShort
+    end
     pull.dist = dist
-    return udx / pull.sx, udy / pull.sy, dist
+    pull.gnorm = rShort > 1e-6 and gdist / rShort or 0
+    return dx, dy, dist
 end
 
 function Game.PointerMove(px, py, uiX, uiY)
@@ -3717,7 +3752,8 @@ function Game.PointerUp(px, py, uiX, uiY)
         Game.ClearLaunchCharge()
         return
     end
-    if activeBall then LaunchMarble(dx, dy, distance / BALANCE.maxPull) end
+    -- v0.13.66：威力用方向无关的玩法归一化拉距（满拉恒 1），不再按设计像素距离。
+    if activeBall then LaunchMarble(dx, dy, Game._pullSpace.gnorm or 0) end
     Game.ClearLaunchCharge()
 end
 
@@ -3958,13 +3994,13 @@ local function ComputeAimLine()
     local pullY = aimY - SLING_Y
     local length = math.sqrt(pullX * pullX + pullY * pullY)
     if length <= 1e-4 then return nil end
-    -- v0.13.64：威力按**设计像素拉距**归一（Game._pullSpace.dist），与投影缩放无关；
-    -- 玩法长度可能因投影 >MAX_PULL，用它归一会让弱拉就显示满亮。
+    -- v0.13.66：死区仍按设计像素判定；瞄准亮度用方向无关的玩法归一化拉距。
     local uiDist = Game._pullSpace.dist or 0
     if uiDist <= AIM_DEAD_ZONE then return nil end
     local dirX = -pullX / length
     local dirY = -pullY / length
-    local radius = activeBall.radius or 0
+    -- v0.13.66：瞄准预测反弹用 85% 反弹碰撞箱，与规则层撞墙判定一致。
+    local radius = (activeBall.radius or 0) * BALANCE.bounceBoxScale
     local x0, y0 = activeBall.x, activeBall.y
 
     -- 求射线与左/右/顶三边的最近正参数 t（发射向上，底边不参与）。
@@ -3979,8 +4015,8 @@ local function ComputeAimLine()
     end
     if t == math.huge or t <= 0 then return nil end
     -- v0.10.23：输出归一化蓄力 (死区→满拉 映射到 0..1)，供渲染层做弱拉渐显。
-    -- v0.13.64：改用设计像素拉距 uiDist 归一，避免投影缩放影响「弱拉渐显」。
-    local power01 = math.max(0, math.min(1, (uiDist - AIM_DEAD_ZONE) / (MAX_PULL - AIM_DEAD_ZONE)))
+    -- v0.13.66：改用玩法归一化拉距（满拉恒 1），死区之上从 gnorm 起渐显。
+    local power01 = math.max(0, math.min(1, Game._pullSpace.gnorm or 0))
     return {
         x1 = x0, y1 = y0,
         x2 = x0 + dirX * t, y2 = y0 + dirY * t,

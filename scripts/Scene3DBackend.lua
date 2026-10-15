@@ -27,6 +27,7 @@ local VisualCatalog = require "VisualCatalog"
 local TalentCatalog = require "TalentCatalog"
 local MetaUI = require "MetaUI"
 local StageIntro = require "ui.StageIntro"
+require "ui.GameplayTips"
 local StageTransition = require "ui.StageTransition"
 local ArtText = require "ui.ArtText"
 local DigitFont = require "ui.DigitFont"
@@ -1016,6 +1017,17 @@ end
 -- 模态外层沿用技术舱屏边支架，正文背景保持干净。
 local function DrawModalBackdrop(ctx, x, y, width, height)
     uiFx.surface.Background(ctx, x, y, width, height, uiFx.anim)
+    -- v0.13.66：齿轮装饰（画在背景之上、壳与正文之下，只占屏幕边缘留白带）。
+    -- 菜单/元层面板（全屏遮罩 y=0）：四角 + 上下边中点；
+    -- 战斗模态遮罩从 HUD 下缘起（y>0）：只画底部两角，顶部信息带不压齿轮。
+    if uiFx.gear then
+        if y <= 0 then
+            uiFx.gear.Corners(ctx, width, uiFx.anim, C.wash, C.dim)
+            uiFx.gear.EdgePair(ctx, width, uiFx.anim, C.wash, C.dim)
+        else
+            uiFx.gear.BattleCorners(ctx, width, uiFx.anim, C.wash, C.dim)
+        end
+    end
 end
 
 local function DrawBluePanel(ctx, x, y, width, height, fill, border, radius)
@@ -1254,9 +1266,9 @@ local function DrawPullHint(ctx, game)
     local t = (game.elapsed or 0) % period
     local progress = math.min(1, t / 0.9)
     local eased = 1 - (1 - progress) * (1 - progress)
-    -- 手部从上往下：起点在车辆上方 ~120px，终点贴近车辆。
+    -- 手部从上往下：起点在车辆上方 ~127.5px（与 85% 拖拽半径一致），终点贴近车辆。
     local handW, handH = 92, 138
-    local topY = slingY - 150
+    local topY = slingY - 127.5
     local bottomY = slingY - handH + 26
     local handX = slingX - handW * 0.5
     local handY = topY + (bottomY - topY) * eased
@@ -1641,6 +1653,11 @@ local function DrawMenu(ctx, game, meta)
     nvgGlobalAlpha(ctx, ModalIntro(game))
     -- 首页、功能页共享深海军底与屏边支架；真实车辆仍使用独立正交展台。
     uiFx.surface.Background(ctx, 0, 0, game.width, game.height, uiFx.anim)
+    -- v0.13.66：首页齿轮（左上被设置按钮占据，三角 + 底部中点），画在支架与内容之下。
+    if uiFx.gear then
+        uiFx.gear.MenuCorners(ctx, game.width, uiFx.anim, C.wash, C.dim)
+        uiFx.gear.MenuCenterBottom(ctx, game.width, uiFx.anim, C.wash, C.dim)
+    end
     DrawCornerBrackets(ctx, 8, 8, game.width - 16, game.height - 16,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 100}, 18, 1)
 
@@ -1750,6 +1767,11 @@ local function DrawGameOver(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
+
+    -- v0.13.66：结算页顶部两簇（窗口上方留白带，与底部两角呼应，四角稀疏分布）。
+    if uiFx.gear then
+        uiFx.gear.TopBandPair(ctx, game.width, uiFx.anim, C.wash, C.dim)
+    end
 
     -- v0.13.60：窗口垂直居中于可视区（92..960，高 868）——原 200..720 偏上、下方大片空白。
     -- winH=620 → winY=92+(868-620)/2=216，上下留白各 124，窗口内按钮下方也留白均匀。
@@ -1900,6 +1922,10 @@ local function DrawStageWin(ctx, game, presentation)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
+    -- v0.13.66：结算页顶部两簇（窗口上方留白带，与底部两角呼应，四角稀疏分布）。
+    if uiFx.gear then
+        uiFx.gear.TopBandPair(ctx, game.width, uiFx.anim, C.wash, C.dim)
+    end
 
     -- v0.13.60：窗口垂直居中于可视区（92..960，高 868）——原 200..668 偏上、下方大片空白。
     local winY = 216
@@ -2193,6 +2219,39 @@ local function DrawUpgradeActions(ctx, game, layout)
     DrawIcon(ctx, "rarity", layout.rerollAd.x + 6, layout.rerollAd.y + 12, 26)
 end
 
+-- 开局选车面板下方的玩法提示。这里不增加交互，只把两轮选车的决策信息
+-- 放到卡片下方空余区域，避免玩家只看到车型名称却不知道车辆差异。
+function DrawOpeningTipPanel(ctx, game)
+    local tips = require "ui.GameplayTips"
+    local x, y, w, h = 24, 720, game.width - 48, 126
+    local border = game.openingRound == 1 and C.cyanDim or C.warn
+    DrawTechPanel(ctx, x, y, w, h, C.rail, border)
+    DrawPixelText(ctx, x + 16, y + 12, "本局提示 · 车辆协同", 17, border)
+
+    local lines = {}
+    if game.openingRound == 1 then
+        lines = {
+            "先选首发：它决定第一发的基础节奏。",
+            "分裂清群 · 冰冻控场 · 加速追击 · 巨型破阵",
+        }
+    else
+        local first = game.openingFirstVehicle
+        local firstName = first and ((SLOT_NAMES[first] or "未知") .. "车") or "首发车"
+        lines = {
+            "备弹会加入发射轮换，和首发车互补覆盖战况。",
+            "当前首发：" .. firstName .. "　建议选择与它不同的车型",
+        }
+    end
+    for i, line in ipairs(lines) do
+        DrawPixelText(ctx, x + 18, y + 46 + (i - 1) * 27, line, 15, i == 2 and C.text or C.dim)
+    end
+
+    -- 在提示底部显示已选车辆的专属说明；第二轮尚未选中时显示候选策略。
+    local selected = game.openingRound == 1 and nil or game.openingFirstVehicle
+    local tip = selected and tips.GetVehicleTip(selected) or tips.Get(1)
+    DrawPixelText(ctx, x + 18, y + 99, tip, 13, C.cyanDim)
+end
+
 local function DrawLevelUp(ctx, game, presentation)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
@@ -2244,6 +2303,8 @@ local function DrawLevelUp(ctx, game, presentation)
         DrawPixelText(ctx, game.width * 0.5, 423, "请稍后再试", 16, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
+
+    if game.openingSelection then DrawOpeningTipPanel(ctx, game) end
 
     if not game.openingSelection then DrawUpgradeActions(ctx, game, layout) end
 
@@ -2725,6 +2786,13 @@ local function RenderOverlay(game, presentation, meta)
             DrawFloatTexts(vg_, game, presentation)
             DrawWaveBanner(vg_, game, presentation)
         end)
+        -- v0.13.66：战斗 HUD 墙体齿轮（不随震屏，左右墙各一簇、极低透明度）。
+        RunOverlayStage("hud-gears", function()
+            ApplyOverlayDesignTransform()
+            if uiFx.gear then
+                uiFx.gear.HudSides(vg_, DESIGN_W, uiFx.anim, C.wash, C.dim)
+            end
+        end)
     end
 
     ApplyOverlayDesignTransform()
@@ -2755,6 +2823,11 @@ local function RenderOverlay(game, presentation, meta)
             RunOverlayStage("stage-intro", function()
                 ApplyOverlayDesignTransform()
                 StageIntro.Draw(vg_, game)
+                -- v0.13.66：准备期也铺齿轮（压在暗化遮罩之上，中心面板之外）。
+                if uiFx.gear then
+                    uiFx.gear.Corners(vg_, DESIGN_W, uiFx.anim, C.wash, C.dim)
+                    uiFx.gear.EdgePair(vg_, DESIGN_W, uiFx.anim, C.wash, C.dim)
+                end
             end)
         end
     elseif game.state == "menu" then
@@ -2917,6 +2990,7 @@ function Backend.Init()
     uiFx.impact = require "ui.CombatImpact"
     uiFx.charge = require "ui.LaunchCharge"
     uiFx.opening = require "ui.OpeningTransition"
+    uiFx.gear = require "ui.GearDecor"
     uiFx.opening.Init({ C = C, text = DrawPixelText, panel = DrawMachinedPanel,
         rect = DrawRect, icon = DrawIcon, backdrop = DrawModalBackdrop,
         names = SLOT_NAMES, colors = SLOT_COLORS })

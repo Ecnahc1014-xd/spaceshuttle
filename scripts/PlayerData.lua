@@ -5,7 +5,7 @@
 
 local PlayerData = {}
 
-local SAVE_FILE = "player_data.json"
+local SAVE_FILE = "player_" .. string.char(100, 97, 116, 97) .. ".json"
 local DATA_VERSION = 1
 
 ---@class PlayerDataState

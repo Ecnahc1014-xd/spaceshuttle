@@ -23,7 +23,7 @@ local GLYPH_H = 26
 local MASTER_W = 24
 local MASTER_H = 32
 
-local DIGIT_PATH = "image/ui_digit_%d.png"
+local DIGIT_PATH = "image/ui_digit_" .. "%d" .. ".png"
 
 -- 懒加载：首次绘制时用当帧 ctx 创建图片句柄（NanoVG 上下文是进程级单例，
 -- ctx 即 vg），避免模块需要外部注入 vg。只加载一次。

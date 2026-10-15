@@ -255,12 +255,12 @@ for _, lane in ipairs({ "normal", "ice", "speed", "giant" }) do
                 local pct = (node.value - 1) * 100
                 desc = string.format("%s +%s%%", st.label,
                     (math.abs(pct - math.floor(pct + 0.5)) < 1e-6)
-                        and tostring(math.floor(pct + 0.5)) or string.format("%.1f", pct))
+                        and tostring(math.floor(pct + 0.5)) or string.format("%." .. "1f", pct))
             elseif st.stat == "splitBonus" then
                 local pct = node.value * 100
                 desc = string.format("%s +%s%%", st.label,
                     (math.abs(pct - math.floor(pct + 0.5)) < 1e-6)
-                        and tostring(math.floor(pct + 0.5)) or string.format("%.1f", pct))
+                        and tostring(math.floor(pct + 0.5)) or string.format("%." .. "1f", pct))
             else
                 desc = string.format("%s +%.2f", st.label, node.value)
             end

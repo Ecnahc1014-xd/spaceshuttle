@@ -7,14 +7,11 @@
 
 # 项目记忆索引
 
-## 天赋树扩到 13 阶 + 整树价格重做（2026-10-15，talent-13stages）
-- 用户：「天赋树额外增加六个更高档位，花费更高但大致收益不变（不加新通用天赋），零散化这一条树，从低到高：经验数据卡，弹药扩容卡，免费刷新+1，加速，贯穿，免费刷新+1，连锁，之后都是获取零件增加」；澄清：**6 档加在整棵树上**（六条线一起到 13 阶）、**整条树价格重做为相邻至少 1.5 倍**。
-- `TalentCatalog`：`STAGE_STARS` 7→13（0/3/9/18/27/36/45/54/63/72/81/90/99）；`STAGE_COST` 7→13（前 7 阶原价不变，新增 30000/45000/68000/102000/153000/230000，**全表相邻最小倍率 1.500**）；新增 `REROLL_PER_NODE`；`general_b` 重排 `[1]xp [2]ammo [4]momentum [5]pierce [7]chain`，`REROLL_STAGES={[3],[6]}` 走新 kind `rerollPlus`，8–13 阶 partsPct。
-- `Game`：`talentRerollBonus` 累加；`upgradeRerollFreeUsed` bool→int；新增 `Game.GetFreeRerollTotal()`（=1+bonus，**挂 Game 表**避 200 上限）；快照 `rerollFreeLeft/Total`。`Scene3DBackend` 免费重抽按钮文案改读快照 N/M。`MetaCatalog` 补 rerollPlus 图标。
-- 收益不变：车线/成长线**沿用原规律延伸**（1 阶解锁车、2 阶专属卡、5 倍数阶 big；成长线每阶暴击 +2%、每 3 阶 +1 攻击），**不新增通用天赋**。
-- 验证：官方多人 build+预览上传 ✅；LSP 36 文件 0 Error；`probe_talent13` PASS（78 节点 / 门槛 0..99 / 相邻最小倍率 1.500 / general_b 排布 / 两处图标映射）；`probe_reroll` PASS（无天赋 total=1 用一次即尽 / 两个 rerollPlus→total=3 恰 3 次 / 重开复位）；`probe_t13draw` PASS（真渲染 13 阶零错）；战斗冒烟零目标错误。BUILD_VERSION/大厅 →0.13.66。
-- ⚠️ `Game.lua` 顶层 local 加完到 199/200 → `GetFreeRerollTotal` 挂 Game 表回收（AB-166）。
-- ⚠️ 探针「开局→战斗」要先跑完两轮选车（每帧无条件 `PickUpgrade(1)`+`Update` 直到 `state=="playing"`）；`GoToMenu()` 不接受 levelup 态。探针脚本用 python 写盘（heredoc 会转义 `\!`）。
+## 恢复 settings 的 official-res（2026-10-15，settings-official-res-restore 附记）
+- 症状：`maker_build` 在 `project_validation` 阶段被拦，`status: invalid_project_settings`，issues 只有一条 `sources.official-res.tag must be "stable"`，`code_submit_status: not_started`，代码零改动。
+- 真因：Maker 插件 Runtime（0.0.34）现在**硬校验** `.project/settings.json`——sources 必须同时有 `engine` / `engine-res` / `official-res` 且 tag 均为 `stable`。本项目 **v0.13.18 为修官方素材 pin 曾手删 `official-res` 并随构建提交**，那个删改现在会让构建跑不起来。
+- 修法：只补回 `"official-res": { "tag": "stable" }`，`@runtime`（multiplayer/ad）一字未动。官方资源**下载**与否取决于 `.build/asset_adopt.json` 的采纳订阅与清单 pinned 引用（本地两者都不存在），与源声明本身无关。
+- 验证：官方多人 build ✅（`1a3c24c`，预览已上传、右侧预览已打开）。LSP/玩法回归跳过（只改配置）。⚠️ AB-155 的「四证①（sources 有无 official-res）」已失效，见 AB-345。
 
 ## 敌机新行为「幻影体素块」+ 缓入曲线上移（2026-10-15，phantom-voxel 附记）
 - 用户：①新增敌机行为——从**未被破坏的引擎灯光源块**发射高速「幻影体素块」，穿过其他敌机、继承源灯块剩余血量一半（≥1），越线按普通越线扣基地血；**不是所有机型都有**，频率按机型、是否发射按难度随机；**每关前 5 波至少 10 架**。②缓入 60%→100% 改为 **75%→100%**，起始倍率随关卡降到**关20 封底 60%**。
@@ -27,8 +24,8 @@
 - 验证：LSP 36 文件 0 Error；`probe_phantom` ALL PASS（引擎灯 2 块、前5波发射 20、峰值在场 8）；`probe_phrender` 真渲染 `state=playing wave=3 phantomsSeenMax=8`、零目标错误。官方多人 build + 预览上传 ✅。抗体 AB-342/343/344。
 
 项目：货车大战飞机
-当前版本：0.13.66
-简述：天赋树扩到 13 阶（六条线一起加 6 个更高档位）+ 整树价格重做（相邻≥1.5×）+ 通用卡线打散重排（经验/弹药/免费刷新/加速/贯穿/免费刷新/连锁 + 6 阶零件）+ 新增「免费刷新 +1」（每局免费重抽 +1）。
+当前版本：0.13.65
+简述：敌机新行为「幻影体素块」（引擎灯发射、穿敌机、越线扣血）；缓入曲线上移到 75%→关20 封底 60%。
 最后巩固：2026-10-15
 
 ## 冲击波放大三层 + 外套 80%/1.2×/2s停留+3s消散 + 拖拽=设计空间圆投影（2026-10-15，bowwave-shell-drag-2026-10-15）
