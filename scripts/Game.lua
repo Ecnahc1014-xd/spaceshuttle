@@ -40,6 +40,11 @@ end
 --   pending = 已使用但当前没有待发车时，顺延给「下一个预备发射的车」的附魔卡
 --   lastWave= 最近一次发放附魔卡时的波号（用于「每完成一波发一张」判定）
 Game._enchant = { card = nil, pending = nil, lastWave = 0 }
+-- v0.13.65：幻影体素块——状态全部收进一张表（零新增顶层 local，AB-166）。
+--   list       = 当前在场幻影块数组（结构见 SpawnPhantom：矩形 + 血量 + 速度）
+--   guaranteed = 本关前 5 波累计已发射数（用于「前 5 波至少 10 架」保底）
+--   firedKeys  = 本关已发射过幻影的机型集合（保底时优先选尚未发射的机型）
+Game._phantom = { list = {}, guaranteed = 0, firedKeys = {}, nextId = 1, guaranteeTimer = 0 }
 -- v0.13.60：失败结算过渡（收进一张表，不新增顶层 local，AB-166）。
 --   at     = 进入 gameover 的时刻（elapsed），过渡动画的计时基准
 --   revive = 本局是否还能复活（决定动画里是否出现「可复活」提示）
@@ -859,6 +864,11 @@ ResetGame = function(startStage)
     activeWords = {}    -- P11：词条重置
     clearStreak = 0
     bricksBroken = 0
+    -- v0.13.65：幻影体素块随关卡重开清空（在场块、本关保底计数、已发射机型集合全部复位）。
+    Game._phantom.list = {}
+    Game._phantom.guaranteed = 0
+    Game._phantom.firedKeys = {}
+    Game._phantom.guaranteeTimer = 0
     BALL_TUNING.damageBonus = 0
     BALL_TUNING.giantArea = 0
     BALL_TUNING.splitBonus = 0
@@ -1013,12 +1023,16 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opt
 
     local bricks = {}
     for entry in (data.data .. ";"):gmatch("(.-);") do
-        local col, row = entry:match("(%d+),(%d+),%d+,%d+,%d+")
+        local col, row, er, eg, eb = entry:match("(%d+),(%d+),(%d+),(%d+),(%d+)")
         if col then
+            -- v0.13.65：标记「引擎灯」体素（bitmapToData 用 110,46,40 表示 E，ClassifySlot 归 engine）。
+            -- 幻影体素块只能由**未被破坏的**引擎灯块发射。
+            local isEngine = (er == "110" and eg == "46" and eb == "40")
             table.insert(bricks, {
                 col = tonumber(col), row = tonumber(row),
                 hp = brickHp, maxHp = brickHp, alive = true,
                 ejected = false,
+                isEngine = isEngine,
             })
         end
     end
@@ -2988,6 +3002,185 @@ local function SummonBossEscort(boss)
     return true
 end
 
+-- v0.13.65：幻影体素块。全部实现为 Game._phantom 的表字段（**零新增顶层 local**，AB-166），
+-- 且挂表定义在它引用到的文件 local（CollideBrick / GetMarbleDamage / Emit / SegmentNearRect 等）之后，
+-- 避免「先用后声明」解析成全局 nil（AB-100 同族）。
+-- 返回该机**第一个存活且未弹出的引擎灯块**（幻影只能从光源块发射；被打掉就没有了）。
+Game._phantom.FindEngineBrick = function(enemy)
+    for _, brick in ipairs(enemy.bricks) do
+        if brick.alive and not brick.ejected and brick.isEngine then return brick end
+    end
+    return nil
+end
+
+-- 从源敌机的引擎灯块发射一枚幻影块：继承该灯块**剩余血量一半（至少 1）**，
+-- 速度 = 当前关卡基准速度 × 0.42 × PHANTOM_SPEED_MUL（基准速度已含波次缓入）。
+Game._phantom.Spawn = function(enemy, brick)
+    -- 同屏上限：幻影块是高速投射物，过多会刷屏并压真机帧率（每次一个 3D 盒子）。
+    if #Game._phantom.list >= 8 then return false end
+    local bs = enemy.brickSize
+    local hp = math.max(1, math.floor(brick.hp / 2))
+    local w = bs * 0.9
+    local h = bs * 0.9
+    local cx = enemy.x + (brick.col - 0.5) * bs
+    local cy = enemy.y + (brick.row - 0.5) * bs
+    local vy = StageCatalog.GetBaseSpeed(stage, stageWave) * 0.42 * StageCatalog.PHANTOM_SPEED_MUL
+    local p = {
+        id = Game._phantom.nextId,
+        x = cx - w * 0.5, y = cy - h * 0.5, w = w, h = h,
+        vy = vy,
+        hp = hp, maxHp = hp,
+        alive = true,
+        sourceKey = enemy.aircraftKey,
+        tag = "phantom",
+    }
+    Game._phantom.nextId = Game._phantom.nextId + 1
+    Game._phantom.list[#Game._phantom.list + 1] = p
+    Emit("phantom_fired", {id = p.id, x = cx, y = cy, aircraftKey = enemy.aircraftKey, hp = hp})
+    return true
+end
+
+-- 逐帧推进幻影块：下移 → 被弹珠击碎 → 越线扣基地血。
+Game._phantom.Update = function(dt)
+    local list = Game._phantom.list
+    for i = #list, 1, -1 do
+        local p = list[i]
+        if not p.alive then
+            table.remove(list, i)
+        else
+            p.y = p.y + p.vy * dt
+            -- 被弹珠击碎（幻影块可被击落；穿过其他敌机不受影响——它不在 veggies 里）。
+            for _, marble in ipairs(marbles) do
+                if marble.alive then
+                    local prevX = marble.x - marble.vx * dt
+                    local prevY = marble.y - marble.vy * dt
+                    if SegmentNearRect(prevX, prevY, marble.x, marble.y,
+                        p.x, p.y, p.w, p.h, marble.radius) then
+                        local overlap = IntersectsBrick(marble, p.x, p.y, p.w, p.h)
+                            or SweptHitsBrick(prevX, prevY, marble.x, marble.y,
+                                marble.radius, p.x, p.y, p.w, p.h)
+                        if overlap then
+                            local def = BALL_TYPES[marble.ballType]
+                            p.hp = p.hp - GetMarbleDamage(marble, def)
+                            CollideBrick(marble, p.x, p.y, p.w, p.h)
+                            if p.hp <= 0 then
+                                p.alive = false
+                                Emit("phantom_destroyed", {id = p.id, x = p.x + p.w * 0.5,
+                                    y = p.y + p.h * 0.5, aircraftKey = p.sourceKey})
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+            -- 越过防线：按普通越线（1 行 = 1 伤）扣基地血，装甲减伤与护盾照常生效。
+            if p.alive and p.y + p.h >= DANGER_Y then
+                p.alive = false
+                local dmg = math.max(1, math.floor(BRICK_BASE_DAMAGE + BALL_TUNING.lineDamageBonus + 0.5))
+                if BALL_TUNING.armorReduce > 0 then
+                    dmg = math.max(1, math.floor(dmg * (1 - BALL_TUNING.armorReduce) + 0.5))
+                end
+                if baseShield > 0 then
+                    local absorbed = math.min(baseShield, dmg)
+                    baseShield = baseShield - absorbed
+                    dmg = dmg - absorbed
+                end
+                Emit("phantom_breached", {id = p.id, x = p.x + p.w * 0.5, y = DANGER_Y})
+                if dmg > 0 then
+                    baseHp = baseHp - dmg
+                    Emit("base_hit", {x = p.x + p.w * 0.5, y = DANGER_Y, brick = true,
+                        damage = dmg, rows = 1})
+                end
+                if baseHp <= 0 and gameState == "playing" then
+                    baseHp = 0
+                    gameState = "gameover"
+                    Game.CancelHoldSpeed()
+                    Game.ClearLaunchCharge()
+                    aiming = false
+                    startArmed = false
+                    if score > highScore then highScore = score end
+                    Game._defeat.at = elapsed
+                    Game._defeat.revive = not reviveUsed
+                    Emit("game_over", {score = score, highScore = highScore, wave = wave,
+                        canRevive = not reviveUsed})
+                end
+            end
+        end
+    end
+end
+
+-- 每帧的幻影发射判定（普通机型，按频率系数 + 难度概率随机）。
+--   - 只有 PHANTOM_KEYS 列出的机型有该行为（用户：「不是所有种类都有」）。
+--   - 每次检查的触发概率 = 该机型 prob × 关卡难度系数（关1 0.6 → 关20+ 1.5）。
+--   - 检查间隔 = 该机型 interval / fireMul（fireMul 越大检查越频繁）。
+--   - 「本关前 5 波至少 10 架」：累计未达 10 且仍在前 5 波时，每 1.2s 强制挑一架未发射过的机型发射。
+Game._phantom.TryFire = function(dt)
+    local ph = Game._phantom
+    local diff = StageCatalog.GetPhantomDifficulty(stage)
+    -- 普通随机发射：逐机按各自 interval 检查，概率 = prob × 难度系数。
+    for _, enemy in ipairs(veggies) do
+        if not enemy.dead and not enemy.breached and not enemy.isElite and not enemy.isBoss then
+            local cfg = StageCatalog.PHANTOM_KEYS[enemy.aircraftKey]
+            if cfg then
+                local interval = cfg.interval / math.max(0.2, cfg.fireMul)
+                -- 首次检查给一个随机相位，避免同波所有敌机在同一帧齐射。
+                local t = enemy.phantomTimer
+                if t == nil then t = Random() * interval end
+                t = t - dt
+                if t <= 0 then
+                    enemy.phantomTimer = interval
+                    if Random() < cfg.prob * diff then
+                        local brick = ph.FindEngineBrick(enemy)
+                        if brick then
+                            if ph.Spawn(enemy, brick) then
+                                ph.guaranteed = ph.guaranteed + 1
+                            end
+                            ph.firedKeys[enemy.aircraftKey] = true
+                        end
+                    end
+                else
+                    enemy.phantomTimer = t
+                end
+            end
+        end
+    end
+    -- 「本关前 5 波至少 10 架」保底：累计不足 10 且仍在前 5 波时，每 1.1s 挑一架
+    -- **尚未发射过**的可发射机型强制发一枚（优先新机型，避免总靠同一架凑数）。
+    if stageWave <= 5 and ph.guaranteed < 10 then
+        ph.guaranteeTimer = ph.guaranteeTimer + dt
+        if ph.guaranteeTimer >= 1.1 then
+            ph.guaranteeTimer = 0
+            local pick = nil
+            for _, enemy in ipairs(veggies) do
+                if not enemy.dead and not enemy.breached and not enemy.isElite and not enemy.isBoss
+                    and StageCatalog.PHANTOM_KEYS[enemy.aircraftKey]
+                    and not ph.firedKeys[enemy.aircraftKey] then
+                    pick = enemy
+                    break
+                end
+            end
+            if not pick then
+                for _, enemy in ipairs(veggies) do
+                    if not enemy.dead and not enemy.breached and not enemy.isElite and not enemy.isBoss
+                        and StageCatalog.PHANTOM_KEYS[enemy.aircraftKey] then
+                        pick = enemy
+                        break
+                    end
+                end
+            end
+            if pick then
+                local brick = ph.FindEngineBrick(pick)
+                if brick then
+                    if ph.Spawn(pick, brick) then
+                        ph.guaranteed = ph.guaranteed + 1
+                    end
+                    ph.firedKeys[pick.aircraftKey] = true
+                end
+            end
+        end
+    end
+end
+
 UpdateEnemies = function(dt)
     -- 先用固定长度遍历本帧已有编队，召唤机延后一帧进入更新。
     local existingCount = #veggies
@@ -3401,6 +3594,10 @@ function Game.Update(dt, inputDt)
     UpdateMarbles(dt)
     if gameState ~= "playing" then return end
     UpdateEnemies(dt)
+    if gameState ~= "playing" then return end
+    -- v0.13.65：幻影体素块——先判定发射，再推进在场幻影（下移/被击碎/越线扣血）。
+    Game._phantom.TryFire(dt)
+    Game._phantom.Update(dt)
     if gameState ~= "playing" then return end
     -- v0.13.26：同波错峰生成——本波还没放完时按间隔逐架放出（精英护航同机制）。
     if pendingSpawn.remaining > 0 then
@@ -3860,6 +4057,8 @@ function Game.GetSnapshot()
     s.openingTimer = Game._opening.timer
     s.openingPhaseTotal = Game._opening.durations[Game._opening.phase] or 0
     s.veggies = veggies
+    -- v0.13.65：在场幻影体素块（只读；渲染层画成高亮方块）。原始引用，不做深拷贝。
+    s.phantoms = Game._phantom.list
     s.marbles = marbles
     s.aiming = aiming
     -- v0.11.4：新手下拉提示只在「本局还没发射过、也没正在拖拽」时显示。

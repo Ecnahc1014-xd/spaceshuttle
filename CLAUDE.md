@@ -4,6 +4,20 @@
 
 ## 当前状态
 
+- 附记: phantom-voxel（2026-10-15，**敌机新行为「幻影体素块」+ 缓入曲线上移到 75%→60%**；不改展示版本）：
+  - 用户两件事：①新增敌机行为——基于**未被破坏的引擎灯光源块**发射高速「幻影体素块」，可穿过其他敌机，继承源灯块剩余血量一半（至少 1），越过玩家防线时按普通越线扣基地血；**不是所有机型都有**，频率按机型、是否发射按难度随机数；**每关前 5 波至少 10 架**发射此行为。②第 1–4 波缓入倍率从 60%→100% 改为 **75%→100%**，且起始倍率随关卡降到**关 20 封底 60%**（此前 v0.13.62 是 60%→40%）。
+  - **口径（先 AskUserQuestion 确认 4 点）**：幻影弹速乘**本次新的缓入**；「前 5 波至少 10 架」= **每关前 5 波合计 ≥10**；「光源块」= **引擎灯（E）**；越线后**像普通越线一样扣基地血**。
+  - **曲线（`StageCatalog.GetWaveSpeedRamp`）**：`start = 0.75 - min(stage-1,19)*(0.15/19)`（关1 0.75 → 关20 起 0.60 封底）；第 4 波仍恒 1.0。`stage` 仍为可选尾参（缺省 1）。
+  - **幻影数据层（`StageCatalog`）**：`PHANTOM_KEYS`（scout/dart/striker/hive/manta/bomber/cruiser 七型；**精英/Boss 不在表内** = 无此行为），每型 `{fireMul, prob, interval}`；`PHANTOM_SPEED_MUL = 5.0`；`GetPhantomDifficulty(stage)` = 0.6→1.5（关20 封顶，越高关越易发射）。
+  - **幻影规则层（`Game.lua`，全部收进 `Game._phantom` 表——零新增顶层 local，AB-166）**：`FindEngineBrick`（找存活且未弹出的 `isEngine` 块）、`Spawn`（继承 `floor(灯块.hp/2)` 至少 1；速度 = `GetBaseSpeed(stage,stageWave)*0.42*5.0`；**同屏上限 8**）、`Update`（下移→被弹珠击碎[走 `GetMarbleDamage`+`CollideBrick`]→越线扣血，含装甲减伤/护盾/`_defeat`+`game_over`）、`TryFire`（逐机按 interval 检查，概率 = `prob × 难度`；**前 5 波累计<10 时每 1.1s 强制挑未发射过的机型补一发**）。`CreateEnemy` 给砖块加 `isEngine`（按 `bitmapToData` 的 E 色 `110,46,40` 判定）。快照出 `s.phantoms`。`ResetGame` 清空幻影状态。
+  - **幻影渲染层（`Renderer3D`，挂 `Renderer3D.phantom` 表）**：每块一个 `CustomGeometry` 盒子（**走敌机箱体同一条已验证可见的 `DiffVCol`+白底纹理+顶点色路径**），颜色取源机型 `hullMain` 向青白偏移 + 常驻自发光；`ClearRunVisuals`/`Shutdown` 释放。**只画，不参与命中**。
+  - **表现层（`Presentation`）**：`phantom_fired`（源机青白闪光+小环）/`phantom_destroyed`（火花+碎片）/`phantom_breached`（警示小环）三条 `FEEDBACK_MAP` + handler。**顺手修 scout 位图缺 E 块**（加背侧两枚引擎灯）。
+  - 验证：LSP workspace **36 文件 0 Error**（1548 诊断）；规则探针 `probe_phantom` **ALL PASS**（曲线：关1 0.75/关10 0.679/关20 0.60/关21 0.60 封底、单调降、波4 恒 1.0；`PHANTOM_KEYS` 7 型且精英/Boss 无；难度 0.6→1.5；开局敌机 43 块中 **引擎灯 2 块**；**本关前 5 波累计发射 20 架、峰值在场 8**）；真渲染冒烟 `probe_phrender`（真实 `client_main`，完成两轮选车→进关→发射→飞行）`state=playing stage=1 wave=3 enemies=6 phantomsSeenMax=8 launched=true`、零 `overlay stage failed`/`Execute Lua function failed`/`LoadChunk failed`/`VertexBuffer is empty`、无 `phantom sync failed`。官方多人 build + 预览上传 ✅。展示版本归并发会话（本批未动 BUILD_VERSION）。
+  - 边界：手机 FPS（幻影每块一个 3D 盒子，已设同屏 8 上限）/ 全 DPR / 用户审美未验收；**真机观感（幻影块速度/密度/青白高亮是否够「幻影」、前 5 波 20 架是否偏多）需 Preview 目视**。
+  - ⚠️ **避雷 AB-342：新玩法若依赖「某类体素块」，先确认**目标机型真的有那种块**（phantom-voxel 实测）**：用户要求幻影从「光源块」发射——本项目 scout（**第 1 关唯一机型**）的 ASCII 位图**根本没有 E（引擎灯）块**，导致关1 恒零发射（探针实测「引擎灯=0、累计发射=0」）。**做法**：接「基于某类块/单位」的新玩法时，**逐机型核对该块是否存在**（本项目 7 种可发射机型里 scout 缺 E，其余都有），缺的就补上（给 scout 背侧加两枚 E）。⚠️ 判据：探针要**同时断言「目标块存在」+「玩法真的触发」**，只测「配置表非空」会漏掉「机型根本没这种块」。
+  - ⚠️ **避雷 AB-343：保底计数要挂在「真正生效的那条路径」上，且**成功才 +1**（phantom-voxel）**：本项目「前 5 波至少 10 架」初版把保底写成「保底期内每次检查都强制发射」→ 探针实测 **64 架**（远超 10，且刷屏）。修法：①**随机路径与保底路径分开**（随机按概率，保底只在累计<10 时补）；②保底**挑「尚未发射过的机型」**；③`Spawn` 返回成功/失败（**同屏上限 8 时返回 false**），**只有成功才 `guaranteed+1`**。⚠️ 「至少 N」是**下限**不是目标——初版做到 64 就是「把下限当成了必达量」。探针要断言「≥N」**并**打印实际值供人判断是否过量。
+  - ⚠️ **避雷 AB-344：新增「逐实体 3D 盒子」类投射物要给**同屏上限**，并走**已验证可见的材质路径**（phantom-voxel）**：幻影块每块一个 `CustomGeometry`（一个 draw call）→ 设**同屏上限 8**（`Spawn` 达上限返回 false）。材质**必须走敌机箱体同一条 `DiffVCol`+白底纹理+顶点色**（本环境离屏 3D 恒黑，其他路径无法自证可见，AB-162/325）；**常驻自发光兜底**。⚠️ 渲染层**只画不判命中**——命中判定在规则层（`Game._phantom.Update`），两者用同一矩形。
+
 - 附记: bowwave-shell-drag-2026-10-15（2026-10-15，**冲击波放大三层 + 外套 80%/1.2×/发射后2s停留+3s消散 + 拖拽范围=设计空间圆的投影**；沿用展示0.13.63，不抢并发版本）：
   - 用户三点要求：①「冲击波太小太简单」→ 放大 + 加层次；②「全息幻影以现在 80% 不透明度、比车稍微大一点（20%）套在车上，发射后 2s 才会开始消散，之后 3s 平滑消散完」；③「发射拖车辆的圆形拖动范围不是指 3d 空间的圆形范围，而是 2d 空间对应直径圆形范围的投影」。只改 VisualCatalog/Presentation/VehicleChargeFx/VehicleBowWave/Game/client_main，不动伤害/初速/回收/附魔/拖尾/暗科技 UI。
   - **① 冲击波放大三层**：`VehicleBowWave` 的 V 形参数 `V_DEPTH 0.34→0.62 / V_SPREAD 1.12→1.90 / THICKNESS 0.12→0.18 / HALF_HEIGHT 0.05→0.12 / GAP 0.16→0.20`；`EmitCar` 改为**三层叠放**（`BANDS` 表：外层最宽最淡 bright0.42 → 中层 0.68/0.78 → 内层最窄最亮 0.38/1.30 白热核），每层各自缩放宽度/深度/厚度/半高并沿前向错开（ahead 0.10/0.03/0.00），形成有纵深的冲击波墙。`BANDS_PER_CAR=3`、`PER_CAR = SEGMENTS*24*3+12 = 1188`（预算 8 车/9504 顶点）。独立 Forward 实图确认三层可见。

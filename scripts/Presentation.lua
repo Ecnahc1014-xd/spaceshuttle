@@ -176,6 +176,10 @@ local FEEDBACK_MAP = {
     enchant_split = {"enchantSplit"},
     enchant_homing = {"enchantHoming"},
     enchant_lifesteal = {"enchantLifesteal"},
+    -- v0.13.65：幻影体素块——发射（源机青白闪光）、被击碎、越线。
+    phantom_fired = {"phantomFired"},
+    phantom_destroyed = {"phantomDestroyed"},
+    phantom_breached = {"phantomBreached"},
 }
 
 local function GetBrickKey(enemyId, col, row)
@@ -659,6 +663,31 @@ local FEEDBACK_HANDLERS = {
     enchantLifesteal = function(event)
         SpawnFloatText(event.x, event.y - 26, "+" .. tostring(event.amount or 1), {120, 255, 160}, 1.0)
         SpawnParticles(event.x, event.y, {120, 255, 160}, 4, "spark")
+    end,
+    -- v0.13.65：幻影体素块三条反馈。
+    phantomFired = function(event)
+        -- 源机引擎灯处青白闪光（幻影块「弹出」的瞬间）。
+        SpawnParticles(event.x, event.y, {180, 255, 245}, 3, "spark")
+        shockRings[#shockRings + 1] = {
+            x = event.x, y = event.y, life = 0.22, maxLife = 0.22,
+            r0 = 4, r1 = 18,
+            r = 150, g = 240, b = 230,
+        }
+    end,
+    phantomDestroyed = function(event)
+        -- 幻影块被击碎：青白火花 + 少量碎片。
+        SpawnParticles(event.x, event.y, {200, 255, 250}, 4, "spark")
+        if math.random() < 0.5 then
+            SpawnParticles(event.x, event.y, {170, 230, 230}, 1, "shard")
+        end
+    end,
+    phantomBreached = function(event)
+        -- 幻影块越过防线：警示色小冲击环（真正的扣血反馈由 base_hit 承担）。
+        shockRings[#shockRings + 1] = {
+            x = event.x, y = event.y, life = 0.3, maxLife = 0.3,
+            r0 = 6, r1 = 26,
+            r = 120, g = 220, b = 255,
+        }
     end,
     -- marble_removed 无需维护拖尾状态。
 }

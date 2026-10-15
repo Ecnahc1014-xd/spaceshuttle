@@ -2241,6 +2241,12 @@ local function ClearRunVisuals()
     if bowWave_.ready then bowWave_.module.Clear(true) end
     ClearVoxelDebris()
     ClearTrailSamples()
+    -- v0.13.65：幻影体素块随重开清空（防上局同 id 复用残留）。
+    for id, rec in pairs(Renderer3D.phantom.records) do
+        if rec.geometry then DisposeComponent(rec.geometry) end
+        if rec.node then RemoveNode(rec.node) end
+        Renderer3D.phantom.records[id] = nil
+    end
     for id, record in pairs(enemyMeshes_) do
         if record.volume and voxelWorld_ then
             voxelWorld_:RemoveVolume(record.volume)
@@ -2267,6 +2273,82 @@ local function ClearRunVisuals()
 end
 
 -- bowWaveDt 可选：未乘 timeScale 的允许推进时间；广告冻结时显式传 0。
+-- v0.13.65：幻影体素块渲染。每块一个 CustomGeometry 盒子（走敌机箱体同一条已验证可见的
+-- DiffVCol + 白底纹理 + 顶点色路径），颜色按**源机型**取配色并整体向青白偏移、常驻自发光，
+-- 与普通敌机区分（「幻影」高亮）。状态挂 Renderer3D.phantom 表，零新增顶层 local（AB-166）。
+Renderer3D.phantom = { records = {} }
+Renderer3D.phantom.sync = function(game, presentation)
+    local list = game.phantoms or {}
+    local active = {}
+    local vc = presentation and presentation.visualCatalog
+    for i = 1, #list do
+        local p = list[i]
+        if p.alive then
+            active[p.id] = true
+            local rec = Renderer3D.phantom.records[p.id]
+            if not rec then
+                local node = scene_:CreateChild("Phantom_" .. tostring(p.id))
+                local geom = node:CreateComponent("CustomGeometry")
+                geom.castShadows = false
+                geom:SetDynamic(false)
+                geom:BeginGeometry(0, TRIANGLE_LIST)
+                local w = p.w * WORLD_SCALE
+                local h = p.h * WORLD_SCALE
+                local d = math.max(w, h) * 0.9
+                local hw, hh, hd = w * 0.5, h * 0.5, d * 0.5
+                -- 源机型配色（找不到时用中性青）：取该机型主装甲色，幻影整体向青白提亮偏移。
+                local rgb = {0.55, 0.92, 0.86}
+                if vc and vc.GetAircraftPalette then
+                    local pal = vc.GetAircraftPalette(p.sourceKey)
+                    local hm = pal and pal.hullMain
+                    if hm then rgb = {hm[1] / 255, hm[2] / 255, hm[3] / 255} end
+                end
+                local col = Color(
+                    math.min(1, rgb[1] * 0.4 + 0.6),
+                    math.min(1, rgb[2] * 0.4 + 0.9),
+                    math.min(1, rgb[3] * 0.4 + 0.85), 1)
+                local function face(c1, c2, c3, c4, n, tint)
+                    local c = Color(col.r * tint, col.g * tint, col.b * tint, 1)
+                    local vs = {c1, c2, c3, c4}
+                    for _, v in ipairs(vs) do
+                        geom:DefineVertex(v); geom:DefineNormal(n)
+                        geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
+                    end
+                    -- 三角形 1: c1,c2,c3 ; 三角形 2: c1,c3,c4
+                    geom:DefineVertex(c1); geom:DefineNormal(n); geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
+                    geom:DefineVertex(c3); geom:DefineNormal(n); geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
+                    geom:DefineVertex(c4); geom:DefineNormal(n); geom:DefineColor(c); geom:DefineTexCoord(Vector2(0, 0))
+                end
+                local P = function(x, y, z) return Vector3(x, y, z) end
+                face(P(-hw,-hh, hd), P(-hw, hh, hd), P( hw, hh, hd), P( hw,-hh, hd), Vector3(0,0, 1), 1.00)
+                face(P( hw,-hh,-hd), P( hw, hh,-hd), P(-hw, hh,-hd), P(-hw,-hh,-hd), Vector3(0,0,-1), 0.85)
+                face(P(-hw,-hh,-hd), P(-hw, hh,-hd), P(-hw, hh, hd), P(-hw,-hh, hd), Vector3(-1,0,0), 0.80)
+                face(P( hw,-hh, hd), P( hw, hh, hd), P( hw, hh,-hd), P( hw,-hh,-hd), Vector3( 1,0,0), 0.90)
+                face(P(-hw, hh, hd), P(-hw, hh,-hd), P( hw, hh,-hd), P( hw, hh, hd), Vector3(0, 1,0), 0.95)
+                face(P(-hw,-hh,-hd), P(-hw,-hh, hd), P( hw,-hh, hd), P( hw,-hh,-hd), Vector3(0,-1,0), 0.70)
+                geom:Commit()
+                local mat = Material:new()
+                mat:SetTechnique(0, cache:GetResource("Technique", "Techniques/DiffVCol.xml"))
+                mat:SetTexture(TU_DIFFUSE, CreateWhiteTexture())
+                mat:SetShaderParameter("MatDiffColor", Variant(Color(1, 1, 1, 1)))
+                -- 常驻自发光兜底可见性（深空场景很暗，同 v0.13.23 教训）。
+                mat:SetShaderParameter("MatEmissiveColor", Variant(Color(0.18, 0.30, 0.28, 1)))
+                geom:SetMaterial(0, mat)
+                rec = { node = node, geometry = geom, material = mat }
+                Renderer3D.phantom.records[p.id] = rec
+            end
+            rec.node.position = GameToWorld(p.x + p.w * 0.5, p.y + p.h * 0.5, -0.95)
+        end
+    end
+    for id, rec in pairs(Renderer3D.phantom.records) do
+        if not active[id] then
+            if rec.geometry then DisposeComponent(rec.geometry) end
+            if rec.node then RemoveNode(rec.node) end
+            Renderer3D.phantom.records[id] = nil
+        end
+    end
+end
+
 function Renderer3D.Render(game, presentation, skin, trail, bowWaveDt)
     if not initialized_ then return end
     selectedSkin_ = skin or "default"
@@ -2313,6 +2395,9 @@ function Renderer3D.Render(game, presentation, skin, trail, bowWaveDt)
         SyncEjectedBoxes(presentation)
     end
     SyncVehicles(game, dt)
+    -- v0.13.65：幻影体素块（3D 盒子，走已验证可见的 DiffVCol 路径）。
+    local okPh, phErr = pcall(Renderer3D.phantom.sync, game, presentation)
+    if not okPh then print("[Renderer3D] phantom sync failed: " .. tostring(phErr)) end
     -- 与波壳复用允许玩法时间；timeScale 仅由各模块内部应用一次。
     local allowedDt = bowWaveDt
     if allowedDt == nil then allowedDt = game.state == "playing" and dt or 0 end
@@ -2419,6 +2504,13 @@ function Renderer3D.Shutdown()
     if bowWave_.module then pcall(bowWave_.module.Shutdown) end
     bowWave_.ready = false
     ClearVoxelDebris()
+    -- v0.13.65：释放幻影体素块自有节点/几何/材质。
+    for id, rec in pairs(Renderer3D.phantom.records) do
+        if rec.geometry then DisposeComponent(rec.geometry) end
+        if rec.material then rec.material:Dispose() end
+        if rec.node then RemoveNode(rec.node) end
+        Renderer3D.phantom.records[id] = nil
+    end
     for _, record in pairs(vehicleRecords_) do RemoveNode(record.root) end
     for _, record in pairs(enemyMeshes_) do
         if record.volume and voxelWorld_ then

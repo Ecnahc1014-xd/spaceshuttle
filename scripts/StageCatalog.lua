@@ -10,6 +10,29 @@ StageCatalog.SPAWN_LANE_COUNT = 5
 -- v0.13.57：屏幕外（尚未进入可见战场）的敌机数量上限。逐架放出时若屏外已堆积到这个数，
 -- 就暂停生成队列、等屏外机下落进场后再放下一架——避免一波多架全挤在屏幕上沿之外。
 StageCatalog.MAX_OFFSCREEN = 3
+
+-- v0.13.65：幻影体素块——部分机型会从**未破坏的引擎灯块**发射高速「幻影块」，可穿过其他敌机、
+-- 继承源灯块剩余血量一半（至少 1），越过防线时按普通越线扣基地血。
+--   fireMul = 该机型的**发射频率系数**（越大越频繁；0 = 该机型**没有**此行为）。
+--   prob    = 每次检查的基础触发概率，最终概率 = prob × 难度系数（随关卡升高）。
+--   interval= 两次检查之间的间隔（秒）。
+-- 只有列出的机型才有该行为（用户：「不是所有种类的敌机都有这一行为」）。
+StageCatalog.PHANTOM_KEYS = {
+    scout   = { fireMul = 1.0, prob = 0.14, interval = 3.0 },
+    dart    = { fireMul = 1.6, prob = 0.19, interval = 2.4 },
+    striker = { fireMul = 1.2, prob = 0.16, interval = 2.8 },
+    hive    = { fireMul = 1.5, prob = 0.18, interval = 2.6 },
+    manta   = { fireMul = 0.8, prob = 0.12, interval = 3.4 },
+    bomber  = { fireMul = 1.4, prob = 0.17, interval = 2.7 },
+    cruiser = { fireMul = 0.6, prob = 0.11, interval = 3.8 },
+}
+-- 幻影块子弹速度 = 源敌机基准下落速度 × 该倍率 × 波次缓入（与敌机移速同一缓入）。
+StageCatalog.PHANTOM_SPEED_MUL = 5.0
+-- 难度系数：随关卡线性上升，关1 = 0.6 → 关20 起封顶 1.5（越高关越容易发射）。
+function StageCatalog.GetPhantomDifficulty(stage)
+    local st = math.max(1, math.floor(stage or 1))
+    return 0.6 + math.min(st - 1, 19) * (0.9 / 19)
+end
 -- v0.13.13：关卡无限——选关列表只列到「最高已解锁关」，可一直往上爬。
 -- 数量、速度、召唤与间隔的成长都有软封顶；方块血量继续每 3 关 +1，
 -- 精英与 Boss 机型按取模循环复用。该值仅作难度封顶参考，不是关卡硬上限。

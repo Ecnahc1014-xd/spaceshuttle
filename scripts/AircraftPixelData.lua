@@ -81,7 +81,8 @@ M.scout = {
     gridW = 11,
     gridH = 8,
     data = bitmapToData({
-        "..M.....M..",
+        -- v0.13.65：背侧两枚引擎灯（E）——scout 原本无 E 块，幻影体素块需要「光源块」才能发射。
+        "..E.....E..",
         ".d.M...M.d.",
         "d.MMMMMMM.d",
         ".MMCCCCCMM.",
