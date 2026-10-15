@@ -473,7 +473,7 @@ local C = {
     railMark = {92, 168, 162, 255},
 }
 
-local BUILD_VERSION = "0.13.63"
+local BUILD_VERSION = "0.13.66"
 local GAME_TITLE = "货车大战飞机"
 -- 主菜单像素大 logo 用的短名（对外全名仍是 GAME_TITLE，窗口/发布名不变）。
 local GAME_SHORT_TITLE = "货车大战飞机"
@@ -2181,7 +2181,9 @@ local function DrawPanelButton(ctx, rect, label, sub, enabled, accent)
 end
 
 local function DrawUpgradeActions(ctx, game, layout)
-    local freeLabel = game.rerollFreeAvailable and "免费重抽 1/1" or "免费重抽 已用"
+    local left = game.rerollFreeLeft or (game.rerollFreeAvailable and 1 or 0)
+    local total = game.rerollFreeTotal or 1
+    local freeLabel = string.format("免费重抽 %d/%d", left, total)
     DrawPanelButton(ctx, layout.rerollFree, freeLabel, "",
         game.rerollFreeAvailable == true, C.cyan)
     DrawIcon(ctx, "reroll", layout.rerollFree.x + 6, layout.rerollFree.y + 12, 26)

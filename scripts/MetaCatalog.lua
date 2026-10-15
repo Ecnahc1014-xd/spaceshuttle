@@ -384,6 +384,7 @@ local TALENT_KIND_ICONS = {
     ballUnlock = "talent_unlock",
     ballCard = "talent_word",
     partsPct = "parts",
+    rerollPlus = "reroll",
     stat = "talent_damage",
 }
 

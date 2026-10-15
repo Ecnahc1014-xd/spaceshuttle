@@ -3,18 +3,24 @@
 -- 被 MetaUI 的选卡界面与 Game 的局内规则读取；真正的"已解锁集合"由 PlayerData 持有，
 -- 由编排层（client_main）在开局前注入 Game。
 --
--- v0.13.15 结构（用户规格）：
---   · 阶段星级门槛 0 / 3 / 9 / 18 / 27 / 36 / 45（第 3 阶起每阶 +9）。
+-- v0.13.64 结构（用户规格）：
+--   · 阶段扩到 13 阶（原 7 阶 + 额外 6 个更高档位），**六条线一起加**。
+--   · 阶段星级门槛延续「第 3 阶起每阶 +9」：0 / 3 / 9 / 18 / 27 / 36 / 45 / 54 / 63 / 72 / 81 / 90 / 99
+--     （满星 45 只是「前 7 阶」的门槛；关卡无限，继续打可以攒到 99★ 解锁最后一阶）。
 --   · 每阶段 6 个节点 = 2 通用（general_a 成长 / general_b 通用卡）+ 4 车（normal/ice/speed/giant）。
 --   · 每节点点一次即满（单级）。
 --   · 解锁需满足：①本阶段星级门槛已达标；②同一线路上一阶段节点已解锁（线路链式）。
 --   · 每个节点解锁都额外给「极低血量加成」（MAX_HP_PER_NODE）——这是**所有卡通用**的规则，
 --     在天赋树顶部**统一说明一次**（HP_RULE_TEXT），不逐条写进节点文案。
---   · 车线路：1 阶=允许该车局内出现，2 阶=解锁该车专属卡，3/4/6/7 阶=小幅基础数值，
+--   · 车线路：1 阶=允许该车局内出现，2 阶=解锁该车专属卡，其余阶=小幅基础数值，
 --     5 的倍数阶段=专属卡效果增强（数值更大）。
 --   · **成长线（general_a）**：每阶「暴击率 +2%」，每 3 阶额外「基础攻击 +1」，
 --     最后一阶是「学满奖励：暴击率额外 +5%」。
---   · **通用卡线（general_b）**：1 阶=经验卡、3 阶=弹药扩容卡，其余阶=结算零件 +5%。
+--   · **通用卡线（general_b）**：按用户指定的从低到高顺序重排——
+--     经验数据卡 → 弹药扩容卡 → 免费刷新+1 → 加速 → 贯穿 → 免费刷新+1 → 连锁 →
+--     之后 6 阶全部是「结算零件 +5%」（高档位的零件填充）。
+--     即原「卡在第 1/3 阶、词条在第 2/4/5 阶」的排布被**打散重排**（零散化），
+--     并新增「免费刷新 +1」这一种节点。
 
 local TalentCatalog = {}
 
@@ -29,13 +35,22 @@ TalentCatalog.ATK_EVERY = 3           -- 每 3 阶额外 +1 基础攻击
 TalentCatalog.ATK_GAIN = 1
 TalentCatalog.MASTERY_CRIT = 5        -- 最后一阶额外暴击率 +5%
 
--- 阶段星级门槛（index = 阶段号 1..7）。满星 15 关 × 3 = 45。
-TalentCatalog.STAGE_STARS = { 0, 3, 9, 18, 27, 36, 45 }
+-- 「免费刷新 +1」节点：每解锁一个，**每局**免费重抽次数 +1（可叠加）。
+TalentCatalog.REROLL_PER_NODE = 1
+
+-- 阶段星级门槛（index = 阶段号 1..13）。第 3 阶起每阶 +9。
+-- 前 7 阶仍落在「满星 45」（15 关 × 3）；后 6 阶继续 +9 到 99★，属长期养成目标。
+TalentCatalog.STAGE_STARS = { 0, 3, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99 }
 TalentCatalog.MAX_STAGE = #TalentCatalog.STAGE_STARS
 
--- 各阶段单节点解锁花费（零件）；保留入门价，相邻两阶至少翻倍。
+-- 各阶段单节点解锁花费（零件）。v0.13.64：整条树价格重做，**相邻两阶至少 ×1.5**。
+-- 前 7 阶保持原有价位（倍率 2.5/2.4/2.08/2/2/2，均 ≥1.5），新增 6 阶按 ×1.5 延伸，
+-- 让「更高档位」明显更贵但曲线不至于爆炸（末阶 23 万，属终局养成目标）。
 -- 六条线路共用此表，界面报价与实际扣费都读取 node.cost；已拥有节点不补扣。
-local STAGE_COST = { 200, 500, 1200, 2500, 5000, 10000, 20000 }
+local STAGE_COST = {
+    200, 500, 1200, 2500, 5000, 10000, 20000,   -- 阶 1..7（原价，倍率均 ≥1.5）
+    30000, 45000, 68000, 102000, 153000, 230000, -- 阶 8..13（×1.5 递增）
+}
 
 -- 六条线路：2 通用 + 4 车。绘制顺序即此顺序（通用在前，车在后）。
 TalentCatalog.LANES = { "general_a", "general_b", "normal", "ice", "speed", "giant" }
@@ -67,7 +82,7 @@ local BALL_STAT = {
 ---@field name string
 ---@field desc string
 ---@field cost integer
----@field kind string "cardUnlock"|"ballUnlock"|"ballCard"|"stat"|"partsPct"
+---@field kind string "cardUnlock"|"ballUnlock"|"ballCard"|"stat"|"partsPct"|"rerollPlus"
 ---@field cardId string|nil
 ---@field ballType string|nil
 ---@field stat string|nil
@@ -121,6 +136,7 @@ TalentCatalog.ICON_BY_KIND = {
     ballUnlock = "talent_unlock",
     ballCard = "talent_word",
     partsPct = "parts",
+    rerollPlus = "reroll",
     stat = "talent_damage",
 }
 ---@type table<string, string>
@@ -141,17 +157,20 @@ TalentCatalog.HP_RULE_TEXT = string.format("每解锁 1 个天赋：生命上限
     TalentCatalog.MAX_HP_PER_NODE)
 
 -- 通用卡线（general_b）：全部是**无车型的通用卡**，须在天赋树解锁对应节点才进局内卡池。
--- v0.13.21：词条卡（贯穿/连锁/动量）也归入通用卡——此前它们无任何门控、开局常驻（用户点名）。
---   1 阶=经验数据卡、2 阶=贯穿弹芯、3 阶=弹药扩容卡、4 阶=连锁弹、5 阶=动量加速；
---   其余阶=结算零件 +5%（填充）。
+-- v0.13.64（用户规格，从低到高）：经验数据卡 → 弹药扩容卡 → 免费刷新+1 → 加速 →
+--   贯穿 → 免费刷新+1 → 连锁 → 之后 6 阶全部「结算零件 +5%」。
+--   ⚠️ 原「卡在第 1/3 阶、词条在第 2/4/5 阶」的排布被**打散重排**（零散化），
+--      并新增「免费刷新 +1」（kind=rerollPlus）这一种节点。
 local GENERAL_CARD = {
-    general_b = { [1] = "xp", [2] = "word_pierce", [3] = "ammo",
-                  [4] = "word_chain", [5] = "word_momentum" },
+    general_b = { [1] = "xp", [2] = "ammo", [4] = "word_momentum",
+                  [5] = "word_pierce", [7] = "word_chain" },
 }
 local GENERAL_CARD_NAME = {
     xp = "经验数据卡", ammo = "弹药扩容卡",
     word_pierce = "贯穿弹芯", word_chain = "连锁弹", word_momentum = "动量加速",
 }
+-- 「免费刷新 +1」出现在这两阶。
+local REROLL_STAGES = { [3] = true, [6] = true }
 for stage = 1, TalentCatalog.MAX_STAGE do
     local cardId = GENERAL_CARD.general_b[stage]
     local node = {
@@ -163,6 +182,11 @@ for stage = 1, TalentCatalog.MAX_STAGE do
         node.cardId = cardId
         node.name = GENERAL_CARD_NAME[cardId]
         node.desc = WithHp("解锁「" .. GENERAL_CARD_NAME[cardId] .. "」进入局内卡池")
+    elseif REROLL_STAGES[stage] then
+        node.kind = "rerollPlus"
+        node.value = TalentCatalog.REROLL_PER_NODE
+        node.name = "免费刷新 +1"
+        node.desc = WithHp("每局免费重抽次数 +1")
     else
         node.kind = "partsPct"
         node.value = 5

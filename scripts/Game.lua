@@ -257,7 +257,7 @@ local settledParts = 0             -- 已按基础倍率入库的累计零件（
 -- 结算账本（v0.14.x 存钱罐）：bricks=已计入跨局统计的击碎数；runCounted=本局是否已计完成；
 -- gear=本局累计「齿轮」（200 块 / 100 齿轮，精英机每块按 2 倍计）；gearSettled=已入库齿轮（复活后只补增量）。
 local settleBook = { bricks = 0, runCounted = false, gear = 0, gearSettled = 0 }
-local upgradeRerollFreeUsed = false -- 每局 1 次免费重抽
+local upgradeRerollFreeUsed = 0    -- 本局已用免费重抽次数（上限 = 1 + 天赋「免费刷新」加成）
 local heldUpgradeId = nil          -- 本局保留到下一次升级的候选卡 id（最多一张）
 local PANEL_CARD_COUNT = 3         -- 常规候选数（v0.12.5 精简：面板不再有解锁第 4 张）
 -- 暂停补给站（看广告，单局限量）
@@ -318,6 +318,10 @@ local talentUnlockedBallCards = {}
 -- v0.13.15：成长线天赋——暴击率（0..1）与基础攻击加成。
 local talentCritChance = 0
 local talentAtkBonus = 0
+-- v0.13.64：通用卡线「免费刷新 +1」节点——每解锁一个，每局免费重抽次数 +1。
+local talentRerollBonus = 0
+-- ⚠️ 本文件顶层 local 已 199/200（AB-166 硬上限），免费重抽总数走 Game 表字段
+-- （表字段不占顶层 local 槽；调用点在函数体内，运行期解析，无前向引用问题）。
 ---@type fun(): table<string, boolean>|nil
 local talentProvider = nil     -- 编排层注入；ResetGame 时拉取最新解锁集合
 
@@ -675,6 +679,7 @@ function Game.SetTalents(owned)
     talentUnlockedBallCards = {}
     talentCritChance = 0
     talentAtkBonus = 0
+    talentRerollBonus = 0
     if type(owned) ~= "table" then return end
     local count = 0
     for id, v in pairs(owned) do
@@ -692,6 +697,9 @@ function Game.SetTalents(owned)
                     talentUnlockedBallCards[node.ballType] = true
                 elseif node.kind == "partsPct" then
                     talentPartsPct = talentPartsPct + (node.value or 0)
+                elseif node.kind == "rerollPlus" then
+                    -- v0.13.64：每局免费重抽次数 +N（可叠加）。
+                    talentRerollBonus = talentRerollBonus + (node.value or 0)
                 elseif node.kind == "stat" then
                     if node.stat == "critChance" then
                         -- 成长线：暴击率累加；每 3 阶还额外给基础攻击。
@@ -822,7 +830,7 @@ ResetGame = function(startStage)
         if ok and type(stock) == "table" then Game.SetItemStock(stock) end
     end
     ResetItems()
-    upgradeRerollFreeUsed = false
+    upgradeRerollFreeUsed = 0
     heldUpgradeId = nil
     pauseHealUsed = 0
     pauseRareUsed = 0
@@ -1832,9 +1840,17 @@ end
 -- 规则层只回答「能不能做」与「做了什么」，是否播放广告由编排层（main.lua）决定。
 -- ============================================================================
 
+-- v0.13.64：本局免费重抽总次数（基础 1 次 + 天赋「免费刷新」加成）。
+-- 挂 Game 表（不占顶层 local 槽，本文件已 199/200）。
+---@return integer
+function Game.GetFreeRerollTotal()
+    return 1 + talentRerollBonus
+end
+
 ---@return boolean
 function Game.CanFreeReroll()
-    return gameState == "levelup" and not Game._opening.active and not upgradeRerollFreeUsed
+    return gameState == "levelup" and not Game._opening.active
+        and upgradeRerollFreeUsed < Game.GetFreeRerollTotal()
 end
 
 ---@return boolean
@@ -1860,8 +1876,8 @@ end
 function Game.RerollUpgrades(mode)
     if gameState ~= "levelup" or Game._opening.active or not upgradeChoices then return false end
     if mode == "free" then
-        if upgradeRerollFreeUsed then return false end
-        upgradeRerollFreeUsed = true
+        if upgradeRerollFreeUsed >= Game.GetFreeRerollTotal() then return false end
+        upgradeRerollFreeUsed = upgradeRerollFreeUsed + 1
     end
     RollUpgradeChoices({ forceRare = (mode == "ad_rare") })
     Emit("upgrade_reroll", {mode = mode})
@@ -4099,6 +4115,9 @@ function Game.GetSnapshot()
     s.partsDoubled = partsDoubled
     s.canDoubleSettle = Game.CanDoubleSettle()
     s.rerollFreeAvailable = Game.CanFreeReroll()
+    -- v0.13.64：免费重抽的「剩余 / 总数」，供升级面板显示 N/M（天赋可提升上限）。
+    s.rerollFreeLeft = math.max(0, Game.GetFreeRerollTotal() - upgradeRerollFreeUsed)
+    s.rerollFreeTotal = Game.GetFreeRerollTotal()
     -- 暂停补给站（只读，供暂停面板画按钮）
     s.canPauseHeal = Game.CanPauseHeal()
     s.pauseHealLeft = Game.GetPauseHealLeft()
