@@ -3,7 +3,6 @@
 -- 世界模式使用宿主投影；模态模式只在空白带显示紧凑回声，不冒充真实伤害范围。
 local VisualCatalog = require "VisualCatalog"
 local CombatImpact = {}
-local SPARK_COLORS = {{255, 209, 120}, {170, 120, 255}, {100, 233, 232}, {180, 230, 255}, {255, 128, 120}}
 
 local function StrokeEllipse(ctx, x, y, rx, ry, color, alpha, width)
     nvgBeginPath(ctx)
@@ -166,50 +165,21 @@ function CombatImpact.DrawRings(ctx, presentation, project)
             local rx, ry = math.abs(ex - x), math.abs(ey - y)
             local a = math.floor(180 * (1 - t))
             local color = {ring.r, ring.g, ring.b}
+            -- v0.13.66：柔光渐变盘——环内不再纯空，连续击碎时环心有余晖，层次更柔。
+            if rx > 1 and ry > 1 then
+                nvgBeginPath(ctx)
+                nvgEllipse(ctx, x, y, rx, ry)
+                nvgFillPaint(ctx, nvgRadialGradient(ctx, x, y,
+                    math.max(1, math.min(rx, ry) * 0.12), math.max(rx, ry),
+                    nvgRGBA(color[1], color[2], color[3], math.floor(36 * (1 - t))),
+                    nvgRGBA(color[1], color[2], color[3], 0)))
+                nvgFill(ctx)
+            end
             StrokeEllipse(ctx, x, y, rx, ry, color, math.floor(a * 0.28), 6)
             StrokeEllipse(ctx, x, y, rx, ry, color, a, 2.5)
             StrokeEllipse(ctx, x, y, rx * 0.82, ry * 0.82, {240, 248, 252}, math.floor(a * 0.78), 1)
             drawn = drawn + 1
         end
-    end
-    nvgRestore(ctx)
-    return drawn
-end
-
--- 高频粒子的动能亮芯：原3D软粒子不删；五色合批、24条预算、不新建视觉对象。
-function CombatImpact.DrawSparks(ctx, presentation, project)
-    local particles = presentation.particles or {}
-    local drawn = 0
-    nvgSave(ctx)
-    nvgIntersectScissor(ctx, 0, 92, 540, 774)
-    for group, color in ipairs(SPARK_COLORS) do
-        nvgBeginPath(ctx)
-        for i = #particles, math.max(1, #particles - 47), -1 do
-            local p = particles[i]
-            if p.kind == "spark" and p.life > 0 and p.maxLife > 0 then
-                local bucket = p.b > p.r + 30 and (p.r > p.g + 20 and 2 or 4)
-                    or (p.g > p.r + 35 and 3 or (p.r > p.g + 70 and 5 or 1))
-                if bucket == group and drawn < 24 then
-                    local life = math.max(0, math.min(1, p.life / p.maxLife))
-                    local x, y = project(p.x, p.y)
-                    local bx, by = project(p.x - p.vx * 0.018, p.y - p.vy * 0.018)
-                    local dx, dy = x - bx, y - by
-                    local length = math.sqrt(dx * dx + dy * dy)
-                    if length > 0.01 and y > 92 and y < 866 and x > 0 and x < 540 then
-                        local ux, uy = dx / length, dy / length
-                        local reach = math.min(13, 3 + length * 2.0) * life
-                        local half = math.min(1.6, p.size * 0.42) * life
-                        nvgMoveTo(ctx, x + ux * 1.5 * life, y + uy * 1.5 * life)
-                        nvgLineTo(ctx, x - ux * reach - uy * half, y - uy * reach + ux * half)
-                        nvgLineTo(ctx, x - ux * reach + uy * half, y - uy * reach - ux * half)
-                        nvgClosePath(ctx)
-                        drawn = drawn + 1
-                    end
-                end
-            end
-        end
-        nvgFillColor(ctx, nvgRGBA(color[1], color[2], color[3], 195))
-        nvgFill(ctx)
     end
     nvgRestore(ctx)
     return drawn

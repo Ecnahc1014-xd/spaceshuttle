@@ -1352,13 +1352,17 @@ local function SyncParticles(presentation)
                 worldSize = math.max(0.015, p.size * WORLD_SCALE * 1.25 * shrink)
                 bb.rotation = p.angle or 0
             else
-                -- 火花：小亮点，整段快速收缩。
+                -- 火花：小亮点沿速度方向拉伸成短拖影（世界空间旋转），整段快速收缩。
+                -- v0.13.66：去重——火花只走 3D Billboard，不再由 2D overlay 叠画拖影。
+                local speed = math.sqrt(p.vx * p.vx + p.vy * p.vy)
+                local stretch = 1 + speed * 0.0045
                 worldSize = math.max(0.012, p.size * WORLD_SCALE * 0.85 * (0.3 + 0.7 * lifeT))
-                bb.rotation = 0
+                bb.rotation = math.atan2(-p.vy, p.vx)
+                bb.size = Vector2(worldSize * stretch, worldSize * 0.78)
             end
             -- DiffAlpha 不读顶点 rgb；保留白顶点，alpha 恒 1（透明度已在纹理里）。
             bb.color = Color(1, 1, 1, 1)
-            bb.size = Vector2(worldSize, worldSize)
+            if kind ~= "spark" then bb.size = Vector2(worldSize, worldSize) end
         end
     end
     for kind, set in pairs(particleSets_) do
