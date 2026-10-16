@@ -332,15 +332,9 @@ local function CreateSpaceEnvironment()
     backdropModel:SetMaterial(CreateUnlitMaterial({0.0025, 0.0035, 0.018}))
     backdropModel.castShadows = false
 
-    skyNode_ = SkyUtils.CreateGradientSky(scene_, {
-        zenith = Color(0.003, 0.006, 0.030),
-        horizon = Color(0.035, 0.012, 0.100),
-        ground = Color(0.002, 0.003, 0.012),
-        skyExp = 0.38,
-        groundExp = 1.8,
-        size = 128,
-        hdrBoost = 2.7,
-    })
+    -- 3D 战场以本地 LDR 背板为底，避免 Skybox/环境贴图在移动端触发
+    -- 缺失的 KTX/cubemap 资源；星场仍提供空间层次。
+    skyNode_ = nil
 
     starNode_ = scene_:CreateChild("DynamicStarField")
     CreateStarFieldLayer(starNode_, 1, 46, 27183, 1.18)
@@ -3054,21 +3048,24 @@ function Backend.Init()
             .. tostring(okVoxel) .. " result=" .. tostring(voxelWorld))
     end
 
-    local lightGroupFile = cache:GetResource("XMLFile", "LightGroup/Daytime.xml")
-    if not lightGroupFile then
-        print("[Scene3DBackend] ERROR: missing LightGroup/Daytime.xml")
-        CleanupFailedInit()
-        return false
-    end
-    lightGroup_ = scene_:CreateChild("LightGroup")
-    lightGroup_:LoadXML(lightGroupFile:GetRoot())
-    zone_ = lightGroup_:GetComponent("Zone", true)
-    if zone_ then
-        zone_.fogColor = Color(0.006, 0.008, 0.025)
-        zone_.fogStart = 32.0
-        zone_.fogEnd = 80.0
-        zone_.ambientIntensity = 0.52
-    end
+    -- 不加载 LightGroup/Daytime.xml：该预设引用项目未随包分发的 HDR cubemap，
+    -- 在 Android 上会让 PBR 的环境光路径失效。使用本地 LDR Zone + 方向光。
+    lightGroup_ = nil
+    local zoneNode = scene_:CreateChild("MobileSafeZone")
+    zone_ = zoneNode:CreateComponent("Zone")
+    zone_.boundingBox = BoundingBox(Vector3(-80.0, -40.0, -80.0), Vector3(80.0, 40.0, 80.0))
+    zone_.ambientSource = AMBIENT_COLOR
+    zone_.ambientColor = Color(0.16, 0.18, 0.24, 1.0)
+    zone_.fogColor = Color(0.006, 0.008, 0.025, 1.0)
+    zone_.fogStart = 32.0
+    zone_.fogEnd = 80.0
+    local lightNode = scene_:CreateChild("MobileSafeKeyLight")
+    lightNode.direction = Vector3(0.45, -0.85, 0.55)
+    local keyLight = lightNode:CreateComponent("Light")
+    keyLight.lightType = LIGHT_DIRECTIONAL
+    keyLight.color = Color(0.92, 0.96, 1.0, 1.0)
+    keyLight.brightness = 1.2
+    keyLight.castShadows = false
 
     CreateSpaceEnvironment()
     CreateWorldEdges()
@@ -3093,7 +3090,9 @@ function Backend.Init()
     viewport_ = Viewport:new(scene_, camera_, IntRect(viewportLeft_, viewportTop_,
         viewportLeft_ + viewportWidth_, viewportTop_ + viewportHeight_))
     renderer:SetViewport(0, viewport_)
-    renderer.hdrRendering = true
+    -- 移动端兼容：主战场不依赖 HDR 后处理。Android 低档 GPU 在 HDR
+    -- render target / tonemap 路径失败时会保留 NanoVG HUD，但 3D viewport 全黑。
+    renderer.hdrRendering = false
     UpdateProjectionMetrics(true)
     ProbeFxaa()    -- WO-16/P9：FXAA 探测（本环境应判定不可用并保持关闭，保全 3D 画面）
 
