@@ -13,6 +13,14 @@
 - 修法：只补回 `"official-res": { "tag": "stable" }`，`@runtime`（multiplayer/ad）一字未动。官方资源**下载**与否取决于 `.build/asset_adopt.json` 的采纳订阅与清单 pinned 引用（本地两者都不存在），与源声明本身无关。
 - 验证：官方多人 build ✅（`1a3c24c`，预览已上传、右侧预览已打开）。LSP/玩法回归跳过（只改配置）。⚠️ AB-155 的「四证①（sources 有无 official-res）」已失效，见 AB-345。
 
+## 修复「client_main.lua 语法错误黑屏」——4 个脚本文件被编码损坏（2026-10-16，encoding-corruption-recover）
+- 平台错误报告（Version `50d1a0b2`/HEAD@`c3b4c991`，3 条唯一）：`Load Buffer failed for game/client_main.lua: [string "game/client_main"]:383: unfinished string near '"本局已复活"'` → `Failed to load Lua module 'game.client_main'` → `Execute Lua function failed: [string "main"]:22: LoadChunk failed: game/client_main.lua`（`main.Start` 崩、整游戏黑屏）。
+- **真因**：不是代码逻辑，而是**工作区 4 个脚本文件的文本编码被损坏**——`scripts/Game.lua`、`scripts/game/client_main.lua`、`scripts/ui/StageSelect.lua`、`scripts/ui/StageIntro.lua` 的中文被「UTF-8 字节按 GBK 重新解码」成乱码（`本局已复活`→`鏈眬宸插娲?`），且**有损**：GBK 解码把多字节序列尾字节与**相邻 ASCII 字节吞掉**（`"本局已复活")` 丢了闭合引号 → `unfinished string`；`clientCloud` 变 `lientCloud`；`".."` 边界丢字符）。**不可逆**（GBK 尾字节把后续 ASCII 的高位吃掉，`gb18030` 往返无法还原，出现 U+E1xx 私用区码点），无干净副本（dist 构建产物、探针目录副本都停在更早版本，工作区含 10-16 未提交新功能 `GameplayTips`/`MobileSafeZone`/`ConnectFailedRetry` 等）。
+- **修法**：从 **HEAD（`7b30c67`，编码干净）** 恢复这 4 个文件（`git checkout HEAD -- <4 files>`），丢弃混在损坏文件里、无法还原的未提交 10-16 改动。**恢复前先核对兼容性**：干净的 `Scene3DBackend.lua`(10-16) 对 `Game`/`client_main`/`StageIntro`/`StageSelect` 的调用（`Backend.*` 方法、`game.*` 快照字段、`StageIntro.Draw` 签名、`StageSelect.*`）在 HEAD 版里**全部存在**（`openingSelection`/`openingRound`/`openingFirstVehicle` HEAD 的 `GetSnapshot` 已暴露；`StageSelect.ITEM_ORDER` 为赋值形式）。**未改动**其余 9 个干净的在途改动文件。
+- **验证**：全量 LSP **36→37 文件**；真实启动探针 `probe_boot`（`ClientMain.Start` → `state=menu`）**零 `LoadChunk failed`/`unfinished string`/`Module not found`**；玩法冒烟 `probe_smoke`（进关→过 intro→发射→400 帧）`state=playing stage=1 wave=1 launched=true`、**目标 Lua/overlay/LoadChunk/空顶点错误 0**；官方多人 build + 预览上传 ✅。⚠️ 残留的 `undefined-field` 报错（`lobby_ui.UI.Panel`/`metaState.codexPage`/`gameSnapshot.state`/`FORMATION_CYCLE[...]`）**也出现在未改动的干净文件里**，属该仓库既有基线噪音，非本次恢复引入。
+- **边界**：损坏文件里未提交的 10-16 改动（`ConnectFailedRetry`/`HasClientCloud`/`PerformanceProbe` 相关）**已随恢复丢失且无法找回**（无任何干净副本）；若需这些功能须重新实现。手机 FPS/全 DPR/真实 SDK/用户审美未验收。
+- **AB-346**：见 `.agent/memory-runtime/antibodies.md`。
+
 ## 敌机新行为「幻影体素块」+ 缓入曲线上移（2026-10-15，phantom-voxel 附记）
 - 用户：①新增敌机行为——从**未被破坏的引擎灯光源块**发射高速「幻影体素块」，穿过其他敌机、继承源灯块剩余血量一半（≥1），越线按普通越线扣基地血；**不是所有机型都有**，频率按机型、是否发射按难度随机；**每关前 5 波至少 10 架**。②缓入 60%→100% 改为 **75%→100%**，起始倍率随关卡降到**关20 封底 60%**。
 - **口径（AskUserQuestion 确认）**：幻影弹速乘新缓入；前5波≥10 = **每关前5波合计**；光源块=**引擎灯E**；越线**扣基地血**。

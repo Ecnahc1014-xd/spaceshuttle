@@ -1,5 +1,5 @@
 -- Game.lua
--- 璐ц溅澶ф垬椋炴満鏍稿績鐜╂硶銆傚彧缁存姢瑙勫垯銆佺鎾炲拰鏉冨▉鐘舵€侊紝涓嶄緷璧栦换浣曟覆鏌?API銆?
+-- 货车大战飞机核心玩法。只维护规则、碰撞和权威状态，不依赖任何渲染 API。
 
 local AircraftData = require "AircraftPixelData"
 local StageCatalog = require "StageCatalog"
@@ -7,9 +7,9 @@ local TalentCatalog = require "TalentCatalog"
 local EnchantCatalog = require "EnchantCatalog"
 
 local Game = {}
--- 绌烘墜闀挎寜鍙缉鏀炬垬鏂楁ā鎷燂紝涓嶆敼鍙樿〃鐜版椂閽燂紱鏀惰〃閬垮厤澧炲姞涓诲潡 local 妲戒綅銆?
+-- 空手长按只缩放战斗模拟，不改变表现时钟；收表避免增加主块 local 槽位。
 Game._holdSpeed = { down = false, active = false, time = 0, threshold = 0.35, epoch = 0 }
--- 鍙戝皠钃勫姏鐙珛浜庢媺閲?鍒濋€燂紝浣跨敤鍏佽杈撳叆鏃堕棿锛屼笉鍙楃┖鎵嬪€嶉€熸垨椤垮抚鍊嶇巼褰卞搷銆?
+-- 发射蓄力独立于拉量/初速，使用允许输入时间，不受空手倍速或顿帧倍率影响。
 ---@class LaunchChargeState
 ---@field time number
 ---@field total number
@@ -23,33 +23,33 @@ function Game.ClearLaunchCharge()
     Game._launchCharge.time = 0
     Game._launchCharge.uiX, Game._launchCharge.uiY = nil, nil
 end
--- v0.13.64锛氭嫋鎷借寖鍥存槸銆?D 璁捐绌洪棿閲屼竴涓洿寰勫渾銆嶇殑鎶曞奖锛岃€屼笉鏄?3D/鐜╂硶绌洪棿閲岀殑鍦嗐€?
---   杈撳叆鍦?*璁捐(UI)鍧愭爣**閲屾寜鍦嗛挸鍒讹紙鍗婂緞 MAX_PULL 璁捐鍍忕礌锛夛紝鍐嶉櫎浠ユ姇褰辩缉鏀炬崲绠楁垚鐜╂硶
---   浣嶇Щ鈥斺€斾簬鏄帺娉曞钩闈笂鐨勮寖鍥存槸涓€涓き鍦嗭紙= 灞忓箷鍦嗙殑鎶曞奖锛夛紝鎵嬫劅濮嬬粓鏄€屽睆骞曚笂鐨勫渾銆嶃€?
---   sx/sy 鐢辩紪鎺掑眰浠庡悗绔姇褰卞彇寰楋紱缂虹渷 1/1 鏃堕€€鍖栦负鐜╂硶绌洪棿鍦嗭紙鎺㈤拡/鏃犵浉鏈哄満鏅級銆?
---   uiX/uiY 璁板綍璁捐鍧愭爣鎸変笅鐐癸紝dist 璁板綍鏈抚閽冲埗鍚庣殑璁捐鍍忕礌鎷夎窛锛堜緵濞佸姏鏄犲皠锛夈€?
-Game._pullSpace = { sx = 1, sy = 1, uiX = 0, uiY = 0, dist = 0, gnorm = 0 }
+-- v0.13.64：拖拽范围是「2D 设计空间里一个直径圆」的投影，而不是 3D/玩法空间里的圆。
+--   输入在**设计(UI)坐标**里按圆钳制（半径 MAX_PULL 设计像素），再除以投影缩放换算成玩法
+--   位移——于是玩法平面上的范围是一个椭圆（= 屏幕圆的投影），手感始终是「屏幕上的圆」。
+--   sx/sy 由编排层从后端投影取得；缺省 1/1 时退化为玩法空间圆（探针/无相机场景）。
+--   uiX/uiY 记录设计坐标按下点，dist 记录本帧钳制后的设计像素拉距（供威力映射）。
+Game._pullSpace = { sx = 1, sy = 1, uiX = 0, uiY = 0, dist = 0 }
 ---@param sx number
 ---@param sy number
 function Game.SetPullSpace(sx, sy)
     Game._pullSpace.sx = (sx and sx > 1e-6) and sx or 1
     Game._pullSpace.sy = (sy and sy > 1e-6) and sy or 1
 end
--- v0.13.58锛氬眬鍐呴檮榄斿崱鐘舵€侊紙鏀惰繘涓€寮犺〃锛屼笉鏂板椤跺眰 local锛孉B-166锛夈€?
---   card    = 褰撳墠鎸佹湁鐨勯檮榄斿崱锛圗nchantDef锛夛紝nil 琛ㄧず绌烘墜
---   pending = 宸蹭娇鐢ㄤ絾褰撳墠娌℃湁寰呭彂杞︽椂锛岄『寤剁粰銆屼笅涓€涓澶囧彂灏勭殑杞︺€嶇殑闄勯瓟鍗?
---   lastWave= 鏈€杩戜竴娆″彂鏀鹃檮榄斿崱鏃剁殑娉㈠彿锛堢敤浜庛€屾瘡瀹屾垚涓€娉㈠彂涓€寮犮€嶅垽瀹氾級
+-- v0.13.58：局内附魔卡状态（收进一张表，不新增顶层 local，AB-166）。
+--   card    = 当前持有的附魔卡（EnchantDef），nil 表示空手
+--   pending = 已使用但当前没有待发车时，顺延给「下一个预备发射的车」的附魔卡
+--   lastWave= 最近一次发放附魔卡时的波号（用于「每完成一波发一张」判定）
 Game._enchant = { card = nil, pending = nil, lastWave = 0 }
--- v0.13.65锛氬够褰变綋绱犲潡鈥斺€旂姸鎬佸叏閮ㄦ敹杩涗竴寮犺〃锛堥浂鏂板椤跺眰 local锛孉B-166锛夈€?
---   list       = 褰撳墠鍦ㄥ満骞诲奖鍧楁暟缁勶紙缁撴瀯瑙?SpawnPhantom锛氱煩褰?+ 琛€閲?+ 閫熷害锛?
---   guaranteed = 鏈叧鍓?5 娉㈢疮璁″凡鍙戝皠鏁帮紙鐢ㄤ簬銆屽墠 5 娉㈣嚦灏?10 鏋躲€嶄繚搴曪級
---   firedKeys  = 鏈叧宸插彂灏勮繃骞诲奖鐨勬満鍨嬮泦鍚堬紙淇濆簳鏃朵紭鍏堥€夊皻鏈彂灏勭殑鏈哄瀷锛?
+-- v0.13.65：幻影体素块——状态全部收进一张表（零新增顶层 local，AB-166）。
+--   list       = 当前在场幻影块数组（结构见 SpawnPhantom：矩形 + 血量 + 速度）
+--   guaranteed = 本关前 5 波累计已发射数（用于「前 5 波至少 10 架」保底）
+--   firedKeys  = 本关已发射过幻影的机型集合（保底时优先选尚未发射的机型）
 Game._phantom = { list = {}, guaranteed = 0, firedKeys = {}, nextId = 1, guaranteeTimer = 0 }
--- v0.13.60锛氬け璐ョ粨绠楄繃娓★紙鏀惰繘涓€寮犺〃锛屼笉鏂板椤跺眰 local锛孉B-166锛夈€?
---   at     = 杩涘叆 gameover 鐨勬椂鍒伙紙elapsed锛夛紝杩囨浮鍔ㄧ敾鐨勮鏃跺熀鍑?
---   revive = 鏈眬鏄惁杩樿兘澶嶆椿锛堝喅瀹氬姩鐢婚噷鏄惁鍑虹幇銆屽彲澶嶆椿銆嶆彁绀猴級
+-- v0.13.60：失败结算过渡（收进一张表，不新增顶层 local，AB-166）。
+--   at     = 进入 gameover 的时刻（elapsed），过渡动画的计时基准
+--   revive = 本局是否还能复活（决定动画里是否出现「可复活」提示）
 Game._defeat = { at = nil, revive = false }
--- 涓よ疆寮€灞€閫夎溅鍊熺敤 levelup 杈撳叆/绐楀彛锛岃鏁扮嫭绔嬩簬缁忛獙鍗囩骇锛屼笉澧炲姞涓诲潡 local銆?
+-- 两轮开局选车借用 levelup 输入/窗口，计数独立于经验升级，不增加主块 local。
 Game._opening = {
     active = false, round = 0, total = 2, selected = {}, phase = nil, timer = 0.0,
     durations = { briefing = 0.95, select = 0.32, between = 0.65, ready = 1.05 },
@@ -57,47 +57,44 @@ Game._opening = {
 
 local DW = 540
 local DH = 960
--- 椤堕儴鍙嶅脊杈圭晫锛堟父鎴忓潗鏍囷級銆傝皟鏁村巻鍙诧細鏈€鍒濅负 0锛堝睆骞曞唴鍗婄┖鍙嶅脊锛夛紝v0.10.8 鎶埌 -270锛堝畬鍏ㄥ嚭灞忥級锛?
--- v0.10.10 鍙栦袱鑰呭潎鍊?-135锛氭姇褰卞埌璁捐鍧愭爣绾?y鈮?05锛屾伆鍦?HUD 涓嬫柟锛岃浇鍏烽鍒版垬鍦洪《閮ㄦ墠鍙嶅脊銆?
--- 宸﹀彸杈圭晫浠嶆槸 0 / DW锛涜瑙夎竟妗嗗繀椤讳笌姝ゅ父閲忎竴鑷达紙瑙?Scene3DBackend.CreateWorldEdges锛夈€?
+-- 顶部反弹边界（游戏坐标）。调整历史：最初为 0（屏幕内半空反弹），v0.10.8 抬到 -270（完全出屏），
+-- v0.10.10 取两者均值 -135：投影到设计坐标约 y≈105，恰在 HUD 下方，载具飞到战场顶部才反弹。
+-- 左右边界仍是 0 / DW；视觉边框必须与此常量一致（见 Scene3DBackend.CreateWorldEdges）。
 local TOP_BOUND_Y = -135
 local BASE_BRICK_SIZE = 16
 local SLING_X = 270
 local SLING_Y = 850
--- v0.13.66锛氬睆骞曟嫋鎷藉渾鍗婂緞 = 鍘?150 璁捐鍍忕礌鐨?85%锛堝睆骞曚负鍑嗭級锛岀帺娉曠┖闂村悓姝ュ渾閽冲埗銆?
-local MAX_PULL = 150 * 0.85
+local MAX_PULL = 150
 local DANGER_Y = 900
 local BASE_HP = 100
 
--- 骞稿瓨鑰呭寲鍙傛暟
-local BRICK_BASE_DAMAGE = 0.5      -- 姣忚鏂瑰潡瓒婅繃鐩爣绾挎椂鐨勫熀纭€浼ゅ锛岄€愯鍚戜笂鍙栨暣锛堟瘡琛屽疄闄呮墸 1锛?
-local XP_PER_BRICK = 1             -- 鍑荤涓€涓柟鍧楄幏寰楃殑缁忛獙
-local XP_PER_CLEAR = 8             -- 娓呮帀鏁存敮椋炶埞鐨勯澶栫粡楠?
--- v0.11.0 鍟嗕笟鍖栵細灞€鍐呫€岄浂浠躲€嶄骇鍑猴紙杞揣甯侊級锛岀粨绠楁椂鐢辩紪鎺掑眰鍐欏叆 PlayerData銆?
-local PARTS_PER_BRICK = 1          -- 鍑荤涓€涓柟鍧?
-local PARTS_PER_CLEAR = 10         -- 娓呮帀鏁存敮缂栭槦
-local PARTS_PER_WAVE = 25          -- 姣忔帹杩涗竴娉?
-local BASE_XP_TO_NEXT = 26         -- 绗竴娆″崌绾ф墍闇€缁忛獙锛堝崟鏋朵睛瀵熸満绾?50 鏍硷紝绾︿袱鏋跺崌涓€绾э級
+-- 幸存者化参数
+local BRICK_BASE_DAMAGE = 0.5      -- 每行方块越过目标线时的基础伤害，逐行向上取整（每行实际扣 1）
+local XP_PER_BRICK = 1             -- 击碎一个方块获得的经验
+local XP_PER_CLEAR = 8             -- 清掉整支飞船的额外经验
+-- v0.11.0 商业化：局内「零件」产出（软货币），结算时由编排层写入 PlayerData。
+local PARTS_PER_BRICK = 1          -- 击碎一个方块
+local PARTS_PER_CLEAR = 10         -- 清掉整支编队
+local PARTS_PER_WAVE = 25          -- 每推进一波
+local BASE_XP_TO_NEXT = 26         -- 第一次升级所需经验（单架侦察机约 50 格，约两架升一级）
 
--- 鏁板€煎钩琛¤〃锛圵O-01/P1锛夛細灞€鍐呬笉鍙彉鏁板€奸泦涓鐞嗭紝渚夸簬璋冨弬涓庣绾挎ā鎷熴€?
--- 鏃у父閲忓悕浠嶄綔涓烘湰琛ㄧ殑鍒濆鍖栨潵婧愶紝淇濇寔鍚戝悗鍙鍒悕銆?
+-- 数值平衡表（WO-01/P1）：局内不可变数值集中管理，便于调参与离线模拟。
+-- 旧常量名仍作为本表的初始化来源，保持向后可读别名。
 local BALANCE = {
     baseHp = BASE_HP,
     brickBaseDamage = BRICK_BASE_DAMAGE,
     xpPerBrick = XP_PER_BRICK,
     xpPerClear = XP_PER_CLEAR,
     baseXpToNext = BASE_XP_TO_NEXT,
-    xpToNextGrowth = 1.26,          -- WO-02/P1锛氭瘡绾х粡楠岄槇鍊兼寚鏁颁箻瀛?
+    xpToNextGrowth = 1.26,          -- WO-02/P1：每级经验阈值指数乘子
     clearStreakBonusCap = 5,
     maxPull = MAX_PULL,
-    -- v0.13.66锛氬弽寮圭鎾炵 = 寮圭彔鍗婂緞鐨?85%锛涗激瀹崇鎾烇紙鍛戒腑/鍦嗗煙/骞诲奖鍑荤锛変粛鐢ㄦ弧鍗婂緞銆?
-    bounceBoxScale = 0.85,
-    pullPositionScale = 0.6, -- 鍦嗗舰杈撳叆淇濈暀鍏ㄥ箙锛屽緟鍙戣溅杈嗕綅绉绘寜姣斾緥缂╃煭
-    powerMin = 0.35,   -- 鏈€灏忚搫鍔涘垵閫熸瘮渚嬶紙杞绘嫋涔熸湁鍩虹灏勭▼锛?
-    powerMax = 1.0,    -- 婊¤搫鍔涘垵閫熸瘮渚?
-    -- 鎷栨嫿钃勫姏鏈熼棿鍏ㄥ眬鍑忛€?80%锛氱帺娉曟椂闂存斁鎱㈠埌 20%锛屾澗鎵?鍙栨秷绔嬪嵆鎭㈠銆?
+    pullPositionScale = 0.6, -- 圆形输入保留全幅，待发车辆位移按比例缩短
+    powerMin = 0.35,   -- 最小蓄力初速比例（轻拖也有基础射程）
+    powerMax = 1.0,    -- 满蓄力初速比例
+    -- 拖拽蓄力期间全局减速 80%：玩法时间放慢到 20%，松手/取消立即恢复。
     dragTimeScale = 0.2,
-    -- 钃勫姏杈惧埌姝ゆ瘮渚嬪嵆瑙嗕负銆屽凡瀹屾垚銆嶏細鍙戝皠鏃剁珛鍒昏ˉ婊★紝浜彈婊¤搫浼ゅ涓庡叏鎭垎鍙戙€?
+    -- 蓄力达到此比例即视为「已完成」：发射时立刻补满，享受满蓄伤害与全息爆发。
     chargeCompleteThreshold = 0.85,
 }
 
@@ -105,22 +102,22 @@ local BALL_TYPES = {
     normal = {
         radius = 20, speed = 560, damage = 1,
         splitChance = 0.05, splitAngle = 18, splitSpread = 18,
-        maxConcurrent = 15,       -- 寰呭彂 + 椋炶 + 鏈抚寰呭姞鍏ョ殑鍒嗚杞︽€讳笂闄愶紱搴撳瓨闃熷垪涓嶅崰鍚嶉
-        bounceElasticity = 1.0,    -- WO-05/P4锛氬弽寮瑰脊鎬э紝1.0 涓烘爣鍑?
+        maxConcurrent = 15,       -- 待发 + 飞行 + 本帧待加入的分裂车总上限；库存队列不占名额
+        bounceElasticity = 1.0,    -- WO-05/P4：反弹弹性，1.0 为标准
     },
     speed = {
         radius = 18, speed = 660, damage = 1,
         speedBoost = 1.06,
-        -- v0.13.22锛?*鍘绘帀閫熷害涓婇檺**锛堝師 maxSpeed=900 灏侀《锛夆€斺€旈€熷害鏃犻檺澧為暱锛屼笉灏侀《銆?
-        -- v0.13.23锛氬姞**杞€ч€掑噺**鈥斺€旈€熷害瓒婇珮锛屾瘡娆″姞閫熺殑鍊嶇巼瓒婃帴杩?1.0锛堜絾浠?>1锛屾案杩滃湪娑級锛?
-        -- 閬垮厤鍚庢湡婊氶洩鐞冨け鎺э紱`speedBoostFloor` 鏄“鍑忎笅闄愶紙鍐嶅揩涔熻嚦灏戞寜杩欎釜鍊嶇巼娑級銆?
+        -- v0.13.22：**去掉速度上限**（原 maxSpeed=900 封顶）——速度无限增长，不封顶。
+        -- v0.13.23：加**软性递减**——速度越高，每次加速的倍率越接近 1.0（但仍 >1，永远在涨），
+        -- 避免后期滚雪球失控；`speedBoostFloor` 是衰减下限（再快也至少按这个倍率涨）。
         speedBoostFloor = 1.012,
-        speedSoftCap = 1400,       -- 杈惧埌姝ら€熷害鏃跺姞閫熷€嶇巼闄嶅埌涓嬮檺
+        speedSoftCap = 1400,       -- 达到此速度时加速倍率降到下限
         damageStep = 320,
-        -- v0.13.22锛?*鍘绘帀浼ゅ灏侀《**锛堝師 maxDamage=2锛夆€斺€斾激瀹虫寜閫熷害鍒嗘。鏃犻檺澧為暱銆?
-        redirectThrottle = 0.45,    -- 鑷姩杩藉嚮鐨勮妭娴侊紙绉掞級锛屽墛寮卞叾鎸佺画榛忕潃
-        redirectMinSpeed = 120,     -- WO-05/P4锛氫綆浜庢閫熷害涓嶈Е鍙戣拷鍑伙紝娑堥櫎浣庨€熸姈鍔?
-        bounceElasticity = 1.0,    -- 鍔犻€熷脊鏇?婊?
+        -- v0.13.22：**去掉伤害封顶**（原 maxDamage=2）——伤害按速度分档无限增长。
+        redirectThrottle = 0.45,    -- 自动追击的节流（秒），削弱其持续黏着
+        redirectMinSpeed = 120,     -- WO-05/P4：低于此速度不触发追击，消除低速抖动
+        bounceElasticity = 1.0,    -- 加速弹更"滑"
     },
     ice = {
         radius = 20, speed = 520, damage = 1,
@@ -131,77 +128,77 @@ local BALL_TYPES = {
         radius = 30, speed = 420, damage = 2,
         pierceAfterBounce = true,
         areaRadiusCells = 3.5,
-        areaCooldown = 1.0,       -- 鑼冨洿浼ゅ鍐呯疆鍐峰嵈锛堢锛夛紝姣忚締宸ㄥ瀷杞︾嫭绔嬭鏃?
-        bounceElasticity = 0.92,   -- WO-05/P4锛氬法鍨嬪脊鏇?娌?
+        areaCooldown = 1.0,       -- 范围伤害内置冷却（秒），每辆巨型车独立计时
+        bounceElasticity = 0.92,   -- WO-05/P4：巨型弹更"沉"
     },
 }
 local BALL_ORDER = { "normal", "ice", "speed", "giant" }
--- v0.13.19锛氬垵濮嬭溅浠庡垎瑁傝溅鏀逛负**鍔犻€熻溅**锛堢敤鎴锋寚瀹氥€屽熀纭€鐨勮溅鏀逛负鍔犻€熻溅銆嶏級銆?
--- 鍏朵綑涓夎溅锛堝垎瑁?鍐板喕/宸ㄥ瀷锛変粛闈犲眬鍐呭崌绾у崱銆岃В閿伱椕楄溅銆嶈繘鍏ユ湰灞€闃熷垪銆?
+-- v0.13.19：初始车从分裂车改为**加速车**（用户指定「基础的车改为加速车」）。
+-- 其余三车（分裂/冰冻/巨型）仍靠局内升级卡「解锁××车」进入本局队列。
 local STARTING_BALL_TYPE = "speed"
--- 寮€灞€瑁呰浇鐨勮溅杈嗘€绘暟锛? 杈嗗緟鍙?+ ammoCapacity-1 杈嗗寮癸級銆?
--- v0.12.15锛氬紑灞€ 3 杈?鈫?1 杈嗭紙鍙湁寰呭彂锛屾病鏈夊寮癸級锛涖€屽脊鑽墿瀹广€嶉€氱敤鍗囩骇姣忕骇 +1锛堟渶澶氫笁绾э級銆?
--- 琛ュ脊鎸夈€屽洖鏀朵竴杈嗚ˉ涓€杈嗐€嶇淮鎸佽繖涓€婚噺锛堜富鐞冨洖鏀舵椂 EnqueueNextBall锛夈€?
+-- 开局装载的车辆总数（1 辆待发 + ammoCapacity-1 辆备弹）。
+-- v0.12.15：开局 3 辆 → 1 辆（只有待发，没有备弹）；「弹药扩容」通用升级每级 +1（最多三级）。
+-- 补弹按「回收一辆补一辆」维持这个总量（主球回收时 EnqueueNextBall）。
 local BASE_AMMO_TOTAL = 1
 local ammoCapacity = BASE_AMMO_TOTAL
 local unlockedBalls = { [STARTING_BALL_TYPE] = true }
 
--- P11 璇嶆潯绯荤粺锛堣鍒欏眰锛夛細寮圭彔鍙惡甯︾殑"璇嶆潯"淇グ锛屽奖鍝嶄激瀹?寮归亾/鍙嶉琛屼负銆?
--- 浠呴€氳繃 CreateMarble 鐨?words 琛ㄦ敞鍏ワ紱apply() 鍦ㄧ敓鎴愭椂鏀瑰啓 marble 瀛楁鎴栨寕杞借涓烘爣璁帮紝
--- 涓嶈Е纰颁换浣曟覆鏌?API銆傝瑙夎〃鐜帮紙璇嶆潯鐜粫鍏夈€佸紓甯告煋鑹诧級鎺ㄨ繜鍒?deferred.md D 鐢辫〃鐜板眰娑堣垂浜嬩欢銆?
+-- P11 词条系统（规则层）：弹珠可携带的"词条"修饰，影响伤害/弹道/反馈行为。
+-- 仅通过 CreateMarble 的 words 表注入；apply() 在生成时改写 marble 字段或挂载行为标记，
+-- 不触碰任何渲染 API。视觉表现（词条环绕光、异常染色）推迟到 deferred.md D 由表现层消费事件。
 local BALL_WORDS = {
-    pierce = {  -- 璐┛锛氭湰娆￠琛岀殑棣栧潡鍛戒腑涓嶅弽寮癸紝鐩存帴绌胯繃缁х画椋炶
-        name = "璐┛",
+    pierce = {  -- 贯穿：本次飞行的首块命中不反弹，直接穿过继续飞行
+        name = "贯穿",
         apply = function(marble) marble.wordPierce = true end,
     },
-    lifesteal = {  -- 鍚歌锛氭瘡娆″嚮纰庣爾鍧椾负鍩哄湴鍥炲灏戦噺鐢熷懡锛堟渶澶氬洖鍒颁笂闄愶級
-        name = "鍚歌",
+    lifesteal = {  -- 吸血：每次击碎砖块为基地回复少量生命（最多回到上限）
+        name = "吸血",
         value = 1,
         apply = function(marble, def) marble.wordLifesteal = def.value or 1 end,
     },
-    chain = {  -- 杩為攣锛氬懡涓椂鍚戞渶杩戝彟涓€鐮栧潡杩藉姞涓€娆″皬鑼冨洿婧呭皠
-        name = "杩為攣",
+    chain = {  -- 连锁：命中时向最近另一砖块追加一次小范围溅射
+        name = "连锁",
         radius = 1.6,
         apply = function(marble, def) marble.wordChain = def.radius or 1.6 end,
     },
-    momentum = {  -- 鍔ㄩ噺锛氫激瀹抽殢褰撳墠閫熷害鎻愬崌锛堥珮閫熺悆鏇寸棝锛?
-        name = "鍔ㄩ噺",
+    momentum = {  -- 动量：伤害随当前速度提升（高速球更痛）
+        name = "动量",
         apply = function(marble) marble.wordMomentum = true end,
     },
-    heavy = {  -- 閲嶅脊锛氬弽寮瑰脊鎬ф洿浣庛€佸懡涓爾鍧楅澶栧帇鍒讹紙鍐荤粨绫讳技鍑忛€熺敱 ice 澶勭悊锛?
-        name = "閲嶅脊",
+    heavy = {  -- 重弹：反弹弹性更低、命中砖块额外压制（冻结类似减速由 ice 处理）
+        name = "重弹",
         apply = function(marble) marble.wordHeavy = true end,
     },
 }
 local WORD_IDS = { "pierce", "lifesteal", "chain", "momentum", "heavy" }
 
--- 灞€鍐呭彲璋冭鍒欙紙鍙楀崌绾у奖鍝嶏級锛屽垵濮嬪€笺€傚繀椤诲湪浣跨敤瀹冪殑鍗囩骇闂寘涔嬪墠澹版槑銆?
+-- 局内可调规则（受升级影响），初始值。必须在使用它的升级闭包之前声明。
 local BALL_TUNING = {
     damageBonus = 0,
     giantArea = 0,
     splitBonus = 0,
     speedMul = 1.0,
     iceBonus = 0,
-    -- 瓒婄嚎鏁翠綋浼ゅ鍑€鍔犳垚锛氬湪鈥滆秺绾胯鏁?脳 ceil(0.5)鈥濆悎璁″悗涓€娆℃€ч檮鍔狅紙鐜荤拑澶х偖 +1锛夈€?
+    -- 越线整体伤害净加成：在“越线行数 × ceil(0.5)”合计后一次性附加（玻璃大炮 +1）。
     lineDamageBonus = 0,
-    -- v0.13.28 閫氱敤鍗￠噸鍋氾細瑁呯敳寮哄寲鐨勭櫨鍒嗘瘮鍑忎激锛?..0.45锛岀粨绠楁椂鍥涜垗浜斿叆骞朵繚璇佹渶浣?1锛夈€?
+    -- v0.13.28 通用卡重做：装甲强化的百分比减伤（0..0.45，结算时四舍五入并保证最低 1）。
     armorReduce = 0,
-    -- v0.13.28 閫氱敤鍗￠噸鍋氾細瑁呯敳寮哄寲鐨勯浂浠朵骇鍑哄€嶇巼锛? + 0.08/绾э級銆?
+    -- v0.13.28 通用卡重做：装甲强化的零件产出倍率（1 + 0.08/级）。
     partsMul = 1.0,
-    -- v0.13.28 閫氱敤鍗￠噸鍋氾細鐜荤拑宸ㄧ偖鐨勫彂灏勫垵閫熷€嶇巼锛? + 0.10/绾э級銆?
+    -- v0.13.28 通用卡重做：玻璃巨炮的发射初速倍率（1 + 0.10/级）。
     launchSpeedMul = 1.0,
-    -- v0.13.28 閫氱敤鍗￠噸鍋氾細绌跨敳寮瑰ご姣忓嚮纰庝竴鍧楃殑棰濆缁忛獙锛?1/绾э級銆?
+    -- v0.13.28 通用卡重做：穿甲弹头每击碎一块的额外经验（+1/级）。
     brickXpFlat = 0,
     xpMul = 1.0,
-    -- v0.13.55 杞﹀瀷銆屼笓灞炲崱銆嶆満鍒剁淮搴︼紙涓庡熀纭€鍗″尯鍒嗭級锛?
-    --   鍩虹鍗″彧缁欒杞︿富灞炴€х殑鎵撳簳鏁板€硷紝涓撳睘鍗℃敼鏈哄埗銆佷笉鏄洿澶х殑鏁板瓧銆?
-    -- 鍒嗚锛氬崟娆″垎瑁備骇鍑虹殑寮圭彔鏁帮紙鍩虹 2 棰楋紱瑁傚彉鏍告瘡绾?+1锛夈€?
+    -- v0.13.55 车型「专属卡」机制维度（与基础卡区分）：
+    --   基础卡只给该车主属性的打底数值，专属卡改机制、不是更大的数字。
+    -- 分裂：单次分裂产出的弹珠数（基础 2 颗；裂变核每级 +1）。
     splitCount = 2,
-    -- 鍐板喕锛氬銆屽喕缁撲腑銆嶆晫鏈虹殑鍙楀嚮浼ゅ鍔犳垚锛?..0.9锛岄湝瑁傛秱灞傛瘡绾?+0.3锛夈€?
+    -- 冰冻：对「冻结中」敌机的受击伤害加成（0..0.9，霜裂涂层每级 +0.3）。
     iceShatter = 0,
-    -- 鍔犻€燂細姣忔椋炶鐨勭┛閫忔鏁帮紙鍔ㄨ兘绌垮埡姣忕骇 +1锛夛紝绌块€忔椂涓嶅弽寮广€佽繛缁悆鍧椼€?
+    -- 加速：每次飞行的穿透次数（动能穿刺每级 +1），穿透时不反弹、连续吃块。
     speedPierce = 0,
-    -- 宸ㄥ瀷锛氳寖鍥村嚮纰庣殑鏆村嚮鐜囷紙0..0.45锛屽啿鍑绘尝姣忕骇 +0.15锛夛紝鏆村嚮浼ゅ 脳2銆?
+    -- 巨型：范围击碎的暴击率（0..0.45，冲击波每级 +0.15），暴击伤害 ×2。
     giantCritChance = 0,
 }
 
@@ -209,10 +206,10 @@ local gameState = "menu"
 local score = 0
 local highScore = 0
 local baseHp = BASE_HP
-local baseShield = 0               -- 灞€鍐呮姢鐩惧惛鏀跺€硷紙閬撳叿妲姐€屾姢鐩俱€嶆彁渚涳級
-local ResetItems                   -- 鍓嶅悜澹版槑锛歊esetGame 閲岃璋冪敤锛涘悗瀹氫箟浼氶€€鍖栨垚鍏ㄥ眬鏌ユ壘
--- v0.13.13锛氬眬澶栭亾鍏峰簱瀛樻媺鍙栧嚱鏁帮紙缂栨帓灞傛敞鍐岋級銆傗殸锔?蹇呴』鍦?ResetGame 涔嬪墠澹版槑鈥斺€?
--- ResetGame 寮€灞€灏辫皟鐢ㄥ畠锛屽悗缃０鏄庝細閫€鍖栨垚鍏ㄥ眬 nil锛圓B-100 鍚屾棌锛夈€?
+local baseShield = 0               -- 局内护盾吸收值（道具槽「护盾」提供）
+local ResetItems                   -- 前向声明：ResetGame 里要调用；后定义会退化成全局查找
+-- v0.13.13：局外道具库存拉取函数（编排层注册）。⚠️ 必须在 ResetGame 之前声明——
+-- ResetGame 开局就调用它，后置声明会退化成全局 nil（AB-100 同族）。
 ---@type fun(): table<string, integer>|nil
 local itemStockProvider = nil
 local wave = 1
@@ -220,69 +217,69 @@ local stage = 1
 local stageWave = 1
 local bossDefeated = false
 ---@type {stage:integer, stars:integer, rating:string, bonusScore:integer, bonusParts:integer, animAt:integer}|nil
-local stageResult = nil   -- stagewin 鎬佸睍绀轰笌瀛樻。鐢紙鏄熺骇/璇勭骇/杩囨浮璧峰鏃跺埢锛?
+local stageResult = nil   -- stagewin 态展示与存档用（星级/评级/过渡起始时刻）
 local elapsed = 0
 local waveCooldown = 0
--- v0.13.26锛氬悓娉㈤敊宄扮敓鎴愮姸鎬侊紙鍓╀綑鏋舵暟/涓嬫璁℃椂/鏈尝鏈哄瀷涓庣爾鍧楀弬鏁帮級銆?
--- 鈿狅笍 鏀惰繘涓€寮犺〃锛欸ame.lua 椤跺眰 local 宸查€艰繎 Lua 200 涓婇檺锛圓B-154 鍚屾棌锛夛紝绂佹鍐嶅姞鏁ｈ椤跺眰 local銆?
+-- v0.13.26：同波错峰生成状态（剩余架数/下次计时/本波机型与砖块参数）。
+-- ⚠️ 收进一张表：Game.lua 顶层 local 已逼近 Lua 200 上限（AB-154 同族），禁止再加散装顶层 local。
 local pendingSpawn = { remaining = 0, timer = 0, key = nil, brickSize = 0, hp = 1, speed = 0, kind = nil, lane = 0, spawned = 0 }
-local INTRO_SECONDS = 4.5
--- v0.13.24锛氳繘鍏冲噯澶囨湡锛堢锛夈€?0 鏃剁帺娉曞喕缁擄細涓嶆帹杩涘脊鐝?鏁屾満/娉㈡锛屽彧鏀捐琛ㄧ幇灞傚姩鐢汇€?
+local INTRO_SECONDS = 3.0
+-- v0.13.24：进关准备期（秒）。>0 时玩法冻结：不推进弹珠/敌机/波次，只放行表现层动画。
 local introTimer = 0
--- 鏈眬鏄惁鎴愬姛鍙戝皠杩囧脊鐝犮€傜敤浜庛€屾柊鎵嬩笅鎷夋墜鍔挎彁绀恒€嶏細鐜╁杩樻病鍋氳繃浠讳綍鎿嶄綔鏃跺惊鐜挱鏀俱€?
+-- 本局是否成功发射过弹珠。用于「新手下拉手势提示」：玩家还没做过任何操作时循环播放。
 local hasLaunched = false
 ---@type NextWavePlan|nil
 local nextWavePlan = nil
 
--- 骞稿瓨鑰呮垚闀跨姸鎬?
+-- 幸存者成长状态
 local playerLevel = 1
 local xp = 0
 local xpToNext = BASE_XP_TO_NEXT
-local pendingLevelUps = 0          -- 寰呭鐞嗙殑鍗囩骇娆℃暟锛堟殏鍋滈€夊己鍖栵級
-local deferredXp = 0               -- 鍗囩骇瑙﹀彂鍚屽抚鍚庣画鍑荤缁忛獙鍘熷€硷紝瀹屾垚閫夊崱鍚庣粨绠?
+local pendingLevelUps = 0          -- 待处理的升级次数（暂停选强化）
+local deferredXp = 0               -- 升级触发同帧后续击碎经验原值，完成选卡后结算
 ---@type UpgradeDef[]|nil
-local upgradeChoices = nil         -- 褰撳墠鍙€夌殑涓夊紶鍗囩骇鍊欓€?
-local upgradePicks = {}            -- 宸查€夊己鍖栫殑绱鏁堟灉锛坕d 鍒楄〃锛屽彲閲嶅锛?
-local upgradeStacks = {}           -- 宸查€夊己鍖栧悇 id 鐨勫眰鏁帮紙WO-09/P5 鍙犲姞涓婇檺鍒ゅ畾锛?
--- P11锛氬凡婵€娲昏瘝鏉★紙鏉ヨ嚜涓撳睘璇嶆潯鍗囩骇锛夛紝浣滀负鏂板脊鐝犵殑榛樿璇嶆潯绗€傝鍒欏眰鎸佹湁锛屾覆鏌撳眰鍙蹇収銆?
+local upgradeChoices = nil         -- 当前可选的三张升级候选
+local upgradePicks = {}            -- 已选强化的累计效果（id 列表，可重复）
+local upgradeStacks = {}           -- 已选强化各 id 的层数（WO-09/P5 叠加上限判定）
+-- P11：已激活词条（来自专属词条升级），作为新弹珠的默认词条第。规则层持有，渲染层只读快照。
 local activeWords = {}
-local clearStreak = 0              -- 杩炵画娓呯┖椋炶埞鐨勮繛鍑伙紙缁忛獙鍔犳垚锛?
-local bricksBroken = 0            -- 绱鍑荤鐮栧潡鏁帮紙WO-11/P8 gameover 鍥為【锛?
-local previousHighScore = 0      -- 鏈眬寮€灞€鏃剁殑鏈€楂樼邯褰曪紙鏂扮邯褰曟彁绀轰粎涓庢鍩哄噯姣旇緝锛?
+local clearStreak = 0              -- 连续清空飞船的连击（经验加成）
+local bricksBroken = 0            -- 累计击碎砖块数（WO-11/P8 gameover 回顾）
+local previousHighScore = 0      -- 本局开局时的最高纪录（新纪录提示仅与此基准比较）
 
--- v0.11.0 鍟嗕笟鍖栵細灞€鍐呴浂浠朵骇鍑轰笌鍗囩骇闈㈡澘鍙樼幇鐘舵€侊紙鍧囦负鍗曞眬鐢熷懡鍛ㄦ湡锛夈€?
-local partsEarned = 0              -- 鏈眬绱鑾峰緱鐨勩€岄浂浠躲€嶏紝缁撶畻鏃剁敱缂栨帓灞傚叆搴?
-local runAircraft = {}             -- 鏈眬娓呮帀杩囩殑鏈哄瀷鍜屽敮涓€鍒楄〃锛堢粨绠楁椂瑙ｉ攣鍥鹃壌锛?
-local partsSettled = false         -- 褰撳墠鎴樻枟闃舵闆朵欢鏄惁宸插叆搴?
-local partsDoubled = false         -- 鏈眬鏄惁宸茬敤骞垮憡缈诲€嶏紙姣忓眬涓€娆★級
-local lastSettledParts = 0         -- 鏈€杩戜竴娆＄粨绠楀疄闄呭叆搴撴暟
-local settledParts = 0             -- 宸叉寜鍩虹鍊嶇巼鍏ュ簱鐨勭疮璁￠浂浠讹紙澶嶆椿鍚庡彧琛ュ閲忥級
--- 缁撶畻璐︽湰锛坴0.14.x 瀛橀挶缃愶級锛歜ricks=宸茶鍏ヨ法灞€缁熻鐨勫嚮纰庢暟锛況unCounted=鏈眬鏄惁宸茶瀹屾垚锛?
--- gear=鏈眬绱銆岄娇杞€嶏紙200 鍧?/ 100 榻胯疆锛岀簿鑻辨満姣忓潡鎸?2 鍊嶈锛夛紱gearSettled=宸插叆搴撻娇杞紙澶嶆椿鍚庡彧琛ュ閲忥級銆?
+-- v0.11.0 商业化：局内零件产出与升级面板变现状态（均为单局生命周期）。
+local partsEarned = 0              -- 本局累计获得的「零件」，结算时由编排层入库
+local runAircraft = {}             -- 本局清掉过的机型和唯一列表（结算时解锁图鉴）
+local partsSettled = false         -- 当前战斗阶段零件是否已入库
+local partsDoubled = false         -- 本局是否已用广告翻倍（每局一次）
+local lastSettledParts = 0         -- 最近一次结算实际入库数
+local settledParts = 0             -- 已按基础倍率入库的累计零件（复活后只补增量）
+-- 结算账本（v0.14.x 存钱罐）：bricks=已计入跨局统计的击碎数；runCounted=本局是否已计完成；
+-- gear=本局累计「齿轮」（200 块 / 100 齿轮，精英机每块按 2 倍计）；gearSettled=已入库齿轮（复活后只补增量）。
 local settleBook = { bricks = 0, runCounted = false, gear = 0, gearSettled = 0 }
-local upgradeRerollFreeUsed = 0    -- 鏈眬宸茬敤鍏嶈垂閲嶆娊娆℃暟锛堜笂闄?= 1 + 澶╄祴銆屽厤璐瑰埛鏂般€嶅姞鎴愶級
-local heldUpgradeId = nil          -- 鏈眬淇濈暀鍒颁笅涓€娆″崌绾х殑鍊欓€夊崱 id锛堟渶澶氫竴寮狅級
-local PANEL_CARD_COUNT = 3         -- 甯歌鍊欓€夋暟锛坴0.12.5 绮剧畝锛氶潰鏉夸笉鍐嶆湁瑙ｉ攣绗?4 寮狅級
--- 鏆傚仠琛ョ粰绔欙紙鐪嬪箍鍛婏紝鍗曞眬闄愰噺锛?
-local pauseHealUsed = 0            -- 宸茬敤銆岄槻绾挎€ユ晳銆嶆鏁?
-local pauseRareUsed = 0            -- 宸茬敤銆屼笅娆″己鍖栦繚搴曠█鏈夈€嶆鏁?
-local pendingRareRoll = false      -- 涓嬫鎶藉崱寮哄埗绋€鏈夛紙鐢辨殏鍋滆ˉ缁欑珯璐拱锛?
--- v0.13.58锛氭殏鍋滆ˉ缁欑珯鐨勫父閲忔敹杩涗竴寮犺〃锛圙ame.lua 椤跺眰 local 閫艰繎 Lua 200 涓婇檺锛孉B-166锛夈€?
+local upgradeRerollFreeUsed = 0    -- 本局已用免费重抽次数（上限 = 1 + 天赋「免费刷新」加成）
+local heldUpgradeId = nil          -- 本局保留到下一次升级的候选卡 id（最多一张）
+local PANEL_CARD_COUNT = 3         -- 常规候选数（v0.12.5 精简：面板不再有解锁第 4 张）
+-- 暂停补给站（看广告，单局限量）
+local pauseHealUsed = 0            -- 已用「防线急救」次数
+local pauseRareUsed = 0            -- 已用「下次强化保底稀有」次数
+local pendingRareRoll = false      -- 下次抽卡强制稀有（由暂停补给站购买）
+-- v0.13.58：暂停补给站的常量收进一张表（Game.lua 顶层 local 逼近 Lua 200 上限，AB-166）。
 local PAUSE_SUPPLY = { healMax = 1, healAmount = 25, rareMax = 1 }
 local EjectBrick
--- v0.13.58锛氶檮榄旀寕杞藉嚱鏁扳€斺€擟reateMarble锛堢害 500 琛岋級鍏堜簬鍏跺畾涔変娇鐢紝蹇呴』鍓嶅悜澹版槑锛圓B-100锛夈€?
+-- v0.13.58：附魔挂载函数——CreateMarble（约 500 行）先于其定义使用，必须前向声明（AB-100）。
 local ApplyEnchantToMarble
 local pauseOrbitalUsed = false
 local pauseReloadUsed = false
 local pausePartsBoostUsed = false
 local partsBoostTime = 0
 
--- 骞稿瓨鑰呭崌绾у己鍖栨睜锛圵O-09/P5锛夛細
--- weight 鎶藉崱鏉冮噸锛況arity 绋€鏈夊害锛坈ommon/rare/epic锛夛紱maxStacks 鍙犲姞涓婇檺锛?
--- tradeoff 鏄惁鎶夋嫨鍨嬶紙apply 鍚屾椂鏀规璐燂級锛泇alue 鍗曟澧為噺锛堢敤浜庡崌绾у崱 delta 棰勮锛夈€?
--- apply(stacks) 鎺ユ敹褰撳墠宸查€夊眰鏁帮紝鏀寔杈归檯閫掑噺锛堝 damage 姣忓眰鐣ュ噺锛夈€?
--- apply() 鍙敼 BALL_TUNING / baseHp锛堣鍒欏眰锛夛紝UI 鍙 GetSnapshot().upgradeChoices銆?
--- detail 涓哄ぉ璧嬪崱璇︽儏鎻忚堪锛堣嚜鍔ㄦ崲琛屽睍绀猴級锛泇alue 鏄崟娆″閲忓窘鏍囷紱tradeoff=鎶夋嫨鍨嬮闄┿€?
+-- 幸存者升级强化池（WO-09/P5）：
+-- weight 抽卡权重；rarity 稀有度（common/rare/epic）；maxStacks 叠加上限；
+-- tradeoff 是否抉择型（apply 同时改正负）；value 单次增量（用于升级卡 delta 预览）。
+-- apply(stacks) 接收当前已选层数，支持边际递减（如 damage 每层略减）。
+-- apply() 只改 BALL_TUNING / baseHp（规则层），UI 只读 GetSnapshot().upgradeChoices。
+-- detail 为天赋卡详情描述（自动换行展示）；value 是单次增量徽标；tradeoff=抉择型风险。
 ---@class UpgradeDef
 ---@field id string
 ---@field name string
@@ -294,174 +291,174 @@ local partsBoostTime = 0
 ---@field tradeoff boolean
 ---@field value string
 ---@field kind string|nil
----@field ballType string|nil 浠呭搴旇溅鍨嬪彲鐢ㄧ殑寮哄寲
----@field unlockBallType string|nil 鏈В閿佹椂鎵嶈繘鍏ュ崱姹犵殑杞﹀瀷瑙ｉ攣鍗?
----@field requiresCard string|nil 闇€澶╄祴鏍戣В閿佺殑閫氱敤鍗?id锛坸p/ammo锛夛紱鏈В閿佷笉杩涘崱姹?
----@field kind string|nil "base"=杞﹁В閿佸嵆鍙娊鐨勫熀纭€鍗★紱鍏朵綑甯?ballType 鐨勪负銆屼笓灞炲崱銆嶏紝闇€ ballCard 鑺傜偣
+---@field ballType string|nil 仅对应车型可用的强化
+---@field unlockBallType string|nil 未解锁时才进入卡池的车型解锁卡
+---@field requiresCard string|nil 需天赋树解锁的通用卡 id（xp/ammo）；未解锁不进卡池
+---@field kind string|nil "base"=车解锁即可抽的基础卡；其余带 ballType 的为「专属卡」，需 ballCard 节点
 ---@field apply fun(stacks: integer)
 
-local UnlockBallType -- 瑙ｉ攣鍗″厛浜庤ˉ寮瑰嚱鏁板０鏄庯紝搴旂敤鏃跺啀璋冪敤瑙勫垯灞傚嚱鏁?
-local IncreaseAmmo   -- 銆屽脊鑽墿瀹广€嶅悓涓婏細鍗℃睜鍏堝畾涔夛紝apply 鏃跺啀璋冪敤瑙勫垯灞傚嚱鏁?
--- v0.13.28锛歳epair 鍗＄殑 apply 闂寘浼氳鐢熷懡涓婇檺锛涜鍑芥暟瀹氫箟鍦ㄥ崱姹犱箣鍚庯紝
--- 蹇呴』鍓嶅悜澹版槑锛屽惁鍒欓棴鍖呰В鏋愭垚鍏ㄥ眬 nil锛圓B-100 鍚屾棌锛夈€?
+local UnlockBallType -- 解锁卡先于补弹函数声明，应用时再调用规则层函数
+local IncreaseAmmo   -- 「弹药扩容」同上：卡池先定义，apply 时再调用规则层函数
+-- v0.13.28：repair 卡的 apply 闭包会读生命上限；该函数定义在卡池之后，
+-- 必须前向声明，否则闭包解析成全局 nil（AB-100 同族）。
 local GetMaxBaseHp
 
--- v0.13.5 澶╄祴鏍戞淳鐢熺姸鎬侊細蹇呴』鍦?UPGRADE_POOL 涔嬪墠澹版槑鈥斺€攔epair 鍗＄殑 apply 闂寘浼氳琛€閲忓姞鎴愩€?
+-- v0.13.5 天赋树派生状态：必须在 UPGRADE_POOL 之前声明——repair 卡的 apply 闭包会读血量加成。
 ---@type table<string, boolean>
 local talentOwned = {}
-local talentMaxHpBonus = 0     -- 宸茶В閿佽妭鐐规暟 脳 姣忚妭鐐硅閲忓姞鎴?
-local talentPartsPct = 0       -- 缁撶畻闆朵欢鐧惧垎姣斿姞鎴愶紙鏉ヨ嚜閫氱敤绾胯矾闈炲崱鑺傜偣锛?
-local talentBallStats = {}     -- 杞︾嚎璺暟鍊煎寮猴細ballType -> {stat, value, mul}
-local talentUnlockedCards = {} -- 澶╄祴瑙ｉ攣鐨勯€氱敤鍗?id 闆嗗悎锛坸p / ammo锛?
-local talentUnlockedBalls = {} -- 澶╄祴瑙ｉ攣鐨勮溅锛堝眬鍐呭嚭鍦鸿祫鏍硷級
--- v0.13.16锛氬ぉ璧嬭В閿佺殑銆屼笓灞炲崱銆嶈祫鏍硷紙ballCard 鑺傜偣锛屾寜杞﹀瀷锛夈€?
--- 鈿狅笍 涔嬪墠杩欎釜鑺傜偣鍙瓨鍦ㄤ簬鐩綍閲屻€佽鍒欏眰浠庢湭娑堣垂 鈫?涓撳睘鍗″彧瑕佽溅瑙ｉ攣灏辫兘鎶斤紝
--- 澶╄祴鏍戠殑銆岃В閿佷笓灞炲崱銆嶈妭鐐规槸瑁呴グ銆傜幇鍦ㄤ笓灞炲崱蹇呴』**鍏堣В閿佽鑺傜偣**鎵嶈繘姹犮€?
+local talentMaxHpBonus = 0     -- 已解锁节点数 × 每节点血量加成
+local talentPartsPct = 0       -- 结算零件百分比加成（来自通用线路非卡节点）
+local talentBallStats = {}     -- 车线路数值增强：ballType -> {stat, value, mul}
+local talentUnlockedCards = {} -- 天赋解锁的通用卡 id 集合（xp / ammo）
+local talentUnlockedBalls = {} -- 天赋解锁的车（局内出场资格）
+-- v0.13.16：天赋解锁的「专属卡」资格（ballCard 节点，按车型）。
+-- ⚠️ 之前这个节点只存在于目录里、规则层从未消费 → 专属卡只要车解锁就能抽，
+-- 天赋树的「解锁专属卡」节点是装饰。现在专属卡必须**先解锁该节点**才进池。
 local talentUnlockedBallCards = {}
--- v0.13.15锛氭垚闀跨嚎澶╄祴鈥斺€旀毚鍑荤巼锛?..1锛変笌鍩虹鏀诲嚮鍔犳垚銆?
+-- v0.13.15：成长线天赋——暴击率（0..1）与基础攻击加成。
 local talentCritChance = 0
 local talentAtkBonus = 0
--- v0.13.64锛氶€氱敤鍗＄嚎銆屽厤璐瑰埛鏂?+1銆嶈妭鐐光€斺€旀瘡瑙ｉ攣涓€涓紝姣忓眬鍏嶈垂閲嶆娊娆℃暟 +1銆?
+-- v0.13.64：通用卡线「免费刷新 +1」节点——每解锁一个，每局免费重抽次数 +1。
 local talentRerollBonus = 0
--- 鈿狅笍 鏈枃浠堕《灞?local 宸?199/200锛圓B-166 纭笂闄愶級锛屽厤璐归噸鎶芥€绘暟璧?Game 琛ㄥ瓧娈?
--- 锛堣〃瀛楁涓嶅崰椤跺眰 local 妲斤紱璋冪敤鐐瑰湪鍑芥暟浣撳唴锛岃繍琛屾湡瑙ｆ瀽锛屾棤鍓嶅悜寮曠敤闂锛夈€?
+-- ⚠️ 本文件顶层 local 已 199/200（AB-166 硬上限），免费重抽总数走 Game 表字段
+-- （表字段不占顶层 local 槽；调用点在函数体内，运行期解析，无前向引用问题）。
 ---@type fun(): table<string, boolean>|nil
-local talentProvider = nil     -- 缂栨帓灞傛敞鍏ワ紱ResetGame 鏃舵媺鍙栨渶鏂拌В閿侀泦鍚?
+local talentProvider = nil     -- 编排层注入；ResetGame 时拉取最新解锁集合
 
 ---@type UpgradeDef[]
 local UPGRADE_POOL = {
-    -- v0.13.28 閫氱敤鍗￠噸鍋氾紙鐢ㄦ埛鐐瑰悕銆屽父椹婚€氱敤鍗″湪鍏? 姣棤甯姪銆嶏級锛?
-    -- 鏃?damage銆屼激瀹?+1銆嶅湪鍏?~3锛堢爾鍧?1 琛€锛夋槸绾孩鍑恒€乺epair/armor 鍦ㄥ嚑涔庝笉鎺夎鐨勫墠鏈熺┖杞€?
-    -- 鍥涘紶鍗℃敼涓烘寕鍦?*浣庨毦搴︿篃鐪熷疄瀛樺湪鐨勫彉閲?*涓婏細缁忛獙 / 鐢熷懡涓婇檺 / 闆朵欢浜у嚭 / 鍙戝皠鍒濋€熴€?
-    { id = "damage", name = "绌跨敳寮瑰ご", desc = "鎵€鏈夊脊鐝犱激瀹?+1锛屽嚮纰庨澶?+1 缁忛獙",
-      detail = "寮圭彔浼ゅ +1锛屾瘡鍑荤涓€鍧楀 +1 缁忛獙銆?,
-      weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1 浼ゅ / +1 缁忛獙",
+    -- v0.13.28 通用卡重做（用户点名「常驻通用卡在关1 毫无帮助」）：
+    -- 旧 damage「伤害 +1」在关1~3（砖块 1 血）是纯溢出、repair/armor 在几乎不掉血的前期空转。
+    -- 四张卡改为挂在**低难度也真实存在的变量**上：经验 / 生命上限 / 零件产出 / 发射初速。
+    { id = "damage", name = "穿甲弹头", desc = "所有弹珠伤害 +1，击碎额外 +1 经验",
+      detail = "弹珠伤害 +1，每击碎一块多 +1 经验。",
+      weight = 1, rarity = "common", maxStacks = 8, tradeoff = false, value = "+1 伤害 / +1 经验",
       apply = function(stacks)
           BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 1
           BALL_TUNING.brickXpFlat = BALL_TUNING.brickXpFlat + 1
       end },
-    -- v0.13.55 杞﹀瀷銆屼笓灞炲崱銆? 鏀规満鍒讹紱瀵瑰簲鐨勩€屽熀纭€鍗°€嶏紙base_*锛岃涓嬫柟锛夊彧缁欎富灞炴€ф墦搴曟暟鍊笺€?
-    -- 鏃х増涓撳睘鍗′笌鍩虹鍗￠兘鍙敼鍚屼竴涓?BALL_TUNING 瀛楁銆佸彧鏄暟瀛楁洿澶?鈫?鍥涙潯鍏紡鍚勫啓涓ら亶銆?
-    { id = "giant", name = "鍐插嚮娉?, desc = "鑼冨洿鍑荤 15% 姒傜巼閫犳垚鍙屽€嶄激瀹?,
-      detail = "鑼冨洿鍑荤 15% 姒傜巼鍙屽€嶄激瀹炽€?,
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "+15% 鑼冨洿鏆村嚮", ballType = "giant",
+    -- v0.13.55 车型「专属卡」= 改机制；对应的「基础卡」（base_*，见下方）只给主属性打底数值。
+    -- 旧版专属卡与基础卡都只改同一个 BALL_TUNING 字段、只是数字更大 → 四条公式各写两遍。
+    { id = "giant", name = "冲击波", desc = "范围击碎 15% 概率造成双倍伤害",
+      detail = "范围击碎 15% 概率双倍伤害。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "+15% 范围暴击", ballType = "giant",
       apply = function(stacks) BALL_TUNING.giantCritChance = BALL_TUNING.giantCritChance + 0.15 end },
-    { id = "split", name = "瑁傚彉鏍?, desc = "鍒嗚鏃堕澶栦骇鍑?1 棰楀皬寮?,
-      detail = "姣忔鍒嗚澶氫骇 1 棰楀皬寮广€?,
-      weight = 0.6, rarity = "rare", maxStacks = 2, tradeoff = false, value = "+1 鍒嗚鏁?, ballType = "normal",
+    { id = "split", name = "裂变核", desc = "分裂时额外产出 1 颗小弹",
+      detail = "每次分裂多产 1 颗小弹。",
+      weight = 0.6, rarity = "rare", maxStacks = 2, tradeoff = false, value = "+1 分裂数", ballType = "normal",
       apply = function(stacks) BALL_TUNING.splitCount = BALL_TUNING.splitCount + 1 end },
-    { id = "speed", name = "鍔ㄨ兘绌垮埡", desc = "椋炶涓彲绌块€?1 鍧椾笉鍙嶅脊",
-      detail = "椋炶涓┛閫?1 鍧楃户缁銆?,
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "绌块€?+1 鍧?, ballType = "speed",
+    { id = "speed", name = "动能穿刺", desc = "飞行中可穿透 1 块不反弹",
+      detail = "飞行中穿透 1 块继续飞。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "穿透 +1 块", ballType = "speed",
       apply = function(stacks) BALL_TUNING.speedPierce = BALL_TUNING.speedPierce + 1 end },
-    { id = "ice", name = "闇滆娑傚眰", desc = "鍐荤粨涓殑鏁屾満鍙楀嚮浼ゅ +30%",
-      detail = "鍐荤粨涓殑鏁屾満鍙楀嚮 +30%銆?,
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "+30% 纰庡啺浼ゅ", ballType = "ice",
+    { id = "ice", name = "霜裂涂层", desc = "冻结中的敌机受击伤害 +30%",
+      detail = "冻结中的敌机受击 +30%。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = false, value = "+30% 碎冰伤害", ballType = "ice",
       apply = function(stacks) BALL_TUNING.iceShatter = BALL_TUNING.iceShatter + 0.30 end },
-    -- v0.13.28锛氭敼涓恒€岀敓鍛戒笂闄?+12 涓旂珛鍗冲洖 12銆嶁€斺€斾綆闅惧害涓嶆帀琛€鏃朵篃鏈?*姘镐箙**鏀剁泭锛堜笉鍐嶆槸绌鸿繃涓€杞級銆?
-    { id = "repair", name = "鍓嶇嚎缁翠慨", desc = "鐢熷懡涓婇檺 +12锛屽苟绔嬪嵆鍥炲 12",
-      detail = "鐢熷懡涓婇檺姘镐箙 +12锛岀珛鍒诲洖 12 鐐广€?,
-      weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+12 涓婇檺 / +12 鐢熷懡",
+    -- v0.13.28：改为「生命上限 +12 且立即回 12」——低难度不掉血时也有**永久**收益（不再是空过一轮）。
+    { id = "repair", name = "前线维修", desc = "生命上限 +12，并立即回复 12",
+      detail = "生命上限永久 +12，立刻回 12 点。",
+      weight = 1, rarity = "common", maxStacks = 99, tradeoff = false, value = "+12 上限 / +12 生命",
       apply = function(stacks)
           BALL_TUNING.maxHpBonus = BALL_TUNING.maxHpBonus + 12
           baseHp = math.min(GetMaxBaseHp(), baseHp + 12)
       end },
-    -- v0.13.28锛氭敼涓恒€岀櫨鍒嗘瘮鍑忎激 + 闆朵欢浜у嚭 +8%/绾с€嶁€斺€斿叧1 鍗曡瓒婄嚎浼ゅ琚挸鎴?1锛屾棫 -1 鍑忎激瀹屽叏鏃犳晥锛?
-    -- 鐧惧垎姣斿噺浼ゅ湪鍗曡涔熶細鐢熸晥锛屼笖闆朵欢鍔犳垚涓庨毦搴︽棤鍏炽€佺涓€鍏冲氨鐪嬪緱瑙併€?
-    { id = "armor", name = "瑁呯敳寮哄寲", desc = "闃茬嚎鍙楀垱 -20%锛岄浂浠朵骇鍑?+8%",
-      detail = "姣忔鍙楀垱灏?20%锛岄浂浠?+8%銆?,
-      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "-20% 鍙楀垱 / +8% 闆朵欢",
+    -- v0.13.28：改为「百分比减伤 + 零件产出 +8%/级」——关1 单行越线伤害被钳成 1，旧 -1 减伤完全无效；
+    -- 百分比减伤在单行也会生效，且零件加成与难度无关、第一关就看得见。
+    { id = "armor", name = "装甲强化", desc = "防线受创 -20%，零件产出 +8%",
+      detail = "每次受创少 20%，零件 +8%。",
+      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "-20% 受创 / +8% 零件",
       apply = function(stacks)
           BALL_TUNING.armorReduce = BALL_TUNING.armorReduce + 0.20
           BALL_TUNING.partsMul = BALL_TUNING.partsMul + 0.08
       end },
-    { id = "xp", name = "鏁版嵁鍥炴敹", desc = "缁忛獙鑾峰彇 +20%",
-      detail = "缁忛獙 +20%锛屽崌绾ф洿蹇€?,
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+20% 缁忛獙",
+    { id = "xp", name = "数据回收", desc = "经验获取 +20%",
+      detail = "经验 +20%，升级更快。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+20% 经验",
       requiresCard = "xp",
       apply = function(stacks) BALL_TUNING.xpMul = BALL_TUNING.xpMul + 0.2 end },
-    -- WO-09/P5 鎶夋嫨鍨嬶細鍚屾椂鏀规璐熻鍒欏彉閲忥紝楂橀闄╅珮鍥炴姤锛堜粛鍙敼 BALL_TUNING/baseHp锛夈€?
-    -- v0.13.28锛氫激瀹?+2鈫?3锛屽苟杩藉姞銆屽彂灏勫垵閫?+10%/绾с€嶁€斺€斾綆闅惧害鐮栧潡 1 琛€鏃讹紝浼ゅ婧㈠嚭浣?*寮归€?*绔嬪埢鏈夋劅銆?
-    { id = "glass_cannon", name = "鐜荤拑宸ㄧ偖", desc = "浼ゅ +3銆佸脊閫?+10%锛屼絾瓒婄嚎浼ゅ +1",
-      detail = "浼ゅ +3銆佸脊閫?+10%锛屼絾琚挒澶氭帀 1 鐐广€?,
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "浼ゅ+3 / 寮归€?10% / 鍙楀垱+1",
+    -- WO-09/P5 抉择型：同时改正负规则变量，高风险高回报（仍只改 BALL_TUNING/baseHp）。
+    -- v0.13.28：伤害 +2→+3，并追加「发射初速 +10%/级」——低难度砖块 1 血时，伤害溢出但**弹速**立刻有感。
+    { id = "glass_cannon", name = "玻璃巨炮", desc = "伤害 +3、弹速 +10%，但越线伤害 +1",
+      detail = "伤害 +3、弹速 +10%，但被撞多掉 1 点。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "伤害+3 / 弹速+10% / 受创+1",
       apply = function(stacks)
           BALL_TUNING.damageBonus = BALL_TUNING.damageBonus + 3
           BALL_TUNING.launchSpeedMul = BALL_TUNING.launchSpeedMul * 1.10
           BALL_TUNING.lineDamageBonus = BALL_TUNING.lineDamageBonus + 1
       end },
-    { id = "overclock", name = "瓒呰浇鏍稿績", desc = "鍔犻€熻溅鍔犻€熷害 +15%锛屽熀鍦?-8",
-      detail = "鍔犻€熻溅鍔犻€熸洿蹇紝浣?-8 鐢熷懡銆?,
-      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "鍔犻€熷害+15% / 鐢熷懡-8", ballType = "speed",
+    { id = "overclock", name = "超载核心", desc = "加速车加速度 +15%，基地 -8",
+      detail = "加速车加速更快，但 -8 生命。",
+      weight = 0.6, rarity = "rare", maxStacks = 3, tradeoff = true, value = "加速度+15% / 生命-8", ballType = "speed",
       apply = function(stacks)
           BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.15
           baseHp = math.max(1, baseHp - 8)
       end },
-    -- v0.13.19锛氬洓杞﹂兘鑳介潬灞€鍐呭崱瑙ｉ攣銆傚垵濮嬭溅鏄姞閫熻溅锛堣 STARTING_BALL_TYPE锛夛紝
-    -- 鎵€浠ャ€岃В閿佸垎瑁傝溅銆嶄篃杩涙睜锛涘姞閫熻溅鑷繁宸茶В閿侊紝鍏惰В閿佸崱鐢?unlockBallType 闂ㄦ帶鑷姩閫€姹犮€?
-    { id = "unlock_normal", name = "瑙ｉ攣鍒嗚杞?, desc = "鍒嗚杞﹀姞鍏ユ湰灞€寮硅嵂闃熷垪",
-      detail = "瑙ｉ攣鍒嗚杞︼紝鍛戒腑鍚庡垎瑁傚皬寮广€?,
-      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "鍒嗚杞﹀叆闃?,
+    -- v0.13.19：四车都能靠局内卡解锁。初始车是加速车（见 STARTING_BALL_TYPE），
+    -- 所以「解锁分裂车」也进池；加速车自己已解锁，其解锁卡由 unlockBallType 门控自动退池。
+    { id = "unlock_normal", name = "解锁分裂车", desc = "分裂车加入本局弹药队列",
+      detail = "解锁分裂车，命中后分裂小弹。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "分裂车入队",
       kind = "unlock", unlockBallType = "normal",
       apply = function(stacks) UnlockBallType("normal") end },
-    { id = "unlock_ice", name = "瑙ｉ攣鍐板喕杞?, desc = "鍐板喕杞﹀姞鍏ユ湰灞€寮硅嵂闃熷垪",
-      detail = "瑙ｉ攣鍐板喕杞︼紝鍛戒腑鍙喕缁撴晫鏈恒€?,
-      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "鍐板喕杞﹀叆闃?,
+    { id = "unlock_ice", name = "解锁冰冻车", desc = "冰冻车加入本局弹药队列",
+      detail = "解锁冰冻车，命中可冻结敌机。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "冰冻车入队",
       kind = "unlock", unlockBallType = "ice",
       apply = function(stacks) UnlockBallType("ice") end },
-    { id = "unlock_speed", name = "瑙ｉ攣鍔犻€熻溅", desc = "鍔犻€熻溅鍔犲叆鏈眬寮硅嵂闃熷垪",
-      detail = "瑙ｉ攣鍔犻€熻溅锛屽弽寮瑰悗瓒婅窇瓒婂揩銆?,
-      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "鍔犻€熻溅鍏ラ槦",
+    { id = "unlock_speed", name = "解锁加速车", desc = "加速车加入本局弹药队列",
+      detail = "解锁加速车，反弹后越跑越快。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "加速车入队",
       kind = "unlock", unlockBallType = "speed",
       apply = function(stacks) UnlockBallType("speed") end },
-    { id = "unlock_giant", name = "瑙ｉ攣宸ㄥ瀷杞?, desc = "宸ㄥ瀷杞﹀姞鍏ユ湰灞€寮硅嵂闃熷垪",
-      detail = "瑙ｉ攣宸ㄥ瀷杞︼紝鍙嶅脊鍚庤寖鍥村嚮纰庛€?,
-      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "宸ㄥ瀷杞﹀叆闃?,
+    { id = "unlock_giant", name = "解锁巨型车", desc = "巨型车加入本局弹药队列",
+      detail = "解锁巨型车，反弹后范围击碎。",
+      weight = 1.4, rarity = "common", maxStacks = 1, tradeoff = false, value = "巨型车入队",
       kind = "unlock", unlockBallType = "giant",
       apply = function(stacks) UnlockBallType("giant") end },
-    -- 閫氱敤寮硅嵂鍗★細闇€澶╄祴鏍戣В閿侊紙3 闃堕€氱敤鍗¤妭鐐癸級鍚庢墠浼氳繘鍏ュ崱姹犮€?
-    { id = "ammo", name = "寮硅嵂鎵╁", desc = "鏈眬寮硅嵂鏁伴噺 +1",
-      detail = "鏈眬寮硅嵂鏁伴噺 +1銆?,
-      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 寮硅嵂",
+    -- 通用弹药卡：需天赋树解锁（3 阶通用卡节点）后才会进入卡池。
+    { id = "ammo", name = "弹药扩容", desc = "本局弹药数量 +1",
+      detail = "本局弹药数量 +1。",
+      weight = 1, rarity = "common", maxStacks = 3, tradeoff = false, value = "+1 弹药",
       requiresCard = "ammo",
       apply = function(stacks) IncreaseAmmo() end },
-    -- v0.13.5 鍩虹澶╄祴姹犻噸鏋勶細鍥涜溅鍚勮ˉ涓€寮犮€屽熀纭€鏁板€笺€嶅崱锛堜笉渚濊禆瑙ｉ攣鍗★紝杞﹁В閿佸嵆鍙娊锛夈€?
-    -- v0.13.55锛氬熀纭€鍗?= 璇ヨ溅涓诲睘鎬х殑**鎵撳簳鏁板€?*锛堝父鍑恒€佸彲鍙犻珮锛夛紝鏈哄埗宸紓浜ょ粰涓婇潰鐨勪笓灞炲崱銆?
-    { id = "base_split", name = "鍒嗚澧炲箙", desc = "鍒嗚杞﹀垎瑁傛鐜?+2%",
-      detail = "鍒嗚灏忚溅姒傜巼 +2%銆?,
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+2% 姒傜巼",
+    -- v0.13.5 基础天赋池重构：四车各补一张「基础数值」卡（不依赖解锁卡，车解锁即可抽）。
+    -- v0.13.55：基础卡 = 该车主属性的**打底数值**（常出、可叠高），机制差异交给上面的专属卡。
+    { id = "base_split", name = "分裂增幅", desc = "分裂车分裂概率 +2%",
+      detail = "分裂小车概率 +2%。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+2% 概率",
       ballType = "normal", kind = "base",
       apply = function(stacks) BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + 0.02 end },
-    { id = "base_ice", name = "瀵掕兘鎵╂暎", desc = "鍐板喕鏃堕暱 +0.5 绉?,
-      detail = "鍐板喕鏃堕棿 +0.5 绉掋€?,
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 绉?,
+    { id = "base_ice", name = "寒能扩散", desc = "冰冻时长 +0.5 秒",
+      detail = "冰冻时间 +0.5 秒。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 秒",
       ballType = "ice", kind = "base",
       apply = function(stacks) BALL_TUNING.iceBonus = BALL_TUNING.iceBonus + 0.5 end },
-    { id = "base_speed", name = "寮曟搸璋冩牎", desc = "鍔犻€熻溅鍔犻€熷害 +4%",
-      detail = "鍔犻€熻溅鍔犻€熸洿蹇€?,
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+4% 鍔犻€熷害",
+    { id = "base_speed", name = "引擎调校", desc = "加速车加速度 +4%",
+      detail = "加速车加速更快。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+4% 加速度",
       ballType = "speed", kind = "base",
       apply = function(stacks) BALL_TUNING.speedMul = BALL_TUNING.speedMul * 1.04 end },
-    { id = "base_giant", name = "寮逛綋澧為噸", desc = "宸ㄥ瀷杞﹁疮绌胯寖鍥?+0.5 鏍?,
-      detail = "宸ㄥ瀷杞︾垎鐐歌寖鍥?+0.5 鏍笺€?,
-      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 鏍?,
+    { id = "base_giant", name = "弹体增重", desc = "巨型车贯穿范围 +0.5 格",
+      detail = "巨型车爆炸范围 +0.5 格。",
+      weight = 1, rarity = "common", maxStacks = 5, tradeoff = false, value = "+0.5 格",
       ballType = "giant", kind = "base",
       apply = function(stacks) BALL_TUNING.giantArea = BALL_TUNING.giantArea + 0.5 end },
-    -- 閫氱敤鍗★紙鏃犺溅鍨嬶級锛氬叏閮ㄩ渶澶╄祴鏍戣В閿佸搴旇妭鐐规墠杩涘眬鍐呭崱姹犮€?
-    -- v0.13.21锛氳瘝鏉″崱褰掑叆閫氱敤鍗♀€斺€旀鍓嶅畠浠棤浠讳綍闂ㄦ帶銆佸紑灞€甯搁┗锛堢敤鎴风偣鍚嶏級銆?
-    { id = "word_pierce", name = "璐┛寮硅姱", desc = "寮圭彔闄勫甫璐┛鏁堟灉",
-      detail = "寮圭彔绌块€忕涓€鍧楃户缁銆?,
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "璐┛",
+    -- 通用卡（无车型）：全部需天赋树解锁对应节点才进局内卡池。
+    -- v0.13.21：词条卡归入通用卡——此前它们无任何门控、开局常驻（用户点名）。
+    { id = "word_pierce", name = "贯穿弹芯", desc = "弹珠附带贯穿效果",
+      detail = "弹珠穿透第一块继续飞。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "贯穿",
       kind = "word", requiresCard = "word_pierce",
       apply = function(stacks) activeWords.pierce = true end },
-    { id = "word_chain", name = "杩為攣寮?, desc = "寮圭彔闄勫甫杩為攣婧呭皠",
-      detail = "鍛戒腑鍚庢簠灏勫埌鏈€杩戝彟涓€鍧椼€?,
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "杩為攣",
+    { id = "word_chain", name = "连锁弹", desc = "弹珠附带连锁溅射",
+      detail = "命中后溅射到最近另一块。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "连锁",
       kind = "word", requiresCard = "word_chain",
       apply = function(stacks) activeWords.chain = true end },
-    { id = "word_momentum", name = "鍔ㄩ噺鍔犻€?, desc = "寮圭彔瓒婂揩浼ゅ瓒婇珮",
-      detail = "寮圭彔瓒婂揩锛屼激瀹宠秺楂樸€?,
-      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "鍔ㄩ噺",
+    { id = "word_momentum", name = "动量加速", desc = "弹珠越快伤害越高",
+      detail = "弹珠越快，伤害越高。",
+      weight = 0.5, rarity = "rare", maxStacks = 1, tradeoff = false, value = "动量",
       kind = "word", requiresCard = "word_momentum",
       apply = function(stacks) activeWords.momentum = true end },
 }
@@ -474,10 +471,10 @@ local ballCycleIndex = 0
 local aiming = false
 local aimX = SLING_X
 local aimY = SLING_Y
--- v0.10.24 閬楃暀锛氳彍鍗?缁撶畻鏉炬墜纭鐨勬瑁呮爣蹇椼€倂0.13.4 璧疯彍鍗曚笉鍐嶇洿鎺ュ紑灞€
--- 锛堟敼璧伴€夊叧鐣岄潰锛夛紝姝ゅ浠呬綔姝讳骸鐬棿闃茶瑙︾殑澶嶄綅瀹堝崼銆?
+-- v0.10.24 遗留：菜单/结算松手确认的武装标志。v0.13.4 起菜单不再直接开局
+-- （改走选关界面），此处仅作死亡瞬间防误触的复位守卫。
 local startArmed = false
--- v0.10.32锛氭瘡灞€涓€娆″箍鍛婂娲伙紱缁撶畻椤垫寜閽敱缂栨帓灞傛秷璐瑰嚑浣曘€?
+-- v0.10.32：每局一次广告复活；结算页按钮由编排层消费几何。
 local reviveUsed = false
 local REVIVE_HP = 50
 
@@ -486,8 +483,8 @@ local nextEnemyId = 1
 local nextMarbleId = 1
 local randomState = 1
 
--- WO-16/P9锛氬揩鐓х紦鍐插鐢紝閬垮厤姣忓抚鏋勯€犳柊 table 瑙﹀彂 GC 鎶栧姩銆?
--- 娓叉煋/琛ㄧ幇灞傚彧璇绘琛紝涓嶅緱缂撳瓨寮曠敤瓒婅繃鏈抚銆?
+-- WO-16/P9：快照缓冲复用，避免每帧构造新 table 触发 GC 抖动。
+-- 渲染/表现层只读此表，不得缓存引用越过本帧。
 local snapshotBuffer_ = nil
 
 local ResetGame
@@ -500,7 +497,7 @@ local GainXp
 local RollUpgradeChoices
 local PlanWave
 local EnsureNextWavePlan
--- v0.13.26锛氬悓娉㈤敊宄扮敓鎴?/ 绮捐嫳鎶よ埅寤惰繜閲婃斁锛圓B-100 鍓嶅悜寮曠敤锛氬０鏄庡厛浜庝娇鐢ㄧ偣锛夈€?
+-- v0.13.26：同波错峰生成 / 精英护航延迟释放（AB-100 前向引用：声明先于使用点）。
 local ReleaseEscortVolley
 local SpawnNextNormalEnemy
 
@@ -539,8 +536,8 @@ local function GetWaveParams(waveNum)
         StageCatalog.GetBrickHp(currentStage, "normal")
 end
 
--- 鍙寜瀛樻椿瀹炰緥璁＄畻鍚嶉锛屼笉鎸佹湁璺ㄥ抚璁℃暟鍣紱鍚屽抚棰勭敓鎴愪篃绔嬪嵆鍗犻绠椼€?
--- 搴撳瓨闃熷垪鍙湁杞﹀瀷閿紝灏氭湭鐢熸垚杞﹁締锛屼笉璁″叆鍚屾椂瀛樺湪鏁伴噺銆?
+-- 只按存活实例计算名额，不持有跨帧计数器；同帧预生成也立即占预算。
+-- 库存队列只有车型键，尚未生成车辆，不计入同时存在数量。
 ---@param pendingMarbles table[]|nil
 ---@return integer
 function Game._NormalMarbleSlots(pendingMarbles)
@@ -574,16 +571,16 @@ local function CreateMarble(ballType, words)
         flightTime = 0,
         ignoredBrick = nil,
         giantPiercing = false,
-        giantPiercePending = false, -- 鍐峰嵈涓彧淇濈暀鍙嶅脊璧勬牸锛屼笉浠ｈ〃宸茬粡鍙互璐┛
+        giantPiercePending = false, -- 冷却中只保留反弹资格，不代表已经可以贯穿
         giantAreaCooldown = 0,
         chargeBoosted = false,
-        -- v0.13.64锛氭嫋灏鹃殢瀛樺湪鏃堕棿鍙樼煭鐢ㄧ殑銆岃瑙夊勾榫勩€嶏紱鍒嗚瀛愯溅缁ф壙姣嶈溅褰撳墠鍊硷紙缁ф壙闀垮害锛夈€?
+        -- v0.13.64：拖尾随存在时间变短用的「视觉年龄」；分裂子车继承母车当前值（继承长度）。
         trailAge = 0,
-        -- v0.13.55 鍔ㄨ兘绌垮埡锛氭湰寮瑰墿浣欑┛閫忔鏁帮紙姣忔绌块€忎笉鍙嶅脊銆佺洿鎺ュ悆涓嬪潡锛夈€?
+        -- v0.13.55 动能穿刺：本弹剩余穿透次数（每次穿透不反弹、直接吃下块）。
         pierceLeft = BALL_TUNING.speedPierce,
-        words = {},    -- P11锛氳瘝鏉′慨楗版寕杞借〃锛堣涓烘爣璁帮級锛岀┖琛ㄨ〃绀烘棤璇嶆潯
+        words = {},    -- P11：词条修饰挂载表（行为标记），空表表示无词条
     }
-    -- P11锛氭敞鍏ヨ瘝鏉★紙鏉ヨ嚜鍗囩骇鎴?Boss 鎺堜簣锛夛紝閫愪釜璋冪敤 apply() 鏀瑰啓 marble 琛屼负銆?
+    -- P11：注入词条（来自升级或 Boss 授予），逐个调用 apply() 改写 marble 行为。
     if words then
         for _, wordId in ipairs(words) do
             local wordDef = BALL_WORDS[wordId]
@@ -594,7 +591,7 @@ local function CreateMarble(ballType, words)
         end
     end
     nextMarbleId = nextMarbleId + 1
-    -- v0.13.58锛氫紭鍏堟秷璐广€岄『寤躲€嶇殑闄勯瓟鍗★紙浣跨敤闄勯瓟鍗℃椂娌℃湁寰呭彂杞?鈫?鎸傜粰涓嬩竴涓澶囧彂灏勭殑杞︼級銆?
+    -- v0.13.58：优先消费「顺延」的附魔卡（使用附魔卡时没有待发车 → 挂给下一个预备发射的车）。
     if Game._enchant.pending then
         local pendingCard = Game._enchant.pending
         Game._enchant.pending = nil
@@ -604,7 +601,7 @@ local function CreateMarble(ballType, words)
 end
 
 local function NextBallType()
-    -- 鍥哄畾椤哄簭杞崲锛屼絾鍙骇鍑烘湰灞€宸茶В閿佺殑杞﹀瀷锛涘嵆浣夸粎鏈夊垵濮嬭溅涔熷缁堝彲琛ュ脊銆?
+    -- 固定顺序轮换，但只产出本局已解锁的车型；即使仅有初始车也始终可补弹。
     for _ = 1, #BALL_ORDER do
         ballCycleIndex = ballCycleIndex % #BALL_ORDER + 1
         local ballType = BALL_ORDER[ballCycleIndex]
@@ -620,20 +617,20 @@ end
 UnlockBallType = function(ballType)
     if not BALL_TYPES[ballType] or unlockedBalls[ballType] then return end
     unlockedBalls[ballType] = true
-    -- 鎶婃柊杞︽斁杩涗笅涓€鍙戞Ы浣嶏紝涓嶆浛鎹㈠緟鍙戣溅锛屼篃涓嶄慨鏀瑰凡鍦ㄩ琛屼腑鐨勮溅杈嗐€?
+    -- 把新车放进下一发槽位，不替换待发车，也不修改已在飞行中的车辆。
     table.insert(ballQueue, 1, ballType)
     print("[Game] ball unlocked: " .. ballType .. ", queued=" .. #ballQueue)
 end
 
--- 銆屽脊鑽墿瀹广€嶏細鏈眬寮硅嵂鎬婚噺 +1锛屽苟绔嬪埢琛ヤ竴杈嗚繘澶囧脊闃熷垪锛?
--- 涔嬪悗涓荤悆鍥炴敹浠嶆寜銆屽洖鏀朵竴杈嗚ˉ涓€杈嗐€嶇淮鎸佹柊鎬婚噺銆?
+-- 「弹药扩容」：本局弹药总量 +1，并立刻补一辆进备弹队列；
+-- 之后主球回收仍按「回收一辆补一辆」维持新总量。
 IncreaseAmmo = function()
     ammoCapacity = ammoCapacity + 1
     EnqueueNextBall()
     print("[Game] ammo capacity -> " .. ammoCapacity)
 end
 
--- P11锛氭妸 activeWords 瑙勫垯琛ㄥ睍寮€涓烘湁搴忚瘝鏉?id 鍒楄〃锛屼緵 CreateMarble 娉ㄥ叆銆?
+-- P11：把 activeWords 规则表展开为有序词条 id 列表，供 CreateMarble 注入。
 local function CollectActiveWords()
     local list = {}
     for _, id in ipairs(WORD_IDS) do
@@ -645,21 +642,21 @@ end
 local function LoadBalls()
     ballQueue = {}
     ballCycleIndex = 0
-    -- 鍏堟斁 1 杈嗗緟鍙戯紝鍐嶆帓鍏?ammoCapacity-1 杈嗗寮癸紙銆屽脊鑽墿瀹广€嶅崌绾т細鎻愰珮鎬婚噺锛夈€?
+    -- 先放 1 辆待发，再排入 ammoCapacity-1 辆备弹（「弹药扩容」升级会提高总量）。
     activeBall = CreateMarble(NextBallType(), CollectActiveWords())
     for _ = 1, ammoCapacity - 1 do EnqueueNextBall() end
 end
 
 local function CanOfferUpgrade(u)
-    -- v0.13.16锛氬甫 ballType 涓旈潪 base 鐨勫崱鏄€屼笓灞炲崱銆嶁€斺€斿繀椤诲ぉ璧嬫爲瑙ｉ攣浜?
-    -- 璇ヨ溅鍨嬬殑銆屼笓灞炲崱銆嶈妭鐐规墠杩涙睜锛坆ase 鍗″彧闇€杞﹁В閿侊級銆?
+    -- v0.13.16：带 ballType 且非 base 的卡是「专属卡」——必须天赋树解锁了
+    -- 该车型的「专属卡」节点才进池（base 卡只需车解锁）。
     local ballOk = (not u.ballType) or unlockedBalls[u.ballType] == true
     if ballOk and u.ballType and u.kind ~= "base" then
         ballOk = talentUnlockedBallCards[u.ballType] == true
     end
-    -- v0.13.20锛氬眬鍐呫€岃В閿伱椕楄溅銆嶅崱**蹇呴』澶╄祴鏍戝厛瑙ｉ攣璇ヨ溅**鎵嶈繘姹狅紙鐢ㄦ埛婢勬竻锛夈€?
-    -- 鍗筹細澶╄祴鏍戣В閿佽溅 鈮?寮€灞€鑳界敤璇ヨ溅锛岃€屾槸銆屽眬鍐呮墠浼氬嚭鐜拌繖寮犺В閿佸崱銆嶏紱
-    -- 鏈湪澶╄祴鏍戣В閿佺殑杞︼紝灞€鍐呮棦涓嶅嚭瀹冪殑瑙ｉ攣鍗°€佷篃涓嶅嚭瀹冪殑 base/涓撳睘鍗°€?
+    -- v0.13.20：局内「解锁××车」卡**必须天赋树先解锁该车**才进池（用户澄清）。
+    -- 即：天赋树解锁车 ≠ 开局能用该车，而是「局内才会出现这张解锁卡」；
+    -- 未在天赋树解锁的车，局内既不出它的解锁卡、也不出它的 base/专属卡。
     if ballOk and u.unlockBallType then
         ballOk = talentUnlockedBalls[u.unlockBallType] == true
     end
@@ -669,8 +666,8 @@ local function CanOfferUpgrade(u)
         and (upgradeStacks[u.id] or 0) < u.maxStacks
 end
 
--- v0.13.5锛氱紪鎺掑眰寮€灞€鍓嶆敞鍏ュぉ璧嬫爲瑙ｉ攣闆嗗悎锛涙妸鑺傜偣 id 姹囨€绘垚瑙勫垯灞傚彲鐢ㄧ殑鍔犳垚銆?
--- 骞傜瓑锛氬彲澶氭璋冪敤锛堟瘡娆￠噸绠楁淳鐢熷€硷級銆傚紑灞€鍓嶈皟鐢ㄤ竴娆″嵆鍙€?
+-- v0.13.5：编排层开局前注入天赋树解锁集合；把节点 id 汇总成规则层可用的加成。
+-- 幂等：可多次调用（每次重算派生值）。开局前调用一次即可。
 ---@param owned table<string, boolean>|nil
 function Game.SetTalents(owned)
     talentOwned = {}
@@ -696,16 +693,16 @@ function Game.SetTalents(owned)
                 elseif node.kind == "ballUnlock" then
                     talentUnlockedBalls[node.ballType] = true
                 elseif node.kind == "ballCard" then
-                    -- 涓撳睘鍗¤祫鏍硷紙鎸夎溅鍨嬶級锛氭湭瑙ｉ攣璇ヨ妭鐐瑰垯涓撳睘鍗′笉杩涙睜銆?
+                    -- 专属卡资格（按车型）：未解锁该节点则专属卡不进池。
                     talentUnlockedBallCards[node.ballType] = true
                 elseif node.kind == "partsPct" then
                     talentPartsPct = talentPartsPct + (node.value or 0)
                 elseif node.kind == "rerollPlus" then
-                    -- v0.13.64锛氭瘡灞€鍏嶈垂閲嶆娊娆℃暟 +N锛堝彲鍙犲姞锛夈€?
+                    -- v0.13.64：每局免费重抽次数 +N（可叠加）。
                     talentRerollBonus = talentRerollBonus + (node.value or 0)
                 elseif node.kind == "stat" then
                     if node.stat == "critChance" then
-                        -- 鎴愰暱绾匡細鏆村嚮鐜囩疮鍔狅紱姣?3 闃惰繕棰濆缁欏熀纭€鏀诲嚮銆?
+                        -- 成长线：暴击率累加；每 3 阶还额外给基础攻击。
                         talentCritChance = talentCritChance + (node.value or 0)
                         talentAtkBonus = talentAtkBonus + (node.atkBonus or 0)
                     else
@@ -729,12 +726,12 @@ function Game.SetTalents(owned)
         count, talentMaxHpBonus, talentPartsPct, cardCount, ballCount))
 end
 
--- 鏈眬鍩哄湴鐢熷懡涓婇檺 = 鍩虹 + 澶╄祴琛€閲忓姞鎴?+ 灞€鍐呫€屽墠绾跨淮淇€嶇殑姘镐箙涓婇檺鍔犳垚銆?
+-- 本局基地生命上限 = 基础 + 天赋血量加成 + 局内「前线维修」的永久上限加成。
 GetMaxBaseHp = function()
     return BASE_HP + talentMaxHpBonus + BALL_TUNING.maxHpBonus
 end
 
--- 渚涚晫闈㈣鍙栵細褰撳墠娉ㄥ叆澶╄祴娲剧敓鍑虹殑鍔犳垚鎽樿锛堝彧璇伙級銆?
+-- 供界面读取：当前注入天赋派生出的加成摘要（只读）。
 ---@return {hpBonus:integer, partsPct:integer, nodeCount:integer}
 function Game.GetTalentBonuses()
     local n = 0
@@ -745,14 +742,14 @@ function Game.GetTalentBonuses()
     }
 end
 
--- v0.13.5锛氱紪鎺掑眰娉ㄥ唽涓€娆″ぉ璧嬫彁渚涜€咃紱姣忔 ResetGame锛堝惈閫夊叧/涓嬩竴鍏?閲嶅紑锛夎嚜鍔ㄩ噸鏂版媺鍙栵紝
--- 閬垮厤鍦ㄥ涓紑灞€鍏ュ彛鍚勫啓涓€娆℃敞鍏ャ€?
+-- v0.13.5：编排层注册一次天赋提供者；每次 ResetGame（含选关/下一关/重开）自动重新拉取，
+-- 避免在多个开局入口各写一次注入。
 ---@param provider fun(): table<string, boolean>
 function Game.SetTalentProvider(provider)
     talentProvider = provider
 end
 
--- 鍙彇娑堝€嶉€燂紝涓嶇Щ鍔ㄥ緟鍙戣溅锛涚湡瀹炲彂灏勫繀椤讳繚鐣欐媺寮撳悗鐨勫嚭鐢熺偣銆?
+-- 只取消倍速，不移动待发车；真实发射必须保留拉弓后的出生点。
 function Game.CancelHoldSpeed()
     if Game._holdSpeed.active then print("[Game] hold speed -> 1x") end
     Game._holdSpeed.down = false
@@ -776,16 +773,16 @@ function Game.CanHoldSpeed()
     return gameState == "playing" and introTimer <= 0 and not aiming and activeBall == nil
 end
 
--- startStage锛氶€夊叧鐣岄潰鎸戦€夌殑鍏冲崱锛坴0.13.4锛夈€傞粯璁?1锛泈ave 鎹㈢畻涓哄叏灞€绱娉㈠彿锛?
--- 浣挎瘡鏃ヤ换鍔°€屾姷杈剧 N 娉€嶅湪鍚庢湡鍏冲崱浠嶆寜鐪熷疄杩涘害璁￠噺銆?
+-- startStage：选关界面挑选的关卡（v0.13.4）。默认 1；wave 换算为全局累计波号，
+-- 使每日任务「抵达第 N 波」在后期关卡仍按真实进度计量。
 ResetGame = function(startStage)
     Game.CancelPointer()
     startStage = math.max(1, math.floor(tonumber(startStage) or 1))
-    -- v0.13.5锛氭瘡娆″紑灞€閲嶆柊鎷夊彇澶╄祴瑙ｉ攣闆嗗悎锛屾淳鐢熷姞鎴愬湪鏈眬鐢熸晥銆?
+    -- v0.13.5：每次开局重新拉取天赋解锁集合，派生加成在本局生效。
     if talentProvider then Game.SetTalents(talentProvider()) end
     score = 0
-    -- v0.13.28锛氬眬鍐呴€氱敤鍗″瓧娈靛繀椤诲湪 baseHp 涔嬪墠澶嶄綅鈥斺€斻€屽墠绾跨淮淇€嶇殑姘镐箙涓婇檺鍔犳垚
-    -- 鍐欏湪 BALL_TUNING.maxHpBonus 閲岋紝鑻ユ櫄浜?GetMaxBaseHp 澶嶄綅锛屼細鎶婁笂涓€灞€鐨勪笂闄愬甫杩涙柊灞€銆?
+    -- v0.13.28：局内通用卡字段必须在 baseHp 之前复位——「前线维修」的永久上限加成
+    -- 写在 BALL_TUNING.maxHpBonus 里，若晚于 GetMaxBaseHp 复位，会把上一局的上限带进新局。
     BALL_TUNING.armorReduce = 0
     BALL_TUNING.partsMul = 1.0
     BALL_TUNING.launchSpeedMul = 1.0
@@ -795,8 +792,8 @@ ResetGame = function(startStage)
     stage = startStage
     stageWave = 1
     wave = (startStage - 1) * StageCatalog.WAVES_PER_STAGE + 1
-    -- v0.13.46锛氳繘鍏ュ叧鍗℃椂鐢熸垚鏈叧闅忔満甯冨眬锛堢簿鑻辨尝浣?/ 绮捐嫳涓?Boss 鏈哄瀷 / 鍏冲崱鐗规€э級銆?
-    -- 閫夊叧銆佷笅涓€鍏炽€佸啀鎴樸€侀噸寮€閮戒細閲嶆幏鈥斺€斿悓涓€鍏虫瘡娆¤繘鍏ラ兘鍙兘涓嶅悓銆?
+    -- v0.13.46：进入关卡时生成本关随机布局（精英波位 / 精英与 Boss 机型 / 关卡特性）。
+    -- 选关、下一关、再战、重开都会重掷——同一关每次进入都可能不同。
     StageCatalog.BeginStage(startStage, os.time())
     bossDefeated = false
     stageResult = nil
@@ -815,7 +812,7 @@ ResetGame = function(startStage)
     hasLaunched = false
     startArmed = false
     reviveUsed = false
-    -- v0.11.0 鍟嗕笟鍖栵細灞€鍐呴浂浠朵笌鍗囩骇闈㈡澘鍙樼幇鐘舵€佸浣?
+    -- v0.11.0 商业化：局内零件与升级面板变现状态复位
     partsEarned = 0
     partsSettled = false
     partsDoubled = false
@@ -827,7 +824,7 @@ ResetGame = function(startStage)
     settleBook.gearSettled = 0
     runAircraft = {}
     baseShield = 0
-    -- v0.13.13锛氬紑灞€鑷姩鎷夊彇灞€澶栭亾鍏峰簱瀛橈紙瑕嗙洊閫夊叧/涓嬩竴鍏?鍐嶆垬/閲嶅紑鍏ㄩ儴鍏ュ彛锛夈€?
+    -- v0.13.13：开局自动拉取局外道具库存（覆盖选关/下一关/再战/重开全部入口）。
     if itemStockProvider then
         local ok, stock = pcall(itemStockProvider)
         if ok and type(stock) == "table" then Game.SetItemStock(stock) end
@@ -838,7 +835,7 @@ ResetGame = function(startStage)
     pauseHealUsed = 0
     pauseRareUsed = 0
     pendingRareRoll = false
-    -- v0.13.58锛氶檮榄斿崱鐘舵€佸浣嶏紙寮€灞€绌烘墜锛沴astWave 璁板綍褰撳墠娉紝浣挎湰娉㈠畬鎴愭椂鍙戞斁绗竴寮狅級銆?
+    -- v0.13.58：附魔卡状态复位（开局空手；lastWave 记录当前波，使本波完成时发放第一张）。
     Game._enchant.card = nil
     Game._enchant.pending = nil
     Game._enchant.lastWave = wave
@@ -848,10 +845,10 @@ ResetGame = function(startStage)
     partsBoostTime = 0
     aimX = SLING_X
     aimY = SLING_Y
-    waveCooldown = 3.2    -- 寮€灞€鐭殏鍠樻伅锛涘悗缁寜鍏冲崱鑺傚鍒锋柊
+    waveCooldown = 3.2    -- 开局短暂喘息；后续按关卡节奏刷新
     introTimer = 0
     nextWavePlan = nil
-    -- v0.13.26锛氬浣嶅悓娉㈤敊宄扮敓鎴愮姸鎬併€?
+    -- v0.13.26：复位同波错峰生成状态。
     pendingSpawn.remaining = 0
     pendingSpawn.timer = 0
     pendingSpawn.kind = nil
@@ -859,7 +856,7 @@ ResetGame = function(startStage)
     pendingSpawn.spawned = 0
     nextEnemyId = 1
     nextMarbleId = 1
-    -- 骞稿瓨鑰呮垚闀跨姸鎬佸浣?
+    -- 幸存者成长状态复位
     playerLevel = 1
     xp = 0
     xpToNext = BALANCE.baseXpToNext
@@ -869,13 +866,13 @@ ResetGame = function(startStage)
     upgradePicks = {}
     upgradeStacks = {}
     unlockedBalls = { [STARTING_BALL_TYPE] = true }
-    -- v0.13.20锛氬ぉ璧嬫爲鐨勩€岃В閿佽溅銆嶈妭鐐?*涓嶅啀**璁╄溅寮€灞€鍗冲彲鐢紙鐢ㄦ埛婢勬竻锛夆€斺€?
-    -- 瀹冨彧鍐冲畾銆屽眬鍐呴偅寮犮€庤В閿伱椕楄溅銆忓崱鏄惁杩涙睜銆嶃€傚紑灞€鑷甫鐨勬案杩滃彧鏈?STARTING_BALL_TYPE銆?
+    -- v0.13.20：天赋树的「解锁车」节点**不再**让车开局即可用（用户澄清）——
+    -- 它只决定「局内那张『解锁××车』卡是否进池」。开局自带的永远只有 STARTING_BALL_TYPE。
     ammoCapacity = BASE_AMMO_TOTAL
-    activeWords = {}    -- P11锛氳瘝鏉￠噸缃?
+    activeWords = {}    -- P11：词条重置
     clearStreak = 0
     bricksBroken = 0
-    -- v0.13.65锛氬够褰变綋绱犲潡闅忓叧鍗￠噸寮€娓呯┖锛堝湪鍦哄潡銆佹湰鍏充繚搴曡鏁般€佸凡鍙戝皠鏈哄瀷闆嗗悎鍏ㄩ儴澶嶄綅锛夈€?
+    -- v0.13.65：幻影体素块随关卡重开清空（在场块、本关保底计数、已发射机型集合全部复位）。
     Game._phantom.list = {}
     Game._phantom.guaranteed = 0
     Game._phantom.firedKeys = {}
@@ -887,12 +884,12 @@ ResetGame = function(startStage)
     BALL_TUNING.iceBonus = 0
     BALL_TUNING.lineDamageBonus = 0
     BALL_TUNING.xpMul = 1.0
-    -- v0.13.55 涓撳睘鍗℃満鍒跺瓧娈靛浣嶏紙蹇呴』鍦?LoadBalls 涔嬪墠鈥斺€斿畠璇?splitCount 绛夛級銆?
+    -- v0.13.55 专属卡机制字段复位（必须在 LoadBalls 之前——它读 splitCount 等）。
     BALL_TUNING.splitCount = 2
     BALL_TUNING.iceShatter = 0
     BALL_TUNING.speedPierce = 0
     BALL_TUNING.giantCritChance = 0
-    -- v0.13.5锛氬彔鍔犲ぉ璧嬫爲鐨勮溅绾胯矾鏁板€煎寮猴紙鍔犳硶鍏堛€佷箻娉曞悗锛岄噺绾у彲鎺э級銆?
+    -- v0.13.5：叠加天赋树的车线路数值增强（加法先、乘法后，量级可控）。
     for _, acc in pairs(talentBallStats) do
         if acc.stat == "splitBonus" then
             BALL_TUNING.splitBonus = BALL_TUNING.splitBonus + acc.add
@@ -908,11 +905,11 @@ ResetGame = function(startStage)
     Emit("game_reset")
 end
 
--- 浠庨€夊叧鐣岄潰杩涘叆鏌愬叧銆俿tageNum 缂虹渷涓?1銆?
+-- 从选关界面进入某关。stageNum 缺省为 1。
 local function StartGameAt(stageNum)
     previousHighScore = highScore
     ResetGame(stageNum)
-    -- 鍏堥€変袱杈嗕笉鍚岃溅鍨嬶紝閫夊畬鎵嶈濉苟鍚姩鍘熶笁绉掑噯澶囨湡锛涗笉鍐嶅浐瀹氶€佸姞閫熻溅銆?
+    -- 先选两辆不同车型，选完才装填并启动原三秒准备期；不再固定送加速车。
     activeBall = nil
     ballQueue = {}
     unlockedBalls = {}
@@ -934,8 +931,8 @@ local function GetAircraftSize(aircraftKey, brickSize)
     return data.gridW * brickSize, data.gridH * brickSize
 end
 
--- 缂栭槦闂磋窛涓庡叏鍦?AABB 闃查噸鍙狅細鐢熸垚鍊欓€夊拰閫愬抚鍒嗙鍏辩敤鍚屼竴濂楀垽瀹氾紝
--- 蹇呴』瀵光€滄湰鎵规宸叉斁缃?+ 鍦轰笂浠嶅瓨娲烩€濈殑鎵€鏈夐鏈虹敓鏁堬紝绂佹鍙鏌ュ叾涓竴杈广€?
+-- 编队间距与全场 AABB 防重叠：生成候选和逐帧分离共用同一套判定，
+-- 必须对“本批次已放置 + 场上仍存活”的所有飞机生效，禁止只检查其中一边。
 local ENEMY_SPACING = 8
 
 local function EnemyAABB(enemy)
@@ -949,8 +946,8 @@ local function RectsOverlap(x, y, w, h, ox, oy, ow, oh, gap)
         and y < oy + oh + gap and y + h + gap > oy
 end
 
--- 鍊欓€夌煩褰㈡槸鍚︿笌鏈壒娆?placed 鎴栧満涓婂瓨娲婚鏈猴紙ignore 鍙帓闄よ嚜韬級閲嶅彔銆?
--- gap 鐪佺暐鏃剁敤 ENEMY_SPACING锛堟棦鏈夎涓猴級锛涘悓娉㈤敊宄扮敓鎴愪紶 brickSize 浠ュ己鍒躲€岃嚦灏戦殧 1 鏍笺€嶃€?
+-- 候选矩形是否与本批次 placed 或场上存活飞机（ignore 可排除自身）重叠。
+-- gap 省略时用 ENEMY_SPACING（既有行为）；同波错峰生成传 brickSize 以强制「至少隔 1 格」。
 local function FleetPositionOccupied(x, y, w, h, placed, ignore, gap)
     for _, item in ipairs(placed) do
         if RectsOverlap(x, y, w, h, item.x, item.y, item.w, item.h, gap) then
@@ -968,7 +965,7 @@ local function FleetPositionOccupied(x, y, w, h, placed, ignore, gap)
     return false
 end
 
--- 鏅€氭満鎸夊叧鍐呮尝娆′緷娆′粠鍘熸湁鏈哄瀷涓€夋嫨锛涚壒娈婃満涓嶆贩鍏ユ櫘閫氶殢鏈烘睜銆?
+-- 普通机按关内波次依次从原有机型中选择；特殊机不混入普通随机池。
 local WAVE_ROSTER = {
     { key = "scout",       minWave = 1 },
     { key = "dart",        minWave = 2 },
@@ -980,12 +977,12 @@ local WAVE_ROSTER = {
     { key = "interceptor", minWave = 9 },
 }
 
--- 鍙敤鏈哄瀷姹犳寜銆岀疮璁￠毦搴︺€嶈В閿侊紝鏈哄瀷绉嶇被闅?*鍏冲崱鍙?*閫愭澧炲鈥斺€斿叧鍗¤秺楂樿秺涓板瘜澶氬厓銆?
--- v0.13.58锛氬厛淇€屾瘡鍏冲紑灞€閮戒竴鏍枫€嶏紙瑙ｉ攣杩涘害涓嶅啀姣忓叧褰掗浂锛夈€?
--- v0.13.59锛氬啀淇€屽叧鍗′箣闂翠笉閫掕繘銆嶁€斺€旀棫杩涘害 `(鍏冲崱-1)+鍏冲唴娉㈡` 璁?*绗?1 鍏崇 10 娉㈠氨瑙ｉ攣鍏ㄩ儴 8 绉?*锛?
---   鐜╁涓€鍏冲唴灏辩湅閬嶆墍鏈夋満鍨嬶紝鍚庣画鍏冲崱姣棤鏂版剰銆傜幇鏀炬參**鍏冲唴**瑙ｉ攣锛堟瘡 3 娉㈡墠 +1 妗ｏ級锛?
---   璁╂満鍨嬫睜涓昏鐢?*鍏冲崱鍙?*椹卞姩锛氬叧1 寮€灞€ 1 绉嶃€佸叧2 寮€灞€ 2 绉嶁€﹀叧 6+ 寮€灞€鍗冲叏鏈哄瀷锛?
---   涓旀瘡鍏冲叧鍐呬粛缂撴參鏀惧锛堟湰鍏冲彲鐢ㄦ満鍨嬮殢娉㈡灏忓箙澧炲姞锛夈€傚叧鍗¤秺楂橈紝鏈叧鍑虹幇鐨勬満鍨嬭秺澶氥€?
+-- 可用机型池按「累计难度」解锁，机型种类随**关卡号**逐步增多——关卡越高越丰富多元。
+-- v0.13.58：先修「每关开局都一样」（解锁进度不再每关归零）。
+-- v0.13.59：再修「关卡之间不递进」——旧进度 `(关卡-1)+关内波次` 让**第 1 关第 10 波就解锁全部 8 种**，
+--   玩家一关内就看遍所有机型，后续关卡毫无新意。现放慢**关内**解锁（每 3 波才 +1 档），
+--   让机型池主要由**关卡号**驱动：关1 开局 1 种、关2 开局 2 种…关 6+ 开局即全机型，
+--   且每关关内仍缓慢放宽（本关可用机型随波次小幅增加）。关卡越高，本关出现的机型越多。
 local function GetAvailableTypes(waveNum)
     local keys = {}
     local progress = (StageCatalog.GetStage(waveNum) - 1)
@@ -998,8 +995,8 @@ local function GetAvailableTypes(waveNum)
     return keys
 end
 
--- 鍙璇婃柇锛堣〃瀛楁璧嬪€硷紝涓嶅崰椤跺眰 local 妲戒綅锛夛細杩斿洖鏌愮疮璁℃尝鍙峰彲鐢ㄧ殑鏅€氭満鍨嬫睜锛?
--- 渚涙帰閽堥獙璇併€屾満鍨嬬绫婚殢鍏冲崱鍙烽€掕繘銆嶃€傛父鎴忛€昏緫涓嶆秷璐广€?
+-- 只读诊断（表字段赋值，不占顶层 local 槽位）：返回某累计波号可用的普通机型池，
+-- 供探针验证「机型种类随关卡号递进」。游戏逻辑不消费。
 function Game.DebugAvailableTypes(waveNum)
     return GetAvailableTypes(waveNum)
 end
@@ -1018,8 +1015,8 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opt
         return nil
     end
 
-    -- A3锛氳涓哄垎鍖栤€斺€旇鍙栬鍨嬫€ф牸鍙傛暟锛屼娇涓嶅悓椋炴満妯憜/鑺傚/涓嬪帇鎰熷悇寮傘€?
-    -- 鍚屾尝闃靛瀷鍙攣瀹?sway锛岄伩鍏嶅悇鑷贡鎽嗘妸闃靛瀷鎷嗘暎銆?
+    -- A3：行为分化——读取该型性格参数，使不同飞机横摆/节奏/下压感各异。
+    -- 同波阵型可锁定 sway，避免各自乱摆把阵型拆散。
     local beh = AircraftData.behavior and AircraftData.behavior[aircraftKey]
         or { swayAmp = 18, swayFreq = 0.4, descentMul = 1.0, agility = 0.8 }
     local swayAmp = beh.swayAmp + Random() * beh.swayAmp * 0.3
@@ -1036,8 +1033,8 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opt
     for entry in (data.data .. ";"):gmatch("(.-);") do
         local col, row, er, eg, eb = entry:match("(%d+),(%d+),(%d+),(%d+),(%d+)")
         if col then
-            -- v0.13.65锛氭爣璁般€屽紩鎿庣伅銆嶄綋绱狅紙bitmapToData 鐢?110,46,40 琛ㄧず E锛孋lassifySlot 褰?engine锛夈€?
-            -- 骞诲奖浣撶礌鍧楀彧鑳界敱**鏈鐮村潖鐨?*寮曟搸鐏潡鍙戝皠銆?
+            -- v0.13.65：标记「引擎灯」体素（bitmapToData 用 110,46,40 表示 E，ClassifySlot 归 engine）。
+            -- 幻影体素块只能由**未被破坏的**引擎灯块发射。
             local isEngine = (er == "110" and eg == "46" and eb == "40")
             table.insert(bricks, {
                 col = tonumber(col), row = tonumber(row),
@@ -1055,32 +1052,32 @@ local function CreateEnemy(aircraftKey, x, y, brickSize, brickHp, baseSpeed, opt
         gridH = data.gridH,
         brickSize = brickSize,
         x = x, y = y, baseX = x,
-        -- v0.10.27锛氬叏灞€涓嬭惤 0.25鈫?.42锛岄娉㈠叆鍦轰笉鍐嶈创鐫€灞忛《锠曞姩銆?
+        -- v0.10.27：全局下落 0.25→0.42，首波入场不再贴着屏顶蠕动。
         vy = baseSpeed * data.speedMul * 0.42 * descent,
         normalVy = baseSpeed * 0.42,
         swayAmp = swayAmp,
         swayFreq = swayFreq,
-        agility = beh.agility,    -- A3锛氳妭濂?鍙嶅簲璐ㄦ劅鏍囪锛堟覆鏌撳眰鍙锛?
-        -- 榛樿 phase=0锛氶甯т綅缃嵆 baseX銆傞樀鍨嬪彲浼犲叆缁熶竴鐩镐綅锛屼繚璇佸悓娉竴璧锋憜銆?
+        agility = beh.agility,    -- A3：节奏/反应质感标记（渲染层可读）
+        -- 默认 phase=0：首帧位置即 baseX。阵型可传入统一相位，保证同波一起摆。
         phase = spawnPhase,
         bricks = bricks,
         dead = false,
         breached = false,
         frozen = 0,
-        freezeRatio = 0,    -- WO-13/P2锛氭覆鏌撳眰鍙鍐荤粨姣斾緥锛?..1锛夛紝鍒濆鍖栦负闆?
+        freezeRatio = 0,    -- WO-13/P2：渲染层只读冻结比例（0..1），初始化为零
     }
     nextEnemyId = nextEnemyId + 1
     return enemy
 end
 
--- v0.10.28锛?bit 琛楁満闃靛瀷銆傚悓娉㈠悓鏈恒€佹暣闃熼攣瀹氭í鎽嗭紝閬垮厤闅忔満鏁ｇ偣鎶婂壀褰辨媶鏁ｃ€?
+-- v0.10.28：8bit 街机阵型。同波同机、整队锁定横摆，避免随机散点把剪影拆散。
 local FORMATION_CYCLE = { "line", "vee", "grid", "swarm", "wedge", "stream" }
 
 local function PickWaveAircraft(pool)
     if #pool == 1 then return pool[1] end
-    -- 鏂拌В閿佹満鍨嬬暐浼樺厛闇茶劯锛屽叾浣欏湪宸茶В閿佹睜鍐呭潎鍖€鎶姐€?
-    -- v0.13.58锛氬亸缃?0.6鈫?.3鈥斺€旀満鍨嬫睜闅忓叧鍗″彉澶у悗锛岃繃楂樺亸缃細璁╂瘡娉㈣繃搴﹀亸鍚戝崟涓€鏈哄瀷銆?
-    -- 鍓婂急鏈凡瑙ｉ攣鏈哄瀷鐨勫鏍锋€э紙鐢ㄦ埛鎶ャ€屾晫鏈虹被鍨嬪お鏃犺亰銆嶏級銆?
+    -- 新解锁机型略优先露脸，其余在已解锁池内均匀抽。
+    -- v0.13.58：偏置 0.6→0.3——机型池随关卡变大后，过高偏置会让每波过度偏向单一机型、
+    -- 削弱本已解锁机型的多样性（用户报「敌机类型太无聊」）。
     if Random() < 0.3 then return pool[#pool] end
     return pool[RandomInt(1, #pool)]
 end
@@ -1101,7 +1098,7 @@ local function PickFormation(waveNum, count, aircraftKey)
     if aircraftKey == "hive" then return "swarm" end
     if count <= 1 then return "line" end
     local kind = FORMATION_CYCLE[((waveNum - 1) % #FORMATION_CYCLE) + 1]
-    -- 瀹芥満妯帓濉炰笉涓?540 瀹斤紝3 鏈烘敼 2+1 缃戞牸锛岄伩鍏嶉€€鍖栨垚绾靛垪銆?
+    -- 宽机横排塞不下 540 宽，3 机改 2+1 网格，避免退化成纵列。
     if (aircraftKey == "manta" or aircraftKey == "cruiser" or aircraftKey == "bomber")
         and count >= 3 then
         return "grid"
@@ -1154,9 +1151,9 @@ EnsureNextWavePlan = function()
     return nextWavePlan
 end
 
--- 绮捐嫳/棣栭鍗曟満浠庡睆澶栬繘鍏ワ細鍗充娇鏁伴噺澧炲姞锛岀壒娈婄洰鏍囦篃濮嬬粓鍗犱竴涓満缇ゅ悕棰濄€?
--- v0.13.26锛氱壒娈婃満鐢?brickSize 浣滈棿璺濇煡鎵剧┖浣嶏紝淇濊瘉銆岃嚦灏戦殧 1 鏍笺€嶏紱
--- 涓斾竴鏃︽湰娉㈡湁鏁屾満鍦ㄥ満锛屾敼鐢ㄣ€屼粠鏇磋繙澶勭敓鎴愩€嶈€岄潪涓婃姮鈥斺€旈伩鍏嶃€孊oss 宸插埌鍦哄張鐬Щ鍒板ご椤躲€嶃€?
+-- 精英/首领单机从屏外进入：即使数量增加，特殊目标也始终占一个机群名额。
+-- v0.13.26：特殊机用 brickSize 作间距查找空位，保证「至少隔 1 格」；
+-- 且一旦本波有敌机在场，改用「从更远处生成」而非上抬——避免「Boss 已到场又瞬移到头顶」。
 local function SpawnSpecialEnemy(plan)
     local key = plan.aircraftKey
     if not AircraftData[key] then
@@ -1167,8 +1164,8 @@ local function SpawnSpecialEnemy(plan)
     local shipW, shipH = GetAircraftSize(key, brickSize)
     local x = DW * 0.5 - shipW * 0.5
     local y = -102 - shipH - 24
-    -- 涓庡湪鍦烘晫鏈鸿嚦灏戦殧 1 鏍硷紙brickSize锛夛細鏈変汉鍗犱綅灏卞線鏇磋繙澶勬尓锛屼繚璇併€屼换鎰忎袱鏋跺垵濮嬧墺1鏍笺€嶃€?
-    -- 鐗规畩鏈烘槸鏂扮敓鎴愮殑锛堝皻鏈彲瑙侊級锛屽線灞忓鏇磋繙澶勬斁涓嶄細閫犳垚銆岀灛绉汇€嶃€?
+    -- 与在场敌机至少隔 1 格（brickSize）：有人占位就往更远处挪，保证「任意两架初始≥1格」。
+    -- 特殊机是新生成的（尚未可见），往屏外更远处放不会造成「瞬移」。
     local guard = 0
     while FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) and guard < 200 do
         y = y - brickSize
@@ -1192,10 +1189,10 @@ local function SpawnSpecialEnemy(plan)
     return enemy
 end
 
--- v0.13.26锛氭湰娉㈡晫鏈洪€愭灦鏀惧嚭鐨勬椂闂撮棿闅斻€備笅闄愭寜銆屼竴鏋跺湪闂撮殧鍐呬笅钀?鈮?1 鏍?+ 浣欓噺銆嶅姩鎬佹姮楂橈紝
--- 淇濊瘉浠绘剰涓ゆ灦鍒濆浣嶇疆鑷冲皯闅斾竴涓牸瀛愶紙鐢ㄦ埛瑕佹眰锛夛紱涓婇檺鐢?StageCatalog 鐨勯€愬叧鏀剁揣鏇茬嚎缁欏嚭銆?
--- 鈿狅笍 涓嬭惤閫熷害鎸?*鏈€鎱㈡満鍨?*淇濆畧鍙栧€硷紙鍩哄噯 脳 0.42 脳 鏈€鎱?descentMul锛夛細闂撮殧澶煭鏃舵渶鎱㈤偅鏋?
--- 鏉ヤ笉鍙婃媺寮€锛屽氨浼氫笌鍚庝竴鏋舵尋鍦ㄥ悓涓€涓牸瀛愬甫鍐呫€傜敤鍩哄噯閫熷害浼扮畻浼氬湪楂樺叧鍗℃紡鎺夎繖涓笅鐣屻€?
+-- v0.13.26：本波敌机逐架放出的时间间隔。下限按「一架在间隔内下落 ≥ 1 格 + 余量」动态抬高，
+-- 保证任意两架初始位置至少隔一个格子（用户要求）；上限由 StageCatalog 的逐关收紧曲线给出。
+-- ⚠️ 下落速度按**最慢机型**保守取值（基准 × 0.42 × 最慢 descentMul）：间隔太短时最慢那架
+-- 来不及拉开，就会与后一架挤在同一个格子带内。用基准速度估算会在高关卡漏掉这个下界。
 local SLOWEST_DESCENT_MUL = 0.66
 local function CurrentSpawnInterval()
     local base = StageCatalog.GetSpawnInterval(stage)
@@ -1204,20 +1201,20 @@ local function CurrentSpawnInterval()
     return math.max(base, minInterval)
 end
 
--- v0.13.26锛氫粠灞忓箷涓婃部涔嬪鏀惧嚭鏈尝涓€鏋舵晫鏈恒€傚睆骞曟槸淇 3D锛屾晫鏈哄湪灞忓箷澶栫敓鎴愬悗
--- 涓嬭惤涓€娈垫墠杩涚敾闈⑩€斺€旀墍浠ャ€屽垰鐢熸垚鏃剁湅涓嶈銆嶆槸棰勬湡锛屼笉鏄病鍒峰嚭鏉ャ€?
+-- v0.13.26：从屏幕上沿之外放出本波一架敌机。屏幕是俯视 3D，敌机在屏幕外生成后
+-- 下落一段才进画面——所以「刚生成时看不见」是预期，不是没刷出来。
 SpawnNextNormalEnemy = function()
     if pendingSpawn.remaining <= 0 then return end
-    -- 婊″満锛氭湰鏋舵帹杩燂紝绛夋湁绌轰綅鍐嶆斁锛堜笉鑳藉己琛岃惤浣嶏紝鍚﹀垯涓ゆ灦浼氬彔鍦ㄤ竴璧凤級銆?
+    -- 满场：本架推迟，等有空位再放（不能强行落位，否则两架会叠在一起）。
     if #veggies >= StageCatalog.MAX_FLEET then
         pendingSpawn.timer = 0.5
         return
     end
-    -- v0.13.57锛氬睆骞曞锛堝皻鏈繘鍏ュ彲瑙佹垬鍦猴紝搴曡竟浠嶅湪 -102 涔嬩笂锛夌殑鏁屾満杈惧埌涓婇檺鏃讹紝
-    -- **鏆傚仠鐢熸垚闃熷垪**鈥斺€旂瓑灞忓鏈轰笅钀借繘鍦哄悗鍐嶆斁涓嬩竴鏋讹紝閬垮厤涓€娉㈠鏋跺叏鍫嗗湪灞忓箷涓婃部涔嬪銆?
-    -- 鈿狅笍 杩欓噷鍙暟**鍦ㄥ満**灞忓鏈猴紙閫愭灦鏀惧嚭涓€鏋躲€佸仠涓€娆★級锛涘緟鏀炬灦鏁扮敱娉㈡鍚姩闂ㄦ帶缁熶竴鑰冭檻
-    --    锛堣 UpdateWaveLogic锛夛紝鍚﹀垯鎶?remaining 涔熺畻杩涙潵浼氳鏁存尝涓€寮€濮嬪氨琚案涔呮帹杩燂紙姝婚攣锛夈€?
-    -- 璁℃暟鍐呰仈鍦ㄥ嚱鏁板唴锛堜笉鏂板椤跺眰 local锛孏ame.lua 宸查€艰繎 Lua 200 涓婇檺锛孉B-166锛夈€?
+    -- v0.13.57：屏幕外（尚未进入可见战场，底边仍在 -102 之上）的敌机达到上限时，
+    -- **暂停生成队列**——等屏外机下落进场后再放下一架，避免一波多架全堆在屏幕上沿之外。
+    -- ⚠️ 这里只数**在场**屏外机（逐架放出一架、停一次）；待放架数由波次启动门控统一考虑
+    --    （见 UpdateWaveLogic），否则把 remaining 也算进来会让整波一开始就被永久推迟（死锁）。
+    -- 计数内联在函数内（不新增顶层 local，Game.lua 已逼近 Lua 200 上限，AB-166）。
     local offscreen = 0
     for i = 1, #veggies do
         local e = veggies[i]
@@ -1238,8 +1235,8 @@ SpawnNextNormalEnemy = function()
     end
     local brickSize = pendingSpawn.brickSize
     local shipW, shipH = GetAircraftSize(key, brickSize)
-    -- v0.13.27锛氭í鍚戝垎閬撯€斺€旈€愭灦杞崲涓嶅悓 x锛堢‘瀹氭€э紝闈為殢鏈猴級锛岄伩鍏嶆暣娉㈤兘鍙犲湪姝ｄ腑涓€鏉＄珫绾夸笂銆?
-    -- 杞﹂亾鏁扮敤鍑芥暟鍐呭眬閮ㄩ噺锛屼笉鏂板椤跺眰 local锛圙ame.lua 宸查€艰繎 Lua 200 涓婇檺锛夈€?
+    -- v0.13.27：横向分道——逐架轮换不同 x（确定性，非随机），避免整波都叠在正中一条竖线上。
+    -- 车道数用函数内局部量，不新增顶层 local（Game.lua 已逼近 Lua 200 上限）。
     local laneCount = StageCatalog.SPAWN_LANE_COUNT
     local margin = 20
     local maxX = math.max(margin, DW - margin - shipW)
@@ -1247,21 +1244,21 @@ SpawnNextNormalEnemy = function()
     pendingSpawn.lane = lane + 1
     local x = margin + (maxX - margin) * (lane / (laneCount - 1))
     local y = -102 - shipH - 24
-    -- 涓庡湪鍦烘晫鏈猴紙鍚湰娉㈠墠鍑犳灦锛夎嚦灏戦殧 1 鏍硷細浠嶅湪灞忓鏃跺啀寰€鍓嶆斁锛屼笉涓嬭惤鐬Щ銆?
+    -- 与在场敌机（含本波前几架）至少隔 1 格：仍在屏外时再往前放，不下落瞬移。
     local guard = 0
     while FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) and guard < 200 do
         y = y - brickSize
         guard = guard + 1
     end
     if FleetPositionOccupied(x, y, shipW, shipH, {}, nil, brickSize) then
-        -- 灞忓绌洪棿涔熸壘涓嶅埌绌轰綅锛堟瀬绔嫢鎸わ級锛氭帹杩熸湰鏋讹紝缁濅笉鍙犳斁銆?
+        -- 屏外空间也找不到空位（极端拥挤）：推迟本架，绝不叠放。
         pendingSpawn.timer = 1.0
         return
     end
-    -- v0.13.51锛氭湰鍏冲唴鎸?*鍑哄満搴忓彿**缁欐櫘閫氭晫鏈鸿閲忓皝椤讹紙绗?鏋垛墹1琛€銆佺2鏋垛墹3琛€銆佺3鏋垛墹5琛€鈥︼級锛?
-    -- 璁╁叧鍗″墠娈电敱寮卞埌寮哄钩婊戦€掕繘锛涘彧灏侀《涓嶆姮鍗囷紙鏇茬嚎鏇翠綆鏃朵繚鎸佹洸绾垮€硷級銆?
-    -- 鈿狅笍 鐢?`pendingSpawn.spawned`锛堟湰鍏冲凡鏀惧嚭璁℃暟锛夎€屼笉鏄€屽満涓婃棤鏁屾満銆嶁€斺€斿惁鍒欓鏈鸿鎵撴帀鍚庯紝
-    -- 鍚屾尝绗簩鏋朵細琚鍒ゆ垚绗竴涓紙AB-204锛夈€傛湰鍏崇涓€娉㈠紑娉㈡椂澶嶄綅銆?
+    -- v0.13.51：本关内按**出场序号**给普通敌机血量封顶（第1架≤1血、第2架≤3血、第3架≤5血…），
+    -- 让关卡前段由弱到强平滑递进；只封顶不抬升（曲线更低时保持曲线值）。
+    -- ⚠️ 用 `pendingSpawn.spawned`（本关已放出计数）而不是「场上无敌机」——否则首机被打掉后，
+    -- 同波第二架会被误判成第一个（AB-204）。本关第一波开波时复位。
     local firstShipHp = pendingSpawn.hp
     if wave == (stage - 1) * StageCatalog.WAVES_PER_STAGE + 1 then
         local cap = StageCatalog.GetFirstShipHpCap(pendingSpawn.spawned + 1)
@@ -1288,7 +1285,7 @@ SpawnNextNormalEnemy = function()
     end
 end
 
--- v0.13.26锛氱簿鑻辨姢鑸篃鏀逛负涓€鏋舵帴涓€鏋堕鍏ワ紙涓庢櫘閫氭尝鍏辩敤鍚屼竴濂楅敊宄版満鍒讹級銆?
+-- v0.13.26：精英护航也改为一架接一架飞入（与普通波共用同一套错峰机制）。
 ReleaseEscortVolley = function(plan)
     local count = math.min(plan.escortCount or 0, math.max(0, StageCatalog.MAX_FLEET - #veggies - 1))
     if count <= 0 then return end
@@ -1304,7 +1301,7 @@ ReleaseEscortVolley = function(plan)
 end
 
 SpawnWave = function(availableSlots)
-    -- 涓嬩竴娉㈤鍛娿€佸疄闄呯紪闃熷拰鐗规畩鐩爣鍚嶇О蹇呴』娑堣垂鍚屼竴浠介鎶借鍒掋€?
+    -- 下一波预告、实际编队和特殊目标名称必须消费同一份预抽计划。
     local plan = nextWavePlan
     if not plan or plan.wave ~= wave then plan = PlanWave(wave) end
     nextWavePlan = nil
@@ -1322,8 +1319,8 @@ SpawnWave = function(availableSlots)
     end
 
     if plan.kind == "boss" then
-        -- v0.13.26锛欱oss 涓嶅啀鍐荤粨鏈尝锛涗粠灞忓箷澶栬緝杩滃椋炲叆锛圫pawnSpecialEnemy 澶勭悊閬胯锛夛紝
-        -- 涓嶆妸宸插湪鍦虹殑鏁屾満椤跺埌澶╀笂锛屼篃涓嶅仛鐬Щ銆?
+        -- v0.13.26：Boss 不再冻结本波；从屏幕外较远处飞入（SpawnSpecialEnemy 处理避让），
+        -- 不把已在场的敌机顶到天上，也不做瞬移。
         local enemy = SpawnSpecialEnemy(plan)
         if enemy then
             Emit("wave_started", {wave = wave, stage = stage, stageWave = stageWave,
@@ -1334,7 +1331,7 @@ SpawnWave = function(availableSlots)
         return
     end
 
-    -- 鏅€氭尝锛氱櫥璁版湰娉㈠弬鏁帮紝鐢?SpawnNextNormalEnemy 鎸夐敊宄伴棿闅旈€愭灦鏀惧嚭锛堢涓€鏋剁珛鍗冲叆鍦猴級銆?
+    -- 普通波：登记本波参数，由 SpawnNextNormalEnemy 按错峰间隔逐架放出（第一架立即入场）。
     local count, baseSpeed, brickHp = GetWaveParams(wave)
     count = math.min(count, availableSlots or count)
     local aircraftKey = plan.aircraftKey
@@ -1349,28 +1346,28 @@ SpawnWave = function(availableSlots)
     pendingSpawn.speed = baseSpeed
     pendingSpawn.remaining = count
     pendingSpawn.timer = 0
-    -- v0.13.61锛氳捣濮嬭溅閬撴幒鍏?*鍏冲崱鍙?*锛堜笉鍐嶇敤绱 wave锛夆€斺€旀瘡鍏抽娉㈡亽涓?
-    -- `(鍏冲崱-1) % 5`锛岄€愬叧杞崲锛涘惁鍒?`(10k)%5==0` 浼氳姣忓叧绗竴鏋舵案杩滆创鏈€宸︼紙鐢ㄦ埛鐐瑰悕锛夈€?
+    -- v0.13.61：起始车道掺入**关卡号**（不再用累计 wave）——每关首波恒为
+    -- `(关卡-1) % 5`，逐关轮换；否则 `(10k)%5==0` 会让每关第一架永远贴最左（用户点名）。
     pendingSpawn.lane = (stage - 1 + stageWave - 1) % StageCatalog.SPAWN_LANE_COUNT
-    -- v0.13.51锛氬嚭鍦哄簭鍙疯鏁伴殢姣忔尝寮€娉㈠浣嶁€斺€斿畠鍙湪鏈叧绗竴娉㈢敓鏁堬紙琛€閲忓皝椤跺垽瀹氬甫 wave 绾︽潫锛夛紝
-    -- 澶嶄綅淇濊瘉绗竴娉粠銆岀 1 鏋躲€嶉噸鏂拌鏁般€?
+    -- v0.13.51：出场序号计数随每波开波复位——它只在本关第一波生效（血量封顶判定带 wave 约束），
+    -- 复位保证第一波从「第 1 架」重新计数。
     pendingSpawn.spawned = 0
     SpawnNextNormalEnemy()
 end
 
--- 纰版挒鍖哄煙璁捐锛氬渾褰㈠脊鐝犲鍗曚釜鏂瑰舰鐮栧潡銆?
+-- 碰撞区域设计：圆形弹珠对单个方形砖块。
 --
---        鍦嗗績 (cx, cy)
+--        圆心 (cx, cy)
 --             o
 --          .-' '-.
---       +----------+  <- 鐮栧潡 AABB (rx, ry, rw, rh)
+--       +----------+  <- 砖块 AABB (rx, ry, rw, rh)
 --       |          |
 --       +----------+
 --
--- 鐩殑锛氬渾涓?AABB 閲嶅彔鏃讹紝鎸夊綊涓€鍖栫┛閫忚緝澶х殑杞村弽灏勯€熷害骞舵帹鍑鸿〃闈€?
--- 杈圭晫锛氱浉鍒囦笉绠楀懡涓紱鎺ㄥ嚭 0.5 璁捐鍗曚綅閬垮厤閲嶅鍗＄銆?
--- 鍏堜互鏈瓙姝ョ殑绾挎鍖呭洿鐩掔矖绛涙暣鏋?鍗曟牸锛岃鐩栨摝杈瑰拰楂橀€熺┛瓒娿€?
--- v0.10.27锛氶珮閫熺悆闄ゅ垎瀛愭杩涳紝杩樺鏈抚浣嶇Щ鍋氱嚎娈?AABB 鎵帬锛岄伩鍏嶆摝杈?瀵硅绌挎牸涓㈠け纰版挒銆?
+-- 目的：圆与 AABB 重叠时，按归一化穿透较大的轴反射速度并推出表面。
+-- 边界：相切不算命中；推出 0.5 设计单位避免重复卡碰。
+-- 先以本子步的线段包围盒粗筛整架/单格，覆盖擦边和高速穿越。
+-- v0.10.27：高速球除分子步进，还对本帧位移做线段-AABB 扫掠，避免擦边/对角穿格丢失碰撞。
 local function SegmentNearRect(x0, y0, x1, y1, rx, ry, rw, rh, radius)
     return math.max(x0, x1) + radius >= rx
         and math.min(x0, x1) - radius <= rx + rw
@@ -1386,7 +1383,7 @@ local function IntersectsBrick(marble, rx, ry, rw, rh)
     return dx * dx + dy * dy < marble.radius * marble.radius
 end
 
--- 鍦嗘部 (px,py)鈫?cx,cy) 鎵繃鑶ㄨ儉鍚庣殑鐮栧潡 AABB銆傜敤浜庢湰甯т綅绉绘紡妫€銆?
+-- 圆沿 (px,py)→(cx,cy) 扫过膨胀后的砖块 AABB。用于本帧位移漏检。
 local function SweptHitsBrick(px, py, cx, cy, radius, rx, ry, rw, rh)
     local minX = rx - radius
     local minY = ry - radius
@@ -1414,37 +1411,30 @@ local function SweptHitsBrick(px, py, cx, cy, radius, rx, ry, rw, rh)
 end
 
 local function CollideBrick(marble, rx, ry, rw, rh)
-    -- v0.13.66锛氬弽寮圭鎾炵 = 85% 鍗婂緞锛涗激瀹冲湀锛堟弧鍗婂緞锛夌敱璋冪敤鏂圭粨绠椼€?
-    -- 鍙繘浼ゅ鍦堛€佹湭杩涘弽寮圭鐨勬摝杈瑰懡涓笉鍙嶅脊锛岃溅杈嗙户缁琛屻€?
-    local br = marble.radius * BALANCE.bounceBoxScale
-    local closestX = math.max(rx, math.min(marble.x, rx + rw))
-    local closestY = math.max(ry, math.min(marble.y, ry + rh))
-    local dx = marble.x - closestX
-    local dy = marble.y - closestY
-    if dx * dx + dy * dy >= br * br then return false end
+    if not IntersectsBrick(marble, rx, ry, rw, rh) then return false end
 
     local centerX = rx + rw * 0.5
     local centerY = ry + rh * 0.5
-    local overlapX = math.abs(marble.x - centerX) / (rw * 0.5 + br)
-    local overlapY = math.abs(marble.y - centerY) / (rh * 0.5 + br)
+    local overlapX = math.abs(marble.x - centerX) / (rw * 0.5 + marble.radius)
+    local overlapY = math.abs(marble.y - centerY) / (rh * 0.5 + marble.radius)
 
     if overlapX >= overlapY then
         marble.vx = -marble.vx
-        if marble.x >= centerX then marble.x = rx + rw + br + 0.5
-        else marble.x = rx - br - 0.5 end
+        if marble.x >= centerX then marble.x = rx + rw + marble.radius + 0.5
+        else marble.x = rx - marble.radius - 0.5 end
     else
         marble.vy = -marble.vy
-        if marble.y >= centerY then marble.y = ry + rh + br + 0.5
-        else marble.y = ry - br - 0.5 end
+        if marble.y >= centerY then marble.y = ry + rh + marble.radius + 0.5
+        else marble.y = ry - marble.radius - 0.5 end
     end
     return true
 end
 
--- 鍙戝皠鍗曚釜鏂瑰潡鐨勭瑁傝瑙変簨浠讹紙鐏姳 + 鐙珛椋炴暎绠变綋锛夈€備笉淇敼瀛樻椿鐘舵€侊紝鐢辫皟鐢ㄦ柟璐熻矗銆?
--- scoreValue 涓烘湰娆″嚮纰庣殑鐪熷疄寰楀垎锛涜秺绾跨瑁傦紙鎯╃綒锛変笉浼狅紝琛ㄧ幇灞傛嵁姝や笉椋樺垎鏁般€?
+-- 发射单个方块的碎裂视觉事件（火花 + 独立飞散箱体）。不修改存活状态，由调用方负责。
+-- scoreValue 为本次击碎的真实得分；越线碎裂（惩罚）不传，表现层据此不飘分数。
 local function EmitBrickShatterFx(enemy, brick, x, y, scoreValue)
     local angle = Random() * math.pi * 2
-    -- v0.10.23锛氶檷浣庨鏁ｉ€熷害/涓婃姏锛岄伩鍏嶇鐗囬鍒板睆椤堕暱鏈熷爢绉€佷笌鏂板皬绮掑瓙鎶㈡垙銆?
+    -- v0.10.23：降低飞散速度/上抛，避免碎片飞到屏顶长期堆积、与新小粒子抢戏。
     local speed = 120 + Random() * 150
     local lift = 80 + Random() * 90
     Emit("brick_hit", {
@@ -1478,14 +1468,14 @@ EjectBrick = function(enemy, brick)
     brick.ejected = true
     score = score + data.score
     bricksBroken = bricksBroken + 1
-    -- v0.14.x 瀛橀挶缃愶細姣忓嚮纰?1 鍧楃疮绉?1 鐐硅繘搴︼紱绮捐嫳鏈烘瘡鍧楁寜 2 鍊嶈锛?> 绮捐嫳 100 榻胯疆 / 100 鍧楋級銆?
+    -- v0.14.x 存钱罐：每击碎 1 块累积 1 点进度；精英机每块按 2 倍计（=> 精英 100 齿轮 / 100 块）。
     settleBook.gear = settleBook.gear + (enemy.isElite and 2 or 1)
-    -- v0.13.28锛氥€岃鐢插己鍖栥€嶇殑闆朵欢浜у嚭鍊嶇巼鍦ㄤ骇鍑虹偣缁熶竴缁撶畻锛堝嚮纰?娓呮満/杩囨尝/缁撶畻鍚屾簮锛夈€?
+    -- v0.13.28：「装甲强化」的零件产出倍率在产出点统一结算（击碎/清机/过波/结算同源）。
     partsEarned = partsEarned + PARTS_PER_BRICK * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
-    -- v0.13.28锛氥€岀┛鐢插脊澶淬€嶆瘡绾ч澶?+1 缁忛獙锛屼綆闅惧害涔熻兘绔嬪埢鍔犻€熷崌绾с€?
+    -- v0.13.28：「穿甲弹头」每级额外 +1 经验，低难度也能立刻加速升级。
     GainXp(XP_PER_BRICK + BALL_TUNING.brickXpFlat)
     EmitBrickShatterFx(enemy, brick, x, y, data.score)
-    -- 鏈€鍚庡瓨娲绘牸娑堝け鍗冲彂甯冨畬鏁村嚮姣佷簨瀹烇紱濂栧姳浠嶇暀鍦?UpdateEnemies锛屼笉鑳藉洜鍗囩骇鎻愬墠缁撶畻銆?
+    -- 最后存活格消失即发布完整击毁事实；奖励仍留在 UpdateEnemies，不能因升级提前结算。
     if not enemy.breached then
         local fullyDestroyed = true
         for _, remaining in ipairs(enemy.bricks) do
@@ -1504,8 +1494,8 @@ EjectBrick = function(enemy, brick)
     return true
 end
 
--- 瓒婄嚎纰庤锛氳琛屾柟鍧楄劚绂荤紪闃熷苟鎾斁鐩稿悓椋炴暎瑙嗚锛屼絾涓嶅姞鍒嗐€佷笉缁欑粡楠?
--- 锛堝畠鏄€滅獊鐮撮槻绾库€濈殑鎯╃綒锛屼笉鏄鐜╁鍑荤锛夈€?
+-- 越线碎裂：该行方块脱离编队并播放相同飞散视觉，但不加分、不给经验
+-- （它是“突破防线”的惩罚，不是被玩家击碎）。
 local function ShatterBreachedBrick(enemy, brick)
     if brick.ejected or not brick.alive then return end
     local x = enemy.x + (brick.col - 0.5) * enemy.brickSize
@@ -1520,7 +1510,7 @@ local function DamageBrick(enemy, brick, damage)
     if enemy.isBoss and enemy.vulnerable then
         damage = (damage or 1) * 1.5
     end
-    -- v0.13.55銆岄湝瑁傛秱灞傘€嶏細鍐荤粨涓殑鏁屾満鍙楀嚮鏇寸棝锛堣剢鍖栫鍐帮級銆?
+    -- v0.13.55「霜裂涂层」：冻结中的敌机受击更痛（脆化碎冰）。
     if enemy.frozen and enemy.frozen > 0 and BALL_TUNING.iceShatter > 0 then
         damage = (damage or 1) * (1 + BALL_TUNING.iceShatter)
     end
@@ -1528,7 +1518,7 @@ local function DamageBrick(enemy, brick, damage)
     if brick.hp <= 0 then
         EjectBrick(enemy, brick)
     else
-        -- 瑁呯敳鍛戒腑涓嶈劚钀斤紱瀹為檯鑰愪箙鐢辨瘡涓夊叧澧為暱涓€娆＄殑 brick.hp 鍐冲畾銆?
+        -- 装甲命中不脱落；实际耐久由每三关增长一次的 brick.hp 决定。
         Emit("brick_hit", {enemyId = enemy.id, aircraftKey = enemy.aircraftKey,
             col = brick.col, row = brick.row,
             x = enemy.x + (brick.col - 0.5) * enemy.brickSize,
@@ -1537,9 +1527,9 @@ local function DamageBrick(enemy, brick, damage)
     end
 end
 
--- P11 浜斿紓甯稿弽搴旂郴缁燂紙瑙勫垯灞傦級锛氱爾鍧楀彲鎼哄甫 burn/shock/corrode/freeze/volatile 浜旂寮傚父鐘舵€侊紝
--- 鐢卞懡涓脊鐝犵殑璇嶆潯鎴栫被鍨嬫柦鍔狅紱鐘舵€侀棿瀛樺湪鍙嶅簲锛堝喕缁?鐏肩儳=铻嶇┛銆佺數鍑?鍐荤粨=纰庤锛夐澶栫粨绠椼€?
--- 浠呰褰曡鏃朵笌浼ゅ锛岃瑙夋煋鑹茬敱琛ㄧ幇灞傛帹杩熸秷璐?status 浜嬩欢銆?
+-- P11 五异常反应系统（规则层）：砖块可携带 burn/shock/corrode/freeze/volatile 五种异常状态，
+-- 由命中弹珠的词条或类型施加；状态间存在反应（冻结+灼烧=融穿、电击+冻结=碎裂）额外结算。
+-- 仅记录计时与伤害，视觉染色由表现层推迟消费 status 事件。
 local STATUS_BITS = {burn = 1, shock = 2, corrode = 4, freeze = 8, volatile = 16}
 local STATUS_ORDER = {"burn", "shock", "corrode", "freeze", "volatile"}
 
@@ -1560,7 +1550,7 @@ local function TickBrickStatus(enemy, brick, dt)
     local y = enemy.y + (brick.row - 0.5) * enemy.brickSize
     local hasFreeze = (brick.status.freeze and brick.status.freeze.time > 0)
     local hasBurn = (brick.status.burn and brick.status.burn.time > 0)
-    -- 鍙嶅簲锛氬喕缁?+ 鐏肩儳 = 铻嶇┛锛屾瘡甯ц拷鍔犱激瀹冲苟鍔犻€熷喕缁撴秷閫€銆?
+    -- 反应：冻结 + 灼烧 = 融穿，每帧追加伤害并加速冻结消退。
     if hasFreeze and hasBurn then
         brick.hp = brick.hp - (0.6 + brick.status.burn.power) * dt
         brick.status.freeze.time = brick.status.freeze.time - dt * 2
@@ -1574,14 +1564,14 @@ local function TickBrickStatus(enemy, brick, dt)
             EjectBrick(enemy, brick)
         end
     end
-    -- 鑵愯殌锛氭寔缁墛鍑忚鐮栧潡鏈夋晥鎶ょ敳锛堣繖閲岀洿鎺ユ崲绠椾负姣忕灏忎激瀹筹級銆?
+    -- 腐蚀：持续削减该砖块有效护甲（这里直接换算为每秒小伤害）。
     if brick.status.corrode and brick.status.corrode.time > 0 then
         brick.hp = brick.hp - 0.25 * dt
         if brick.hp <= 0 and brick.alive then
             EjectBrick(enemy, brick)
         end
     end
-    -- 鏄撴毚锛氬缁堟椂寮曠垎閭绘牸锛坴olatile锛夛紝棰濆鑼冨洿浼ゅ鐢?base_hit 椋庢牸浜嬩欢骞挎挱銆?
+    -- 易暴：寿终时引爆邻格（volatile），额外范围伤害由 base_hit 风格事件广播。
     local volatile = brick.status.volatile
     if volatile and volatile.time > 0 and not brick.alive and not volatile.detonated then
         volatile.detonated = true
@@ -1612,7 +1602,7 @@ local function IsEnemyCleared(enemy)
     return true
 end
 
--- 骞稿瓨鑰呭崌绾э細鑾峰緱缁忛獙锛岃法绾ф椂绱寰呭鐞嗙殑鍗囩骇閫夋嫨銆?
+-- 幸存者升级：获得经验，跨级时累计待处理的升级选择。
 GainXp = function(amount)
     if pendingLevelUps > 0 then
         deferredXp = deferredXp + amount
@@ -1626,8 +1616,8 @@ GainXp = function(amount)
         pendingLevelUps = pendingLevelUps + 1
     end
     if pendingLevelUps > 0 then
-        -- v0.10.24锛氫笌 Pause 涓€鑷达紝杩涘叆鍗囩骇闈㈡澘鏃跺彇娑堣繘琛屼腑鐨勬嫋鎷藉苟璁╁緟鍙戣溅褰掍綅锛?
-        -- 闃叉閫夊畬寮哄寲鍥炲埌 playing 鍚庢畫鐣欐棫 aiming/grabStart銆?
+        -- v0.10.24：与 Pause 一致，进入升级面板时取消进行中的拖拽并让待发车归位，
+        -- 防止选完强化回到 playing 后残留旧 aiming/grabStart。
         Game.ClearLaunchCharge()
         aiming = false
         if activeBall then
@@ -1643,14 +1633,14 @@ GainXp = function(amount)
 end
 
 ---@class RollUpgradeOpts
----@field count integer|nil 鍊欓€夊崱鏁伴噺锛堢己鐪?3锛?
----@field forceRare boolean|nil 骞垮憡銆屽崱姹犲崌鏍笺€嶏細浼樺厛鎶界█鏈夊崱
+---@field count integer|nil 候选卡数量（缺省 3）
+---@field forceRare boolean|nil 广告「卡池升格」：优先抽稀有卡
 
 ---@param opts RollUpgradeOpts|nil
 RollUpgradeChoices = function(opts)
     if Game._opening.active then
-        -- 涓撶敤姹犲彧鍙栧洓寮犳棦鏈夎В閿佸崱锛涙棫妗ｄ篃鑳介€夎溅锛屼笉浼€犳案涔呭ぉ璧嬫垨鐢熷懡鍔犳垚銆?
-        -- 绗竴杞洓绉嶅彇涓夛紝绗簩杞墿浣欎笁绉嶅叏閮ㄥ睍绀猴紱鏃犻噸澶?鍗犱綅/閲嶆娊淇濆簳鍓綔鐢ㄣ€?
+        -- 专用池只取四张既有解锁卡；旧档也能选车，不伪造永久天赋或生命加成。
+        -- 第一轮四种取三，第二轮剩余三种全部展示；无重复/占位/重抽保底副作用。
         local available = {}
         for _, u in ipairs(UPGRADE_POOL) do
             if u.unlockBallType and not unlockedBalls[u.unlockBallType] then
@@ -1665,12 +1655,12 @@ RollUpgradeChoices = function(opts)
         print("[Game] opening candidates round=" .. Game._opening.round .. " count=" .. #upgradeChoices)
         return
     end
-    -- WO-09/P5锛氬姞鏉冩娊鍗?+ 鍙犲姞涓婇檺 + 绋€鏈変繚搴?+ 鍚屾鍊欓€夊幓閲嶃€?
-    -- v0.11.0锛氭敮鎸佽嚜瀹氫箟鍊欓€夋暟涓庡箍鍛娿€屽崱姹犲崌鏍笺€嶇殑绋€鏈変繚搴曘€?
+    -- WO-09/P5：加权抽卡 + 叠加上限 + 稀有保底 + 同次候选去重。
+    -- v0.11.0：支持自定义候选数与广告「卡池升格」的稀有保底。
     opts = opts or {}
     local cardCount = math.max(1, math.floor(opts.count or PANEL_CARD_COUNT))
     local forceRare = opts.forceRare == true
-    -- 鏆傚仠琛ョ粰绔欎拱鐨勩€屼繚搴曠█鏈夈€嶄竴娆℃€х敓鏁堝悗鍗虫竻绌恒€?
+    -- 暂停补给站买的「保底稀有」一次性生效后即清空。
     if pendingRareRoll then
         forceRare = true
         pendingRareRoll = false
@@ -1723,7 +1713,7 @@ RollUpgradeChoices = function(opts)
             local stacks = upgradeStacks[u.id] or 0
             if CanOfferUpgrade(u) and not chosenThisRoll[u.id] then
                 local w = u.weight
-                -- v0.13.28锛氥€屽墠绾跨淮淇€嶇幇鍦ㄧ粰姘镐箙鐢熷懡涓婇檺锛屼笉鍐嶉殢鍙犲眰璐€硷紝鍙湪寰堥珮灞傛暟杞诲井闄嶆潈銆?
+                -- v0.13.28：「前线维修」现在给永久生命上限，不再随叠层贬值，只在很高层数轻微降权。
                 if u.id == "repair" and stacks >= 8 then w = w * 0.6 end
                 if u.id == "xp" and stacks >= 4 then w = w * 0.5 end
                 avail[#avail + 1] = {u = u, w = w}
@@ -1732,12 +1722,12 @@ RollUpgradeChoices = function(opts)
         if #avail == 0 then break end
 
         local picked
-        -- 銆屽崱姹犲崌鏍笺€嶏細鏈棣栧紶寮哄埗绋€鏈夛紙璇ユ爣蹇楀彧鐢熸晥涓€娆★紝涓嶄緷璧?sinceRare锛夈€?
+        -- 「卡池升格」：本次首张强制稀有（该标志只生效一次，不依赖 sinceRare）。
         if forceRare and not forcedRareDone then
             picked = PickWeighted(avail, true)
             if picked then forcedRareDone = true end
         end
-        -- 甯歌绋€鏈変繚搴曪細杩炵画 6 寮犳櫘閫氬悗寮哄埗鍑虹█鏈夈€?
+        -- 常规稀有保底：连续 6 张普通后强制出稀有。
         if not picked and sinceRare >= 6 then
             picked = PickWeighted(avail, true)
         end
@@ -1755,7 +1745,7 @@ RollUpgradeChoices = function(opts)
         upgradeChoices[#upgradeChoices + 1] = picked
     end
 
-    -- 鎶藉崱鍊欓€変笉瓒虫椂浠嶅繀椤绘彁渚涘彲鐐瑰嚮鐨勫畬鏁村€欓€夛紝绂佹杩涘叆涓嶅彲鎭㈠鐨勭┖鍗囩骇鎬併€?
+    -- 抽卡候选不足时仍必须提供可点击的完整候选，禁止进入不可恢复的空升级态。
     if #upgradeChoices < cardCount then
         for _, u in ipairs(UPGRADE_POOL) do
             if #upgradeChoices >= cardCount then break end
@@ -1770,9 +1760,9 @@ RollUpgradeChoices = function(opts)
     end
 end
 
--- 鐢卞閮?UI 璋冪敤锛氶€夋嫨绗?index锛?-based锛夐」寮哄寲锛屾仮澶?playing銆?
--- v0.12.5 绮剧畝锛氶潰鏉垮箍鍛婅Е鐐规敹鏁涗负銆屽厤璐归噸鎶?+ 鐪嬪箍鍛婇噸鎶姐€嶏紝
--- 鍒犻櫎绗?4 寮犺В閿?/ 鍗曞崱鍗囨牸 / 棰濆鍐嶉€?/ 閫夊崱鍊掕鏃讹紙瑙︾偣杩囧瘑鎷涜嚧鍙嶆劅锛夈€?
+-- 由外部 UI 调用：选择第 index（1-based）项强化，恢复 playing。
+-- v0.12.5 精简：面板广告触点收敛为「免费重抽 + 看广告重抽」，
+-- 删除第 4 张解锁 / 单卡升格 / 额外再选 / 选卡倒计时（触点过密招致反感）。
 ---@param index integer
 ---@return boolean picked
 function Game.PickUpgrade(index)
@@ -1787,7 +1777,7 @@ function Game.PickUpgrade(index)
         upgradeChoices = nil
         Emit("upgrade_picked", { id = choice.id, name = choice.name, stacks = 1 })
         print("[Game] opening picked round=" .. opening.round .. " vehicle=" .. choice.unlockBallType)
-        -- 闃舵纭涓嶅啓缁忛獙鍗囩骇璐︽湰锛屾棦鏈夐€変腑闊虫晥/鍙嶉浠嶄繚鐣欍€?
+        -- 阶段确认不写经验升级账本，既有选中音效/反馈仍保留。
         opening.phase = #opening.selected < opening.total and "between" or "ready"
         opening.timer = opening.durations[opening.phase]
         return true
@@ -1798,7 +1788,7 @@ function Game.PickUpgrade(index)
     local times = math.min(choice.maxStacks - stacks, 1)
     if times <= 0 then return false end
     for _ = 1, times do
-        choice.apply(stacks)   -- 浼犲叆褰撳墠灞傛暟锛屾敮鎸佽竟闄呴€掑噺
+        choice.apply(stacks)   -- 传入当前层数，支持边际递减
         stacks = stacks + 1
     end
     upgradeStacks[choice.id] = stacks
@@ -1830,7 +1820,7 @@ function Game.GetUpgradeChoices()
     local current = upgradeChoices
     if not current then return nil end
     local list = {}
-    -- WO-10/P5锛氬崌绾у崱 delta 棰勮瀛楁锛孶I 鍙灞曠ず锛屼笉鍦ㄦ鍋氳鍒欒绠椼€?
+    -- WO-10/P5：升级卡 delta 预览字段，UI 只读展示，不在此做规则计算。
     for _, c in ipairs(current) do
         table.insert(list, {
             id = c.id, name = c.name, desc = c.desc, detail = c.detail,
@@ -1846,12 +1836,12 @@ function Game.GetUpgradeChoices()
 end
 
 -- ============================================================================
--- v0.11.0 鍟嗕笟鍖栵細鍗囩骇闈㈡澘鍙樼幇鎺ュ彛銆?
--- 瑙勫垯灞傚彧鍥炵瓟銆岃兘涓嶈兘鍋氥€嶄笌銆屽仛浜嗕粈涔堛€嶏紝鏄惁鎾斁骞垮憡鐢辩紪鎺掑眰锛坢ain.lua锛夊喅瀹氥€?
+-- v0.11.0 商业化：升级面板变现接口。
+-- 规则层只回答「能不能做」与「做了什么」，是否播放广告由编排层（main.lua）决定。
 -- ============================================================================
 
--- v0.13.64锛氭湰灞€鍏嶈垂閲嶆娊鎬绘鏁帮紙鍩虹 1 娆?+ 澶╄祴銆屽厤璐瑰埛鏂般€嶅姞鎴愶級銆?
--- 鎸?Game 琛紙涓嶅崰椤跺眰 local 妲斤紝鏈枃浠跺凡 199/200锛夈€?
+-- v0.13.64：本局免费重抽总次数（基础 1 次 + 天赋「免费刷新」加成）。
+-- 挂 Game 表（不占顶层 local 槽，本文件已 199/200）。
 ---@return integer
 function Game.GetFreeRerollTotal()
     return 1 + talentRerollBonus
@@ -1868,7 +1858,7 @@ function Game.CanReroll()
     return gameState == "levelup" and not Game._opening.active and upgradeChoices ~= nil
 end
 
--- 閿佷綇涓€寮犲凡鏈夊€欓€夊崱锛屼笅涓€娆″崌绾э紙鎴栨湰娆￠噸鎶斤級鍥哄畾淇濈暀鍦ㄩ浣嶏紱鍐嶆鐐瑰嚮瑙ｉ櫎銆?
+-- 锁住一张已有候选卡，下一次升级（或本次重抽）固定保留在首位；再次点击解除。
 ---@param index integer
 ---@return boolean ok
 function Game.ToggleHeldUpgrade(index)
@@ -1896,7 +1886,7 @@ function Game.RerollUpgrades(mode)
 end
 
 -- ============================================================================
--- 鏆傚仠琛ョ粰绔欙紙鐪嬪箍鍛婏紝鍗曞眬闄愰噺锛夈€傝鍒欏眰鍙垽瀹氥€岃兘涓嶈兘鐢ㄣ€嶏紝骞垮憡鐢辩紪鎺掑眰鎾€?
+-- 暂停补给站（看广告，单局限量）。规则层只判定「能不能用」，广告由编排层播。
 -- ============================================================================
 
 ---@return boolean
@@ -1904,7 +1894,7 @@ function Game.CanPauseHeal()
     return gameState == "paused" and pauseHealUsed < PAUSE_SUPPLY.healMax and baseHp < GetMaxBaseHp()
 end
 
----@return integer 鍓╀綑鍙敤娆℃暟
+---@return integer 剩余可用次数
 function Game.GetPauseHealLeft()
     return math.max(0, PAUSE_SUPPLY.healMax - pauseHealUsed)
 end
@@ -1929,7 +1919,7 @@ function Game.GetPauseRareLeft()
     return math.max(0, PAUSE_SUPPLY.rareMax - pauseRareUsed)
 end
 
--- 涔般€屼笅涓€涓己鍖栭潰鏉夸繚搴曞嚭绋€鏈夈€嶃€?
+-- 买「下一个强化面板保底出稀有」。
 ---@return boolean ok
 function Game.PauseRarePick()
     if not Game.CanPauseRarePick() then return false end
@@ -1973,7 +1963,7 @@ end
 function Game.PauseReload()
     if not Game.CanPauseReload() then return false end
     pauseReloadUsed = true
-    -- v0.13.19锛氬厹搴曠敤鍒濆杞︾被鍨嬶紙鍔犻€熻溅锛夛紝涓嶅啀鍐欐鍒嗚杞︺€?
+    -- v0.13.19：兜底用初始车类型（加速车），不再写死分裂车。
     local nextType = ballQueue[1] or (activeBall and activeBall.ballType) or STARTING_BALL_TYPE
     table.insert(ballQueue, 1, nextType)
     if not activeBall and (nextType ~= "normal" or Game._NormalMarbleSlots() > 0) then
@@ -1998,43 +1988,43 @@ function Game.PausePartsBoost()
 end
 
 -- ============================================================================
--- 灞€鍐呴亾鍏锋Ы锛坴0.11.0 鍟嗕笟鍖?P4锛夈€?
--- 涓夋牸锛氱偢寮?/ 鍐板喕 / 鎶ょ浘銆傛瘡鏍煎崟灞€鍙敤骞垮憡鑾峰彇 1 娆★紝鑾峰彇鍚庣偣涓€涓嬬珛鍗崇敓鏁堛€?
--- 瑙勫垯灞傚彧绠°€岃兘涓嶈兘鎷?/ 鎷垮埌娌?/ 鐢ㄤ簡浠€涔堟晥鏋溿€嶏紝骞垮憡鎾斁鐢辩紪鎺掑眰鍐冲畾銆?
+-- 局内道具槽（v0.11.0 商业化 P4）。
+-- 三格：炸弹 / 冰冻 / 护盾。每格单局可用广告获取 1 次，获取后点一下立即生效。
+-- 规则层只管「能不能拿 / 拿到没 / 用了什么效果」，广告播放由编排层决定。
 -- ============================================================================
 
 ---@class ItemDef
 ---@field key string
 ---@field name string
----@field color integer[] 妲戒綅涓昏壊锛圲I 鍙锛?
+---@field color integer[] 槽位主色（UI 只读）
 
 ---@type ItemDef[]
 local ITEM_DEFS = {
-    { key = "bomb",   name = "鐐稿脊", color = {196, 120, 255} },
-    { key = "freeze", name = "鍐板喕", color = {120, 216, 255} },
-    { key = "shield", name = "鎶ょ浘", color = {90, 200, 255} },
+    { key = "bomb",   name = "炸弹", color = {196, 120, 255} },
+    { key = "freeze", name = "冰冻", color = {120, 216, 255} },
+    { key = "shield", name = "护盾", color = {90, 200, 255} },
 }
 local ITEM_BY_KEY = {}
 for i = 1, #ITEM_DEFS do ITEM_BY_KEY[ITEM_DEFS[i].key] = ITEM_DEFS[i] end
 
 ---@type table<string, integer>
-local itemCharges = { bomb = 0, freeze = 0, shield = 0 }  -- 妲戒綅瀛橀噺
+local itemCharges = { bomb = 0, freeze = 0, shield = 0 }  -- 槽位存量
 ---@type table<string, boolean>
-local itemGranted = {}                                     -- 鏈眬鏄惁宸茬敤骞垮憡棰嗚繃
--- v0.13.13锛氬眬澶栦拱鏉ョ殑姘镐箙搴撳瓨锛堥€夊叧鐣岄潰鑺遍浂浠惰喘涔帮級锛岃繘灞€鏃舵敞鍏ャ€?
--- 瑙勫垯锛?*姣忕閬撳叿姣忓眬鏈€澶氫娇鐢ㄤ竴娆?*锛堢敤鎴疯姹傦紝涓嶅湪 UI 閲屽啓鏄庯紝闈犵簿鐏垫槑鏆?瑙掓爣琛ㄨ揪锛夈€?
+local itemGranted = {}                                     -- 本局是否已用广告领过
+-- v0.13.13：局外买来的永久库存（选关界面花零件购买），进局时注入。
+-- 规则：**每种道具每局最多使用一次**（用户要求，不在 UI 里写明，靠精灵明暗+角标表达）。
 ---@type table<string, integer>
 local itemStock = { bomb = 0, freeze = 0, shield = 0 }
 ---@type table<string, boolean>
-local itemUsedThisRun = {}                                 -- 鏈眬璇ラ亾鍏锋槸鍚﹀凡鐢ㄨ繃
-local FREEZE_SECONDS = 6.0                                 -- 鍐板喕鎸佺画锛坴0.13.58锛? 鈫?6锛屽姞寮猴級
-local SHIELD_POINTS = 60                                   -- 鎶ょ浘鍚告敹閲忥紙v0.13.58锛?0 鈫?60锛屽姞寮猴級
+local itemUsedThisRun = {}                                 -- 本局该道具是否已用过
+local FREEZE_SECONDS = 6.0                                 -- 冰冻持续（v0.13.58：4 → 6，加强）
+local SHIELD_POINTS = 60                                   -- 护盾吸收量（v0.13.58：30 → 60，加强）
 
 ResetItems = function()
     itemCharges = { bomb = 0, freeze = 0, shield = 0 }
     itemGranted = {}
     itemUsedThisRun = {}
-    -- 鎶婃案涔呭簱瀛樻敞鍏ユ湰灞€妲戒綅锛堟瘡鏍?1 涓紱鏈眬闄愮敤涓€娆＄敱 itemUsedThisRun 鍏滃簳锛夈€?
+    -- 把永久库存注入本局槽位（每样 1 个；本局限用一次由 itemUsedThisRun 兜底）。
     for i = 1, #ITEM_DEFS do
         local key = ITEM_DEFS[i].key
         if (itemStock[key] or 0) > 0 then
@@ -2043,7 +2033,7 @@ ResetItems = function()
     end
 end
 
--- 灞€澶栧簱瀛樼敱缂栨帓灞傚湪寮€灞€鍓嶆敞鍏ワ紙PlayerData 鈫?Game锛夈€?
+-- 局外库存由编排层在开局前注入（PlayerData → Game）。
 ---@param stock table<string, integer>
 function Game.SetItemStock(stock)
     itemStock = { bomb = 0, freeze = 0, shield = 0 }
@@ -2053,8 +2043,8 @@ function Game.SetItemStock(stock)
     end
 end
 
--- v0.13.13锛氬簱瀛?provider鈥斺€擱esetGame 姣忔寮€灞€鑷姩鎷夊彇锛?
--- 瑕嗙洊銆岄€夊叧 / 涓嬩竴鍏?/ 鍐嶆垬 / 閲嶅紑銆嶅叏閮ㄥ叆鍙ｏ紝閬垮厤閫愪釜鍏ュ彛鎵嬪姩娉ㄥ叆婕忔帀銆?
+-- v0.13.13：库存 provider——ResetGame 每次开局自动拉取，
+-- 覆盖「选关 / 下一关 / 再战 / 重开」全部入口，避免逐个入口手动注入漏掉。
 ---@param fn fun(): table<string, integer>
 function Game.SetItemStockProvider(fn)
     itemStockProvider = fn
@@ -2079,7 +2069,7 @@ function Game.GetItemCharges(key)
     return itemCharges[key] or 0
 end
 
--- 骞垮憡鐪嬪畬鍚庡彂鏀惧埌妲戒綅銆?
+-- 广告看完后发放到槽位。
 ---@param key string
 ---@return boolean ok
 function Game.GrantItem(key)
@@ -2095,12 +2085,12 @@ end
 ---@return boolean
 function Game.CanUseItem(key)
     if gameState ~= "playing" then return false end
-    -- v0.13.13锛氭瘡绉嶉亾鍏锋瘡灞€鏈€澶氫娇鐢ㄤ竴娆★紙鏃犺搴撳瓨澶氬皯锛夈€?
+    -- v0.13.13：每种道具每局最多使用一次（无论库存多少）。
     if itemUsedThisRun[key] then return false end
     return (itemCharges[key] or 0) > 0
 end
 
--- 绔嬪嵆鐢熸晥銆傜偢寮?鍏ㄥ満姣忔満鐐告帀鏁版牸锛涘啺鍐?鍏ㄥ満鍐荤粨锛涙姢鐩?闃茬嚎鑾峰緱鍚告敹鍊笺€?
+-- 立即生效。炸弹=全场每机炸掉数格；冰冻=全场冻结；护盾=防线获得吸收值。
 ---@param key string
 ---@return boolean ok
 function Game.UseItem(key)
@@ -2116,8 +2106,8 @@ function Game.UseItem(key)
                 for _, brick in ipairs(enemy.bricks) do
                     if brick.alive then live[#live + 1] = brick end
                 end
-                -- v0.13.58锛氱偢寮瑰姞寮衡€斺€旀瘡鏈虹偢鎺夈€屽瓨娲绘牸鏁扮殑涓€鍗婏紙鍚戜笂鍙栨暣锛夈€嶏紝
-                -- 鏈€澶?12 鏍硷紙鍘熶负鍥哄畾 4 鏍硷級銆傛墦婊＄紪闃熸椂鏄庢樉娓呭満锛屼絾浠嶉潪涓€閿叏娓呫€?
+                -- v0.13.58：炸弹加强——每机炸掉「存活格数的一半（向上取整）」，
+                -- 最多 12 格（原为固定 4 格）。打满编队时明显清场，但仍非一键全清。
                 local take = math.min(12, math.ceil(#live * 0.5))
                 for _ = 1, take do
                     local idx = RandomInt(1, #live)
@@ -2159,14 +2149,14 @@ function Game.GetItemDefs()
 end
 
 -- ============================================================================
--- 灞€鍐呴檮榄斿崱锛坴0.13.58锛夈€?
--- 姣忓畬鎴愪竴娉㈣幏寰?鏇存崲涓€寮犻檮榄斿崱锛屾樉绀哄湪宸︿笂瑙掞紙涓庡彸涓婇亾鍏风珫鍒楀绉帮級銆?
--- 浣跨敤鍚庡崱鐗囨秷澶憋紝鏁堟灉浣滅敤鍦?*棰勫鍙戝皠鐨勮溅**涓婏紱鑻ュ綋鍓嶆病鏈夊緟鍙戣溅锛堢悆鍦ㄩ/琛ュ脊涓級锛?
--- 鍒欓『寤剁粰銆屼笅涓€涓澶囧彂灏勭殑杞︺€嶃€傜█鏈夊害钃?绱?榛勶紝娉㈡瓒婇珮瓒婂鏄撳嚭楂樼█鏈夊害銆?
--- 瑙勫垯灞傚彧鍒ゅ畾銆岃兘涓嶈兘鐢?/ 鐢ㄤ簡浠€涔堟晥鏋溿€嶏紝缁樺埗涓庡懡涓湪 UI 灞傘€?
+-- 局内附魔卡（v0.13.58）。
+-- 每完成一波获得/更换一张附魔卡，显示在左上角（与右上道具竖列对称）。
+-- 使用后卡片消失，效果作用在**预备发射的车**上；若当前没有待发车（球在飞/补弹中），
+-- 则顺延给「下一个预备发射的车」。稀有度蓝/紫/黄，波次越高越容易出高稀有度。
+-- 规则层只判定「能不能用 / 用了什么效果」，绘制与命中在 UI 层。
 -- ============================================================================
 
--- 鎶婇檮榄斿崱鎸傚埌涓€棰楀脊鐝犱笂锛堟敼鍐欒涓哄瓧娈碉紱涓嶆敼寮圭瀹氫箟锛岀姝㈢‖缂栫爜鍒版覆鏌撳眰锛夈€?
+-- 把附魔卡挂到一颗弹珠上（改写行为字段；不改弹种定义，禁止硬编码到渲染层）。
 ---@param marble table
 ---@param card EnchantDef|nil
 ApplyEnchantToMarble = function(marble, card)
@@ -2178,20 +2168,20 @@ ApplyEnchantToMarble = function(marble, card)
     })
 end
 
--- 褰撳墠鏄惁鏈夐檮榄斿崱鍦ㄦ墜銆?
+-- 当前是否有附魔卡在手。
 ---@return boolean
 function Game.HasEnchant()
     return Game._enchant.card ~= nil
 end
 
--- 鑳戒笉鑳戒娇鐢ㄩ檮榄斿崱锛氬彧鍦ㄦ垬鏂椾腑銆佷笖鎵嬩笂鏈夊崱鏃跺彲鐢ㄣ€?
+-- 能不能使用附魔卡：只在战斗中、且手上有卡时可用。
 ---@return boolean
 function Game.CanUseEnchant()
     return gameState == "playing" and Game._enchant.card ~= nil
 end
 
--- 浣跨敤闄勯瓟鍗°€傛湁棰勫鍙戝皠鐨勮溅 鈫?绔嬪嵆鐢熸晥锛涘惁鍒欓『寤剁粰涓嬩竴涓澶囧彂灏勭殑杞︺€?
--- 鏃犺绔嬪嵆鐢熸晥杩樻槸椤哄欢锛屽崱鐗囬兘浼氫粠鎵嬩笂娑堝け锛堢敤鎺夊嵆娑堣€楋級銆?
+-- 使用附魔卡。有预备发射的车 → 立即生效；否则顺延给下一个预备发射的车。
+-- 无论立即生效还是顺延，卡片都会从手上消失（用掉即消耗）。
 ---@return boolean ok
 function Game.UseEnchant()
     if not Game.CanUseEnchant() then return false end
@@ -2208,7 +2198,7 @@ function Game.UseEnchant()
     return true
 end
 
--- 鏂颁竴娉㈠畬鎴愭椂鍙戞斁/鏇存崲涓€寮犻檮榄斿崱銆傜敱 UpdateWaveLogic 鍦ㄦ尝娆℃帹杩涘璋冪敤涓€娆°€?
+-- 新一波完成时发放/更换一张附魔卡。由 UpdateWaveLogic 在波次推进处调用一次。
 local function GrantEnchant()
     local card = EnchantCatalog.Roll(wave, Random)
     Game._enchant.card = card
@@ -2218,7 +2208,7 @@ local function GrantEnchant()
     print("[Game] enchant granted at wave " .. wave .. ": " .. card.id .. " (" .. card.rarity .. ")")
 end
 
--- 璇诲彇褰撳墠闄勯瓟鐘舵€侊紙渚涙覆鏌撳眰鍙灞曠ず锛夈€?
+-- 读取当前附魔状态（供渲染层只读展示）。
 ---@return {card: EnchantDef|nil, pending: EnchantDef|nil}
 function Game.GetEnchantState()
     return { card = Game._enchant.card, pending = Game._enchant.pending }
@@ -2246,18 +2236,18 @@ local function CreateSplitMarble(source, angle, originBrick)
         isPrimary = false,
         generation = source.generation + 1,
         flightTime = 0,
-        -- 鍒嗚缁ф壙姣嶈溅褰撳墠鎷栧熬骞撮緞锛堛€屽垎瑁傝涓虹户鎵块暱搴︺€嶏級锛氭柊瀛愯溅涓嶄粠 0 閲嶆柊璁℃椂銆?
+        -- 分裂继承母车当前拖尾年龄（「分裂行为继承长度」）：新子车不从 0 重新计时。
         trailAge = source.trailAge or 0,
         ignoredBrick = originBrick,
         giantPiercing = false,
     }
-    -- v0.13.58锛氬垎瑁傚瓙杞︾户鎵挎瘝杞︾殑闄勯瓟锛堝惁鍒欍€岃鍙?鍚歌/杩借釜銆嶇瓑鍗″湪鍒嗚鍚庡嵆澶辨晥锛夈€?
-    -- 鈿狅笍 浣嗘爣璁颁负瀛愯溅鈥斺€斿懡涓椂涓嶅啀瑙﹀彂銆岃鍙樸€嶇殑 splitOnHit锛屽惁鍒欏瓙杞﹀啀鍒嗚浼氭棤闄愰€掑綊
-    --    锛堣櫧琚?maxConcurrent=15 鍏滀綇锛屼絾浼氳灞忎笂姘镐箙濉炴弧 15 棰楋級銆?
+    -- v0.13.58：分裂子车继承母车的附魔（否则「裂变/吸血/追踪」等卡在分裂后即失效）。
+    -- ⚠️ 但标记为子车——命中时不再触发「裂变」的 splitOnHit，否则子车再分裂会无限递归
+    --    （虽被 maxConcurrent=15 兜住，但会让屏上永久塞满 15 颗）。
     marble.enchant = source.enchant
     marble.enchantPierce = source.enchantPierce
     marble.enchantIsChild = true
-    -- 鍚屾鍙戝皠鐨勫垎瑁?闄勯瓟杩藉姞瀛愯溅缁ф壙璧勬牸锛屼笉绱箻锛涘洖鏀跺悗鐨勬柊寰呭彂杞﹂粯璁?false銆?
+    -- 同次发射的分裂/附魔追加子车继承资格，不累乘；回收后的新待发车默认 false。
     marble.chargeBoosted = source.chargeBoosted == true
     nextMarbleId = nextMarbleId + 1
     return marble
@@ -2267,14 +2257,14 @@ local function TrySplitNormal(marble, originBrick, pendingMarbles)
     local def = BALL_TYPES.normal
     if Random() >= def.splitChance + BALL_TUNING.splitBonus then return end
 
-    -- v0.13.55銆岃鍙樻牳銆嶏細鍒嗚鏁伴噺鐢?splitCount 鍐冲畾锛堝熀纭€ 2 棰楋紝涓撳睘鍗℃瘡绾?+1锛夈€?
-    -- 棰勭畻鍚屾椂鎵ｉ櫎姣嶅脊銆佸緟鍙戣溅鍜屾湰甯у緟鍔犲叆鐨勫瓙寮癸紱涓嶈冻鏃跺彧鐢熸垚鍓╀綑鍚嶉銆?
+    -- v0.13.55「裂变核」：分裂数量由 splitCount 决定（基础 2 颗，专属卡每级 +1）。
+    -- 预算同时扣除母弹、待发车和本帧待加入的子弹；不足时只生成剩余名额。
     local count = math.min(math.max(2, math.floor(BALL_TUNING.splitCount or 2)),
         Game._NormalMarbleSlots(pendingMarbles))
     if count <= 0 then return end
-    -- 浠ユ瘝寮归€熷害鏂瑰悜涓轰腑蹇冮摵寮€锛涘彧鍓╀竴涓悕棰濇椂灞呬腑锛岄伩鍏嶆亽鍚戝乏鍋忋€?
-    -- v0.13.58锛氭瘡棰楀瓙杞﹀湪鍩哄噯瑙掍笂鍙?卤5掳 闅忔満鍋忕Щ鈥斺€斾腑闂寸殑锛堝熀鍑?0掳锛変笉鍐嶆案杩滆蛋姝ｅ墠鏂癸紝
-    -- 鏁翠釜鎵囧舰涔熺暐寰殢鏈哄寲锛岃鎰熸洿鑷劧銆傚亸绉讳笂闄愬浐瀹?5掳锛屼笉鏀瑰彉鍒嗚鏁伴噺涓庨摵寮€瀹藉害銆?
+    -- 以母弹速度方向为中心铺开；只剩一个名额时居中，避免恒向左偏。
+    -- v0.13.58：每颗子车在基准角上叠 ±5° 随机偏移——中间的（基准 0°）不再永远走正前方，
+    -- 整个扇形也略微随机化，观感更自然。偏移上限固定 5°，不改变分裂数量与铺开宽度。
     local spread = def.splitSpread or 18
     for i = 1, count do
         local angle = count == 1 and 0 or -spread + (2 * spread) * (i - 1) / (count - 1)
@@ -2293,7 +2283,7 @@ end
 local function FindNearestBrick(originEnemy, originBrick, originX, originY)
     local nearest = nil
     local nearestDistanceSq = math.huge
-    -- 纰版挒鍖哄彧閬嶅巻浠嶅湪缂栭槦涓殑 alive 鏂瑰潡锛沞jected 鏂瑰潡涓嶄細鍐嶆鍛戒腑銆?
+    -- 碰撞区只遍历仍在编队中的 alive 方块；ejected 方块不会再次命中。
     for _, enemy in ipairs(veggies) do
         if not enemy.dead then
             for _, brick in ipairs(enemy.bricks) do
@@ -2318,17 +2308,17 @@ local function BoostSpeedMarble(marble)
     local def = BALL_TYPES.speed
     if marble.ballType ~= "speed" then return end
 
-    -- v0.13.22锛氫笉鍐嶆湁閫熷害涓婇檺锛堝師 effMax = maxSpeed * speedMul锛夈€?
-    -- v0.13.23锛氬姞閫熷€嶇巼闅忓綋鍓嶉€熷害**杞€ч€掑噺**鈥斺€斾粠**鍒濆閫熷害**璧风畻锛屽埌 speedSoftCap 鏃堕檷鍒颁笅闄愶紝
-    -- 涔嬪悗鎭掑畾鎸変笅闄愮ǔ姝ュ闀匡紙浠嶄弗鏍?>1锛岄€熷害姘歌繙鍦ㄦ定銆佹棤纭笂闄愶級銆?
-    -- 渚嬶細鍒濋€?660 鏃?脳1.06锛堜笉鍚冭“鍑忥級锛?400 鍙婁互涓婃亽 脳1.012銆?
+    -- v0.13.22：不再有速度上限（原 effMax = maxSpeed * speedMul）。
+    -- v0.13.23：加速倍率随当前速度**软性递减**——从**初始速度**起算，到 speedSoftCap 时降到下限，
+    -- 之后恒定按下限稳步增长（仍严格 >1，速度永远在涨、无硬上限）。
+    -- 例：初速 660 时 ×1.06（不吃衰减）；1400 及以上恒 ×1.012。
     local boost = def.speedBoost
     local softCap = def.speedSoftCap
     if softCap and softCap > def.speed then
         local t = math.min(1, math.max(0, (marble.speed - def.speed) / (softCap - def.speed)))
         boost = def.speedBoost + (def.speedBoostFloor - def.speedBoost) * t
     end
-    -- speedMul锛堝ぉ璧?鍗★級浣滀负銆屽姞閫熷害鍔犳垚銆嶅彔鍔犲湪鍊嶇巼涓娿€?
+    -- speedMul（天赋/卡）作为「加速度加成」叠加在倍率上。
     local gain = boost + (BALL_TUNING.speedMul - 1.0) * 0.1
     marble.speed = marble.speed * gain
     local velocityLength = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy)
@@ -2338,16 +2328,16 @@ local function BoostSpeedMarble(marble)
     end
 end
 
--- v0.13.15锛氬ぉ璧嬨€屽熀纭€鏀诲嚮 +N銆嶇洿鎺ュ苟鍏ヤ激瀹冲姞鎴愶紙瀵规墍鏈夊脊绉嶇敓鏁堬級銆?
+-- v0.13.15：天赋「基础攻击 +N」直接并入伤害加成（对所有弹种生效）。
 local function TalentDamageBonus()
     return talentAtkBonus
 end
 
--- 鏆村嚮鍒ゅ畾锛氭寜澶╄祴鏆村嚮鐜囨幏涓€娆★紱鍛戒腑鍒欎激瀹?脳TalentCatalog.CRIT_MULT銆?
--- 鈿狅笍 GetMarbleDamage 浼氬湪瀛愭杩涢噷琚娆¤皟鐢紝浣嗘瘡娆¤皟鐢ㄩ兘瀵瑰簲銆屼竴娆″懡涓粨绠椼€嶏紝
--- 涓斿悓涓€甯у悓涓€鐮栧潡宸茬敱 frameHitBricks 鍘婚噸锛屽洜姝や笉浼氶噸澶嶆幏銆?
+-- 暴击判定：按天赋暴击率掷一次；命中则伤害 ×TalentCatalog.CRIT_MULT。
+-- ⚠️ GetMarbleDamage 会在子步进里被多次调用，但每次调用都对应「一次命中结算」，
+-- 且同一帧同一砖块已由 frameHitBricks 去重，因此不会重复掷。
 ---@param base number
----@param marble table|nil 鐢ㄤ簬缁欒〃鐜板眰鎻愪緵椋樺瓧鍧愭爣
+---@param marble table|nil 用于给表现层提供飘字坐标
 ---@return number damage
 local function ApplyCrit(base, marble)
     if talentCritChance <= 0 then return base end
@@ -2363,23 +2353,23 @@ local function GetMarbleDamage(marble, def)
     if marble.ballType ~= "speed" then
         base = def.damage + BALL_TUNING.damageBonus + TalentDamageBonus()
     else
-        -- v0.13.22锛氬姞閫熻溅浼ゅ鎸夐€熷害鍒嗘。**鏃犻檺澧為暱**锛堝師 min(maxDamage, ...) 灏侀《宸插幓锛夈€?
+        -- v0.13.22：加速车伤害按速度分档**无限增长**（原 min(maxDamage, ...) 封顶已去）。
         local bonus = math.floor(math.max(0, marble.speed - def.speed) / def.damageStep)
         base = def.damage + bonus + BALL_TUNING.damageBonus + TalentDamageBonus()
     end
-    -- v0.13.58锛氶檮榄斻€岄噸鍑汇€嶁€斺€旂洿鎺ユ斁澶ф湰娆″脊鐝犵殑鍩虹浼ゅ銆?
+    -- v0.13.58：附魔「重击」——直接放大本次弹珠的基础伤害。
     if marble.enchant and marble.enchant.damageMul then
         base = base * marble.enchant.damageMul
     end
-    -- 浠呭寮烘湰娆¤溅杈嗕激瀹筹紱鍦嗗煙/杩為攣/鐖嗙偢閮戒粠姝ゅ叆鍙ｅ彇鍊硷紝涓嶅湪 DamageBrick 鍐嶄箻銆?
+    -- 仅增强本次车辆伤害；圆域/连锁/爆炸都从此入口取值，不在 DamageBrick 再乘。
     if marble.chargeBoosted then base = base * 1.5 end
-    -- 鏆村嚮鍙奖鍝嶆湰娆＄粨绠楋紝涓嶆敼寮圭彔鐘舵€侊紱琛ㄧ幇灞傛秷璐?crit_hit 鍑洪瀛椼€?
+    -- 暴击只影响本次结算，不改弹珠状态；表现层消费 crit_hit 出飘字。
     return ApplyCrit(base, marble)
 end
 
 local function RedirectSpeedMarble(marble, originEnemy, originBrick)
-    -- 鍓婂急锛氬彈 redirectThrottle 鑺傛祦锛岄伩鍏嶆瘡娆″懡涓兘榛忕潃杩借釜銆?
-    -- WO-05/P4锛氫綆浜?redirectMinSpeed 涓嶈拷鍑伙紝娑堥櫎浣庨€熸杞ㄨ抗鎶栧姩銆?
+    -- 削弱：受 redirectThrottle 节流，避免每次命中都黏着追踪。
+    -- WO-05/P4：低于 redirectMinSpeed 不追击，消除低速段轨迹抖动。
     if marble.speed < (BALL_TYPES.speed.redirectMinSpeed or 0) then return end
     local target = FindNearestBrick(originEnemy, originBrick, marble.x, marble.y)
     if not target then return end
@@ -2411,20 +2401,20 @@ local function ArmGiantPiercing(marble)
     end
     marble.giantPiercePending = false
     marble.giantPiercing = true
-    -- 鍙湁鍐峰嵈缁撴潫鎵嶅彂甯冨氨缁紝琛ㄧ幇灞傛嵁姝ゆ彁绀恒€屽彲浠ヨ疮绌裤€嶃€?
+    -- 只有冷却结束才发布就绪，表现层据此提示「可以贯穿」。
     Emit("giant_pierce_armed", {id = marble.id, x = marble.x, y = marble.y})
     print("[Game] giant marble circular piercing ready id=" .. tostring(marble.id))
 end
 
--- 宸ㄥ瀷寮硅疮绌夸激瀹冲尯锛氫互鍛戒腑鐮栧潡涓績涓哄渾蹇冿紝鐩村緞 7 涓晫鏂瑰崟鍏冩牸銆?
+-- 巨型弹贯穿伤害区：以命中砖块中心为圆心，直径 7 个敌方单元格。
 --
 --          o o o
 --        o o o o o
---      o o o X o o o    X = 鍛戒腑鏍?
---        o o o o o       鍗婂緞 = 3.5 脳 鍛戒腑鏁屼汉鐨勫崟鏍煎昂瀵?
+--      o o o X o o o    X = 命中格
+--        o o o o o       半径 = 3.5 × 命中敌人的单格尺寸
 --          o o o
 --
--- 鍦嗗舰杈圭紭鎸夌爾鍧椾腑蹇冨垽鏂紱璺ㄦ晫浜轰絾浠嶅湪鍦嗗唴鐨勫崟鍏冩牸涔熶細鍙楀埌浼ゅ銆?
+-- 圆形边缘按砖块中心判断；跨敌人但仍在圆内的单元格也会受到伤害。
 local function DamageGiantArea(originEnemy, originBrick, damage, frameHitBricks)
     local centerX = originEnemy.x + (originBrick.col - 0.5) * originEnemy.brickSize
     local centerY = originEnemy.y + (originBrick.row - 0.5) * originEnemy.brickSize
@@ -2442,7 +2432,7 @@ local function DamageGiantArea(originEnemy, originBrick, damage, frameHitBricks)
                     local dy = y - centerY
                     if dx * dx + dy * dy <= radiusSq then
                         frameHitBricks[brick] = true
-                        -- v0.13.55銆屽啿鍑绘尝銆嶏細鑼冨洿鍑荤鎸夋鐜囨毚鍑伙紙鍙屽€嶄激瀹筹級锛屽鐢ㄦ毚鍑婚瀛椼€?
+                        -- v0.13.55「冲击波」：范围击碎按概率暴击（双倍伤害），复用暴击飘字。
                         local cellDamage = damage
                         if BALL_TUNING.giantCritChance > 0 and Random() < BALL_TUNING.giantCritChance then
                             cellDamage = damage * 2
@@ -2469,12 +2459,12 @@ local function LaunchMarble(dx, dy, power)
     Game.CancelHoldSpeed()
 
     local def = BALL_TYPES[activeBall.ballType]
-    -- WO-08/P7锛歱ower 涓哄綊涓€鍖栬搫鍔?(0..1)锛屾槧灏勫埌 [powerMin, powerMax] 鍒濋€熸瘮渚嬨€?
+    -- WO-08/P7：power 为归一化蓄力 (0..1)，映射到 [powerMin, powerMax] 初速比例。
     local powerRatio = math.max(0, math.min(1, power or 0))
     local speedScale = BALANCE.powerMin + (BALANCE.powerMax - BALANCE.powerMin) * powerRatio
-    -- v0.13.28锛氥€岀幓鐠冨法鐐€嶇殑鍙戝皠鍒濋€熷€嶇巼鈥斺€斾綆闅惧害鐮栧潡 1 琛€鏃朵激瀹虫槸婧㈠嚭锛屼絾鏇村揩鐨勫脊閬撶珛鍒绘湁鎰熴€?
+    -- v0.13.28：「玻璃巨炮」的发射初速倍率——低难度砖块 1 血时伤害是溢出，但更快的弹道立刻有感。
     local speed = def.speed * speedScale * BALL_TUNING.launchSpeedMul
-    -- v0.13.64锛氳搫鍔涘凡杈?85% 鏃跺彂灏?鈫?绔嬪埢琛ユ弧锛屼韩鍙楁弧钃勪激瀹充笌鍏ㄦ伅鐖嗗彂锛堜笉蹇呯瓑鍒?100%锛夈€?
+    -- v0.13.64：蓄力已达 85% 时发射 → 立刻补满，享受满蓄伤害与全息爆发（不必等到 100%）。
     local charge = Game._launchCharge
     if charge.total > 0 and charge.time / charge.total >= BALANCE.chargeCompleteThreshold then
         charge.time = charge.total
@@ -2496,14 +2486,14 @@ local function LaunchMarble(dx, dy, power)
         chargeProgress = Game._launchCharge.time / Game._launchCharge.total,
         chargeX = Game._launchCharge.x, chargeY = Game._launchCharge.y,
         chargeUiX = Game._launchCharge.uiX, chargeUiY = Game._launchCharge.uiY,
-        -- 鍙戝皠鐬棿鐨勮溅杈嗘潈濞佷綅缃細閲婃斁鍥炲０鐨勫湀蹇冧笌钃勫姏鍦堣繛缁紙鍚屼竴杞﹁締鍧愭爣锛夈€?
+        -- 发射瞬间的车辆权威位置：释放回声的圈心与蓄力圈连续（同一车辆坐标）。
         carX = activeBall.x, carY = activeBall.y,
     })
     print("[Game] launch charge id=" .. activeBall.id .. " boosted=" .. tostring(activeBall.chargeBoosted))
-    -- v0.13.58锛氶檮榄斻€屼笁杩炪€嶁€斺€斿彂灏勬椂棰濆鎵囧舰灏勫嚭鍚屽瀷杞︺€?
-    -- v0.13.64锛氬壇瀛愬脊**瑙嗕负鍒嗚寮?*锛坕sPrimary=false锛岀伆鏆楁覆鏌擄級浣?*鍔熻兘涓庝富寮圭浉鍚?*鈥斺€?
-    -- 缁ф壙璇嶆潯锛坵ords锛夈€侀檮榄斻€佺┛閫忔鏁颁笌鎷栧熬骞撮緞锛涙竻闄?enchantIsChild锛屼娇瀹冧滑涓庝富寮逛竴鏍?
-    -- 鍙Е鍙戣鍙樼瓑鍛戒腑鏁堟灉锛堟暟閲忕敱 maxConcurrent 涓婇檺鍏滃簳锛屼笉浼氭棤闄愰€掑綊锛夈€?
+    -- v0.13.58：附魔「三连」——发射时额外扇形射出同型车。
+    -- v0.13.64：副子弹**视为分裂弹**（isPrimary=false，灰暗渲染）但**功能与主弹相同**——
+    -- 继承词条（words）、附魔、穿透次数与拖尾年龄；清除 enchantIsChild，使它们与主弹一样
+    -- 可触发裂变等命中效果（数量由 maxConcurrent 上限兜底，不会无限递归）。
     local triple = activeBall.enchant and activeBall.enchant.tripleShot or 0
     for k = 1, triple do
         local sign = (k % 2 == 1) and 1 or -1
@@ -2533,7 +2523,7 @@ end
 
 local function QueueNextBall()
     if #ballQueue > 0 then
-        -- 婊￠鏃朵繚鎸侀槦棣栦笌搴撳瓨锛岀瓑宸叉湁鍒嗚杞﹀洖鏀跺悗鍐嶈濉紝涓嶇粫杩囧悓灞忎笂闄愩€?
+        -- 满额时保持队首与库存，等已有分裂车回收后再装填，不绕过同屏上限。
         if ballQueue[1] == "normal" and Game._NormalMarbleSlots() <= 0 then return end
         activeBall = CreateMarble(table.remove(ballQueue, 1), CollectActiveWords())
     end
@@ -2549,8 +2539,8 @@ local function UpdateAiming()
     end
 end
 
--- 鍏佽寮圭彔鍦ㄥ満涓婃寔缁彂鎸ヤ綔鐢紝浣嗙函姘村钩鍙戝皠鍙兘姘镐笉瓒婅繃鍥炴敹绾匡紱
--- 鏋佺闀块琛屽厹搴曞洖鏀堕伩鍏嶆棤鐣岀疮绉紝涓嶆敼鍙樺垎瑁傛鐜囨垨姝ｅ父杞ㄨ抗銆?
+-- 允许弹珠在场上持续发挥作用，但纯水平发射可能永不越过回收线；
+-- 极端长飞行兜底回收避免无界累积，不改变分裂概率或正常轨迹。
 local MAX_MARBLE_FLIGHT_TIME = 60
 
 UpdateMarbles = function(dt)
@@ -2558,16 +2548,16 @@ UpdateMarbles = function(dt)
     for i = #marbles, 1, -1 do
         local marble = marbles[i]
         local def = BALL_TYPES[marble.ballType]
-        -- v0.10.28锛氭寜鏈抚浣嶇Щ鑷€傚簲瀛愭杩涳紝楂橀€熷脊涓嶅啀鎵撶┛钖勬牸銆?
+        -- v0.10.28：按本帧位移自适应子步进，高速弹不再打穿薄格。
         local move = math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy) * dt
-        -- 鍊嶉€熸渶澶氭妸瀹㈡埛绔?.05绉掓ā鎷熸墿涓?.1绉掞紝纰版挒棰勭畻鍚屾缈诲€嶃€?
-        -- 涓嶉噸澶嶆暣涓鍒欏抚锛氬悓杞﹀悓鐮栧幓閲嶄笌瓒婄嚎鎸夎鑱氬悎浠嶅彧缁撶畻涓€娆°€?
+        -- 倍速最多把客户端0.05秒模拟扩为0.1秒，碰撞预算同步翻倍。
+        -- 不重复整个规则帧：同车同砖去重与越线按行聚合仍只结算一次。
         local stepScale = math.max(1, math.ceil(dt / 0.05 - 1e-9))
         local steps = math.max(6 * stepScale, math.min(16 * stepScale, math.ceil(move / math.max(4, marble.radius * 0.32))))
         local subDt = dt / steps
         local frameHitBricks = {}
         marble.flightTime = (marble.flightTime or 0) + dt
-        -- 鎷栧熬瑙嗚骞撮緞锛氶殢瀛樺湪鏃堕棿澧為暱锛堝垎瑁傚瓙杞︾户鎵挎瘝杞﹀綋鍓嶅€硷紝鏁呴暱搴︿細寤剁画锛夈€?
+        -- 拖尾视觉年龄：随存在时间增长（分裂子车继承母车当前值，故长度会延续）。
         marble.trailAge = (marble.trailAge or 0) + dt
 
         for _ = 1, steps do
@@ -2576,10 +2566,10 @@ UpdateMarbles = function(dt)
             if marble.redirectCooldown and marble.redirectCooldown > 0 then
                 marble.redirectCooldown = marble.redirectCooldown - subDt
             end
-            -- 鍐峰嵈鍙殢鐜╂硶瀛愭鎺ㄨ繘锛涙殏鍋溿€佸崌绾т笌骞垮憡鍐荤粨鏃朵笉娑堣€椼€?
+            -- 冷却只随玩法子步推进；暂停、升级与广告冻结时不消耗。
             if (marble.giantAreaCooldown or 0) > 0 then
                 local remaining = marble.giantAreaCooldown - subDt
-                -- 娑堥櫎绱娴偣灏炬暟锛岀‘淇濇弧 1 绉掍笉澶氱瓑涓€涓瓙姝ャ€?
+                -- 消除累计浮点尾数，确保满 1 秒不多等一个子步。
                 marble.giantAreaCooldown = remaining > 1e-9 and remaining or 0
                 if marble.giantAreaCooldown == 0 and marble.giantPiercePending then
                     ArmGiantPiercing(marble)
@@ -2591,42 +2581,39 @@ UpdateMarbles = function(dt)
             marble.x = marble.x + marble.vx * subDt
             marble.y = marble.y + marble.vy * subDt
 
-            -- WO-05/P4锛氬弽寮瑰脊鎬х敱 ballType 鍐冲畾锛堝法鍨嬫洿娌夈€佸姞閫熸洿婊戯級锛岄粯璁?1.0銆?
-            -- v0.13.64锛氭瘡娆℃挒澧欏彂涓€涓洖寮逛簨浠讹紙甯﹀唴娉曠嚎锛夛紝琛ㄧ幇灞傛嵁姝ゆ挱鏀惧洖寮圭壒鏁堛€?
-            -- v0.13.66锛氭挒澧欏弽寮圭 = 85% 鍗婂緞锛堜激瀹崇鎾炶寖鍥翠笉鍙橈級銆?
+            -- WO-05/P4：反弹弹性由 ballType 决定（巨型更沉、加速更滑），默认 1.0。
+            -- v0.13.64：每次撞墙发一个回弹事件（带内法线），表现层据此播放回弹特效。
             local elastic = def.bounceElasticity or 1.0
-            local bounceR = marble.radius * BALANCE.bounceBoxScale
-            if marble.x - bounceR < 0 then
-                marble.x = bounceR
+            if marble.x - marble.radius < 0 then
+                marble.x = marble.radius
                 marble.vx = math.abs(marble.vx) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
-                -- v0.13.66锛氬洖寮圭壒鏁堝湪澧欓潰鎺ヨЕ鐐瑰彂锛坸=0锛夛紝涓嶅啀鐢ㄨ溅杈嗗渾蹇冿紙鍚﹀垯鏁堟灉鎮湪澧欏悗灞忓箷鍐呬晶锛夈€?
-                Emit("marble_bounce", {id = marble.id, x = 0, y = marble.y,
+                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
                     ballType = marble.ballType, nx = 1, ny = 0})
-            elseif marble.x + bounceR > DW then
-                marble.x = DW - bounceR
+            elseif marble.x + marble.radius > DW then
+                marble.x = DW - marble.radius
                 marble.vx = -math.abs(marble.vx) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
-                Emit("marble_bounce", {id = marble.id, x = DW, y = marble.y,
+                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
                     ballType = marble.ballType, nx = -1, ny = 0})
             end
-            if marble.y - bounceR < TOP_BOUND_Y then
-                marble.y = TOP_BOUND_Y + bounceR
+            if marble.y - marble.radius < TOP_BOUND_Y then
+                marble.y = TOP_BOUND_Y + marble.radius
                 marble.vy = math.abs(marble.vy) * elastic
                 marble.bounceCount = marble.bounceCount + 1
                 BoostSpeedMarble(marble)
                 ArmGiantPiercing(marble)
-                Emit("marble_bounce", {id = marble.id, x = marble.x, y = TOP_BOUND_Y,
+                Emit("marble_bounce", {id = marble.id, x = marble.x, y = marble.y,
                     ballType = marble.ballType, nx = 0, ny = 1})
             end
 
-            -- v0.10.28锛氬厛鏀堕泦鏈鎵€鏈夐噸鍙犳牸锛屽啀鎵撴渶杩戠殑涓€鏍笺€?
-            -- 鏃ч€昏緫鎸?bricks 鏁扮粍椤哄簭鍛戒腑绗竴鏍煎氨 break锛屼細婕忔帀鐪熸纰板埌鐨勬牸锛?
-            -- 琛ㄧ幇涓衡€滅悆绌胯繃鏈虹考/搴ц埍鏃犵鎾炪€佺瑁備笉瀹屾暣鈥濄€?
+            -- v0.10.28：先收集本步所有重叠格，再打最近的一格。
+            -- 旧逻辑按 bricks 数组顺序命中第一格就 break，会漏掉真正碰到的格，
+            -- 表现为“球穿过机翼/座舱无碰撞、碎裂不完整”。
             if marble.ignoredBrick then
                 local ib = marble.ignoredBrick
                 local found = false
@@ -2695,16 +2682,16 @@ UpdateMarbles = function(dt)
                 local enemy = best.enemy
                 local brick = best.brick
                 if marble.giantPiercing and (marble.giantAreaCooldown or 0) <= 0 then
-                    -- 浠呭疄闄呭渾鍩熷懡涓惎鍔ㄥ喎鍗达紝鍏堢疆浣嶉槻鍚屽抚杩炵画瑙﹀彂锛?
-                    -- 鍐峰嵈鏈熼棿璧版櫘閫氱鎾烇紝淇濈暀鍙嶅脊姝﹁浣嗕笉鎻愬墠閲婃斁鍦嗗煙銆?
+                    -- 仅实际圆域命中启动冷却，先置位防同帧连续触发；
+                    -- 冷却期间走普通碰撞，保留反弹武装但不提前释放圆域。
                     marble.giantAreaCooldown = def.areaCooldown
                     DamageGiantArea(enemy, brick,
                         GetMarbleDamage(marble, def), frameHitBricks)
                     Emit("giant_pierce_consumed", {id = marble.id, x = marble.x, y = marble.y})
                     marble.giantPiercing = false
                 else
-                    -- v0.13.55銆屽姩鑳界┛鍒恒€嶏細鍔犻€熻溅甯︾┛閫忔鏁版椂涓嶅弽寮癸紝鐩存帴鍚冧笅杩欎竴鍧楀苟缁х画椋炶銆?
-                    -- 浣嶇疆娌块€熷害鏂瑰悜鍓嶆帹绾?0.75 鏍硷紝閬垮厤涓嬩竴甯т粛鍗″湪鍚屼竴鐮栧唴閲嶅缁撶畻銆?
+                    -- v0.13.55「动能穿刺」：加速车带穿透次数时不反弹，直接吃下这一块并继续飞行。
+                    -- 位置沿速度方向前推约 0.75 格，避免下一帧仍卡在同一砖内重复结算。
                     local pierced = false
                     if marble.ballType == "speed" and (marble.pierceLeft or 0) > 0 then
                         marble.pierceLeft = marble.pierceLeft - 1
@@ -2721,7 +2708,7 @@ UpdateMarbles = function(dt)
                         Emit("speed_pierce", { id = marble.id, x = marble.x, y = marble.y,
                             remaining = marble.pierceLeft })
                     end
-                    -- v0.13.58锛氶檮榄斻€岀┛閫忋€嶁€斺€斾换鎰忚溅鍨嬮兘鑳藉甫绌块€忔鏁帮紝涓嶅弽寮广€佽繛缁悆鍧椼€?
+                    -- v0.13.58：附魔「穿透」——任意车型都能带穿透次数，不反弹、连续吃块。
                     if not pierced and (marble.enchantPierce or 0) > 0 then
                         marble.enchantPierce = marble.enchantPierce - 1
                         marble.ignoredBrick = brick
@@ -2738,22 +2725,14 @@ UpdateMarbles = function(dt)
                             remaining = marble.enchantPierce })
                     end
                     if not pierced then
-                        -- v0.13.66锛氫激瀹冲厛缁撶畻锛堟弧鍗婂緞浼ゅ鍦堜笉鍙橈級锛屽弽寮圭敤 85% 纰版挒绠憋紱
-                        -- 鍙繘浼ゅ鍦堢殑鎿﹁竟鍛戒腑涓嶅弽寮癸紝杞﹁締淇濇寔鏈瓙姝ヤ綅绉荤户缁琛屻€?
-                        frameHitBricks[brick] = true
-                        DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
                         local resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
                         if not resolved then
-                            -- 鎵帬鍛戒腑鐨勭爾锛屽瓙姝ョ粓鐐瑰彲鑳藉凡瓒婅繃鍙嶅脊绠憋細鍥炲埌璧风偣閲嶈瘯涓€娆★紝
-                            -- 浠嶄笉鍛戒腑鍒欐寜鎿﹁竟澶勭悊锛屾仮澶嶆湰瀛愭浣嶇Щ銆?
                             marble.x = prevX
                             marble.y = prevY
                             resolved = CollideBrick(marble, best.rx, best.ry, best.rw, best.rh)
-                            if not resolved then
-                                marble.x = prevX + marble.vx * subDt
-                                marble.y = prevY + marble.vy * subDt
-                            end
                         end
+                        frameHitBricks[brick] = true
+                        DamageBrick(enemy, brick, GetMarbleDamage(marble, def))
                     end
                 end
 
@@ -2787,7 +2766,7 @@ UpdateMarbles = function(dt)
                     ArmGiantPiercing(marble)
                 end
 
-                -- v0.13.58锛氶檮榄斿崱鍛戒腑鏁堟灉锛堝叏閮ㄨ惤鍦ㄦ満鍒朵笂锛屼笌璇嶆潯/寮圭鏁堟灉鐩镐簰鐙珛锛夈€?
+                -- v0.13.58：附魔卡命中效果（全部落在机制上，与词条/弹种效果相互独立）。
                 local enchant = marble.enchant
                 if enchant then
                     if enchant.healPerHit and baseHp < GetMaxBaseHp() then
@@ -2805,12 +2784,12 @@ UpdateMarbles = function(dt)
                         end
                     end
                     if enchant.chain then
-                        -- v0.13.58锛氳繛閿佲€斺€斿懡涓椂瀵规渶杩戠殑鍙︿竴鍧?*閫犳垚鐪熷疄浼ゅ**锛堟鍓嶅彧鍙戜簨浠舵棤浼ゅ锛屾槸 bug锛夈€?
+                        -- v0.13.58：连锁——命中时对最近的另一块**造成真实伤害**（此前只发事件无伤害，是 bug）。
                         local target = FindNearestBrick(enemy, brick, marble.x, marble.y)
                         if target then
                             local mul = enchant.chainDamage or 1.5
                             local dmg = GetMarbleDamage(marble, def) * mul
-                            -- 鎵惧埌璇ョ洰鏍囧搴旂殑鐮栧潡骞剁粨绠楋紙婧呭皠鍚屾椂缁欎竴灏忕墖鍛ㄥ洿鍔犳垚锛夈€?
+                            -- 找到该目标对应的砖块并结算（溅射同时给一小片周围加成）。
                             local splash = enemy.brickSize * 1.2
                             for _, other in ipairs(veggies) do
                                 if not other.dead then
@@ -2882,10 +2861,10 @@ UpdateMarbles = function(dt)
                 end
             end
 
-            -- 鍥炴敹绾垮湪闃茬嚎 DANGER_Y锛堣溅鍥炶惤杩涘叆搴曢儴 Dock 瀹夊叏灞傚嵆鍥炲簱琛ュ脊锛夈€?
-            -- 蹇呴』鍚屾椂婊¤冻 vy>0锛堟鍦ㄥ悜涓嬭繍鍔級锛氬脊寮撳悜涓嬫媺銆佸悜涓婂彂灏勬椂鍑虹敓鐐瑰彲鑳藉氨鍦?
-            -- DANGER_Y 涔嬩笅锛堝緟鍙戜綅 y鈮?50銆佹媺婊″彲鍒?940锛屽法鍨嬭溅鍗婂緞 30锛夛紝鑻ユ棤姝ゆ潯浠?
-            -- 鐞冧竴鍙戝皠杩樻病寰€涓婅蛋灏辫鍒ゅ洖鏀讹紝琛ㄧ幇涓衡€滃皠涓嶅嚭鍘烩€濄€?
+            -- 回收线在防线 DANGER_Y（车回落进入底部 Dock 安全层即回库补弹）。
+            -- 必须同时满足 vy>0（正在向下运动）：弹弓向下拉、向上发射时出生点可能就在
+            -- DANGER_Y 之下（待发位 y≈850、拉满可到 940，巨型车半径 30），若无此条件
+            -- 球一发射还没往上走就被判回收，表现为“射不出去”。
             if marble.vy > 0 and marble.y - marble.radius > DANGER_Y then
                 marble.alive = false
                 break
@@ -2895,14 +2874,14 @@ UpdateMarbles = function(dt)
         if marble.alive and marble.flightTime >= MAX_MARBLE_FLIGHT_TIME then
             marble.alive = false
             print("[Game][perf] expired marble id=" .. tostring(marble.id)
-                .. " flight=" .. string.format("%." .. "1f", marble.flightTime))
+                .. " flight=" .. string.format("%.1f", marble.flightTime))
         end
 
         if not marble.alive then
             table.remove(marbles, i)
             if marble.isPrimary then
                 EnqueueNextBall()
-                -- v0.10.24锛氫富鐞冨洖搴撹ˉ寮癸紝缁欒〃鐜板眰涓€涓交閲忓弽棣堜簨浠躲€?
+                -- v0.10.24：主球回库补弹，给表现层一个轻量反馈事件。
                 Emit("marble_reloaded", {ballType = activeBall and activeBall.ballType or "normal"})
             end
             Emit("marble_removed", {id = marble.id, isPrimary = marble.isPrimary == true})
@@ -2918,10 +2897,10 @@ UpdateMarbles = function(dt)
     end
 end
 
--- 閫愬抚鍏ㄦ満缇ら槻閲嶅彔锛氭憜鍔?涓嬬Щ瀹屾垚鍚庡鎵€鏈夊瓨娲婚鏈哄仛澶氳疆 AABB 杩唬姹傝В銆?
--- 姘村钩绌块€忥細涓ゆ灦瀵圭О璁╀綅锛堥《鍒版垬鍦鸿竟鐣岀殑涓€渚т笉鍔紝鍏ㄩ噺鎺ㄧ粰鍙︿竴渚э級锛?
--- 鍨傜洿绌块€忥細鍙妸鏇撮潬涓婄殑椋炴満鏁翠綋鎶珮锛坹 鍑忓皬锛夛紝缁濅笉鍚戜笅鎸ゅ帇瀵艰嚧鎻愬墠瓒婄嚎鎵ｈ銆?
--- 澶氳疆杩唬鐢ㄤ簬娑堣В A 鎺ㄥ紑 B銆丅 鍙堟挒涓?C 鐨勯摼寮忕┛鎻掞紱鏈€鍚庣粺涓€閽冲埗宸﹀彸杈圭晫骞跺洖鍐?baseX銆?
+-- 逐帧全机群防重叠：摆动/下移完成后对所有存活飞机做多轮 AABB 迭代求解。
+-- 水平穿透：两架对称让位（顶到战场边界的一侧不动，全量推给另一侧）；
+-- 垂直穿透：只把更靠上的飞机整体抬高（y 减小），绝不向下挤压导致提前越线扣血。
+-- 多轮迭代用于消解 A 推开 B、B 又撞上 C 的链式穿插；最后统一钳制左右边界并回写 baseX。
 local FLEET_SOLVE_ITERATIONS = 8
 local FLEET_SIDE_MARGIN = 10
 
@@ -2956,15 +2935,15 @@ local function ResolveFleetOverlaps()
                     local b = veggies[j]
                     if not b.dead then
                         local bx, by, bw, bh = EnemyAABB(b)
-                        -- 绾靛悜宸茬敱鐢熸垚鎺掑簭淇濊瘉鑷冲皯闂撮殧 ENEMY_SPACING锛涘彧鍦ㄧ旱鍚戠湡姝ｉ噸鍙犳椂
-                        -- 鎵嶅厑璁告í鍚戣浣嶏紝閬垮厤涓寸晫娴偣锛坥verlapY鈮?锛夎鍒ゆ妸鏂版満鐬棿妯帹锛堚€滃洖鎾も€濓級銆?
+                        -- 纵向已由生成排序保证至少间隔 ENEMY_SPACING；只在纵向真正重叠时
+                        -- 才允许横向让位，避免临界浮点（overlapY≈0）误判把新机瞬间横推（“回撤”）。
                         local overlapX = math.min(ax + aw + ENEMY_SPACING, bx + bw + ENEMY_SPACING)
                             - math.max(ax - ENEMY_SPACING, bx - ENEMY_SPACING)
                         local overlapY = math.min(ay + ah + ENEMY_SPACING, by + bh + ENEMY_SPACING)
                             - math.max(ay - ENEMY_SPACING, by - ENEMY_SPACING)
                         if overlapX > 1.0 and overlapY > 1.0 then
-                            -- 鍙鏈変竴鏂硅繕鍦ㄥ彲瑙佹垬鍦洪《锛?102锛変箣涓婏紝浼樺厛绾靛悜鎶婇潬涓婄殑缁х画鎶珮锛?
-                            -- 閬垮厤鏂版満杩涘満鏃惰瀵圭О妯帹閫犳垚鈥滅獊鐒舵í鍚戝洖鎾も€濄€?
+                            -- 只要有一方还在可见战场顶（-102）之上，优先纵向把靠上的继续抬高，
+                            -- 避免新机进场时被对称横推造成“突然横向回撤”。
                             local aOffscreen = ay + ah < -102
                             local bOffscreen = by + bh < -102
                             if aOffscreen or bOffscreen then
@@ -3001,7 +2980,7 @@ local function ResolveFleetOverlaps()
         local enemy = veggies[i]
         if not enemy.dead then
             ClampEnemyX(enemy, enemy.gridW * enemy.brickSize)
-            -- 鍒嗙鍚庣殑瀹為檯 x 鍥炲啓涓烘憜鍔ㄤ腑蹇冿紝閬垮厤涓嬩竴甯?sin(phase) 鍙樺寲鍙堟妸椋炴満鎷夊洖閲嶅彔浣嶃€?
+            -- 分离后的实际 x 回写为摆动中心，避免下一帧 sin(phase) 变化又把飞机拉回重叠位。
             enemy.baseX = enemy.x - (enemy.drift or math.sin(enemy.phase) * enemy.swayAmp)
         end
     end
@@ -3039,10 +3018,10 @@ local function SummonBossEscort(boss)
     return true
 end
 
--- v0.13.65锛氬够褰变綋绱犲潡銆傚叏閮ㄥ疄鐜颁负 Game._phantom 鐨勮〃瀛楁锛?*闆舵柊澧為《灞?local**锛孉B-166锛夛紝
--- 涓旀寕琛ㄥ畾涔夊湪瀹冨紩鐢ㄥ埌鐨勬枃浠?local锛圕ollideBrick / GetMarbleDamage / Emit / SegmentNearRect 绛夛級涔嬪悗锛?
--- 閬垮厤銆屽厛鐢ㄥ悗澹版槑銆嶈В鏋愭垚鍏ㄥ眬 nil锛圓B-100 鍚屾棌锛夈€?
--- 杩斿洖璇ユ満**绗竴涓瓨娲讳笖鏈脊鍑虹殑寮曟搸鐏潡**锛堝够褰卞彧鑳戒粠鍏夋簮鍧楀彂灏勶紱琚墦鎺夊氨娌℃湁浜嗭級銆?
+-- v0.13.65：幻影体素块。全部实现为 Game._phantom 的表字段（**零新增顶层 local**，AB-166），
+-- 且挂表定义在它引用到的文件 local（CollideBrick / GetMarbleDamage / Emit / SegmentNearRect 等）之后，
+-- 避免「先用后声明」解析成全局 nil（AB-100 同族）。
+-- 返回该机**第一个存活且未弹出的引擎灯块**（幻影只能从光源块发射；被打掉就没有了）。
 Game._phantom.FindEngineBrick = function(enemy)
     for _, brick in ipairs(enemy.bricks) do
         if brick.alive and not brick.ejected and brick.isEngine then return brick end
@@ -3050,10 +3029,10 @@ Game._phantom.FindEngineBrick = function(enemy)
     return nil
 end
 
--- 浠庢簮鏁屾満鐨勫紩鎿庣伅鍧楀彂灏勪竴鏋氬够褰卞潡锛氱户鎵胯鐏潡**鍓╀綑琛€閲忎竴鍗婏紙鑷冲皯 1锛?*锛?
--- 閫熷害 = 褰撳墠鍏冲崱鍩哄噯閫熷害 脳 0.42 脳 PHANTOM_SPEED_MUL锛堝熀鍑嗛€熷害宸插惈娉㈡缂撳叆锛夈€?
+-- 从源敌机的引擎灯块发射一枚幻影块：继承该灯块**剩余血量一半（至少 1）**，
+-- 速度 = 当前关卡基准速度 × 0.42 × PHANTOM_SPEED_MUL（基准速度已含波次缓入）。
 Game._phantom.Spawn = function(enemy, brick)
-    -- 鍚屽睆涓婇檺锛氬够褰卞潡鏄珮閫熸姇灏勭墿锛岃繃澶氫細鍒峰睆骞跺帇鐪熸満甯х巼锛堟瘡娆′竴涓?3D 鐩掑瓙锛夈€?
+    -- 同屏上限：幻影块是高速投射物，过多会刷屏并压真机帧率（每次一个 3D 盒子）。
     if #Game._phantom.list >= 8 then return false end
     local bs = enemy.brickSize
     local hp = math.max(1, math.floor(brick.hp / 2))
@@ -3077,7 +3056,7 @@ Game._phantom.Spawn = function(enemy, brick)
     return true
 end
 
--- 閫愬抚鎺ㄨ繘骞诲奖鍧楋細涓嬬Щ 鈫?琚脊鐝犲嚮纰?鈫?瓒婄嚎鎵ｅ熀鍦拌銆?
+-- 逐帧推进幻影块：下移 → 被弹珠击碎 → 越线扣基地血。
 Game._phantom.Update = function(dt)
     local list = Game._phantom.list
     for i = #list, 1, -1 do
@@ -3086,7 +3065,7 @@ Game._phantom.Update = function(dt)
             table.remove(list, i)
         else
             p.y = p.y + p.vy * dt
-            -- 琚脊鐝犲嚮纰庯紙骞诲奖鍧楀彲琚嚮钀斤紱绌胯繃鍏朵粬鏁屾満涓嶅彈褰卞搷鈥斺€斿畠涓嶅湪 veggies 閲岋級銆?
+            -- 被弹珠击碎（幻影块可被击落；穿过其他敌机不受影响——它不在 veggies 里）。
             for _, marble in ipairs(marbles) do
                 if marble.alive then
                     local prevX = marble.x - marble.vx * dt
@@ -3110,7 +3089,7 @@ Game._phantom.Update = function(dt)
                     end
                 end
             end
-            -- 瓒婅繃闃茬嚎锛氭寜鏅€氳秺绾匡紙1 琛?= 1 浼わ級鎵ｅ熀鍦拌锛岃鐢插噺浼や笌鎶ょ浘鐓у父鐢熸晥銆?
+            -- 越过防线：按普通越线（1 行 = 1 伤）扣基地血，装甲减伤与护盾照常生效。
             if p.alive and p.y + p.h >= DANGER_Y then
                 p.alive = false
                 local dmg = math.max(1, math.floor(BRICK_BASE_DAMAGE + BALL_TUNING.lineDamageBonus + 0.5))
@@ -3146,21 +3125,21 @@ Game._phantom.Update = function(dt)
     end
 end
 
--- 姣忓抚鐨勫够褰卞彂灏勫垽瀹氾紙鏅€氭満鍨嬶紝鎸夐鐜囩郴鏁?+ 闅惧害姒傜巼闅忔満锛夈€?
---   - 鍙湁 PHANTOM_KEYS 鍒楀嚭鐨勬満鍨嬫湁璇ヨ涓猴紙鐢ㄦ埛锛氥€屼笉鏄墍鏈夌绫婚兘鏈夈€嶏級銆?
---   - 姣忔妫€鏌ョ殑瑙﹀彂姒傜巼 = 璇ユ満鍨?prob 脳 鍏冲崱闅惧害绯绘暟锛堝叧1 0.6 鈫?鍏?0+ 1.5锛夈€?
---   - 妫€鏌ラ棿闅?= 璇ユ満鍨?interval / fireMul锛坒ireMul 瓒婂ぇ妫€鏌ヨ秺棰戠箒锛夈€?
---   - 銆屾湰鍏冲墠 5 娉㈣嚦灏?10 鏋躲€嶏細绱鏈揪 10 涓斾粛鍦ㄥ墠 5 娉㈡椂锛屾瘡 1.2s 寮哄埗鎸戜竴鏋舵湭鍙戝皠杩囩殑鏈哄瀷鍙戝皠銆?
+-- 每帧的幻影发射判定（普通机型，按频率系数 + 难度概率随机）。
+--   - 只有 PHANTOM_KEYS 列出的机型有该行为（用户：「不是所有种类都有」）。
+--   - 每次检查的触发概率 = 该机型 prob × 关卡难度系数（关1 0.6 → 关20+ 1.5）。
+--   - 检查间隔 = 该机型 interval / fireMul（fireMul 越大检查越频繁）。
+--   - 「本关前 5 波至少 10 架」：累计未达 10 且仍在前 5 波时，每 1.2s 强制挑一架未发射过的机型发射。
 Game._phantom.TryFire = function(dt)
     local ph = Game._phantom
     local diff = StageCatalog.GetPhantomDifficulty(stage)
-    -- 鏅€氶殢鏈哄彂灏勶細閫愭満鎸夊悇鑷?interval 妫€鏌ワ紝姒傜巼 = prob 脳 闅惧害绯绘暟銆?
+    -- 普通随机发射：逐机按各自 interval 检查，概率 = prob × 难度系数。
     for _, enemy in ipairs(veggies) do
         if not enemy.dead and not enemy.breached and not enemy.isElite and not enemy.isBoss then
             local cfg = StageCatalog.PHANTOM_KEYS[enemy.aircraftKey]
             if cfg then
                 local interval = cfg.interval / math.max(0.2, cfg.fireMul)
-                -- 棣栨妫€鏌ョ粰涓€涓殢鏈虹浉浣嶏紝閬垮厤鍚屾尝鎵€鏈夋晫鏈哄湪鍚屼竴甯ч綈灏勩€?
+                -- 首次检查给一个随机相位，避免同波所有敌机在同一帧齐射。
                 local t = enemy.phantomTimer
                 if t == nil then t = Random() * interval end
                 t = t - dt
@@ -3181,8 +3160,8 @@ Game._phantom.TryFire = function(dt)
             end
         end
     end
-    -- 銆屾湰鍏冲墠 5 娉㈣嚦灏?10 鏋躲€嶄繚搴曪細绱涓嶈冻 10 涓斾粛鍦ㄥ墠 5 娉㈡椂锛屾瘡 1.1s 鎸戜竴鏋?
-    -- **灏氭湭鍙戝皠杩?*鐨勫彲鍙戝皠鏈哄瀷寮哄埗鍙戜竴鏋氾紙浼樺厛鏂版満鍨嬶紝閬垮厤鎬婚潬鍚屼竴鏋跺噾鏁帮級銆?
+    -- 「本关前 5 波至少 10 架」保底：累计不足 10 且仍在前 5 波时，每 1.1s 挑一架
+    -- **尚未发射过**的可发射机型强制发一枚（优先新机型，避免总靠同一架凑数）。
     if stageWave <= 5 and ph.guaranteed < 10 then
         ph.guaranteeTimer = ph.guaranteeTimer + dt
         if ph.guaranteeTimer >= 1.1 then
@@ -3219,7 +3198,7 @@ Game._phantom.TryFire = function(dt)
 end
 
 UpdateEnemies = function(dt)
-    -- 鍏堢敤鍥哄畾闀垮害閬嶅巻鏈抚宸叉湁缂栭槦锛屽彫鍞ゆ満寤跺悗涓€甯ц繘鍏ユ洿鏂般€?
+    -- 先用固定长度遍历本帧已有编队，召唤机延后一帧进入更新。
     local existingCount = #veggies
     for i = existingCount, 1, -1 do
         if gameState == "gameover" then break end
@@ -3233,14 +3212,14 @@ UpdateEnemies = function(dt)
             speedMultiplier = 0.3
         end
 
-        -- WO-13/P2锛氭毚闇插喕缁撴瘮渚嬬粰娓叉煋灞傦紝鐢ㄤ簬椤剁偣鑹插喎鑹插亸绉讳笌姝ｉ潰闇滃喕楂樺厜銆?
-        -- 鍩哄噯涓哄啺寮瑰喕缁撴椂闀?+ 娣卞瘨娑傚眰鍔犳垚锛屾覆鏌撳眰鍙姝ゅ€硷紝涓嶅緱鍙嶅悜淇敼鏉冨▉鐘舵€併€?
+        -- WO-13/P2：暴露冻结比例给渲染层，用于顶点色冷色偏移与正面霜冻高光。
+        -- 基准为冰弹冻结时长 + 深寒涂层加成，渲染层只读此值，不得反向修改权威状态。
         local freezeRef = BALL_TYPES.ice.freezeDuration + BALL_TUNING.iceBonus
         enemy.freezeRatio = enemy.frozen > 0
             and math.max(0, math.min(1, enemy.frozen / freezeRef))
             or 0
 
-        -- P11锛氬紓甯哥姸鎬侀€愬抚缁撶畻锛圖oT/鍙嶅簲/鏄撴毚锛夛紝浠呭湪鐮栧潡瀛樻椿鏃舵帹杩涖€?
+        -- P11：异常状态逐帧结算（DoT/反应/易暴），仅在砖块存活时推进。
         for _, brick in ipairs(enemy.bricks) do
             if brick.alive and brick.status then
                 TickBrickStatus(enemy, brick, dt)
@@ -3259,7 +3238,7 @@ UpdateEnemies = function(dt)
                 enemy.vulnerable = (newPhase == 2)
                 Emit("boss_phase", {enemyId = enemy.id, phase = newPhase, vulnerable = enemy.vulnerable})
             end
-            -- 鍙敜鍚嶉鍖呭惈鏅€氭尝浣欑暀缂栭槦锛岀‖涓婇檺閬垮厤鍚庢湡鎵嬫満琚満缇ゅ帇鍨€?
+            -- 召唤名额包含普通波余留编队，硬上限避免后期手机被机群压垮。
             enemy.summonTimer = enemy.summonTimer - dt
             if enemy.summonTimer <= 0 then
                 enemy.summonTimer = StageCatalog.GetBossSummonInterval(stage)
@@ -3276,7 +3255,7 @@ UpdateEnemies = function(dt)
             local beh = AircraftData.behavior[enemy.aircraftKey]
             local dodge = beh.dodge or {}
             local t = enemy.phase
-            -- 鍙岄娉笌鏂规尝/鎶樿繑缁勫悎锛屼綅缃繛缁紱浠呭湪姘村钩鏂瑰悜鍋氫笉绋冲畾婕傜Щ銆?
+            -- 双频波与方波/折返组合，位置连续；仅在水平方向做不稳定漂移。
             if dodge.kind == "zigzag" then
                 drift = drift + (2 / math.pi) * (dodge.amp or 12)
                     * math.asin(math.sin(t * (dodge.freq or 2)))
@@ -3288,7 +3267,7 @@ UpdateEnemies = function(dt)
             else
                 drift = drift + (dodge.amp or 12) * math.sin(t * (dodge.freq or 2))
             end
-            -- 绾靛悜鐬椂閫熷害 0.75锝?.05 脳 鏅€氭満锛涘潎鍊间笉瓒呰繃 1.1 鍊嶃€?
+            -- 纵向瞬时速度 0.75～1.05 × 普通机；均值不超过 1.1 倍。
             enemy.y = enemy.y + math.min(enemy.normalVy * 1.1,
                 enemy.vy * (0.90 + 0.15 * math.sin(t * 1.9))) * speedMultiplier * dt
         else
@@ -3305,17 +3284,17 @@ UpdateEnemies = function(dt)
         end
     end
 
-    -- 鎵€鏈夌紪闃熸湰甯ф憜鍔?涓嬬Щ瀹屾垚鍚庣粺涓€鍋氬杞?AABB 鍒嗙锛岄伩鍏嶉€愭満鍗曡疆姹傝В婕忓垽銆?
+    -- 所有编队本帧摆动/下移完成后统一做多轮 AABB 分离，避免逐机单轮求解漏判。
     ResolveFleetOverlaps()
 
-    -- 绗簩瓒燂細鍦ㄦ渶缁堜綅缃笂鍋氳秺绾垮垽瀹氾紙鎸夎锛夈€佺瑁傘€佹竻绌轰笌绉婚櫎銆?
-    -- 鏈抚鎵€鏈夎秺绾胯鍏堟敹闆嗗苟閫愬潡纰庤锛屾墸琛€鍦ㄦ暣浣撳悎璁″悗鍙粨绠椾竴娆°€?
+    -- 第二趟：在最终位置上做越线判定（按行）、碎裂、清空与移除。
+    -- 本帧所有越线行先收集并逐块碎裂，扣血在整体合计后只结算一次。
     local breachedRows = {}
     for i = #veggies, 1, -1 do
         if gameState == "gameover" then break end
         local enemy = veggies[i]
 
-        -- 瓒婄嚎鍒ゅ畾鎸夆€滆鈥濆垎缁勶細鍚屼竴鏋堕鏈洪噷瓒婅繃鐩爣绾跨殑鏂瑰潡鎸?brick.row 褰掔粍銆?
+        -- 越线判定按“行”分组：同一架飞机里越过目标线的方块按 brick.row 归组。
         local rows = {}
         for _, brick in ipairs(enemy.bricks) do
             if brick.alive then
@@ -3330,7 +3309,7 @@ UpdateEnemies = function(dt)
 
         local bossBreachedThisFrame = false
         for row, list in pairs(rows) do
-            -- 璇ヨ鏂瑰潡鍏ㄩ儴纰庤锛堢嫭绔嬮鏁ｇ浣擄級锛岃瑙夊弽棣堝彇璇ヨ涓績銆?
+            -- 该行方块全部碎裂（独立飞散箱体），视觉反馈取该行中心。
             local sumX = 0
             enemy.breached = true
             if enemy.isBoss then bossBreachedThisFrame = true end
@@ -3347,24 +3326,24 @@ UpdateEnemies = function(dt)
         end
     end
 
-    -- 姣忚鍩虹浼ゅ 0.5 鍚戜笂鍙栨暣锛?姣忚 1锛夛紱鍔犳垚鍙湪鏁翠綋鍚堣鍚庨檮鍔犱竴娆★紝鏈€缁堜笉浣庝簬 1銆?
+    -- 每行基础伤害 0.5 向上取整（=每行 1）；加成只在整体合计后附加一次，最终不低于 1。
     if #breachedRows > 0 and gameState ~= "gameover" then
         local baseDamage = math.ceil(#breachedRows * BRICK_BASE_DAMAGE)
-        -- v0.13.28锛氥€岃鐢插己鍖栥€嶇敱鍥哄畾 -1 鏀逛负**鐧惧垎姣斿噺浼?*鈥斺€旀棫 -1 鍦ㄥ崟琛岃秺绾匡紙浼ゅ琚挸鎴?1锛夋椂瀹屽叏鏃犳晥锛?
-        -- 鐧惧垎姣斿鍗曡涔熺敓鏁堬紙1 琛?脳 20% 鍥涜垗浜斿叆涓?0锛屾晠鍐嶇敤 max(1,鈥? 淇濅綇涓嬮檺 1锛屼笉澶氬噺锛夈€?
+        -- v0.13.28：「装甲强化」由固定 -1 改为**百分比减伤**——旧 -1 在单行越线（伤害被钳成 1）时完全无效；
+        -- 百分比对单行也生效（1 行 × 20% 四舍五入为 0，故再用 max(1,…) 保住下限 1，不多减）。
         local mitigated = baseDamage + BALL_TUNING.lineDamageBonus
         if BALL_TUNING.armorReduce > 0 then
             mitigated = math.floor(mitigated * (1 - BALL_TUNING.armorReduce) + 0.5)
         end
         local totalDamage = math.max(1, mitigated)
-        -- 鎶ょ浘浼樺厛鍚告敹锛屽惛瀹岃繕鏈夊墿鎵嶆墸琛€銆?
+        -- 护盾优先吸收，吸完还有剩才扣血。
         if baseShield > 0 then
             local absorbed = math.min(baseShield, totalDamage)
             baseShield = baseShield - absorbed
             totalDamage = totalDamage - absorbed
         end
         if totalDamage > 0 then baseHp = baseHp - totalDamage end
-        -- 闃茬嚎鍙嶉锛氫竴鏉¤仛鍚堜簨浠讹紙闇囧睆/鍐插嚮娉?椋樺瓧锛夛紝纰庤鏂瑰潡鐨勯绠辩敱鍚勮嚜浜嬩欢鍛堢幇銆?
+        -- 防线反馈：一条聚合事件（震屏/冲击波/飘字），碎裂方块的飞箱由各自事件呈现。
         local focus = breachedRows[1]
         Emit("base_hit", {x = focus.x, y = DANGER_Y, brick = true, damage = totalDamage, rows = #breachedRows})
         if baseHp <= 0 then
@@ -3375,7 +3354,7 @@ UpdateEnemies = function(dt)
             aiming = false
             startArmed = false
             if score > highScore then highScore = score end
-            -- v0.13.60锛氳褰曞け璐ユ椂鍒伙紙杩囨浮鍔ㄧ敾璁℃椂鍩哄噯锛変笌澶嶆椿璧勬牸銆?
+            -- v0.13.60：记录失败时刻（过渡动画计时基准）与复活资格。
             Game._defeat.at = elapsed
             Game._defeat.revive = not reviveUsed
             Emit("game_over", {
@@ -3387,14 +3366,14 @@ UpdateEnemies = function(dt)
         end
     end
 
-    -- 娓呯┖涓庣Щ闄わ細瓒婄嚎纰庤鍚庢暣鏋堕鏈虹殑鐮栧潡閮芥病浜嗗垯瑙嗕负琚獊鐮存竻绌猴紙涓嶅姞鍒嗭級銆?
+    -- 清空与移除：越线碎裂后整架飞机的砖块都没了则视为被突破清空（不加分）。
     for i = #veggies, 1, -1 do
         local enemy = veggies[i]
         local width = enemy.gridW * enemy.brickSize
         local height = enemy.gridH * enemy.brickSize
         if not enemy.dead and IsEnemyCleared(enemy) then
             enemy.dead = true
-            -- Boss 浠嶅彲鍦ㄥ彈鍒伴儴鍒嗚秺绾夸激瀹冲悗琚嚮璐ワ紱鍙湁鏈€鍚庡瓨娲绘牸瓒婄嚎鎵嶇畻閫冭劚銆?
+            -- Boss 仍可在受到部分越线伤害后被击败；只有最后存活格越线才算逃脱。
             if enemy.isBoss and not enemy.escaped then
                 bossDefeated = true
                 Emit("boss_defeated", {enemyId = enemy.id, stage = stage, aircraftKey = enemy.aircraftKey})
@@ -3404,7 +3383,7 @@ UpdateEnemies = function(dt)
                 partsEarned = partsEarned + PARTS_PER_CLEAR * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
                 runAircraft[enemy.aircraftKey] = true
                 clearStreak = clearStreak + 1
-                -- 杩炵画娓呯┖鐨勮繛鍑荤粡楠屽姞鎴愶紝榧撳姳杩炵画鍘嬪埗銆?
+                -- 连续清空的连击经验加成，鼓励连续压制。
                 local bonus = math.min(clearStreak - 1, BALANCE.clearStreakBonusCap)
                 GainXp(XP_PER_CLEAR + bonus)
                 Emit("enemy_cleared", {
@@ -3413,7 +3392,7 @@ UpdateEnemies = function(dt)
                     y = enemy.y + height * 0.5,
                     streak = clearStreak,
                     width = width, height = height,
-                    -- 鍙弿杩版秷鐏簨瀹烇細瓒婄嚎鎹熷け杩囨満浣撶殑鍑昏触涓嶆槸瀹屾暣鍑绘瘉銆?
+                    -- 只描述消灭事实：越线损失过机体的击败不是完整击毁。
                     fullDestroyed = not enemy.breached,
                 })
             end
@@ -3427,22 +3406,22 @@ UpdateReload = function()
     if not activeBall and #ballQueue > 0 then QueueNextBall() end
 end
 
--- 閫氬叧璇勭骇锛坴0.13.4锛夛細鍓╀綑闃茬嚎琛€閲忓喅瀹氭槦绾э紱棰濆鍒嗘暟涓庨浂浠跺鍔辫繘缁撶畻銆?
--- 涓€鏄?闄╄儨锛?40%锛夈€佷袱鏄?浼樿壇锛?0~74%锛夈€佷笁鏄?瀹岀編锛?=75%锛夈€?
+-- 通关评级（v0.13.4）：剩余防线血量决定星级；额外分数与零件奖励进结算。
+-- 一星=险胜（<40%）、两星=优良（40~74%）、三星=完美（>=75%）。
 local function ComputeStageResult()
     local ratio = baseHp / GetMaxBaseHp()
     local stars, rating
-    if ratio >= 0.75 then stars, rating = 3, "瀹岀編"
-    elseif ratio >= 0.40 then stars, rating = 2, "浼樿壇"
-    else stars, rating = 1, "闄╄儨" end
+    if ratio >= 0.75 then stars, rating = 3, "完美"
+    elseif ratio >= 0.40 then stars, rating = 2, "优良"
+    else stars, rating = 1, "险胜" end
     return {
         stage = stage,
         stars = stars,
         rating = rating,
         bonusScore = 200 * stars,
         bonusParts = 50 * stars,
-        -- v0.13.57锛氱粨绠楄繃娓″姩鐢荤殑璧峰鏃跺埢锛堣〃鐜板眰鎹绠楄繃娓¤繘搴︼級銆?
-        -- 鐢ㄥ叏灞€ elapsed 鑰岄潪鏂板鍙橀噺锛岄伩鍏?Game 椤跺眰 local 瓒呴檺锛圓B-166锛夈€?
+        -- v0.13.57：结算过渡动画的起始时刻（表现层据此算过渡进度）。
+        -- 用全局 elapsed 而非新增变量，避免 Game 顶层 local 超限（AB-166）。
         animAt = elapsed,
     }
 end
@@ -3458,15 +3437,15 @@ UpdateWaveLogic = function(dt)
                 break
             end
         end
-        -- 棣栭閫冭劚鍙寜鐜版湁瓒婄嚎瑙勫垯鎵ｈ锛屼笉瓒充互缁撴潫鏈眬鏃堕噸鏂版淳鍑哄悓涓€棣栭銆?
+        -- 首领逃脱只按现有越线规则扣血，不足以结束本局时重新派出同一首领。
         if not bossDefeated and not bossStillAlive then
             if baseHp <= 0 then return end
             nextWavePlan = PlanWave(wave)
             SpawnWave(StageCatalog.MAX_FLEET - #veggies)
             return
         end
-        -- v0.13.4锛氶棰嗗嚮璐ュ嵆**缁撴潫鏈叧骞惰繘鍏ヨ儨鍒╃粨绠楁€?*锛堜笉鍐嶈嚜鍔ㄨ繘涓嬩竴鍏筹級銆?
-        -- 娈嬩綑鎶よ埅涓庡彫鍞ゆ満閫€鍦猴紱鏄熺骇鐢卞墿浣欓槻绾胯閲忓喅瀹氾紝鐜╁鐪嬪畬缁撶畻鍚庢墜鍔ㄨ繘鍏炽€?
+        -- v0.13.4：首领击败即**结束本关并进入胜利结算态**（不再自动进下一关）。
+        -- 残余护航与召唤机退场；星级由剩余防线血量决定，玩家看完结算后手动进关。
         if bossDefeated then
             stageResult = ComputeStageResult()
             score = score + stageResult.bonusScore
@@ -3490,7 +3469,7 @@ UpdateWaveLogic = function(dt)
                 baseHp = baseHp, maxBaseHp = GetMaxBaseHp(),
             })
             print("[Game] stage " .. stage .. " cleared: " .. stageResult.rating
-                .. " " .. stageResult.stars .. "鏄?)
+                .. " " .. stageResult.stars .. "星")
         end
         return
     end
@@ -3506,11 +3485,11 @@ UpdateWaveLogic = function(dt)
         waveCooldown = 1
         return
     end
-    -- v0.13.57锛氬睆骞曞鏁屾満宸茶揪涓婇檺鏃?*涓嶅紑鏂颁竴娉?*鈥斺€旂簿鑻?鎶よ埅/棣栭涓嶈蛋 pendingSpawn 闃熷垪锛?
-    -- 鑻ヤ笉鍦ㄦ鎷︽埅锛屽畠浠細鍦ㄩ槦鍒楀凡鍫嗘弧灞忓鏃跺啀鍙犱竴鏋讹紝鎶婂睆澶栨暟椤跺埌涓婇檺涔嬩笂銆?
-    -- 鈿狅笍 鍙ｅ緞 = 灞忓**鍦ㄥ満**鏁?+ 鏈尝**寰呮斁**鏁帮細寰呮斁鐨勬櫘閫氭満灏嗘潵涔熶細鐢熸垚鍦ㄥ睆澶栵紝
-    --    鍙暟鍦ㄥ満浼氳銆屽睆澶? + 闃熷垪杩樻湁1鏋躲€嶆斁琛岀簿鑻辨尝鍚庣珛鍒婚《鍒颁笂闄愪箣涓婏紙鏈壒韪╁埌锛夈€?
-    -- 璁℃暟鍐呰仈锛堜笉鏂板椤跺眰 local锛孉B-166锛夛紝涓?SpawnNextNormalEnemy 鍚屽彛寰勩€?
+    -- v0.13.57：屏幕外敌机已达上限时**不开新一波**——精英/护航/首领不走 pendingSpawn 队列，
+    -- 若不在此拦截，它们会在队列已堆满屏外时再叠一架，把屏外数顶到上限之上。
+    -- ⚠️ 口径 = 屏外**在场**数 + 本波**待放**数：待放的普通机将来也会生成在屏外，
+    --    只数在场会让「屏外2 + 队列还有1架」放行精英波后立刻顶到上限之上（本批踩到）。
+    -- 计数内联（不新增顶层 local，AB-166），与 SpawnNextNormalEnemy 同口径。
     local offscreen = 0
     for i = 1, #veggies do
         local e = veggies[i]
@@ -3527,14 +3506,14 @@ UpdateWaveLogic = function(dt)
     SpawnWave(availableSlots)
     waveCooldown = StageCatalog.GetInterval(stage, stageWave)
     EnsureNextWavePlan()
-    -- v0.13.58锛氭瘡瀹屾垚涓€娉㈠彂鏀?鏇存崲涓€寮犻檮榄斿崱锛堥珮娉㈡鏇村鏄撳嚭楂樼█鏈夊害锛夈€?
-    -- 鏀惧湪娉㈡鐪熸鎺ㄨ繘澶勶紙stageWave 宸?+1锛夛紝涓嶅湪 Boss 閲嶆淳/寮€娉㈠け璐ヨ矾寰勮Е鍙戙€?
+    -- v0.13.58：每完成一波发放/更换一张附魔卡（高波次更容易出高稀有度）。
+    -- 放在波次真正推进处（stageWave 已 +1），不在 Boss 重派/开波失败路径触发。
     GrantEnchant()
 end
 
--- v0.10.15锛氬叏灞忚捣鎵嬬殑鐩稿鎷栨嫿銆俻ull 涓烘墜鎸囩浉瀵规寜涓嬬偣鐨勪綅绉伙紙涓嶅啀鐩稿鍥哄畾寮瑰紦鐐癸級锛?
--- 杞﹁締瑙嗚閿氬畾 SLING 闄勮繎锛屾墜鎸囧湪灞忓箷浠绘剰浣嶇疆璧锋墜閮戒笉浼氶伄鎸¤溅杈嗐€?
--- v0.13.64锛氶挸鍒舵敼鍦?*璁捐(UI)鍧愭爣**閲屽仛锛堣 PullToGameplay锛夛紝鏁呮棫 ClampPull 宸茬Щ闄ゃ€?
+-- v0.10.15：全屏起手的相对拖拽。pull 为手指相对按下点的位移（不再相对固定弹弓点），
+-- 车辆视觉锚定 SLING 附近，手指在屏幕任意位置起手都不会遮挡车辆。
+-- v0.13.64：钳制改在**设计(UI)坐标**里做（见 PullToGameplay），故旧 ClampPull 已移除。
 
 function Game.Init(config)
     config = config or {}
@@ -3551,8 +3530,8 @@ function Game.Init(config)
         .. " highScore=" .. tostring(highScore))
 end
 
----@param dt number 瑙勫垯鏃堕棿锛堝凡鍙犲姞椤垮抚锛?
----@param inputDt number|nil 鍘熷杈撳叆鏃堕棿锛涗笉浼犳椂浣跨敤 dt
+---@param dt number 规则时间（已叠加顿帧）
+---@param inputDt number|nil 原始输入时间；不传时使用 dt
 function Game.Update(dt, inputDt)
     elapsed = elapsed + dt
     if gameState ~= "playing" then
@@ -3566,7 +3545,7 @@ function Game.Update(dt, inputDt)
                 if opening.phase == "ready" then
                     opening.active = false
                     opening.phase = nil
-                    -- 棣栭€夊緟鍙戙€佹閫夊寮癸紱纭瀹屾垚鍚庢墠寮€濮嬪畬鏁翠笁绉掑噯澶囨湡銆?
+                    -- 首选待发、次选备弹；确认完成后才开始完整三秒准备期。
                     activeBall = CreateMarble(opening.selected[1], CollectActiveWords())
                     ballQueue = { opening.selected[2] }
                     for i, ballType in ipairs(BALL_ORDER) do
@@ -3588,11 +3567,11 @@ function Game.Update(dt, inputDt)
                 end
             end
         end
-        -- 闈炴垬鏂楁€佸彧鎺ㄨ繘寮€灞€娴佺▼涓庢椂閽燂紱鍒囧叆 playing 鐨勬湰甯т篃涓嶆秷鑰?intro銆?
+        -- 非战斗态只推进开局流程与时钟；切入 playing 的本帧也不消耗 intro。
         return
     end
 
-    -- v0.13.24锛氳繘鍏冲噯澶囨湡鍐呭喕缁撶帺娉曪紙鍙帹杩涜鏃跺櫒锛夛紝鍔ㄧ敾鏀捐缁欒〃鐜板眰銆?
+    -- v0.13.24：进关准备期内冻结玩法（只推进计时器），动画放行给表现层。
     if introTimer > 0 then
         if Game._holdSpeed.down or Game._holdSpeed.active then Game.CancelHoldSpeed() end
         introTimer = math.max(0, introTimer - dt)
@@ -3621,9 +3600,9 @@ function Game.Update(dt, inputDt)
     else
         Game.ClearLaunchCharge()
     end
-    -- elapsed銆佸噯澶囧姩鐢诲彧鎺ㄨ繘鍘熷瑙勫垯鏃堕棿锛涘叾浣欐垬鏂楄鏃剁粺涓€浣跨敤妯℃嫙鏃堕棿銆?
-    -- 宸插紑鍚悗涓嶅洜琛ヨ溅閫€鍑猴紝鍙敱鏉炬墜銆佺湡瀹炲彂灏勬垨鐢熷懡鍛ㄦ湡鍙栨秷銆?
-    -- 鎷栨嫿钃勫姏鏃跺叏灞€鍑忛€燂紙BALANCE.dragTimeScale锛夛紝鏉炬墜鍗虫仮澶嶏紱涓庣┖鎵?2 鍊嶉€熶簰鏂ワ紙钃勫姏鏃跺繀鏈夎溅锛屼笉鍏卞瓨锛夈€?
+    -- elapsed、准备动画只推进原始规则时间；其余战斗计时统一使用模拟时间。
+    -- 已开启后不因补车退出，只由松手、真实发射或生命周期取消。
+    -- 拖拽蓄力时全局减速（BALANCE.dragTimeScale），松手即恢复；与空手 2 倍速互斥（蓄力时必有车，不共存）。
     local dragSlow = (aiming and activeBall) and BALANCE.dragTimeScale or 1
     dt = dt * (Game._holdSpeed.active and 2 or 1) * dragSlow
     UpdateAiming()
@@ -3632,11 +3611,11 @@ function Game.Update(dt, inputDt)
     if gameState ~= "playing" then return end
     UpdateEnemies(dt)
     if gameState ~= "playing" then return end
-    -- v0.13.65锛氬够褰变綋绱犲潡鈥斺€斿厛鍒ゅ畾鍙戝皠锛屽啀鎺ㄨ繘鍦ㄥ満骞诲奖锛堜笅绉?琚嚮纰?瓒婄嚎鎵ｈ锛夈€?
+    -- v0.13.65：幻影体素块——先判定发射，再推进在场幻影（下移/被击碎/越线扣血）。
     Game._phantom.TryFire(dt)
     Game._phantom.Update(dt)
     if gameState ~= "playing" then return end
-    -- v0.13.26锛氬悓娉㈤敊宄扮敓鎴愨€斺€旀湰娉㈣繕娌℃斁瀹屾椂鎸夐棿闅旈€愭灦鏀惧嚭锛堢簿鑻辨姢鑸悓鏈哄埗锛夈€?
+    -- v0.13.26：同波错峰生成——本波还没放完时按间隔逐架放出（精英护航同机制）。
     if pendingSpawn.remaining > 0 then
         pendingSpawn.timer = pendingSpawn.timer - dt
         if pendingSpawn.timer <= 0 then
@@ -3670,7 +3649,7 @@ function Game.PointerDown(px, py, uiX, uiY)
     end
     if introTimer > 0 then return end
 
-    -- v0.13.64锛氭媺寮撳湪**璁捐(UI)鍧愭爣**閲岄挸鍒讹紙灞忓箷涓婄殑鍦嗭級锛屾寜涓嬬偣涔熻璁捐鍧愭爣銆?
+    -- v0.13.64：拉弓在**设计(UI)坐标**里钳制（屏幕上的圆），按下点也记设计坐标。
     Game.ClearLaunchCharge()
     Game._launchCharge.x, Game._launchCharge.y = px, py
     Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
@@ -3679,18 +3658,15 @@ function Game.PointerDown(px, py, uiX, uiY)
     pull.uiX = uiX or px
     pull.uiY = uiY or py
     pull.dist = 0
-    pull.gnorm = 0
     aimX = SLING_X
     aimY = SLING_Y
     print("[Game] launch charge started")
 end
 
--- v0.13.66锛氭嫋鎷借寖鍥?=銆屽睆骞曟鍦嗭紙鍗婂緞 MAX_PULL锛? 鐜╂硶绌洪棿鍚屾鍦嗐€嶃€?
---   鈶犺璁″潗鏍囨眰浣嶇Щ锛屾寜 MAX_PULL 鍦嗛挸鍒讹紙灞忓箷涓哄噯锛氬崐寰?85%脳150 璁捐鍍忕礌锛夛紱
---   鈶￠櫎浠ユ姇褰辩缉鏀?sx/sy 寰楃帺娉曚綅绉诲悗锛屽啀鎸夌煭杞村崐寰勫渾閽冲埗锛堥暱杞寸缉鍒扮煭杞达紝
---     鐜╂硶绌洪棿涓嶅啀鏄>楂樼殑妞渾锛夛紱
---   鈶㈣繑鍥炵帺娉?dx/dy銆佽璁″儚绱犳媺璺?dist锛堟鍖哄垽瀹氾級涓庡綊涓€鍖栬搫鍔?gnorm
---     锛?鐜╂硶鎷夎窛/鍦嗗崐寰勶紝鏂瑰悜鏃犲叧銆佹弧鎷夋亽 1锛屼緵濞佸姏/鐬勫噯浜害鏄犲皠锛夈€?
+-- v0.13.64：把设计空间的圆位移换算成玩法位移。
+--   ①在设计坐标里求 pull，按 MAX_PULL 半径圆钳制（屏幕上是正圆）；
+--   ②除以投影缩放 sx/sy → 玩法位移（玩法平面上的范围因此是「屏幕圆的投影」椭圆）；
+--   ③返回玩法 dx/dy 与本帧设计像素拉距 dist（供威力/蓄力映射）。
 ---@param uiX number
 ---@param uiY number
 ---@return number dx
@@ -3706,19 +3682,8 @@ local function PullToGameplay(uiX, uiY)
         udy = udy / dist * MAX_PULL
         dist = MAX_PULL
     end
-    local dx = udx / pull.sx
-    local dy = udy / pull.sy
-    -- 鐜╂硶鍦嗗崐寰?= 鐭酱锛堢缉鏀捐緝澶х殑涓€杞村搴旇緝鐭殑鐜╂硶鑼冨洿锛?
-    local rShort = MAX_PULL / math.max(pull.sx, pull.sy)
-    local gdist = math.sqrt(dx * dx + dy * dy)
-    if gdist > rShort then
-        dx = dx / gdist * rShort
-        dy = dy / gdist * rShort
-        gdist = rShort
-    end
     pull.dist = dist
-    pull.gnorm = rShort > 1e-6 and gdist / rShort or 0
-    return dx, dy, dist
+    return udx / pull.sx, udy / pull.sy, dist
 end
 
 function Game.PointerMove(px, py, uiX, uiY)
@@ -3732,7 +3697,7 @@ function Game.PointerMove(px, py, uiX, uiY)
 end
 
 function Game.PointerUp(px, py, uiX, uiY)
-    -- 鍙彇娑堢┖鎵嬪€嶉€燂紱鏈彂钃勫姏椤讳繚鐣欏埌 LaunchMarble 閿佸畾璧勬牸涔嬪悗銆?
+    -- 只取消空手倍速；本发蓄力须保留到 LaunchMarble 锁定资格之后。
     Game.CancelHoldSpeed()
     if gameState ~= "playing" or not aiming then
         Game.ClearLaunchCharge()
@@ -3746,14 +3711,13 @@ function Game.PointerUp(px, py, uiX, uiY)
     aimY = SLING_Y + dy
     UpdateAiming()
     aiming = false
-    -- 姝诲尯鎸?*璁捐鍍忕礌**鍒ゅ畾锛?5 璁捐鍍忕礌锛夛紝涓庢姇褰辩缉鏀炬棤鍏筹紝淇濊瘉鎵嬫劅涓€鑷淬€?
+    -- 死区按**设计像素**判定（15 设计像素），与投影缩放无关，保证手感一致。
     if distance <= 15 then
         if activeBall then activeBall.x, activeBall.y = SLING_X, SLING_Y end
         Game.ClearLaunchCharge()
         return
     end
-    -- v0.13.66锛氬▉鍔涚敤鏂瑰悜鏃犲叧鐨勭帺娉曞綊涓€鍖栨媺璺濓紙婊℃媺鎭?1锛夛紝涓嶅啀鎸夎璁″儚绱犺窛绂汇€?
-    if activeBall then LaunchMarble(dx, dy, Game._pullSpace.gnorm or 0) end
+    if activeBall then LaunchMarble(dx, dy, distance / BALANCE.maxPull) end
     Game.ClearLaunchCharge()
 end
 
@@ -3766,25 +3730,25 @@ function Game.HandleAction(action, pressed)
     end
 end
 
--- 閫夊叧鐣岄潰纭鍚庣敱缂栨帓灞傜洿鎺ヨ皟鐢紱stageNumber 宸叉寜瑙ｉ攣杩涘害鏍￠獙銆?
+-- 选关界面确认后由编排层直接调用；stageNumber 已按解锁进度校验。
 function Game.StartStageAt(stageNumber)
     if gameState ~= "menu" then return false end
     StartGameAt(math.max(1, math.floor(tonumber(stageNumber) or 1)))
     return true
 end
 
--- 鑳滃埄缁撶畻椤点€屽啀鎴樻湰鍏炽€嶏細閲嶅紑褰撳墠鍏筹紙淇濈暀宸茶В閿佽繘搴︼紝鎴愰暱閲嶇疆锛夈€?
+-- 胜利结算页「再战本关」：重开当前关（保留已解锁进度，成长重置）。
 function Game.RetryStage()
     if gameState ~= "stagewin" or not stageResult then return false end
     StartGameAt(stageResult.stage)
     return true
 end
 
--- 鑳滃埄缁撶畻椤点€屼笅涓€鍏炽€嶏細浠呭綋涓嬩竴鍏冲瓨鍦ㄦ椂鏈夋晥銆?
+-- 胜利结算页「下一关」：仅当下一关存在时有效。
 function Game.NextStage()
     if gameState ~= "stagewin" or not stageResult then return false end
     local nextStage = stageResult.stage + 1
-    -- v0.13.13锛氬叧鍗℃棤闄愶紝銆屼笅涓€鍏炽€嶆案杩滃彲鐢ㄣ€?
+    -- v0.13.13：关卡无限，「下一关」永远可用。
     StartGameAt(nextStage)
     return true
 end
@@ -3801,7 +3765,7 @@ function Game.CanRevive()
     return gameState == "gameover" and not reviveUsed
 end
 
--- 婵€鍔辫棰戠湅瀹屽悗鐢辩紪鎺掑眰璋冪敤锛氬洖 50 琛€銆佹妸浠嶅瓨娲荤殑缂栭槦鎶洖灞忓锛岀户缁湰灞€銆?
+-- 激励视频看完后由编排层调用：回 50 血、把仍存活的编队抬回屏外，继续本局。
 function Game.ReviveFromAd()
     if gameState ~= "gameover" or reviveUsed then return false end
     reviveUsed = true
@@ -3821,7 +3785,7 @@ function Game.ReviveFromAd()
         end
     end
     gameState = "playing"
-    -- 棣栭鍦ㄨ秺绾垮鑷寸敓鍛藉綊闆剁殑甯ф秷澶辨椂锛屽娲诲悗琛ラ綈褰撳墠鍗佹尝鐨勭洰鏍囥€?
+    -- 首领在越线导致生命归零的帧消失时，复活后补齐当前十波的目标。
     if stageWave == StageCatalog.WAVES_PER_STAGE and not bossDefeated and not bossAlive then
         for i = #veggies, 1, -1 do
             if veggies[i].isBoss then table.remove(veggies, i) end
@@ -3829,7 +3793,7 @@ function Game.ReviveFromAd()
         nextWavePlan = PlanWave(wave)
         SpawnWave(StageCatalog.MAX_FLEET - #veggies)
     end
-    -- 淇濈暀鏈眬宸茬粨绠楀熀绾匡紱澶嶆椿鍚庡啀娆℃浜″彧鍏ュ簱鏂板闆朵欢銆?
+    -- 保留本局已结算基线；复活后再次死亡只入库新增零件。
     partsSettled = false
     lastSettledParts = 0
     Emit("base_revived", {hp = baseHp})
@@ -3843,40 +3807,40 @@ function Game.RestartFromOver()
 end
 
 -- ============================================================================
--- v0.11.0 鍟嗕笟鍖栵細灞€鍐呴浂浠剁粨绠椼€?
--- 缁撶畻椤典竴鍑虹幇灏辩敱缂栨帓灞傛寜 脳1 鍏ュ簱锛涖€岀湅骞垮憡鍙屽€嶃€嶅啀琛ュ彂绛夐闆朵欢銆?
+-- v0.11.0 商业化：局内零件结算。
+-- 结算页一出现就由编排层按 ×1 入库；「看广告双倍」再补发等额零件。
 -- ============================================================================
 
----@return integer 褰撳墠闃舵寰呯粨绠楁垨宸茬粨绠楃殑闆朵欢
+---@return integer 当前阶段待结算或已结算的零件
 function Game.GetRunParts()
     if partsSettled then return lastSettledParts end
-    -- v0.13.28锛歱artsEarned 鍙兘鍥犮€岃鐢插己鍖栥€嶇殑 partsMul 鑰屾槸娴偣锛涘睍绀?鍏ュ簱涓€寰嬪彇鏁淬€?
+    -- v0.13.28：partsEarned 可能因「装甲强化」的 partsMul 而是浮点；展示/入库一律取整。
     return math.floor(math.max(0, partsEarned - settledParts))
 end
 
--- 璺ㄥ眬缁熻鍙澧為噺锛涘娲诲悗鍐嶆姝讳骸涓嶉噸澶嶈銆屽畬鎴愪竴灞€銆嶄笌鏃х爾鍧椼€?
--- 鑳滃埄缁撶畻锛坰tagewin锛夊悓鏍峰叆搴撻浂浠朵笌缁熻銆?
+-- 跨局统计只认增量；复活后再次死亡不重复计「完成一局」与旧砖块。
+-- 胜利结算（stagewin）同样入库零件与统计。
 function Game.TakeSettlementStats()
     if (gameState ~= "gameover" and gameState ~= "stagewin") or partsSettled then return 0, false, 0 end
     local delta = math.max(0, bricksBroken - settleBook.bricks)
     settleBook.bricks = bricksBroken
     local firstFinish = not settleBook.runCounted
     settleBook.runCounted = true
-    -- v0.14.x 瀛橀挶缃愶細鍙洖浼犳湰灞€鏂板榻胯疆锛堝娲诲悗鍐嶆缁撶畻涓嶉噸澶嶈鏃у€硷級銆?
+    -- v0.14.x 存钱罐：只回传本局新增齿轮（复活后再次结算不重复计旧值）。
     local gearDelta = math.max(0, settleBook.gear - settleBook.gearSettled)
     settleBook.gearSettled = settleBook.gear
     return delta, firstFinish, gearDelta
 end
 
 ---@param multiplier integer
----@return integer granted 鏈鍏ュ簱鐨勬柊澧為浂浠讹紙0 琛ㄧず娌℃湁鏂板锛?
+---@return integer granted 本次入库的新增零件（0 表示没有新增）
 function Game.SettleParts(multiplier)
     if partsSettled then return 0 end
     partsSettled = true
-    -- v0.13.28锛氬厛鍙栨暣鍒版暣鏁板啀绠楃櫨鍒嗘瘮鍔犳垚锛岄伩鍏?partsMul 鐨勬诞鐐规笚杩涘叆搴撳€笺€?
+    -- v0.13.28：先取整到整数再算百分比加成，避免 partsMul 的浮点渗进入库值。
     local delta = math.floor(math.max(0, partsEarned - settledParts))
     settledParts = partsEarned
-    -- v0.13.5锛氬ぉ璧嬫爲閫氱敤绾胯矾鐨勭粨绠楅浂浠剁櫨鍒嗘瘮鍔犳垚锛堝湪骞垮憡鍊嶆暟鍓嶅彔鍔狅級銆?
+    -- v0.13.5：天赋树通用线路的结算零件百分比加成（在广告倍数前叠加）。
     local pctBonus = math.floor(delta * talentPartsPct / 100 + 0.5)
     delta = delta + pctBonus
     lastSettledParts = delta * math.max(1, math.floor(multiplier or 1))
@@ -3890,7 +3854,7 @@ function Game.CanDoubleSettle()
     return partsSettled and not partsDoubled and lastSettledParts > 0
 end
 
----@return integer extra 骞垮憡鍙屽€嶈ˉ鍙戠殑闆朵欢鏁帮紙0 琛ㄧず涓嶅彲鐢級
+---@return integer extra 广告双倍补发的零件数（0 表示不可用）
 function Game.DoubleSettlement()
     if not Game.CanDoubleSettle() then return 0 end
     partsDoubled = true
@@ -3911,8 +3875,8 @@ end
 function Game.Pause()
     if gameState == "playing" then
         Game.CancelPointer()
-        -- v0.10.24锛氭殏鍋滄椂鍙栨秷杩涜涓殑鎷栨嫿骞惰寰呭彂杞﹀綊浣嶏紝
-        -- 閬垮厤鎭㈠鐬棿甯︾潃鏃ц搫鍔?娈嬬暀 aiming 鐘舵€併€?
+        -- v0.10.24：暂停时取消进行中的拖拽并让待发车归位，
+        -- 避免恢复瞬间带着旧蓄力/残留 aiming 状态。
         Game.ClearLaunchCharge()
         aiming = false
         if activeBall then
@@ -3935,8 +3899,8 @@ function Game.IsPaused()
     return gameState == "paused"
 end
 
--- v0.12.5锛氫富鍔ㄥ洖涓昏彍鍗曪紙鏆傚仠椤点€岃繑鍥炰富鑿滃崟銆? 缁撶畻椤点€屽洖涓昏彍鍗曘€嶅嚭鍙ｏ級銆?
--- 鍗囩骇鎬佸繀椤诲厛閫夊畬鍗★紙闈㈡澘鏄己鍒朵笁閫変竴锛夛紝涓嶈蛋杩欓噷銆?
+-- v0.12.5：主动回主菜单（暂停页「返回主菜单」/ 结算页「回主菜单」出口）。
+-- 升级态必须先选完卡（面板是强制三选一），不走这里。
 function Game.GoToMenu()
     if gameState == "playing" or gameState == "paused" or gameState == "gameover"
         or gameState == "stagewin" then
@@ -3949,7 +3913,7 @@ function Game.GoToMenu()
     return false
 end
 
--- 浠呬緵鎺㈤拡/楠屾敹锛氱洿鎺ヨ繘鍏ュけ璐ョ粨绠楋紙澶嶅埢鐪熷疄 gameover 鍒嗘敮鐨勭姸鎬佽缃?+ 浜嬩欢锛夈€?
+-- 仅供探针/验收：直接进入失败结算（复刻真实 gameover 分支的状态设置 + 事件）。
 function Game.DebugForceGameOver()
     if gameState ~= "playing" then return false end
     baseHp = 0
@@ -3968,7 +3932,7 @@ function Game.DebugForceGameOver()
     return true
 end
 
--- 浠呬緵鎺㈤拡/楠屾敹锛氭瀯閫犱竴娆＄湡瀹炶儨鍒╃粨绠楋紙璧板悓涓€鏉?stagewin 閫昏緫锛屽惈 stageResult锛夈€?
+-- 仅供探针/验收：构造一次真实胜利结算（走同一条 stagewin 逻辑，含 stageResult）。
 function Game.DebugForceStageWin()
     if gameState ~= "playing" then return false end
     stageResult = ComputeStageResult()
@@ -3985,8 +3949,8 @@ function Game.DrainEvents()
     return events
 end
 
--- v0.10.19锛氱瀯鍑嗙洿绾裤€備粎鍦ㄦ嫋鎷借搫鍔涜秴杩?15px 姝诲尯鏃惰繑鍥炶捣鐐?鍒版渶杩戠帺娉曡竟鐣岀殑缁堢偣锛?
--- 鏂瑰悜涓?LaunchMarble 瀹屽叏涓€鑷达紙-pull 褰掍竴鍖栵級銆傚彧绠椾竴鏉＄洿绾匡紝涓嶅仛鍙嶅脊棰勬祴銆?
+-- v0.10.19：瞄准直线。仅在拖拽蓄力超过 15px 死区时返回起点+到最近玩法边界的终点；
+-- 方向与 LaunchMarble 完全一致（-pull 归一化）。只算一条直线，不做反弹预测。
 local AIM_DEAD_ZONE = 15
 local function ComputeAimLine()
     if not (aiming and activeBall) then return nil end
@@ -3994,16 +3958,16 @@ local function ComputeAimLine()
     local pullY = aimY - SLING_Y
     local length = math.sqrt(pullX * pullX + pullY * pullY)
     if length <= 1e-4 then return nil end
-    -- v0.13.66锛氭鍖轰粛鎸夎璁″儚绱犲垽瀹氾紱鐬勫噯浜害鐢ㄦ柟鍚戞棤鍏崇殑鐜╂硶褰掍竴鍖栨媺璺濄€?
+    -- v0.13.64：威力按**设计像素拉距**归一（Game._pullSpace.dist），与投影缩放无关；
+    -- 玩法长度可能因投影 >MAX_PULL，用它归一会让弱拉就显示满亮。
     local uiDist = Game._pullSpace.dist or 0
     if uiDist <= AIM_DEAD_ZONE then return nil end
     local dirX = -pullX / length
     local dirY = -pullY / length
-    -- v0.13.66锛氱瀯鍑嗛娴嬪弽寮圭敤 85% 鍙嶅脊纰版挒绠憋紝涓庤鍒欏眰鎾炲鍒ゅ畾涓€鑷淬€?
-    local radius = (activeBall.radius or 0) * BALANCE.bounceBoxScale
+    local radius = activeBall.radius or 0
     local x0, y0 = activeBall.x, activeBall.y
 
-    -- 姹傚皠绾夸笌宸?鍙?椤朵笁杈圭殑鏈€杩戞鍙傛暟 t锛堝彂灏勫悜涓婏紝搴曡竟涓嶅弬涓庯級銆?
+    -- 求射线与左/右/顶三边的最近正参数 t（发射向上，底边不参与）。
     local t = math.huge
     if dirX < -0.0001 then
         t = math.min(t, (radius - x0) / dirX)
@@ -4014,9 +3978,9 @@ local function ComputeAimLine()
         t = math.min(t, (TOP_BOUND_Y + radius - y0) / dirY)
     end
     if t == math.huge or t <= 0 then return nil end
-    -- v0.10.23锛氳緭鍑哄綊涓€鍖栬搫鍔?(姝诲尯鈫掓弧鎷?鏄犲皠鍒?0..1)锛屼緵娓叉煋灞傚仛寮辨媺娓愭樉銆?
-    -- v0.13.66锛氭敼鐢ㄧ帺娉曞綊涓€鍖栨媺璺濓紙婊℃媺鎭?1锛夛紝姝诲尯涔嬩笂浠?gnorm 璧锋笎鏄俱€?
-    local power01 = math.max(0, math.min(1, Game._pullSpace.gnorm or 0))
+    -- v0.10.23：输出归一化蓄力 (死区→满拉 映射到 0..1)，供渲染层做弱拉渐显。
+    -- v0.13.64：改用设计像素拉距 uiDist 归一，避免投影缩放影响「弱拉渐显」。
+    local power01 = math.max(0, math.min(1, (uiDist - AIM_DEAD_ZONE) / (MAX_PULL - AIM_DEAD_ZONE)))
     return {
         x1 = x0, y1 = y0,
         x2 = x0 + dirX * t, y2 = y0 + dirY * t,
@@ -4025,7 +3989,7 @@ local function ComputeAimLine()
 end
 
 function Game.GetSnapshot()
-    -- WO-16/P9锛氬鐢ㄥ父椹荤紦鍐诧紝浠呮瘡甯ц鐩栧瓧娈点€傜瀯鍑嗙姸鎬佸彧渚涙嫋鎷藉彂灏勶紝涓嶅啀鐢熸垚棰勭瀯杞ㄨ抗銆?
+    -- WO-16/P9：复用常驻缓冲，仅每帧覆盖字段。瞄准状态只供拖拽发射，不再生成预瞄轨迹。
     local s = snapshotBuffer_ or {}
     snapshotBuffer_ = s
     s.state = gameState
@@ -4037,7 +4001,7 @@ function Game.GetSnapshot()
     s.maxBaseHp = GetMaxBaseHp()
     s.talentHpBonus = talentMaxHpBonus
     s.talentPartsPct = talentPartsPct
-    -- v0.13.15锛氭垚闀跨嚎澶╄祴璇绘暟锛堜緵 UI 鏄剧ず鏆村嚮鐜?鍩虹鏀诲嚮锛夈€?
+    -- v0.13.15：成长线天赋读数（供 UI 显示暴击率/基础攻击）。
     s.talentCritChance = talentCritChance
     s.talentAtkBonus = talentAtkBonus
     s.talentHpPerNode = TalentCatalog.MAX_HP_PER_NODE
@@ -4047,17 +4011,17 @@ function Game.GetSnapshot()
     s.wavesPerStage = StageCatalog.WAVES_PER_STAGE
     s.stageSubtitle = StageCatalog.GetLayoutSubtitle(stage)
     s.stageResult = stageResult
-    -- v0.13.62锛氭湰灞€鏄惁鍑昏触杩囬棰嗭紙鎴愬氨銆屾柀棣栬鍔ㄣ€嶇敤锛涘彧鍦?ResetGame 澶嶄綅锛夈€?
+    -- v0.13.62：本局是否击败过首领（成就「斩首行动」用；只在 ResetGame 复位）。
     s.bossDefeated = bossDefeated
-    -- v0.13.60锛氬け璐ヨ繃娓★紙gameover 鍔ㄧ敾鐨勮鏃跺熀鍑?+ 鏄惁鍙娲伙級銆?
+    -- v0.13.60：失败过渡（gameover 动画的计时基准 + 是否可复活）。
     s.defeatAt = Game._defeat.at
     s.defeatRevive = Game._defeat.revive
-    -- v0.13.13锛氬叧鍗℃棤闄愨€斺€旀案杩滄湁涓嬩竴鍏筹紱stageTotal 鍙槸銆岄毦搴﹀皝椤跺弬鑰冨叧鏁般€嶃€?
+    -- v0.13.13：关卡无限——永远有下一关；stageTotal 只是「难度封顶参考关数」。
     s.stageHasNext = (gameState == "stagewin" and stageResult ~= nil) or false
     s.stageTotal = StageCatalog.STAGE_SOFT_CAP
     s.elapsed = elapsed
-    -- 琛ㄧ幇灞傜粺涓€鏃堕挓鍊嶇巼锛氭嫋鎷借搫鍔涗紭鍏堬紙鍏ㄥ眬鍑忛€燂級锛屽惁鍒欑┖鎵嬮暱鎸?2 鍊嶉€熴€?
-    -- 鍚勭壒鏁堟ā鍧楋紙娉㈠３/闄勯瓟鐞冿級鍙箻涓€娆★紝鏆傚仠/骞垮憡鐢?allowedDt=0 鍐荤粨銆?
+    -- 表现层统一时钟倍率：拖拽蓄力优先（全局减速），否则空手长按 2 倍速。
+    -- 各特效模块（波壳/附魔球）只乘一次，暂停/广告由 allowedDt=0 冻结。
     s.timeScale = gameState == "playing"
         and ((aiming and activeBall) and BALANCE.dragTimeScale
             or (Game._holdSpeed.active and 2 or 1))
@@ -4067,12 +4031,12 @@ function Game.GetSnapshot()
     s.pointerEpoch = Game._holdSpeed.epoch
     s.chargeActive = gameState == "playing" and aiming and activeBall ~= nil
     s.chargeProgress = s.chargeActive and Game._launchCharge.time / Game._launchCharge.total or 0
-    -- 钃勫姏杈惧埌瀹屾垚闃堝€硷紙85%锛夊嵆瑙嗕綔銆屾弧钃勩€嶏細琛ㄧ幇灞傛嵁姝ゆ彁鍓嶇垎鍙戝叏鎭紙涓嶅繀绛?100%锛夈€?
+    -- 蓄力达到完成阈值（85%）即视作「满蓄」：表现层据此提前爆发全息（不必等 100%）。
     s.chargeReady = s.chargeActive and s.chargeProgress >= BALANCE.chargeCompleteThreshold
     s.chargeX, s.chargeY = Game._launchCharge.x, Game._launchCharge.y
     s.chargeUiX, s.chargeUiY = Game._launchCharge.uiX, Game._launchCharge.uiY
-    -- 闈掑湀鍦嗗績閿氬畾寰呭彂杞︽潈濞佷綅缃紙鐜╂硶鍧愭爣锛夛紱琛ㄧ幇灞傜敤鍚屼竴鐜╂硶鎶曞奖鍗冲緱杞﹁締灞忓箷涓績锛?
-    -- 涓嶅啀閿氭寚閽堛€傛棤钃勫姏鏃剁疆 nil锛岀敱琛ㄧ幇灞傚洖閫€鏃ф寚閽堣矾寰勩€?
+    -- 青圈圆心锚定待发车权威位置（玩法坐标）；表现层用同一玩法投影即得车辆屏幕中心，
+    -- 不再锚指针。无蓄力时置 nil，由表现层回退旧指针路径。
     s.chargeCarX = s.chargeActive and activeBall.x or nil
     s.chargeCarY = s.chargeActive and activeBall.y or nil
     s.playerLevel = playerLevel
@@ -4082,18 +4046,18 @@ function Game.GetSnapshot()
     s.upgradePicks = upgradePicks
     s.clearStreak = clearStreak
     s.bricksBroken = bricksBroken
-    -- v0.14.x 瀛橀挶缃愶細鏈眬绱榻胯疆锛?00 鍧?100 榻胯疆锛岀簿鑻辨満姣忓潡 2 鍊嶏級锛涘彧璇绘爣閲忋€?
+    -- v0.14.x 存钱罐：本局累计齿轮（200 块/100 齿轮，精英机每块 2 倍）；只读标量。
     s.gear = settleBook.gear
-    s.concurrentCount = #veggies    -- WO-12/P6锛氬綋鍓嶅悓灞忕紪闃熸暟锛圚UD 鎸囨爣锛?
-    -- 褰撳墠鍏冲崱鏍煎瓙灏哄锛?4/15/16锛夛細鏉冨▉鍊硷紝渚涜〃鐜板眰鎸夈€屾牸銆嶅亸绉伙紝娉㈤棿闅欐棤鏁屾満鏃朵篃鍙敤銆?
+    s.concurrentCount = #veggies    -- WO-12/P6：当前同屏编队数（HUD 指标）
+    -- 当前关卡格子尺寸（14/15/16）：权威值，供表现层按「格」偏移，波间隙无敌机时也可用。
     s.brickSize = GetBrickSize(wave)
     s.brickDmg = math.max(1, math.ceil(BRICK_BASE_DAMAGE) + BALL_TUNING.lineDamageBonus)
-    -- v0.13.28锛氬眬鍐呴€氱敤鍗＄殑娲剧敓璇绘暟锛堝彧璇绘爣閲忥紝渚?UI 涓庢牎楠岋紱涓嶆柊寤?table 浠ュ厤姣忓抚 GC锛夈€?
+    -- v0.13.28：局内通用卡的派生读数（只读标量，供 UI 与校验；不新建 table 以免每帧 GC）。
     s.brickXpFlat = BALL_TUNING.brickXpFlat
     s.partsMul = BALL_TUNING.partsMul
     s.armorReduce = BALL_TUNING.armorReduce
     s.launchSpeedMul = BALL_TUNING.launchSpeedMul
-    -- P11锛氬凡婵€娲昏瘝鏉★紙鍙鍒楄〃锛屼緵 HUD 灞曠ず锛屼笉鍙嶅悜鍐欒鍒欙級銆?
+    -- P11：已激活词条（只读列表，供 HUD 展示，不反向写规则）。
     local words = {}
     for _, id in ipairs(WORD_IDS) do
         if activeWords[id] then words[#words + 1] = id end
@@ -4109,11 +4073,11 @@ function Game.GetSnapshot()
     s.openingTimer = Game._opening.timer
     s.openingPhaseTotal = Game._opening.durations[Game._opening.phase] or 0
     s.veggies = veggies
-    -- v0.13.65锛氬湪鍦哄够褰变綋绱犲潡锛堝彧璇伙紱娓叉煋灞傜敾鎴愰珮浜柟鍧楋級銆傚師濮嬪紩鐢紝涓嶅仛娣辨嫹璐濄€?
+    -- v0.13.65：在场幻影体素块（只读；渲染层画成高亮方块）。原始引用，不做深拷贝。
     s.phantoms = Game._phantom.list
     s.marbles = marbles
     s.aiming = aiming
-    -- v0.11.4锛氭柊鎵嬩笅鎷夋彁绀哄彧鍦ㄣ€屾湰灞€杩樻病鍙戝皠杩囥€佷篃娌℃鍦ㄦ嫋鎷姐€嶆椂鏄剧ず銆?
+    -- v0.11.4：新手下拉提示只在「本局还没发射过、也没正在拖拽」时显示。
     s.showPullHint = (gameState == "playing") and (not hasLaunched) and (not aiming)
     s.aimX = aimX
     s.aimY = aimY
@@ -4121,27 +4085,27 @@ function Game.GetSnapshot()
     s.slingY = SLING_Y
     s.maxPull = MAX_PULL
     s.activeBall = activeBall
-    -- v0.10.19锛氭嫋鎷借搫鍔涜秴杩囨鍖烘椂杈撳嚭涓€鏉＄洿鐬勭嚎锛堣鍒欏眰绠楀埌鏈€杩戠帺娉曡竟鐣岀殑浜ょ偣锛夛紝
-    -- 3D 鍚庣鍙礋璐ｇ敾锛屼笉鍋氬弽寮归娴嬨€?
+    -- v0.10.19：拖拽蓄力超过死区时输出一条直瞄线（规则层算到最近玩法边界的交点），
+    -- 3D 后端只负责画，不做反弹预测。
     s.aimLine = ComputeAimLine()
     s.ballQueue = ballQueue
     s.ballOrder = BALL_ORDER
     s.unlockedBalls = unlockedBalls
-    -- v0.12.15锛氭湰灞€寮硅嵂鎬婚噺锛? 杈嗗緟鍙?+ 澶囧脊锛夛紝渚涖€屽脊鑽墿瀹广€嶅睍绀轰笌鏍￠獙銆?
+    -- v0.12.15：本局弹药总量（1 辆待发 + 备弹），供「弹药扩容」展示与校验。
     s.ammoCapacity = ammoCapacity
     s.width = DW
     s.height = DH
     s.dangerY = DANGER_Y
     s.topBound = TOP_BOUND_Y
-    -- v0.10.31锛氫笅涓€娉㈤鍛婂彧璇昏鍒掞紝娓叉煋灞傜敾灏忓浘锛屼笉鍙嶅悜鍐欒鍒欍€?
+    -- v0.10.31：下一波预告只读计划，渲染层画小图，不反向写规则。
     s.nextWave = (gameState == "playing") and nextWavePlan or nil
     s.waveCooldown = waveCooldown
-    -- v0.13.24锛氳繘鍏冲噯澶囨湡鍓╀綑绉掓暟锛堟覆鏌撳眰鐢昏繃娓?鍑嗗鐣岄潰锛?0 = 鏈紑鎴橈級
+    -- v0.13.24：进关准备期剩余秒数（渲染层画过渡/准备界面；>0 = 未开战）
     s.introTimer = introTimer
     s.introTotal = INTRO_SECONDS
     s.canRevive = (gameState == "gameover") and not reviveUsed
     s.reviveUsed = reviveUsed
-    -- v0.11.0 鍟嗕笟鍖栵細灞€鍐呴浂浠朵笌鍗囩骇闈㈡澘鍙樼幇鐘舵€侊紙娓叉煋灞傚彧璇伙級銆?
+    -- v0.11.0 商业化：局内零件与升级面板变现状态（渲染层只读）。
     s.partsEarned = math.floor(partsEarned)
     local aircraftList = {}
     for key in pairs(runAircraft) do aircraftList[#aircraftList + 1] = key end
@@ -4151,10 +4115,10 @@ function Game.GetSnapshot()
     s.partsDoubled = partsDoubled
     s.canDoubleSettle = Game.CanDoubleSettle()
     s.rerollFreeAvailable = Game.CanFreeReroll()
-    -- v0.13.64锛氬厤璐归噸鎶界殑銆屽墿浣?/ 鎬绘暟銆嶏紝渚涘崌绾ч潰鏉挎樉绀?N/M锛堝ぉ璧嬪彲鎻愬崌涓婇檺锛夈€?
+    -- v0.13.64：免费重抽的「剩余 / 总数」，供升级面板显示 N/M（天赋可提升上限）。
     s.rerollFreeLeft = math.max(0, Game.GetFreeRerollTotal() - upgradeRerollFreeUsed)
     s.rerollFreeTotal = Game.GetFreeRerollTotal()
-    -- 鏆傚仠琛ョ粰绔欙紙鍙锛屼緵鏆傚仠闈㈡澘鐢绘寜閽級
+    -- 暂停补给站（只读，供暂停面板画按钮）
     s.canPauseHeal = Game.CanPauseHeal()
     s.pauseHealLeft = Game.GetPauseHealLeft()
     s.canPauseRarePick = Game.CanPauseRarePick()
@@ -4163,8 +4127,8 @@ function Game.GetSnapshot()
     s.canPauseReload = Game.CanPauseReload()
     s.canPausePartsBoost = Game.CanPausePartsBoost()
     s.partsBoostTime = partsBoostTime
-    -- 灞€鍐呴亾鍏锋Ы锛堟覆鏌撳眰鍙锛夛細姣忔牸 {key,name,color,charges,canGrant,usedThisRun}
-    -- usedThisRun 渚涙覆鏌撳眰鐢ㄣ€岀簿鐏靛彉鏆?+ 瑙掓爣銆嶈〃杈俱€屾湰灞€宸茬敤杩囥€嶏紝涓嶅啓鏂囧瓧銆?
+    -- 局内道具槽（渲染层只读）：每格 {key,name,color,charges,canGrant,usedThisRun}
+    -- usedThisRun 供渲染层用「精灵变暗 + 角标」表达「本局已用过」，不写文字。
     local items = {}
     for i = 1, #ITEM_DEFS do
         local def = ITEM_DEFS[i]
@@ -4177,8 +4141,8 @@ function Game.GetSnapshot()
     end
     s.items = items
     s.baseShield = baseShield
-    -- v0.13.58锛氶檮榄斿崱鍙蹇収锛堝乏涓婅灞曠ず锛夈€俢ard=鍦ㄦ墜锛宲ending=宸查『寤剁粰涓嬩竴杈嗗緟鍙戣溅銆?
-    -- 鍙湪鏈夊崱/鏈夐『寤舵椂鏂板缓灏忚〃锛岄伩鍏嶆瘡甯?GC锛堟棤鍗℃椂缃?nil锛夈€?
+    -- v0.13.58：附魔卡只读快照（左上角展示）。card=在手，pending=已顺延给下一辆待发车。
+    -- 只在有卡/有顺延时新建小表，避免每帧 GC（无卡时置 nil）。
     local ecard, epend = Game._enchant.card, Game._enchant.pending
     s.enchantCard = ecard and {
         id = ecard.id, name = ecard.name, rarity = ecard.rarity, desc = ecard.desc,
