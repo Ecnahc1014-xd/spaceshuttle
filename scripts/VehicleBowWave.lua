@@ -62,7 +62,7 @@ local S = {
     faulted = false,
 }
 local M = {}
-local SEGMENTS, MAX_CARS = 16, 8
+local SEGMENTS, MAX_CARS = 10, 8
 -- V 形冲击波：中央折角朝车头前方，两翼后掠并展开到车体半宽之外。
 -- v0.13.64：整体放大 + 三层叠放（外层宽而淡 / 中层 / 内层窄而亮热核），不再是一条薄带。
 local V_DEPTH, V_SPREAD, THICKNESS, HALF_HEIGHT, GAP = 0.62, 1.90, 0.18, 0.12, 0.20

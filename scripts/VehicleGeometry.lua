@@ -147,12 +147,13 @@ local function AddWheels(tire, metal, positions, offset, radius, spokes)
     --                   /|\ 控制臂
     --                ( 轮心 )  z=0，各轮半径相同，最低点均为 +radius。
     for _, x in ipairs(positions) do
-        AddRod(metal, Vector3(x, -offset + 0.08, 0), Vector3(x, offset - 0.08, 0), 0.045, 8)
+        AddRod(metal, Vector3(x, -offset + 0.08, 0), Vector3(x, offset - 0.08, 0), 0.045, 6)
         for _, sign in ipairs({-1, 1}) do
             local y = sign * offset
             -- 胎冠窄于中段，胎肩为斜面；胎侧、凹轮辋、辐条、中心盖分层。
             local bands = {{-0.10, 0.89}, {-0.075, 1}, {0.075, 1}, {0.10, 0.89}}
-            local segments = 16
+            -- v0.13.66 减面：轮胎/轮辋 16→10 段（屏上 ~40px 车体肉眼看不出差异）。
+            local segments = 10
             for band = 1, #bands - 1 do
                 for i = 0, segments - 1 do
                     local a, b = i * math.pi * 2 / segments, (i + 1) * math.pi * 2 / segments
@@ -177,7 +178,7 @@ local function AddWheels(tire, metal, positions, offset, radius, spokes)
             end
             local faceY = y + sign * 0.111
             AddArcY(metal, x, faceY, 0, radius * 0.53, radius * 0.64, 0.014, 0, math.pi * 2, segments)
-            AddCylinderY(metal, x, faceY + sign * 0.012, 0, radius * 0.16, 0.025, 8)
+            AddCylinderY(metal, x, faceY + sign * 0.012, 0, radius * 0.16, 0.025, 6)
             for i = 0, spokes - 1 do
                 local angle = i * math.pi * 2 / spokes
                 local a = Vector3(x + math.cos(angle) * radius * 0.14, faceY + sign * 0.01, math.sin(angle) * radius * 0.14)
@@ -191,7 +192,7 @@ local function AddWheels(tire, metal, positions, offset, radius, spokes)
                 AddQuad(metal, a - edge + depth, a + edge + depth, b + edge + depth, b - edge + depth, Vector3(0, -sign, 0))
             end
             for _, dx in ipairs({-0.16, 0.16}) do
-                AddRod(metal, Vector3(x + dx, sign * 0.38, -0.12), Vector3(x, y - sign * 0.095, 0), 0.026, 6)
+                AddRod(metal, Vector3(x + dx, sign * 0.38, -0.12), Vector3(x, y - sign * 0.095, 0), 0.026, 5)
             end
         end
     end
@@ -242,7 +243,7 @@ local function AddFenders(body, positions, offset, radius)
     for _, x in ipairs(positions) do
         for _, sign in ipairs({-1, 1}) do
             AddArcY(body, x, sign * (offset - 0.075), 0, radius + 0.038, radius + 0.083,
-                0.095, -math.pi + 0.10, -0.10, 12)
+                0.095, -math.pi + 0.10, -0.10, 8)
         end
     end
 end
@@ -293,7 +294,7 @@ end
 
 local function AddMirrors(tire, metal, x, width, z)
     for _, sign in ipairs({-1, 1}) do
-        AddRod(metal, Vector3(x, sign * width, z), Vector3(x - 0.07, sign * (width + 0.12), z - 0.05), 0.018, 6)
+        AddRod(metal, Vector3(x, sign * width, z), Vector3(x - 0.07, sign * (width + 0.12), z - 0.05), 0.018, 5)
         AddRoundedPrism(tire, x - 0.07, sign * (width + 0.14), z - 0.11, z + 0.03, 0.15, 0.08, 0.015)
         AddRoundedPrism(metal, x - 0.145, sign * (width + 0.14), z - 0.085, z + 0.005, 0.009, 0.056, 0.003)
     end
@@ -357,7 +358,7 @@ local function BuildSUV(body, side, tire, metal, glass, light)
         AddRoundedPrism(metal, -0.0675, sign * 0.69, -0.11, -0.04, 1.355, 0.14, 0.015)
         AddRoundedPrism(metal, -0.15, sign * 0.43, -0.98, -0.94, 1.53, 0.036, 0.008)
         for _, x in ipairs({-0.78, 0.47}) do
-            AddRod(metal, Vector3(x, sign * 0.43, -0.905), Vector3(x, sign * 0.43, -0.962), 0.022, 6)
+            AddRod(metal, Vector3(x, sign * 0.43, -0.905), Vector3(x, sign * 0.43, -0.962), 0.022, 5)
             AddRoundedPrism(metal, x - 0.12, sign * 0.62, -0.43, -0.407, 0.16, 0.016, 0.004)
         end
     end
@@ -384,7 +385,7 @@ local function BuildSports(body, side, tire, metal, glass, light)
         AddRoundedPrism(side, -0.0675, sign * 0.62, -0.10, -0.055, 1.395, 0.12, 0.012)
         AddRoundedPrism(tire, -0.64, sign * 0.628, -0.27, -0.12, 0.32, 0.012, 0.007)
         AddRoundedPrism(metal, -0.97, sign * 0.38, -0.48, -0.395, 0.07, 0.05, 0.010)
-        AddRod(metal, Vector3(-0.97, sign * 0.38, -0.44), Vector3(-1.40, sign * 0.38, -0.535), 0.020, 6)
+        AddRod(metal, Vector3(-0.97, sign * 0.38, -0.44), Vector3(-1.40, sign * 0.38, -0.535), 0.020, 5)
     end
     -- 双支脚落在后甲板，翼面不悬浮；此处不再叠通用车顶套件。
     AddRoundedPrism(side, -1.40, 0, -0.56, -0.515, 0.19, 1.17, 0.035)
@@ -434,8 +435,8 @@ local function BuildArmored(body, side, tire, metal, glass, light)
             AddFrustum(side, x, sign * 0.619, -0.70, -0.41, 0.51, 0.065, 0.56, 0.105, 0.016)
             AddRoundedPrism(metal, x + 0.13, sign * 0.677, -0.59, -0.552, 0.035, 0.012, 0.004)
         end
-        AddRod(metal, Vector3(-0.87, sign * 0.37, -0.873), Vector3(-0.87, sign * 0.37, -0.91), 0.025, 6)
-        AddRod(metal, Vector3(-0.19, sign * 0.37, -0.873), Vector3(-0.19, sign * 0.37, -0.91), 0.025, 6)
+        AddRod(metal, Vector3(-0.87, sign * 0.37, -0.873), Vector3(-0.87, sign * 0.37, -0.91), 0.025, 5)
+        AddRod(metal, Vector3(-0.19, sign * 0.37, -0.873), Vector3(-0.19, sign * 0.37, -0.91), 0.025, 5)
         AddRoundedPrism(metal, -0.53, sign * 0.37, -0.935, -0.90, 0.77, 0.040, 0.008)
     end
     AddRoundedPrism(tire, 1.638, 0, -0.38, -0.25, 0.015, 0.89, 0.009)
@@ -459,21 +460,21 @@ local function BuildBuggy(body, side, tire, metal, glass, light)
         local topFront = Vector3(0.04, sign * 0.40, -0.78)
         local topRear = Vector3(-0.70, sign * 0.40, -0.78)
         local footRear = Vector3(-1.04, sign * 0.43, -0.28)
-        AddRod(metal, footFront, topFront, 0.036, 8)
-        AddRod(metal, topFront, topRear, 0.036, 8)
-        AddRod(metal, topRear, footRear, 0.036, 8)
-        AddRod(metal, footFront, footRear, 0.031, 8)
-        AddRod(metal, Vector3(-0.72, sign * 0.50, -0.25), Vector3(-0.98, sign * 0.682, 0), 0.028, 6)
-        AddRod(metal, Vector3(0.35, sign * 0.43, -0.29), Vector3(0.97, sign * 0.682, 0), 0.028, 6)
+        AddRod(metal, footFront, topFront, 0.036, 6)
+        AddRod(metal, topFront, topRear, 0.036, 6)
+        AddRod(metal, topRear, footRear, 0.036, 6)
+        AddRod(metal, footFront, footRear, 0.031, 6)
+        AddRod(metal, Vector3(-0.72, sign * 0.50, -0.25), Vector3(-0.98, sign * 0.682, 0), 0.028, 5)
+        AddRod(metal, Vector3(0.35, sign * 0.43, -0.29), Vector3(0.97, sign * 0.682, 0), 0.028, 5)
     end
     for _, x in ipairs({0.04, -0.70}) do
-        AddRod(metal, Vector3(x, -0.40, -0.78), Vector3(x, 0.40, -0.78), 0.036, 8)
+        AddRod(metal, Vector3(x, -0.40, -0.78), Vector3(x, 0.40, -0.78), 0.036, 6)
     end
-    AddRod(metal, Vector3(-0.70, -0.40, -0.78), Vector3(-1.04, 0.43, -0.27), 0.026, 6)
+    AddRod(metal, Vector3(-0.70, -0.40, -0.78), Vector3(-1.04, 0.43, -0.27), 0.026, 5)
     AddWindshield(glass, 0.055, 0.31, -0.755, -0.32, 0.76, 0.80)
     AddRoundedPrism(metal, 1.51, 0, -0.29, -0.20, 0.075, 1.07, 0.02)
     for _, sign in ipairs({-1, 1}) do
-        AddRod(metal, Vector3(1.15, sign * 0.36, -0.20), Vector3(1.51, sign * 0.36, -0.27), 0.025, 6)
+        AddRod(metal, Vector3(1.15, sign * 0.36, -0.20), Vector3(1.51, sign * 0.36, -0.27), 0.025, 5)
         AddRoundedPrism(light, 1.43, sign * 0.29, -0.50, -0.43, 0.09, 0.12, 0.012)
         AddRod(metal, Vector3(1.30, sign * 0.29, -0.37), Vector3(1.43, sign * 0.29, -0.465), 0.023, 6)
     end
@@ -483,7 +484,7 @@ local function BuildBuggy(body, side, tire, metal, glass, light)
     -- 沙地车轮距宽于窄侧壳，轮眉必须通过短支座接回侧围，不能悬浮在胎外。
     for _, x in ipairs(axles) do
         for _, sign in ipairs({-1, 1}) do
-            AddRod(metal, Vector3(x, sign * 0.50, -0.278), Vector3(x, sign * 0.688, -0.332), 0.022, 6)
+            AddRod(metal, Vector3(x, sign * 0.50, -0.278), Vector3(x, sign * 0.688, -0.332), 0.022, 5)
         end
     end
     AddLamps(light, 1.55, -1.56, 0.38, -0.32)
