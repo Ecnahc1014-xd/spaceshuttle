@@ -5,7 +5,7 @@
     "id": "170922189"
   },
   "entry": "main.lua",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "taptap_publish": {
     "title": "货车大战飞机",
     "description": "竖屏弹射对战：拖拽发射重卡撞击像素敌机，逐块击碎、波次推进、三选一强化。",
@@ -50,12 +50,12 @@
     "square_promotional_image_url": "https://tapcode-sce.spark.xd.com/assets/game_material/货车大战飞机/SQUARE_PROMO_2026-10-13T14-08-07_01.jpg"
   },
   "metadata": {
-    "updated_at": "2026-10-16T04:43:30.516Z",
+    "updated_at": "2026-10-16T04:44:18.697Z",
     "promo_dependent_hash": "a2a10fb10c416c45eb0ddadaa374b0b4"
   },
   "test_qrcode": {
-    "url": "https://tapcode-sce.spark.xd.com/qrcode/p_q74c_1792125810403.png",
-    "generated_at": "2026-10-16T04:43:30.516Z"
+    "url": "https://tapcode-sce.spark.xd.com/qrcode/p_q74c_1792125858600.png",
+    "generated_at": "2026-10-16T04:44:18.697Z"
   },
   "entry@client": "main.lua",
   "entry@server": "main.lua"
