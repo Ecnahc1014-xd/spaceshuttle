@@ -5,7 +5,7 @@
     "id": "170922189"
   },
   "entry": "main.lua",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "taptap_publish": {
     "title": "货车大战飞机",
     "description": "竖屏弹射对战：拖拽发射重卡撞击像素敌机，逐块击碎、波次推进、三选一强化。",
