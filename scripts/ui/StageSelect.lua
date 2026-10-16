@@ -1,15 +1,15 @@
 -- ui/StageSelect.lua
--- 选关界面（NanoVG）。v0.13.14：改为**开心消消乐式蜿蜒路径地图**。
+-- 閫夊叧鐣岄潰锛圢anoVG锛夈€倂0.13.14锛氭敼涓?*寮€蹇冩秷娑堜箰寮忚溈铚掕矾寰勫湴鍥?*銆?
 --
--- 用户否决了上一版「直线微偏移的细描边圆钮」，参考图给的是消消乐关卡地图：
---   · 一条**粗壮的蜿蜒路径**贯穿全屏，左右来回摆动（振幅大、周期长，肉眼看出"蛇形"）；
---   · 关卡节点是**大圆果冻钮**：亮色外圈 + 内部亮芯 + 粗描边数字，像可点的糖果；
---   · 节点**下方三颗星**（已得=实心亮星，未得=暗星）；
---   · 两侧竖排**圆形图标栏**（左侧道具购买、右侧装饰/收集），图标大而圆；
---   · 第 1 关在最下方，越往上关数越高，可一直往上爬。
+-- 鐢ㄦ埛鍚﹀喅浜嗕笂涓€鐗堛€岀洿绾垮井鍋忕Щ鐨勭粏鎻忚竟鍦嗛挳銆嶏紝鍙傝€冨浘缁欑殑鏄秷娑堜箰鍏冲崱鍦板浘锛?
+--   路 涓€鏉?*绮楀．鐨勮溈铚掕矾寰?*璐┛鍏ㄥ睆锛屽乏鍙虫潵鍥炴憜鍔紙鎸箙澶с€佸懆鏈熼暱锛岃倝鐪肩湅鍑?铔囧舰"锛夛紱
+--   路 鍏冲崱鑺傜偣鏄?*澶у渾鏋滃喕閽?*锛氫寒鑹插鍦?+ 鍐呴儴浜姱 + 绮楁弿杈规暟瀛楋紝鍍忓彲鐐圭殑绯栨灉锛?
+--   路 鑺傜偣**涓嬫柟涓夐鏄?*锛堝凡寰?瀹炲績浜槦锛屾湭寰?鏆楁槦锛夛紱
+--   路 涓や晶绔栨帓**鍦嗗舰鍥炬爣鏍?*锛堝乏渚ч亾鍏疯喘涔般€佸彸渚ц楗?鏀堕泦锛夛紝鍥炬爣澶ц€屽渾锛?
+--   路 绗?1 鍏冲湪鏈€涓嬫柟锛岃秺寰€涓婂叧鏁拌秺楂橈紝鍙竴鐩村線涓婄埇銆?
 --
--- ⚠️ UI 无污染：沿用游戏 dark-tech 令牌与 NanoVG 原语（依赖注入，不引入控件树）。
--- ⚠️ 本模块只画与命中；开某关 / 买道具由编排层（client_main.lua）执行。
+-- 鈿狅笍 UI 鏃犳薄鏌擄細娌跨敤娓告垙 dark-tech 浠ょ墝涓?NanoVG 鍘熻锛堜緷璧栨敞鍏ワ紝涓嶅紩鍏ユ帶浠舵爲锛夈€?
+-- 鈿狅笍 鏈ā鍧楀彧鐢讳笌鍛戒腑锛涘紑鏌愬叧 / 涔伴亾鍏风敱缂栨帓灞傦紙client_main.lua锛夋墽琛屻€?
 
 local StageCatalog = require "StageCatalog"
 local ItemShop = require "ui.ItemShop"
@@ -19,7 +19,7 @@ local ArtText = require "ui.ArtText"
 
 local StageSelect = {}
 
----@type table|nil  与 MetaUI.Init 相同的依赖表（C 令牌 + 绘制原语）
+---@type table|nil  涓?MetaUI.Init 鐩稿悓鐨勪緷璧栬〃锛圕 浠ょ墝 + 缁樺埗鍘熻锛?
 local D = nil
 
 ---@param deps table
@@ -41,20 +41,20 @@ local function Inside(r, px, py)
 end
 
 -- ============================================================================
--- 常量（蜿蜒路径几何）
+-- 甯搁噺锛堣溈铚掕矾寰勫嚑浣曪級
 -- ============================================================================
 
-local NODE_R = 40            -- 关卡果冻钮半径（比上一版大，像可点的糖果）
-local ROW_STEP = 132         -- 相邻关卡的纵向间距（够大才显出"路"）
-local SWAY_AMP = 96          -- 横向摆动幅度（大振幅 = 明显蛇形，不再"轻度"）
-local SWAY_PERIOD = 3        -- 每几关完成一次左右来回（周期长 = 大 S 弯）
-local SIDE_ICON_R = 26       -- 两侧圆形图标半径
+local NODE_R = 40            -- 鍏冲崱鏋滃喕閽崐寰勶紙姣斾笂涓€鐗堝ぇ锛屽儚鍙偣鐨勭硸鏋滐級
+local ROW_STEP = 132         -- 鐩搁偦鍏冲崱鐨勭旱鍚戦棿璺濓紙澶熷ぇ鎵嶆樉鍑?璺?锛?
+local SWAY_AMP = 96          -- 妯悜鎽嗗姩骞呭害锛堝ぇ鎸箙 = 鏄庢樉铔囧舰锛屼笉鍐?杞诲害"锛?
+local SWAY_PERIOD = 3        -- 姣忓嚑鍏冲畬鎴愪竴娆″乏鍙虫潵鍥烇紙鍛ㄦ湡闀?= 澶?S 寮級
+local SIDE_ICON_R = 26       -- 涓や晶鍦嗗舰鍥炬爣鍗婂緞
 
--- 路径采样密度（贝塞尔分段数），越大越平滑
+-- 璺緞閲囨牱瀵嗗害锛堣礉濉炲皵鍒嗘鏁帮級锛岃秺澶ц秺骞虫粦
 local PATH_SEGMENTS = 14
 
 -- ============================================================================
--- 滚动状态（由编排层转发 Scroll* 调用）
+-- 婊氬姩鐘舵€侊紙鐢辩紪鎺掑眰杞彂 Scroll* 璋冪敤锛?
 -- ============================================================================
 
 local scrollY_ = 0
@@ -65,16 +65,16 @@ local dragMoved_ = false
 local lastMaxStage_ = 1
 
 -- ============================================================================
--- 布局
+-- 甯冨眬
 -- ============================================================================
 
 ---@class StageSelectLayout
----@field content table 可视内容区（含裁剪）
+---@field content table 鍙鍐呭鍖猴紙鍚鍓級
 ---@field close table
----@field towerX number 路径中心基准 x
----@field nodeY table<integer, number> 每关圆心 y（已应用滚动偏移）
----@field itemRows table[] 左侧道具购买行几何
----@field contentH number 全部内容高度
+---@field towerX number 璺緞涓績鍩哄噯 x
+---@field nodeY table<integer, number> 姣忓叧鍦嗗績 y锛堝凡搴旂敤婊氬姩鍋忕Щ锛?
+---@field itemRows table[] 宸︿晶閬撳叿璐拱琛屽嚑浣?
+---@field contentH number 鍏ㄩ儴鍐呭楂樺害
 ---@field maxStage integer
 
 ---@param w number
@@ -87,12 +87,12 @@ local function GetLayout(w, maxStage)
     local close = { x = x + sw - 46, y = y + 8, w = 36, h = 36 }
 
     local towerX = content.x + content.w * 0.5
-    -- 第 1 关在最下方：nodeY(1) = 内容区底部；越往上 y 越小。
+    -- 绗?1 鍏冲湪鏈€涓嬫柟锛歯odeY(1) = 鍐呭鍖哄簳閮紱瓒婂線涓?y 瓒婂皬銆?
     local botPad = NODE_R + 30
     local topPad = NODE_R + 30
     local contentH = topPad + botPad + (maxStage - 1) * ROW_STEP
-    -- ⚠️ 关卡数少时内容矮于可视区：贴底会让上方留一大片空白（"没适配"观感）。
-    -- 此时把整座塔**垂直居中**，让路径落在视觉中心。
+    -- 鈿狅笍 鍏冲崱鏁板皯鏃跺唴瀹圭煯浜庡彲瑙嗗尯锛氳创搴曚細璁╀笂鏂圭暀涓€澶х墖绌虹櫧锛?娌￠€傞厤"瑙傛劅锛夈€?
+    -- 姝ゆ椂鎶婃暣搴у**鍨傜洿灞呬腑**锛岃璺緞钀藉湪瑙嗚涓績銆?
     local freeSpace = content.h - contentH
     local centerOffset = freeSpace > 0 and freeSpace * 0.5 or 0
 
@@ -103,7 +103,7 @@ local function GetLayout(w, maxStage)
             + scrollY_ - centerOffset
     end
 
-    -- 左侧道具行：靠左边缘竖排（与路径不重叠：路径振幅 SWAY_AMP + NODE_R）。
+    -- 宸︿晶閬撳叿琛岋細闈犲乏杈圭紭绔栨帓锛堜笌璺緞涓嶉噸鍙狅細璺緞鎸箙 SWAY_AMP + NODE_R锛夈€?
     ---@type table[]
     local itemRows = {}
     local rowH = 104
@@ -125,7 +125,7 @@ local function GetLayout(w, maxStage)
     }
 end
 
--- 任意关号的圆心 y（含滚动与居中偏移）——供「未来关幽灵节点」这类 stage > maxStage 的绘制用。
+-- 浠绘剰鍏冲彿鐨勫渾蹇?y锛堝惈婊氬姩涓庡眳涓亸绉伙級鈥斺€斾緵銆屾湭鏉ュ叧骞界伒鑺傜偣銆嶈繖绫?stage > maxStage 鐨勭粯鍒剁敤銆?
 ---@param L StageSelectLayout
 ---@param stage integer
 ---@return number
@@ -134,18 +134,18 @@ local function NodeYAt(L, stage)
         + scrollY_ - L.centerOffset
 end
 
----@return number 滚动上限（0 表示内容不高于可视区）
+---@return number 婊氬姩涓婇檺锛? 琛ㄧず鍐呭涓嶉珮浜庡彲瑙嗗尯锛?
 local function MaxScroll(L)
     return math.max(0, L.contentH - L.content.h)
 end
 
 local function ClampScroll(L)
-    -- 塔从下往上延伸：更高关要靠正偏移移入可视区，不能套普通列表的负偏移范围。
+    -- 濉斾粠涓嬪線涓婂欢浼革細鏇撮珮鍏宠闈犳鍋忕Щ绉诲叆鍙鍖猴紝涓嶈兘濂楁櫘閫氬垪琛ㄧ殑璐熷亸绉昏寖鍥淬€?
     scrollY_ = math.max(0, math.min(MaxScroll(L), scrollY_))
 end
 
--- 某关的横向偏移：**大振幅确定性正弦**（写死在代码里，非随机）。
--- 周期 SWAY_PERIOD 关一次来回 → 形成明显的大 S 弯，而不是"轻微抖动"。
+-- 鏌愬叧鐨勬í鍚戝亸绉伙細**澶ф尟骞呯‘瀹氭€ф寮?*锛堝啓姝诲湪浠ｇ爜閲岋紝闈為殢鏈猴級銆?
+-- 鍛ㄦ湡 SWAY_PERIOD 鍏充竴娆℃潵鍥?鈫?褰㈡垚鏄庢樉鐨勫ぇ S 寮紝鑰屼笉鏄?杞诲井鎶栧姩"銆?
 ---@param stage integer
 ---@return number
 local function StageSway(stage)
@@ -160,21 +160,21 @@ local function NodeCenter(L, stage)
     return L.towerX + StageSway(stage), L.nodeY[stage]
 end
 
--- 把视图滚动到「最新已解锁关」——打开面板时默认定位到它。
+-- 鎶婅鍥炬粴鍔ㄥ埌銆屾渶鏂板凡瑙ｉ攣鍏炽€嶁€斺€旀墦寮€闈㈡澘鏃堕粯璁ゅ畾浣嶅埌瀹冦€?
 ---@param w number
 ---@param maxStage integer
 function StageSelect.FocusLatest(w, maxStage)
     lastMaxStage_ = math.max(1, maxStage or 1)
     scrollY_ = 0
     local L = GetLayout(w, lastMaxStage_)
-    -- 让最新关落在可视区底部偏上，露出下方路径的"来路"。
+    -- 璁╂渶鏂板叧钀藉湪鍙鍖哄簳閮ㄥ亸涓婏紝闇插嚭涓嬫柟璺緞鐨?鏉ヨ矾"銆?
     local target = L.content.y + L.content.h - NODE_R - 110
     scrollY_ = target - L.nodeY[lastMaxStage_]
     ClampScroll(L)
 end
 
 -- ============================================================================
--- 绘制原语（圆、平滑路径）
+-- 缁樺埗鍘熻锛堝渾銆佸钩婊戣矾寰勶級
 -- ============================================================================
 
 ---@param ctx any
@@ -204,10 +204,10 @@ local function CircleStroke(ctx, cx, cy, r, color, width)
 end
 
 -- ============================================================================
--- 星图原语（v0.13.59 风格重做：六边形关卡芯片 + 星座连线 + 星空）
+-- 鏄熷浘鍘熻锛坴0.13.59 椋庢牸閲嶅仛锛氬叚杈瑰舰鍏冲崱鑺墖 + 鏄熷骇杩炵嚎 + 鏄熺┖锛?
 -- ============================================================================
 
--- 正六边形路径（尖角朝上下）。绘制与命中共用同一形状，保证「看着能点=点得到」。
+-- 姝ｅ叚杈瑰舰璺緞锛堝皷瑙掓湞涓婁笅锛夈€傜粯鍒朵笌鍛戒腑鍏辩敤鍚屼竴褰㈢姸锛屼繚璇併€岀湅鐫€鑳界偣=鐐瑰緱鍒般€嶃€?
 ---@param ctx any
 ---@param cx number
 ---@param cy number
@@ -246,7 +246,7 @@ local function HexStroke(ctx, cx, cy, r, color, width)
     nvgStroke(ctx)
 end
 
--- 确定性星空（无随机状态；滚动时整体视差，营造「航行」感）。合并成单一路径避免命令缓冲溢出（AB-216）。
+-- 纭畾鎬ф槦绌猴紙鏃犻殢鏈虹姸鎬侊紱婊氬姩鏃舵暣浣撹宸紝钀ラ€犮€岃埅琛屻€嶆劅锛夈€傚悎骞舵垚鍗曚竴璺緞閬垮厤鍛戒护缂撳啿婧㈠嚭锛圓B-216锛夈€?
 ---@param ctx any
 ---@param area table {x,y,w,h}
 local function DrawStarfield(ctx, area)
@@ -262,7 +262,7 @@ local function DrawStarfield(ctx, area)
     end
     nvgFillColor(ctx, nvgRGBA(C.text[1], C.text[2], C.text[3], 60))
     nvgFill(ctx)
-    -- 少量亮星
+    -- 灏戦噺浜槦
     nvgBeginPath(ctx)
     for i = 0, 11 do
         local sx = area.x + ((i * 271 + 97) % math.max(1, math.floor(area.w)))
@@ -274,12 +274,12 @@ local function DrawStarfield(ctx, area)
     nvgRestore(ctx)
 end
 
--- 关卡芯片的水平半宽（命中与连线让位共用）。
+-- 鍏冲崱鑺墖鐨勬按骞冲崐瀹斤紙鍛戒腑涓庤繛绾胯浣嶅叡鐢級銆?
 local function NodeHalfW()
     return NODE_R * 0.87
 end
 
--- 沿两节点的连线方向各内缩 `pad`，得到不压住芯片的线段端点。
+-- 娌夸袱鑺傜偣鐨勮繛绾挎柟鍚戝悇鍐呯缉 `pad`锛屽緱鍒颁笉鍘嬩綇鑺墖鐨勭嚎娈电鐐广€?
 ---@param ax number
 ---@param ay number
 ---@param bx number
@@ -297,7 +297,7 @@ local function LinkGaps(ax, ay, bx, by, pad)
     return ax + ux * pad, ay + uy * pad, bx - ux * pad, by - uy * pad
 end
 
--- 两节点间的星座连线：外发光 + 主线 + 芯线（三层做出「有能量」的观感）。
+-- 涓よ妭鐐归棿鐨勬槦搴ц繛绾匡細澶栧彂鍏?+ 涓荤嚎 + 鑺嚎锛堜笁灞傚仛鍑恒€屾湁鑳介噺銆嶇殑瑙傛劅锛夈€?
 ---@param ctx any
 ---@param ax number
 ---@param ay number
@@ -323,7 +323,7 @@ local function DrawLink(ctx, ax, ay, bx, by, color, lit)
 end
 
 -- ============================================================================
--- 装饰插图（确定性挑选的低透明度像素块）
+-- 瑁呴グ鎻掑浘锛堢‘瀹氭€ф寫閫夌殑浣庨€忔槑搴﹀儚绱犲潡锛?
 -- ============================================================================
 
 local DECOR = {
@@ -350,7 +350,7 @@ local function DrawDecor(ctx, x, y, scale, index, alpha)
 end
 
 -- ============================================================================
--- 关卡节点（果冻钮 + 粗数字 + 三颗星）
+-- 鍏冲崱鑺傜偣锛堟灉鍐婚挳 + 绮楁暟瀛?+ 涓夐鏄燂級
 -- ============================================================================
 
 ---@param ctx any
@@ -365,7 +365,7 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
     local r = NODE_R
 
     if not unlocked then
-        -- 未解锁：暗色六边形 + 程序化小锁 + 压暗关号（贴图叠色表达，不写文字）。
+        -- 鏈В閿侊細鏆楄壊鍏竟褰?+ 绋嬪簭鍖栧皬閿?+ 鍘嬫殫鍏冲彿锛堣创鍥惧彔鑹茶〃杈撅紝涓嶅啓鏂囧瓧锛夈€?
         HexFill(ctx, cx, cy, r, { 16, 22, 34, 255 })
         HexStroke(ctx, cx, cy, r, { C.dim[1], C.dim[2], C.dim[3], 95 }, 1.4)
         D.rect(ctx, cx - 9, cy - 13, 18, 12, { 120, 138, 160, 235 }, 5)
@@ -378,18 +378,18 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
         return
     end
 
-    -- 已解锁：亮色六边形芯片（有星=金 / 无星=青，与「稀有/主操作」语义一致）。
+    -- 宸茶В閿侊細浜壊鍏竟褰㈣姱鐗囷紙鏈夋槦=閲?/ 鏃犳槦=闈掞紝涓庛€岀█鏈?涓绘搷浣溿€嶈涔変竴鑷达級銆?
     local accent = stars > 0 and C.warn or C.cyan
-    -- 外发光（宽描边低 alpha，不填充以免糊住底图）
+    -- 澶栧彂鍏夛紙瀹芥弿杈逛綆 alpha锛屼笉濉厖浠ュ厤绯婁綇搴曞浘锛?
     HexStroke(ctx, cx, cy, r + 3.5, { accent[1], accent[2], accent[3], 60 }, 7)
-    -- 底盘 + 内环（厚度）
+    -- 搴曠洏 + 鍐呯幆锛堝帤搴︼級
     HexFill(ctx, cx, cy, r, { 26, 40, 62, 255 })
     HexStroke(ctx, cx, cy, r - 5, { accent[1], accent[2], accent[3], 105 }, 1)
-    -- 当前关：整片亮色实心底（深字），是全屏最亮的焦点
+    -- 褰撳墠鍏筹細鏁寸墖浜壊瀹炲績搴曪紙娣卞瓧锛夛紝鏄叏灞忔渶浜殑鐒︾偣
     if current then HexFill(ctx, cx, cy, r - 8, accent) end
-    -- 主环
+    -- 涓荤幆
     HexStroke(ctx, cx, cy, r, accent, current and 3 or 2.2)
-    -- 顶面受光（沿上左/上右两条边画一道亮线，做出「斜切金属」感）
+    -- 椤堕潰鍙楀厜锛堟部涓婂乏/涓婂彸涓ゆ潯杈圭敾涓€閬撲寒绾匡紝鍋氬嚭銆屾枩鍒囬噾灞炪€嶆劅锛?
     nvgBeginPath(ctx)
     nvgMoveTo(ctx, cx - r * 0.5, cy - r * 0.866)
     nvgLineTo(ctx, cx, cy - r)
@@ -398,7 +398,7 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
     nvgStrokeWidth(ctx, 1.2)
     nvgStroke(ctx)
 
-    -- 关号（贴图；缺图回退 zpix）。当前关深字、其余亮字。
+    -- 鍏冲彿锛堣创鍥撅紱缂哄浘鍥為€€ zpix锛夈€傚綋鍓嶅叧娣卞瓧銆佸叾浣欎寒瀛椼€?
     local label = tostring(stage)
     local size = (#label >= 3) and 28 or 38
     local digitColor = current and C.ink or C.text
@@ -407,7 +407,7 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- 当前关：随共享相位脉冲一圈（低频动态，非随机）。
+    -- 褰撳墠鍏筹細闅忓叡浜浉浣嶈剦鍐蹭竴鍦堬紙浣庨鍔ㄦ€侊紝闈為殢鏈猴級銆?
     if current then
         local phase = (D.anim and D.anim() or 0)
         local pulse = 0.5 + 0.5 * math.sin(phase * math.pi * 0.8)
@@ -415,7 +415,7 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
             { accent[1], accent[2], accent[3], math.floor(120 * (1 - pulse)) }, 2)
     end
 
-    -- 三星：画在芯片**下方外侧**，用菱形（与六边形/科技语言一致），实心=已得。
+    -- 涓夋槦锛氱敾鍦ㄨ姱鐗?*涓嬫柟澶栦晶**锛岀敤鑿卞舰锛堜笌鍏竟褰?绉戞妧璇█涓€鑷达級锛屽疄蹇?宸插緱銆?
     local gap = 15
     local sy = cy + r + 13
     for i = 1, 3 do
@@ -441,7 +441,7 @@ local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
 end
 
 -- ============================================================================
--- 两侧圆形图标栏
+-- 涓や晶鍦嗗舰鍥炬爣鏍?
 -- ============================================================================
 
 ---@param ctx any
@@ -465,7 +465,7 @@ local function DrawRoundIcon(ctx, r, iconKey, label, value, valueColor,
     if not D.icon(ctx, iconKey, cx - 14, cy - 14, 28, alpha) then
         Circle(ctx, cx, cy, 9, ring)
     end
-    -- 角标（库存/数量），用数字表达，不写说明文字
+    -- 瑙掓爣锛堝簱瀛?鏁伴噺锛夛紝鐢ㄦ暟瀛楄〃杈撅紝涓嶅啓璇存槑鏂囧瓧
     if badge then
         local bx, by = cx + SIDE_ICON_R - 6, cy - SIDE_ICON_R + 6
         Circle(ctx, bx, by, 11, badgeColor)
@@ -478,12 +478,12 @@ local function DrawRoundIcon(ctx, r, iconKey, label, value, valueColor,
 end
 
 -- ============================================================================
--- 绘制
+-- 缁樺埗
 -- ============================================================================
 
 ---@param ctx any
 ---@param w number
----@param meta table 需含 stageStars / maxStage / itemStock / itemPrices
+---@param meta table 闇€鍚?stageStars / maxStage / itemStock / itemPrices
 function StageSelect.Draw(ctx, w, meta)
     local C = Style()
     local tips = require "ui.GameplayTips"
@@ -493,31 +493,31 @@ function StageSelect.Draw(ctx, w, meta)
     D.backdrop(ctx, 0, 0, w, 960)
     D.shell(ctx, 18, 108, w - 36, 780, 48)
     D.rect(ctx, 18, 156, 3, 22, C.cyan, 0)
-    -- v0.13.58：面板主标题改用 AI 像素艺术字（深底亮字 → tint C.text）；无图回退 zpix。
+    -- v0.13.58锛氶潰鏉夸富鏍囬鏀圭敤 AI 鍍忕礌鑹烘湳瀛楋紙娣卞簳浜瓧 鈫?tint C.text锛夛紱鏃犲浘鍥為€€ zpix銆?
     if not ArtText.Draw(ctx, "stage", 34 + ArtText.Width("stage") * 0.5, 116, C.text) then
-        D.text(ctx, 34, 118, "选择关卡", 22, C.text)
+        D.text(ctx, 34, 118, "閫夋嫨鍏冲崱", 22, C.text)
     end
     local totalStars = 0
     for stage = 1, maxStage do
         totalStars = totalStars + ((meta.stageStars and meta.stageStars[stage]) or 0)
     end
     D.text(ctx, L.content.x + L.content.w - 44, 122,
-        string.format("★ %d", totalStars), 15, C.warn,
+        string.format("鈽?%d", totalStars), 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    -- 关闭按钮
+    -- 鍏抽棴鎸夐挳
     D.panel(ctx, L.close.x, L.close.y, L.close.w, L.close.h, C.card, C.cyanDim, 6)
     D.text(ctx, L.close.x + L.close.w * 0.5, L.close.y + 7, "X", 20, C.dim,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
-    -- ---- 塔身（裁剪到内容区）----
+    -- ---- 濉旇韩锛堣鍓埌鍐呭鍖猴級----
     nvgSave(ctx)
     nvgIntersectScissor(ctx, L.content.x, L.content.y, L.content.w, L.content.h)
 
-    -- 星空底（滚动视差），作为整片星图的基座。
+    -- 鏄熺┖搴曪紙婊氬姩瑙嗗樊锛夛紝浣滀负鏁寸墖鏄熷浘鐨勫熀搴с€?
     DrawStarfield(ctx, L.content)
 
-    -- 仪器边框：四角折线 + 极淡网格 + 顶/底刻度带（与其余面板同语言，只画不进命中）。
+    -- 浠櫒杈规锛氬洓瑙掓姌绾?+ 鏋佹贰缃戞牸 + 椤?搴曞埢搴﹀甫锛堜笌鍏朵綑闈㈡澘鍚岃瑷€锛屽彧鐢讳笉杩涘懡涓級銆?
     D.corner(ctx, L.content.x + 4, L.content.y + 4, L.content.w - 8, L.content.h - 8,
         {C.dim[1], C.dim[2], C.dim[3], 120}, 12, 1)
     D.grid(ctx, L.content.x + 6, L.content.y + 6, L.content.w - 12, L.content.h - 12,
@@ -527,13 +527,13 @@ function StageSelect.Draw(ctx, w, meta)
     D.rule(ctx, L.content.x + 12, L.content.y + L.content.h - 6, L.content.w - 24, 10,
         {C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], 90})
 
-    -- 星座连线：相邻关之间一段；已解锁段亮青、未解锁段暗。
+    -- 鏄熷骇杩炵嚎锛氱浉閭诲叧涔嬮棿涓€娈碉紱宸茶В閿佹浜潚銆佹湭瑙ｉ攣娈垫殫銆?
     for stage = 1, maxStage - 1 do
         local ax, ay = NodeCenter(L, stage)
         local bx, by = NodeCenter(L, stage + 1)
         DrawLink(ctx, ax, ay, bx, by, C.cyan, true)
     end
-    -- 从当前最新关继续往前，延伸出通往「未来关」的暗线（纯装饰，不参与命中）。
+    -- 浠庡綋鍓嶆渶鏂板叧缁х画寰€鍓嶏紝寤朵几鍑洪€氬線銆屾湭鏉ュ叧銆嶇殑鏆楃嚎锛堢函瑁呴グ锛屼笉鍙備笌鍛戒腑锛夈€?
     local px, py = NodeCenter(L, maxStage)
     for k = 1, 5 do
         local nx = L.towerX + StageSway(maxStage + k)
@@ -542,7 +542,7 @@ function StageSelect.Draw(ctx, w, meta)
         px, py = nx, ny
     end
 
-    -- 流动能量点：沿整条航线（已解锁段 + 延伸段）按共享相位前进（确定性，非随机）。
+    -- 娴佸姩鑳介噺鐐癸細娌挎暣鏉¤埅绾匡紙宸茶В閿佹 + 寤朵几娈碉級鎸夊叡浜浉浣嶅墠杩涳紙纭畾鎬э紝闈為殢鏈猴級銆?
     do
         local phase = (D.anim and D.anim() or 0)
         local fpts = {}
@@ -566,7 +566,7 @@ function StageSelect.Draw(ctx, w, meta)
         end
     end
 
-    -- 未来关幽灵六边形：补满内容区、让「航线还很长」可见（极低 alpha，不参与命中）。
+    -- 鏈潵鍏冲菇鐏靛叚杈瑰舰锛氳ˉ婊″唴瀹瑰尯銆佽銆岃埅绾胯繕寰堥暱銆嶅彲瑙侊紙鏋佷綆 alpha锛屼笉鍙備笌鍛戒腑锛夈€?
     for stage = maxStage + 1, maxStage + 6 do
         local cx = L.towerX + StageSway(stage)
         local cy = NodeYAt(L, stage)
@@ -576,7 +576,7 @@ function StageSelect.Draw(ctx, w, meta)
         end
     end
 
-    -- 关卡芯片（从高到低画，避免重叠时低关压住高关）
+    -- 鍏冲崱鑺墖锛堜粠楂樺埌浣庣敾锛岄伩鍏嶉噸鍙犳椂浣庡叧鍘嬩綇楂樺叧锛?
     for stage = maxStage, 1, -1 do
         local cx, cy = NodeCenter(L, stage)
         if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
@@ -585,7 +585,7 @@ function StageSelect.Draw(ctx, w, meta)
         end
     end
 
-    -- 右侧装饰插图（确定性挑选）
+    -- 鍙充晶瑁呴グ鎻掑浘锛堢‘瀹氭€ф寫閫夛級
     local seed = math.floor(scrollY_ / 110)
     for k = 0, 4 do
         local idx = (seed + k) % #DECOR + 1
@@ -597,7 +597,7 @@ function StageSelect.Draw(ctx, w, meta)
 
     nvgRestore(ctx)
 
-    -- ---- 左侧栏：道具购买（圆形图标 + 角标库存 + 价格）----
+    -- ---- 宸︿晶鏍忥細閬撳叿璐拱锛堝渾褰㈠浘鏍?+ 瑙掓爣搴撳瓨 + 浠锋牸锛?---
     local parts = PlayerData.GetParts()
     for i = 1, #StageSelect.ITEM_ORDER do
         local def = StageSelect.ITEM_ORDER[i]
@@ -616,40 +616,40 @@ function StageSelect.Draw(ctx, w, meta)
         end
     end
 
-    -- 关卡列表底部常驻提示：列表加载结束后仍保留一条可轮换的玩法信息。
+    -- 鍏冲崱鍒楄〃搴曢儴甯搁┗鎻愮ず锛氬垪琛ㄥ姞杞界粨鏉熷悗浠嶄繚鐣欎竴鏉″彲杞崲鐨勭帺娉曚俊鎭€?
     local tipIndex = math.floor((D.anim and D.anim() or 0) / 4) % tips.Count() + 1
     local tipY = 898
     D.panel(ctx, 30, tipY, w - 60, 50, C.rail, C.cyanDim, 6)
-    D.text(ctx, 46, tipY + 8, "作战提示", 12, C.cyanDim)
+    D.text(ctx, 46, tipY + 8, "浣滄垬鎻愮ず", 12, C.cyanDim)
     D.text(ctx, 46, tipY + 25, tips.Get(tipIndex), 13, C.text)
 
-    -- 首次进入关卡列表时显示短暂的航线同步加载层，让提示在等待期间也可读。
+    -- 棣栨杩涘叆鍏冲崱鍒楄〃鏃舵樉绀虹煭鏆傜殑鑸嚎鍚屾鍔犺浇灞傦紝璁╂彁绀哄湪绛夊緟鏈熼棿涔熷彲璇汇€?
     if meta.stageSelectLoading then
-        local loadT = math.max(0, math.min(1, (meta.stageSelectLoadingTimer or 0) / 0.72))
+        local loadT = math.max(0, math.min(1, (meta.stageSelectLoadingTimer or 0) / 1.35))
         D.rect(ctx, 0, 0, w, 960, { 4, 8, 16, 220 }, 0)
         local panelW, panelH = w - 96, 214
         local panelX, panelY = 48, 328
         D.panel(ctx, panelX, panelY, panelW, panelH, C.rail, C.cyanDim, 8)
-        D.text(ctx, w * 0.5, panelY + 28, "航线同步中", 22, C.cyan,
+        D.text(ctx, w * 0.5, panelY + 28, "鑸嚎鍚屾涓?, 22, C.cyan,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        D.text(ctx, w * 0.5, panelY + 67, "正在整理关卡航线与补给信息", 14, C.dim,
+        D.text(ctx, w * 0.5, panelY + 67, "姝ｅ湪鏁寸悊鍏冲崱鑸嚎涓庤ˉ缁欎俊鎭?, 14, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        D.text(ctx, panelX + 22, panelY + 112, "提示", 13, C.cyanDim)
+        D.text(ctx, panelX + 22, panelY + 112, "鎻愮ず", 13, C.cyanDim)
         D.text(ctx, panelX + 22, panelY + 137, tips.Get(tipIndex + 1), 15, C.text)
         D.progress(ctx, panelX + 22, panelY + 178, panelW - 44, 1 - loadT, C.cyan, 5)
     end
 end
 
 -- ============================================================================
--- 命中：返回 (action, index)。
---   "play_stage" + 关号 / "buy_item" + 道具序号 / "close"
+-- 鍛戒腑锛氳繑鍥?(action, index)銆?
+--   "play_stage" + 鍏冲彿 / "buy_item" + 閬撳叿搴忓彿 / "close"
 -- ============================================================================
 
--- 道具 key 与图标/名称（顺序即左侧栏从上到下的顺序）。
+-- 閬撳叿 key 涓庡浘鏍?鍚嶇О锛堥『搴忓嵆宸︿晶鏍忎粠涓婂埌涓嬬殑椤哄簭锛夈€?
 StageSelect.ITEM_ORDER = {
-    { key = "bomb",   name = "炸弹", color = { 196, 120, 255 }, icon = "bomb" },
-    { key = "freeze", name = "冰冻", color = { 120, 216, 255 }, icon = "freeze" },
-    { key = "shield", name = "护盾", color = { 90, 200, 255 },  icon = "shield" },
+    { key = "bomb",   name = "鐐稿脊", color = { 196, 120, 255 }, icon = "bomb" },
+    { key = "freeze", name = "鍐板喕", color = { 120, 216, 255 }, icon = "freeze" },
+    { key = "shield", name = "鎶ょ浘", color = { 90, 200, 255 },  icon = "shield" },
 }
 
 ---@param uiX number
@@ -664,13 +664,13 @@ function StageSelect.HitTest(uiX, uiY, w, meta)
     local L = GetLayout(w, maxStage)
     if Inside(L.close, uiX, uiY) then return "close", nil end
 
-    -- 道具：命中整块竖条（含图标与文字），便于点按
+    -- 閬撳叿锛氬懡涓暣鍧楃珫鏉★紙鍚浘鏍囦笌鏂囧瓧锛夛紝渚夸簬鐐规寜
     for i = 1, #StageSelect.ITEM_ORDER do
         if Inside(L.itemRows[i], uiX, uiY) then return "buy_item", i end
     end
 
-    -- 关卡芯片：六边形命中（与绘制同形，保证「看着能点=点得到」）。
-    -- 六边形（尖角朝上下）用三个约束判定：|dy| ≤ r，以及两条斜边 ±(dy·0.5 + |dx|·0.866) ≤ r。
+    -- 鍏冲崱鑺墖锛氬叚杈瑰舰鍛戒腑锛堜笌缁樺埗鍚屽舰锛屼繚璇併€岀湅鐫€鑳界偣=鐐瑰緱鍒般€嶏級銆?
+    -- 鍏竟褰紙灏栬鏈濅笂涓嬶級鐢ㄤ笁涓害鏉熷垽瀹氾細|dy| 鈮?r锛屼互鍙婁袱鏉℃枩杈?卤(dy路0.5 + |dx|路0.866) 鈮?r銆?
     local hr = NODE_R + 3
     for stage = maxStage, 1, -1 do
         local cy = L.nodeY[stage]
@@ -686,7 +686,7 @@ function StageSelect.HitTest(uiX, uiY, w, meta)
 end
 
 -- ============================================================================
--- 滚动（由编排层从鼠标/触摸转发）
+-- 婊氬姩锛堢敱缂栨帓灞備粠榧犳爣/瑙︽懜杞彂锛?
 -- ============================================================================
 
 ---@param uiX number
@@ -714,7 +714,7 @@ function StageSelect.ScrollMove(uiY, w)
     ClampScroll(GetLayout(w, lastMaxStage_))
 end
 
----@return boolean moved 是否真的拖动过（拖动过则吞掉本次点击）
+---@return boolean moved 鏄惁鐪熺殑鎷栧姩杩囷紙鎷栧姩杩囧垯鍚炴帀鏈鐐瑰嚮锛?
 function StageSelect.ScrollEnd()
     if not dragging_ then return false end
     dragging_ = false

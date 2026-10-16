@@ -1,21 +1,21 @@
 -- ui/StageIntro.lua
--- 进关过渡 / 准备动画（v0.13.24）。用户要求「进入关卡的过渡和准备动画」。
+-- 杩涘叧杩囨浮 / 鍑嗗鍔ㄧ敾锛坴0.13.24锛夈€傜敤鎴疯姹傘€岃繘鍏ュ叧鍗＄殑杩囨浮鍜屽噯澶囧姩鐢汇€嶃€?
 --
--- 触发：Game 进入关卡时置 `introTimer = INTRO_SECONDS`（默认 3s），期间玩法冻结
--- （弹珠/敌机/波次都不推进），本模块负责画这段过渡界面：
---   ① 全屏暗化遮罩（战场在背后保留，只是压暗）；
---   ② 中央大号**像素数字贴图**关卡号（DigitFont）+「关卡准备」标题；
---   ③ 环形/条形倒计时 + 数字跳秒；
---   ④ 一道横向扫描光带 + 边框角标（dark-tech 克制装饰）。
+-- 瑙﹀彂锛欸ame 杩涘叆鍏冲崱鏃剁疆 `introTimer = INTRO_SECONDS`锛堥粯璁?3s锛夛紝鏈熼棿鐜╂硶鍐荤粨
+-- 锛堝脊鐝?鏁屾満/娉㈡閮戒笉鎺ㄨ繘锛夛紝鏈ā鍧楄礋璐ｇ敾杩欐杩囨浮鐣岄潰锛?
+--   鈶?鍏ㄥ睆鏆楀寲閬僵锛堟垬鍦哄湪鑳屽悗淇濈暀锛屽彧鏄帇鏆楋級锛?
+--   鈶?涓ぎ澶у彿**鍍忕礌鏁板瓧璐村浘**鍏冲崱鍙凤紙DigitFont锛?銆屽叧鍗″噯澶囥€嶆爣棰橈紱
+--   鈶?鐜舰/鏉″舰鍊掕鏃?+ 鏁板瓧璺崇锛?
+--   鈶?涓€閬撴í鍚戞壂鎻忓厜甯?+ 杈规瑙掓爣锛坉ark-tech 鍏嬪埗瑁呴グ锛夈€?
 --
--- ⚠️ 纯绘制模块：只读 game 快照（introTimer/introTotal/stage），不写规则层。
--- ⚠️ 与 Scene3DBackend 分离，避免后者模块级 local 逼近 200 上限（v0.13.18 教训）。
+-- 鈿狅笍 绾粯鍒舵ā鍧楋細鍙 game 蹇収锛坕ntroTimer/introTotal/stage锛夛紝涓嶅啓瑙勫垯灞傘€?
+-- 鈿狅笍 涓?Scene3DBackend 鍒嗙锛岄伩鍏嶅悗鑰呮ā鍧楃骇 local 閫艰繎 200 涓婇檺锛坴0.13.18 鏁欒锛夈€?
 
 local DigitFont = require "ui.DigitFont"
 
 local StageIntro = {}
 
--- 内置 dark-tech 令牌（与 Scene3DBackend.C 同值；本模块不反向依赖后端）。
+-- 鍐呯疆 dark-tech 浠ょ墝锛堜笌 Scene3DBackend.C 鍚屽€硷紱鏈ā鍧椾笉鍙嶅悜渚濊禆鍚庣锛夈€?
 local C = {
     cyan    = {0, 229, 208, 255},
     cyanDim = {0, 150, 148, 220},
@@ -43,7 +43,7 @@ local function StrokeRect(ctx, x, y, w, h, c, r, width)
     nvgStroke(ctx)
 end
 
--- 大号关卡号：优先像素贴图（DigitFont），缺图回退 zpix 字体。
+-- 澶у彿鍏冲崱鍙凤細浼樺厛鍍忕礌璐村浘锛圖igitFont锛夛紝缂哄浘鍥為€€ zpix 瀛椾綋銆?
 local function DrawStageNumber(ctx, stage, cx, topY, h, color)
     if DigitFont.DrawNumber(ctx, stage, cx, topY, h, color) then return end
     nvgFontSize(ctx, h)
@@ -53,25 +53,25 @@ local function DrawStageNumber(ctx, stage, cx, topY, h, color)
 end
 
 ---@param ctx any
----@param game table 快照（需 introTimer/introTotal/stage/width/height）
+---@param game table 蹇収锛堥渶 introTimer/introTotal/stage/width/height锛?
 function StageIntro.Draw(ctx, game)
     local t = game.introTimer or 0
     if t <= 0 then return end
-    -- 文字用项目像素字体（与 Scene3DBackend 同名注册；缺字体时引擎回退 sans）。
+    -- 鏂囧瓧鐢ㄩ」鐩儚绱犲瓧浣擄紙涓?Scene3DBackend 鍚屽悕娉ㄥ唽锛涚己瀛椾綋鏃跺紩鎿庡洖閫€ sans锛夈€?
     nvgFontFace(ctx, "zpix")
     local total = game.introTotal or 3.0
     local w, h = game.width or 540, game.height or 960
     local cx = w * 0.5
-    local p = 1 - math.min(1, t / total)   -- 0→1 进度
+    local p = 1 - math.min(1, t / total)   -- 0鈫? 杩涘害
     local remain = math.max(0, math.ceil(t))
     local tips = require "ui.GameplayTips"
 
-    -- ① 暗化遮罩（渐入：开场 0.25s 内到 0.82，收尾 0.35s 淡出）
-    local a = math.min(1, (1 - t / total) / 0.12)
-    if t < 0.35 then a = t / 0.35 end
+    -- 鈶?鏆楀寲閬僵锛堟笎鍏ワ細寮€鍦?0.25s 鍐呭埌 0.82锛屾敹灏?0.35s 娣″嚭锛?
+    local a = 1
+    if t < 0.45 then a = math.max(0, t / 0.45) end
     FillRect(ctx, 0, 0, w, h, { 4, 8, 16, math.floor(210 * a) })
 
-    -- ② 中央面板：入场从 0.92 弹性放大
+    -- 鈶?涓ぎ闈㈡澘锛氬叆鍦轰粠 0.92 寮规€ф斁澶?
     local pop = 1 + 0.08 * math.max(0, 1 - p / 0.18)
     local pw, ph = 360, 320
     local px, py = cx - pw * 0.5, h * 0.5 - ph * 0.5 - 40
@@ -82,7 +82,7 @@ function StageIntro.Draw(ctx, game)
 
     FillRect(ctx, px, py, pw, ph, { 10, 16, 28, math.floor(232 * a) }, 8)
     StrokeRect(ctx, px, py, pw, ph, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], math.floor(200 * a) }, 8, 1.4)
-    -- 四角折角
+    -- 鍥涜鎶樿
     local cl, cc = 18, { C.cyan[1], C.cyan[2], C.cyan[3], math.floor(220 * a) }
     nvgBeginPath(ctx)
     nvgMoveTo(ctx, px, py + cl); nvgLineTo(ctx, px, py); nvgLineTo(ctx, px + cl, py)
@@ -91,17 +91,17 @@ function StageIntro.Draw(ctx, game)
     nvgMoveTo(ctx, px + pw - cl, py + ph); nvgLineTo(ctx, px + pw, py + ph); nvgLineTo(ctx, px + pw, py + ph - cl)
     nvgStrokeColor(ctx, rgba(cc)); nvgStrokeWidth(ctx, 1.6); nvgStroke(ctx)
 
-    -- 标题「关卡准备」
+    -- 鏍囬銆屽叧鍗″噯澶囥€?
     nvgFontSize(ctx, 18)
     nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgFillColor(ctx, rgba({ C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], math.floor(230 * a) }))
-    nvgText(ctx, cx, py + 26, "关卡准备", nil)
+    nvgText(ctx, cx, py + 26, "鍏冲崱鍑嗗", nil)
 
-    -- ③ 大号关卡号（像素贴图）
+    -- 鈶?澶у彿鍏冲崱鍙凤紙鍍忕礌璐村浘锛?
     local numColor = { C.text[1], C.text[2], C.text[3], math.floor(255 * a) }
     DrawStageNumber(ctx, game.stage or 1, cx, py + 78, 96, numColor)
 
-    -- 在大号关卡号与倒计时之间保留一条可读的作战提示。
+    -- 鍦ㄥぇ鍙峰叧鍗″彿涓庡€掕鏃朵箣闂翠繚鐣欎竴鏉″彲璇荤殑浣滄垬鎻愮ず銆?
     local tipBoxX, tipBoxY, tipBoxW, tipBoxH = px + 26, py + 180, pw - 52, 32
     FillRect(ctx, tipBoxX, tipBoxY, tipBoxW, tipBoxH, { 14, 28, 42, math.floor(220 * a) }, 4)
     StrokeRect(ctx, tipBoxX, tipBoxY, tipBoxW, tipBoxH,
@@ -111,12 +111,12 @@ function StageIntro.Draw(ctx, game)
     nvgFillColor(ctx, rgba({ C.text[1], C.text[2], C.text[3], math.floor(235 * a) }))
     nvgText(ctx, cx, tipBoxY + 9, tips.Get((game.stage or 1) + 1), nil)
 
-    -- ④ 倒计时条 + 跳秒数字
+    -- 鈶?鍊掕鏃舵潯 + 璺崇鏁板瓧
     local barW, barH = pw - 80, 10
     local bx, by = cx - barW * 0.5, py + 224
     FillRect(ctx, bx, by, barW, barH, { 4, 8, 16, math.floor(255 * a) }, 5)
     FillRect(ctx, bx, by, barW * p, barH, { C.cyan[1], C.cyan[2], C.cyan[3], math.floor(255 * a) }, 5)
-    -- 跳秒：每秒一下的脉冲缩放
+    -- 璺崇锛氭瘡绉掍竴涓嬬殑鑴夊啿缂╂斁
     local tick = 1 + 0.35 * math.max(0, 1 - (t % 1) / 0.18)
     nvgSave(ctx)
     nvgTranslate(ctx, cx, py + 268)
@@ -127,11 +127,11 @@ function StageIntro.Draw(ctx, game)
     nvgFontSize(ctx, 13)
     nvgTextAlign(ctx, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     nvgFillColor(ctx, rgba({ C.dim[1], C.dim[2], C.dim[3], math.floor(220 * a) }))
-    nvgText(ctx, cx, py + 292, "秒后开战", nil)
+    nvgText(ctx, cx, py + 292, "绉掑悗寮€鎴?, nil)
 
     nvgRestore(ctx)
 
-    -- ⑤ 横向扫描光带（自上而下扫过整屏，克制）
+    -- 鈶?妯悜鎵弿鍏夊甫锛堣嚜涓婅€屼笅鎵繃鏁村睆锛屽厠鍒讹級
     local scanY = (p * 1.15 - 0.05) * h
     FillRect(ctx, 0, scanY, w, 2, { C.cyan[1], C.cyan[2], C.cyan[3], math.floor(60 * a) })
     FillRect(ctx, 0, scanY - 8, w, 1, { C.cyanDim[1], C.cyanDim[2], C.cyanDim[3], math.floor(28 * a) })

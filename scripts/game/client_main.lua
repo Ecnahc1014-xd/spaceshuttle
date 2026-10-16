@@ -1,11 +1,11 @@
 -- game/client_main.lua
--- 客户端玩法编排：桥接引擎事件、核心玩法、表现状态与可替换渲染后端。
+-- 瀹㈡埛绔帺娉曠紪鎺掞細妗ユ帴寮曟搸浜嬩欢銆佹牳蹇冪帺娉曘€佽〃鐜扮姸鎬佷笌鍙浛鎹㈡覆鏌撳悗绔€?
 --
--- ⚠️ 引擎通过脚本名解析事件处理器，所以 HandleUpdate / HandleRender / HandleMouse* /
---    HandleTouch* / HandleKey* 必须保持**文件级全局** function（不能加 local），
---    否则 SubscribeToEvent("Update", HandleUpdate) 会静默失效。
--- ⚠️ 本文件不做联机权威：战斗、排行榜、养成存档都在客户端（clientCloud + 本地存档）；
---    服务端只管 IAP 发货与氪金代币余额（见 network/Server.lua）。
+-- 鈿狅笍 寮曟搸閫氳繃鑴氭湰鍚嶈В鏋愪簨浠跺鐞嗗櫒锛屾墍浠?HandleUpdate / HandleRender / HandleMouse* /
+--    HandleTouch* / HandleKey* 蹇呴』淇濇寔**鏂囦欢绾у叏灞€** function锛堜笉鑳藉姞 local锛夛紝
+--    鍚﹀垯 SubscribeToEvent("Update", HandleUpdate) 浼氶潤榛樺け鏁堛€?
+-- 鈿狅笍 鏈枃浠朵笉鍋氳仈鏈烘潈濞侊細鎴樻枟銆佹帓琛屾銆佸吇鎴愬瓨妗ｉ兘鍦ㄥ鎴风锛坈lientCloud + 鏈湴瀛樻。锛夛紱
+--    鏈嶅姟绔彧绠?IAP 鍙戣揣涓庢蔼閲戜唬甯佷綑棰濓紙瑙?network/Server.lua锛夈€?
 
 local Game = require "Game"
 local Presentation = require "Presentation"
@@ -34,15 +34,15 @@ local SysNotif = require "urhox-libs.System.SystemNotification"
 local PerformanceProbe = require "PerformanceProbe"
 
 local ClientMain = {}
--- 业务手势与后端视觉使用同一主指针；0 是合法 TouchID。
+-- 涓氬姟鎵嬪娍涓庡悗绔瑙変娇鐢ㄥ悓涓€涓绘寚閽堬紱0 鏄悎娉?TouchID銆?
 ClientMain._pointer = { source = "", touchId = -1, state = "", epoch = 0, focused = true }
--- 请求槽跨 Stop/Start 保留到真实终态，避免旧写尚未结束就启动新写。
+-- 璇锋眰妲借法 Stop/Start 淇濈暀鍒扮湡瀹炵粓鎬侊紝閬垮厤鏃у啓灏氭湭缁撴潫灏卞惎鍔ㄦ柊鍐欍€?
 ClientMain._highScore = {
     active = false, lifetime = {}, request = nil, readRequest = nil,
     readReady = false, retained = 0,
 }
 
--- 钻石商品价格缓存：sku -> 元（来自 Shop.getProducts()，离线/未开通时为空）
+-- 閽荤煶鍟嗗搧浠锋牸缂撳瓨锛歴ku -> 鍏冿紙鏉ヨ嚜 Shop.getProducts()锛岀绾?鏈紑閫氭椂涓虹┖锛?
 ---@type table<string, number>
 local gemPrices_ = {}
 local productsAvailable_ = false
@@ -54,31 +54,35 @@ local reviveArmed = false
 local doubleArmed = false
 local restartArmed = false
 local menuArmed = false
--- v0.13.4：胜利结算页松手确认（避免误触直接跳关）。
+-- v0.13.4锛氳儨鍒╃粨绠楅〉鏉炬墜纭锛堥伩鍏嶈瑙︾洿鎺ヨ烦鍏筹級銆?
 local stageWinArmed = nil
 local metaPointerConsumed = false
--- v0.13.8：天赋树拖拽滚动是否已起手（Move/Up 转发给 TalentTree.Scroll*）。
+-- v0.13.8锛氬ぉ璧嬫爲鎷栨嫿婊氬姩鏄惁宸茶捣鎵嬶紙Move/Up 杞彂缁?TalentTree.Scroll*锛夈€?
 local talentScrollArmed = false
--- v0.13.13：选关界面（无限爬塔）拖拽滚动是否已起手。
+-- v0.13.13锛氶€夊叧鐣岄潰锛堟棤闄愮埇濉旓級鎷栨嫿婊氬姩鏄惁宸茶捣鎵嬨€?
 local stageSelectScrollArmed = false
--- v0.13.56：第 1 关「测试模式」询问确认后，要进入的目标关卡号。
+-- v0.13.56锛氱 1 鍏炽€屾祴璇曟ā寮忋€嶈闂‘璁ゅ悗锛岃杩涘叆鐨勭洰鏍囧叧鍗″彿銆?
 local pendingTestStage_ = nil
--- 设计宽度缓存（天赋树命中/滚动用；Init 时由 GetDesignSize 填）。
+-- 璁捐瀹藉害缂撳瓨锛堝ぉ璧嬫爲鍛戒腑/婊氬姩鐢紱Init 鏃剁敱 GetDesignSize 濉級銆?
 local designWidth_ = 540
 local CLOUD_HIGH_SCORE_KEY = "high_score"
 local CLOUD_META_KEY = "player_meta"
 local metaCloudSynced = false
 local metaRevision = 0
 local metaSaveInFlight = false
--- 最高分云写合并：局内只累计待提交值，局末 / 回菜单 / 周期兜底才真正写一次，
--- 避免「每击碎一块砖刷新最高分就写一次云」（云写配额 300 次/分钟）。
-local highScoreDirty = 0        -- 待提交的最高分（0 表示无待提交）
-local highScoreCommitCooldown = 0  -- 距下次允许提交的秒数（局内周期兜底）
+-- 鏈€楂樺垎浜戝啓鍚堝苟锛氬眬鍐呭彧绱寰呮彁浜ゅ€硷紝灞€鏈?/ 鍥炶彍鍗?/ 鍛ㄦ湡鍏滃簳鎵嶇湡姝ｅ啓涓€娆★紝
+-- 閬垮厤銆屾瘡鍑荤涓€鍧楃爾鍒锋柊鏈€楂樺垎灏卞啓涓€娆′簯銆嶏紙浜戝啓閰嶉 300 娆?鍒嗛挓锛夈€?
+local highScoreDirty = 0        -- 寰呮彁浜ょ殑鏈€楂樺垎锛? 琛ㄧず鏃犲緟鎻愪氦锛?
+local highScoreCommitCooldown = 0  -- 璺濅笅娆″厑璁告彁浜ょ殑绉掓暟锛堝眬鍐呭懆鏈熷厹搴曪級
 local HIGH_SCORE_COMMIT_INTERVAL = 15
--- 上一帧的 game.state：用于「进入结算/菜单态时提交一次」（避免持续态每帧提交）。
+-- 涓婁竴甯х殑 game.state锛氱敤浜庛€岃繘鍏ョ粨绠?鑿滃崟鎬佹椂鎻愪氦涓€娆°€嶏紙閬垮厤鎸佺画鎬佹瘡甯ф彁浜わ級銆?
 ---@type string|nil
 local prevHighScoreState_ = nil
 local RefreshMeta
+
+local function HasClientCloud()
+    return clientCloud ~= nil
+end
 
 local function RefreshSnapshots()
     gameSnapshot = Game.GetSnapshot()
@@ -92,6 +96,12 @@ end
 local function SaveHighScoreToCloud(score)
     local state = ClientMain._highScore
     local n = math.floor(tonumber(score) or 0)
+    if not HasClientCloud() then
+        PlayerData.SetHighScore(n)
+        lastSavedHighScore = math.max(lastSavedHighScore, PlayerData.GetHighScore())
+        highScoreDirty = 0
+        return
+    end
     if GameMode.IsOffline() or not state.active or state.request
         or state.readRequest or not state.readReady
         or n <= lastSavedHighScore then return end
@@ -102,7 +112,7 @@ local function SaveHighScoreToCloud(score)
         if request.done then return end
         request.done = true
         if state.request == request then state.request = nil end
-        -- 旧会话终态仅释放旧请求槽，不确认新会话分数、不污染新界面。
+        -- 鏃т細璇濈粓鎬佷粎閲婃斁鏃ц姹傛Ы锛屼笉纭鏂颁細璇濆垎鏁般€佷笉姹℃煋鏂扮晫闈€?
         if not state.active or request.lifetime ~= state.lifetime then return end
         if success then
             lastSavedHighScore = math.max(lastSavedHighScore, request.score)
@@ -114,7 +124,7 @@ local function SaveHighScoreToCloud(score)
             Presentation.SetCloudStatus("unavailable")
             print("[Main] cloud save failed: " .. tostring(reason))
         end
-        -- 异步回调不递归发请求；下一次受控周期/状态边沿再提交更高值。
+        -- 寮傛鍥炶皟涓嶉€掑綊鍙戣姹傦紱涓嬩竴娆″彈鎺у懆鏈?鐘舵€佽竟娌垮啀鎻愪氦鏇撮珮鍊笺€?
         highScoreCommitCooldown = HIGH_SCORE_COMMIT_INTERVAL
     end
     local okCall, errCall = pcall(function()
@@ -127,14 +137,14 @@ local function SaveHighScoreToCloud(score)
         })
     end)
     if not okCall and not request.done then
-        -- 提交抛错也可能已有请求入队：保留请求槽，不能凭异常再发重叠写。
+        -- 鎻愪氦鎶涢敊涔熷彲鑳藉凡鏈夎姹傚叆闃燂細淇濈暀璇锋眰妲斤紝涓嶈兘鍑紓甯稿啀鍙戦噸鍙犲啓銆?
         highScoreDirty = math.max(highScoreDirty, n)
         Presentation.SetCloudStatus("unavailable")
         print("[Main] cloud submission uncertain, retain request slot: " .. tostring(errCall))
     end
 end
 
--- 记录「待提交的最高分」：局内每次刷新只更新内存值，不立刻写云。
+-- 璁板綍銆屽緟鎻愪氦鐨勬渶楂樺垎銆嶏細灞€鍐呮瘡娆″埛鏂板彧鏇存柊鍐呭瓨鍊硷紝涓嶇珛鍒诲啓浜戙€?
 local function MarkHighScoreDirty(score)
     local n = math.floor(tonumber(score) or 0)
     if n > highScoreDirty and n > lastSavedHighScore then
@@ -142,14 +152,22 @@ local function MarkHighScoreDirty(score)
     end
 end
 
--- 首次云读成功前禁止覆盖写；读取失败由同一 15 秒节流窗口重读。
+-- 棣栨浜戣鎴愬姛鍓嶇姝㈣鐩栧啓锛涜鍙栧け璐ョ敱鍚屼竴 15 绉掕妭娴佺獥鍙ｉ噸璇汇€?
 local function LoadHighScoreFromCloud()
     local state = ClientMain._highScore
+    if not HasClientCloud() then
+        local localScore = PlayerData.GetHighScore()
+        state.readReady = true
+        lastSavedHighScore = math.max(lastSavedHighScore, localScore)
+        Game.ApplyCloudHighScore(localScore)
+        RefreshSnapshots()
+        return
+    end
     if GameMode.IsOffline() or not state.active then
         Presentation.SetCloudStatus("unavailable")
         return
     end
-    -- 跨生命周期旧写未结束时先不读，避免读到 H 后旧写 L 才落地。
+    -- 璺ㄧ敓鍛藉懆鏈熸棫鍐欐湭缁撴潫鏃跺厛涓嶈锛岄伩鍏嶈鍒?H 鍚庢棫鍐?L 鎵嶈惤鍦般€?
     if state.request or state.readRequest then return end
     local request = { lifetime = state.lifetime, done = false }
     state.readRequest = request
@@ -187,14 +205,14 @@ local function LoadHighScoreFromCloud()
         })
     end)
     if not okCall and not request.done then
-        -- 抛错不证明请求未入队；保留读槽，迟到真实终态仍可收尾。
+        -- 鎶涢敊涓嶈瘉鏄庤姹傛湭鍏ラ槦锛涗繚鐣欒妲斤紝杩熷埌鐪熷疄缁堟€佷粛鍙敹灏俱€?
         Presentation.SetCloudStatus("unavailable")
         print("[Main] cloud read submission uncertain, retain request slot: " .. tostring(errCall))
     end
 end
 
--- 提交待写的最高分（局末 / 回菜单 / 周期兜底调用）。
--- 无论是否真有待提交值都重置冷却，避免菜单态每帧重试（配额超限时形成写风暴）。
+-- 鎻愪氦寰呭啓鐨勬渶楂樺垎锛堝眬鏈?/ 鍥炶彍鍗?/ 鍛ㄦ湡鍏滃簳璋冪敤锛夈€?
+-- 鏃犺鏄惁鐪熸湁寰呮彁浜ゅ€奸兘閲嶇疆鍐峰嵈锛岄伩鍏嶈彍鍗曟€佹瘡甯ч噸璇曪紙閰嶉瓒呴檺鏃跺舰鎴愬啓椋庢毚锛夈€?
 local function CommitHighScore()
     highScoreCommitCooldown = HIGH_SCORE_COMMIT_INTERVAL
     local state = ClientMain._highScore
@@ -210,12 +228,12 @@ local function CommitHighScore()
     SaveHighScoreToCloud(highScoreDirty)
 end
 
--- v0.11.0 商业化：玩家元数据（零件/图鉴/签到/任务）云同步。
--- 云变量只在编排层读写；PlayerData 只负责编解码。
+-- v0.11.0 鍟嗕笟鍖栵細鐜╁鍏冩暟鎹紙闆朵欢/鍥鹃壌/绛惧埌/浠诲姟锛変簯鍚屾銆?
+-- 浜戝彉閲忓彧鍦ㄧ紪鎺掑眰璇诲啓锛汸layerData 鍙礋璐ｇ紪瑙ｇ爜銆?
 local function SavePlayerDataToCloud()
-    if GameMode.IsOffline() then return end
+    if GameMode.IsOffline() or not HasClientCloud() then return end
     metaRevision = metaRevision + 1
-    -- 初次云档读取尚未完成时仅记脏；先写会把另一台设备的档案覆盖掉。
+    -- 鍒濇浜戞。璇诲彇灏氭湭瀹屾垚鏃朵粎璁拌剰锛涘厛鍐欎細鎶婂彟涓€鍙拌澶囩殑妗ｆ瑕嗙洊鎺夈€?
     if not metaCloudSynced or metaSaveInFlight then return end
     metaSaveInFlight = true
     local revision = metaRevision
@@ -244,7 +262,8 @@ local function SavePlayerDataToCloud()
 end
 
 local function LoadPlayerDataFromCloud()
-    if GameMode.IsOffline() then
+    if GameMode.IsOffline() or not HasClientCloud() then
+        metaCloudSynced = not GameMode.IsOffline()
         print("[Main] offline: skip cloud player data")
         return
     end
@@ -256,19 +275,26 @@ local function LoadPlayerDataFromCloud()
                 if values then raw = values[CLOUD_META_KEY] end
                 if type(raw) == "table" then raw = cjson.encode(raw) end
                 if type(raw) == "string" and raw ~= "" then
-                    local merged = PlayerData.ImportFromCloud(raw)
+                    local cloudUpdatedAt = 0
+                    local decodeOk, cloudData = pcall(cjson.decode, raw)
+                    if decodeOk and type(cloudData) == "table" then
+                        cloudUpdatedAt = math.floor(tonumber(cloudData.updatedAt) or 0)
+                    end
+                    local localUpdatedAt = PlayerData.GetUpdatedAt()
+                    local merged = cloudUpdatedAt > localUpdatedAt
+                        and PlayerData.ImportFromCloud(raw)
                     if merged then
                         PlayerData.Save()
                         RefreshSnapshots()
                         RefreshMeta()
-                        metaCloudSynced = true
-                        if metaRevision ~= requestRevision or PlayerData.ExportForCloud() ~= raw then
-                            SavePlayerDataToCloud()
-                        end
-                        print("[Main] player meta merged from cloud")
+                        print("[Main] newer server save merged")
+                    end
+                    metaCloudSynced = true
+                    if not merged or metaRevision ~= requestRevision then
+                        SavePlayerDataToCloud()
                     end
                 else
-                    -- 云端尚无档案时把本地进度上传，避免换设备后找不到已有存档。
+                    -- 浜戠灏氭棤妗ｆ鏃舵妸鏈湴杩涘害涓婁紶锛岄伩鍏嶆崲璁惧鍚庢壘涓嶅埌宸叉湁瀛樻。銆?
                     metaCloudSynced = true
                     SavePlayerDataToCloud()
                 end
@@ -281,7 +307,7 @@ local function LoadPlayerDataFromCloud()
     end)
 end
 
--- 取消而非模拟松手：失焦/广告/模态不能误发射，也不能保留旧按压。
+-- 鍙栨秷鑰岄潪妯℃嫙鏉炬墜锛氬け鐒?骞垮憡/妯℃€佷笉鑳借鍙戝皠锛屼篃涓嶈兘淇濈暀鏃ф寜鍘嬨€?
 function ClientMain.CancelInput()
     ClientMain._pointer.source = ""
     ClientMain._pointer.touchId = -1
@@ -330,7 +356,7 @@ function ClientMain.OwnsPointer(source, touchId)
         and (source == "mouse" or ClientMain._pointer.touchId == touchId)
 end
 
--- v0.11.0 商业化：所有激励视频统一走 AdService，保证一次性完成与防重复发奖。
+-- v0.11.0 鍟嗕笟鍖栵細鎵€鏈夋縺鍔辫棰戠粺涓€璧?AdService锛屼繚璇佷竴娆℃€у畬鎴愪笌闃查噸澶嶅彂濂栥€?
 ---@param onReward fun()
 local function ShowAd(onReward)
     local function fail(msg)
@@ -354,12 +380,12 @@ end
 
 local function ShowReviveAd()
     if not Game.CanRevive() then
-        Presentation.SetAdToast("本局已复活")
+        Presentation.SetAdToast("鏈眬宸插娲?)
         return
     end
     ShowAd(function()
         if not Game.ReviveFromAd() then
-            Presentation.SetAdToast("复活未能生效")
+            Presentation.SetAdToast("澶嶆椿鏈兘鐢熸晥")
         end
     end)
 end
@@ -371,14 +397,14 @@ local function ShowDoublePartsAd()
             PlayerData.AddParts(extra)
             PlayerData.Save()
             SavePlayerDataToCloud()
-            Presentation.SetAdToast(string.format("双倍到账 +%d 零件", extra))
+            Presentation.SetAdToast(string.format("鍙屽€嶅埌璐?+%d 闆朵欢", extra))
         end
     end)
 end
 
 -- ============================================================================
--- v0.11.0 商业化：元层界面（主菜单商业区 / 每日签到与补给 / 任务 / 图鉴 / 排行 / 商城 / 转盘）
--- 所有状态变更集中在此，MetaUI 只负责画。
+-- v0.11.0 鍟嗕笟鍖栵細鍏冨眰鐣岄潰锛堜富鑿滃崟鍟嗕笟鍖?/ 姣忔棩绛惧埌涓庤ˉ缁?/ 浠诲姟 / 鍥鹃壌 / 鎺掕 / 鍟嗗煄 / 杞洏锛?
+-- 鎵€鏈夌姸鎬佸彉鏇撮泦涓湪姝わ紝MetaUI 鍙礋璐ｇ敾銆?
 -- ============================================================================
 
 local META_TOAST_SECONDS = 2.4
@@ -404,7 +430,7 @@ local metaState = {
     screen = nil,
     stageSelectLoading = false,
     stageSelectLoadingTimer = 0,
-    -- 选关界面（v0.13.4）：星级 + 已解锁范围 + 关卡总数，供 StageSelect 只读渲染。
+    -- 閫夊叧鐣岄潰锛坴0.13.4锛夛細鏄熺骇 + 宸茶В閿佽寖鍥?+ 鍏冲崱鎬绘暟锛屼緵 StageSelect 鍙娓叉煋銆?
     stageStars = {},
     maxStage = 1,
     stageTotal = 0,
@@ -420,12 +446,12 @@ local metaState = {
     codexUnlocked = 0,
     codexTotal = 0,
     codexClaimable = false,
-    -- 成就面板（v0.13.62）：列表 + 已解锁数 + 翻页下标。
+    -- 鎴愬氨闈㈡澘锛坴0.13.62锛夛細鍒楄〃 + 宸茶В閿佹暟 + 缈婚〉涓嬫爣銆?
     achievements = {},
     achUnlocked = 0,
     achTotal = 0,
     achPage = 1,
-    -- v0.14.0：战斗档案屏内的页签（"pass" 档案 / "ach" 成就）。
+    -- v0.14.0锛氭垬鏂楁。妗堝睆鍐呯殑椤电锛?pass" 妗ｆ / "ach" 鎴愬氨锛夈€?
     passTab = "pass",
     rankList = {},
     rankLoading = false,
@@ -444,36 +470,43 @@ local metaState = {
     giftUsed = {},
     wheelReady = false,
     wheelPrize = 0,
-    -- 设置页开关（v0.13.60）：音乐 / 音效，供设置屏只读渲染。
+    -- 璁剧疆椤靛紑鍏筹紙v0.13.60锛夛細闊充箰 / 闊虫晥锛屼緵璁剧疆灞忓彧璇绘覆鏌撱€?
     musicEnabled = true,
     sfxEnabled = true,
     toast = nil,
-    -- 联机 / 氪金代币
+    -- 鑱旀満 / 姘噾浠ｅ竵
     offline = false,
     productsAvailable = false,
     prices = {},
     rechargeToast = nil,
 }
 
--- v0.12.5：平台系统通知换皮（dark-tech 顶部通知条），不再允许默认白底弹窗直出。
--- ⚠️ 全局只有一个 handler 槽；大厅/游戏是两个 Runtime，切换后各自注册。
+-- v0.12.5锛氬钩鍙扮郴缁熼€氱煡鎹㈢毊锛坉ark-tech 椤堕儴閫氱煡鏉★級锛屼笉鍐嶅厑璁搁粯璁ょ櫧搴曞脊绐楃洿鍑恒€?
+-- 鈿狅笍 鍏ㄥ眬鍙湁涓€涓?handler 妲斤紱澶у巺/娓告垙鏄袱涓?Runtime锛屽垏鎹㈠悗鍚勮嚜娉ㄥ唽銆?
 local function installSystemNotificationHandler()
     pcall(function()
         SysNotif.RegisterHandler(function(info)
             local ok, view = pcall(function() return SysNotif.Resolve(info) end)
             if not ok or type(view) ~= "table" then return false end
+            if info.id == SysNotif.Id.DisconnectChecking
+                or info.id == SysNotif.Id.Reconnecting
+                or info.id == SysNotif.Id.ConnectFailedRetry
+                or info.id == SysNotif.Id.ConnectInitiateFailed then
+                print("[Main] silent network retry: " .. tostring(info.id))
+                return true
+            end
             local tone = view.kind == "error" and "error" or "warn"
             local message = view.message or ""
             if view.reason and view.reason ~= "" then
-                message = message .. " 原因：" .. view.reason
+                message = message .. " 鍘熷洜锛? .. view.reason
             end
             RenderBackend.ShowSystemBanner({
-                title = view.title or "连接提示",
+                title = view.title or "杩炴帴鎻愮ず",
                 message = message,
                 tone = tone,
                 ttl = 15,
-                -- 连接检查/重连类（error）只提示不劝退；被踢/弹窗类给退出出口。
-                actionText = view.kind == "error" and nil or "退出",
+                -- 杩炴帴妫€鏌?閲嶈繛绫伙紙error锛夊彧鎻愮ず涓嶅姖閫€锛涜韪?寮圭獥绫荤粰閫€鍑哄嚭鍙ｃ€?
+                actionText = view.kind == "error" and nil or "閫€鍑?,
                 actionId = "banner_exit",
             })
             print("[Main] system notification banner: " .. tostring(view.id)
@@ -483,15 +516,15 @@ local function installSystemNotificationHandler()
     end)
 end
 
--- v0.12.7：删除「主菜单自动弹付费轨通知条 + 自动弹每日补给」两处启动打扰
--- （用户否决：开局首充弹窗）。付费轨解锁入口收回战斗档案面板与钻石兑换，
--- 玩家主动打开才见；后端 SystemBanner 通道保留，仅供平台 SystemNotification 换皮用。
+-- v0.12.7锛氬垹闄ゃ€屼富鑿滃崟鑷姩寮逛粯璐硅建閫氱煡鏉?+ 鑷姩寮规瘡鏃ヨˉ缁欍€嶄袱澶勫惎鍔ㄦ墦鎵?
+-- 锛堢敤鎴峰惁鍐筹細寮€灞€棣栧厖寮圭獥锛夈€備粯璐硅建瑙ｉ攣鍏ュ彛鏀跺洖鎴樻枟妗ｆ闈㈡澘涓庨捇鐭冲厬鎹紝
+-- 鐜╁涓诲姩鎵撳紑鎵嶈锛涘悗绔?SystemBanner 閫氶亾淇濈暀锛屼粎渚涘钩鍙?SystemNotification 鎹㈢毊鐢ㄣ€?
 
--- 顶端通知条动作处理：真正的函数体在 HandleMetaAction 定义后赋值（同文件 local
--- 前向引用问题：upvalue 同一变量，运行时才取函数体，TryBannerAt 闭包引用不受影响）。
+-- 椤剁閫氱煡鏉″姩浣滃鐞嗭細鐪熸鐨勫嚱鏁颁綋鍦?HandleMetaAction 瀹氫箟鍚庤祴鍊硷紙鍚屾枃浠?local
+-- 鍓嶅悜寮曠敤闂锛歶pvalue 鍚屼竴鍙橀噺锛岃繍琛屾椂鎵嶅彇鍑芥暟浣擄紝TryBannerAt 闂寘寮曠敤涓嶅彈褰卞搷锛夈€?
 local onBannerAction = nil
 
--- 拉一次钻石商品列表（价格来自平台，离线/未开通时为空）。
+-- 鎷変竴娆￠捇鐭冲晢鍝佸垪琛紙浠锋牸鏉ヨ嚜骞冲彴锛岀绾?鏈紑閫氭椂涓虹┖锛夈€?
 local function RefreshGemProducts()
     if GameMode.IsOffline() then
         gemPrices_ = {}
@@ -559,7 +592,7 @@ RefreshMeta = function()
     metaState.codexUnlocked = PlayerData.CodexCount()
     metaState.codexTotal = MetaCatalog.GetCodexTotal()
 
-    -- v0.13.62：成就面板数据（本地权威）——列表 + 已解锁数，供 Achievements 面板只读渲染。
+    -- v0.13.62锛氭垚灏遍潰鏉挎暟鎹紙鏈湴鏉冨▉锛夆€斺€斿垪琛?+ 宸茶В閿佹暟锛屼緵 Achievements 闈㈡澘鍙娓叉煋銆?
     local achList = {}
     local achUnlockedCount = 0
     for _, def in ipairs(AchievementCatalog.GetAll()) do
@@ -576,8 +609,8 @@ RefreshMeta = function()
     metaState.achUnlocked = achUnlockedCount
     metaState.achTotal = #achList
 
-    -- 选关界面数据（v0.13.4）：逐关星级 + 已解锁范围。
-    -- v0.13.13：关卡无限——只统计到「最高已解锁关」，列表随进度增长。
+    -- 閫夊叧鐣岄潰鏁版嵁锛坴0.13.4锛夛細閫愬叧鏄熺骇 + 宸茶В閿佽寖鍥淬€?
+    -- v0.13.13锛氬叧鍗℃棤闄愨€斺€斿彧缁熻鍒般€屾渶楂樺凡瑙ｉ攣鍏炽€嶏紝鍒楄〃闅忚繘搴﹀闀裤€?
     local maxStage = PlayerData.GetMaxStage()
     local stageStars = {}
     for stage = 1, maxStage do
@@ -586,23 +619,23 @@ RefreshMeta = function()
     metaState.stageStars = stageStars
     metaState.maxStage = maxStage
     metaState.stageTotal = StageCatalog.STAGE_SOFT_CAP
-    -- 选关界面「局内道具」购买条：库存 / 单价 / 本局每样限用一次。
+    -- 閫夊叧鐣岄潰銆屽眬鍐呴亾鍏枫€嶈喘涔版潯锛氬簱瀛?/ 鍗曚环 / 鏈眬姣忔牱闄愮敤涓€娆°€?
     metaState.itemStock = PlayerData.GetItemStock()
     metaState.itemPrices = ItemShop.PRICES
-    -- 设置页开关（v0.13.60）：音乐 / 音效，供设置屏只读渲染。
+    -- 璁剧疆椤靛紑鍏筹紙v0.13.60锛夛細闊充箰 / 闊虫晥锛屼緵璁剧疆灞忓彧璇绘覆鏌撱€?
     metaState.musicEnabled = PlayerData.IsMusicEnabled()
     metaState.sfxEnabled = PlayerData.IsSfxEnabled()
 
-    -- 天赋树界面数据（v0.13.5）：已解锁节点 + 星级汇总。
+    -- 澶╄祴鏍戠晫闈㈡暟鎹紙v0.13.5锛夛細宸茶В閿佽妭鐐?+ 鏄熺骇姹囨€汇€?
     metaState.talents = PlayerData.GetTalents()
     metaState.totalStars = PlayerData.GetTotalStars()
     metaState.talentCount = PlayerData.TalentCount()
     metaState.talentTotal = #TalentCatalog.GetNodes()
-    -- v0.13.56：第 1 关「测试模式」询问是否待决（渲染层据此画提示）。
+    -- v0.13.56锛氱 1 鍏炽€屾祴璇曟ā寮忋€嶈闂槸鍚﹀緟鍐筹紙娓叉煋灞傛嵁姝ょ敾鎻愮ず锛夈€?
     metaState.testMode = (pendingTestStage_ ~= nil)
     metaState.talentMaxStage = TalentCatalog.MAX_STAGE
     metaState.talentStageCount = TalentCatalog.GetUnlockedStageCount(metaState.totalStars)
-    -- 是否有「当前可负担且前置满足」的节点（菜单红点）。
+    -- 鏄惁鏈夈€屽綋鍓嶅彲璐熸媴涓斿墠缃弧瓒炽€嶇殑鑺傜偣锛堣彍鍗曠孩鐐癸級銆?
     do
         local owned = metaState.talents
         local parts = metaState.parts
@@ -643,7 +676,7 @@ RefreshMeta = function()
     local rewards = {}
     local claimed = PlayerData.GetPassClaimed()
     metaState.premiumPass = (not GameMode.IsOffline()) and NetClient.GetPremiumPass() or false
-    -- 首充礼包：限时窗内且未购买（服务端权威已购标志 + 本地已补发标志都不再展示）。
+    -- 棣栧厖绀煎寘锛氶檺鏃剁獥鍐呬笖鏈喘涔帮紙鏈嶅姟绔潈濞佸凡璐爣蹇?+ 鏈湴宸茶ˉ鍙戞爣蹇楅兘涓嶅啀灞曠ず锛夈€?
     local giftOpen = (not PlayerData.IsFirstGiftClaimed())
         and (not GameMode.IsOffline()) and (not NetClient.GetFirstGiftBought())
     metaState.firstGiftAvailable = giftOpen
@@ -665,14 +698,14 @@ RefreshMeta = function()
     end
     metaState.passRewards = rewards
     metaState.passClaimable = metaState.passLevel > claimed
-    -- v0.14.x 存钱罐：档案领满 6 级后切换到「存钱罐式」。
+    -- v0.14.x 瀛橀挶缃愶細妗ｆ棰嗘弧 6 绾у悗鍒囨崲鍒般€屽瓨閽辩綈寮忋€嶃€?
     metaState.piggyMode = PlayerData.IsPiggyMode()
     metaState.piggyGear = PlayerData.GetGear()
     metaState.offline = GameMode.IsOffline()
     metaState.gems = GameMode.IsOffline() and metaState.gems or NetClient.GetGems()
 end
 
--- 零件入账统一出口：写入 + 存档 + 云同步 + 刷新界面。
+-- 闆朵欢鍏ヨ处缁熶竴鍑哄彛锛氬啓鍏?+ 瀛樻。 + 浜戝悓姝?+ 鍒锋柊鐣岄潰銆?
 ---@param amount integer
 ---@param label string|nil
 local function GrantParts(amount, label)
@@ -682,7 +715,7 @@ local function GrantParts(amount, label)
     SavePlayerDataToCloud()
     RefreshMeta()
     if label then
-        SetMetaToast(string.format("%s +%d 零件", label, amount))
+        SetMetaToast(string.format("%s +%d 闆朵欢", label, amount))
     end
 end
 
@@ -692,14 +725,14 @@ local function PersistMeta()
     RefreshMeta()
 end
 
--- 全服排行榜：GetRankList 只返回 userId，昵称要再查一次 GetUserNickname。
+-- 鍏ㄦ湇鎺掕姒滐細GetRankList 鍙繑鍥?userId锛屾樀绉拌鍐嶆煡涓€娆?GetUserNickname銆?
 local function FetchRankList()
     if GameMode.IsOffline() then
         metaState.rankLoading = false
         metaState.myRankLoading = false
         metaState.myRank = nil
         metaState.rankList = {}
-        SetMetaToast("联网后可用排行榜")
+        SetMetaToast("鑱旂綉鍚庡彲鐢ㄦ帓琛屾")
         return
     end
     metaState.rankLoading = true
@@ -735,7 +768,7 @@ local function FetchRankList()
                     if iscore then value = iscore[CLOUD_HIGH_SCORE_KEY] or 0 end
                     list[#list + 1] = {
                         rank = i,
-                        name = "玩家",
+                        name = "鐜╁",
                         score = math.floor(value),
                         userId = item.userId,
                         isMe = tostring(item.userId) == myId,
@@ -768,7 +801,7 @@ local function FetchRankList()
             error = function(code, reason)
                 metaState.rankLoading = false
                 metaState.rankList = {}
-                SetMetaToast("排行榜暂不可用")
+                SetMetaToast("鎺掕姒滄殏涓嶅彲鐢?)
                 print("[Main] rank list failed: " .. tostring(reason) .. " code=" .. tostring(code))
             end,
         })
@@ -793,14 +826,14 @@ local function OpenMetaScreen(name)
     metaState.screen = name
     if name == "stage_select" then
         metaState.stageSelectLoading = true
-        metaState.stageSelectLoadingTimer = 0.72
+        metaState.stageSelectLoadingTimer = 1.35
     else
         metaState.stageSelectLoading = false
         metaState.stageSelectLoadingTimer = 0
     end
     if name == "rank" then FetchRankList() end
     RefreshMeta()
-    -- v0.13.13：选关界面是无限爬塔——打开时默认定位在「最新（最高已解锁）关」。
+    -- v0.13.13锛氶€夊叧鐣岄潰鏄棤闄愮埇濉斺€斺€旀墦寮€鏃堕粯璁ゅ畾浣嶅湪銆屾渶鏂帮紙鏈€楂樺凡瑙ｉ攣锛夊叧銆嶃€?
     if name == "stage_select" then
         StageSelect.FocusLatest(designWidth_, metaState.maxStage or 1)
     end
@@ -808,13 +841,13 @@ end
 
 local function HandleSignIn()
     if not PlayerData.CanSignIn() then
-        SetMetaToast("今日已签到")
+        SetMetaToast("浠婃棩宸茬鍒?)
         return
     end
     local reward = PlayerData.SignIn()
     if reward > 0 then
         PersistMeta()
-        SetMetaToast(string.format("签到成功 +%d 零件", reward))
+        SetMetaToast(string.format("绛惧埌鎴愬姛 +%d 闆朵欢", reward))
     end
 end
 
@@ -822,20 +855,20 @@ end
 local function HandleSupply(mode)
     if not metaState.supplyAvailable then
         metaState.supplyOpen = false
-        SetMetaToast("今日补给已领取")
+        SetMetaToast("浠婃棩琛ョ粰宸查鍙?)
         return
     end
     if mode == "double" then
         ShowAd(function()
             PlayerData.AddDailyCount("supply", 1)
             metaState.supplyOpen = false
-            GrantParts(metaState.supplyReward * 2, "每日补给 双倍")
+            GrantParts(metaState.supplyReward * 2, "姣忔棩琛ョ粰 鍙屽€?)
         end)
         return
     end
     PlayerData.AddDailyCount("supply", 1)
     metaState.supplyOpen = false
-    GrantParts(metaState.supplyReward, "每日补给")
+    GrantParts(metaState.supplyReward, "姣忔棩琛ョ粰")
 end
 
 ---@param index integer
@@ -845,7 +878,7 @@ local function HandleClaimTask(index)
     local reward = PlayerData.ClaimDaily(view.id)
     if reward > 0 then
         PersistMeta()
-        SetMetaToast(string.format("任务完成 +%d 零件", reward))
+        SetMetaToast(string.format("浠诲姟瀹屾垚 +%d 闆朵欢", reward))
     end
 end
 
@@ -857,15 +890,15 @@ local function HandleShopSkin(index)
     if PlayerData.HasSkin(skin.key) then
         PlayerData.SelectSkin(skin.key)
         PersistMeta()
-        SetMetaToast("已切换为 " .. skin.name)
+        SetMetaToast("宸插垏鎹负 " .. skin.name)
         return
     end
     if not PlayerData.PurchaseSkin(skin.key, skin.cost) then
-        SetMetaToast("零件不足，还差 " .. tostring(math.max(0, skin.cost - PlayerData.GetParts())))
+        SetMetaToast("闆朵欢涓嶈冻锛岃繕宸?" .. tostring(math.max(0, skin.cost - PlayerData.GetParts())))
         return
     end
     PersistMeta()
-    SetMetaToast("已购买 " .. skin.name)
+    SetMetaToast("宸茶喘涔?" .. skin.name)
 end
 
 ---@param index integer
@@ -876,15 +909,15 @@ local function HandleShopTrail(index)
     if PlayerData.HasTrail(trail.key) then
         PlayerData.SelectTrail(trail.key)
         PersistMeta()
-        SetMetaToast("已切换为 " .. trail.name)
+        SetMetaToast("宸插垏鎹负 " .. trail.name)
         return
     end
     if not PlayerData.PurchaseTrail(trail.key, trail.cost) then
-        SetMetaToast("零件不足，还差 " .. tostring(math.max(0, trail.cost - PlayerData.GetParts())))
+        SetMetaToast("闆朵欢涓嶈冻锛岃繕宸?" .. tostring(math.max(0, trail.cost - PlayerData.GetParts())))
         return
     end
     PersistMeta()
-    SetMetaToast("已购买 " .. trail.name)
+    SetMetaToast("宸茶喘涔?" .. trail.name)
 end
 
 ---@param index integer
@@ -895,7 +928,7 @@ local function HandleAdGift(index)
     local key = "gift_" .. gift.key
     local limit = MetaCatalog.GetAdGiftDailyLimit(gift.key)
     if PlayerData.GetDailyCount(key) >= limit then
-        SetMetaToast("今日已领取")
+        SetMetaToast("浠婃棩宸查鍙?)
         return
     end
     ShowAd(function()
@@ -906,41 +939,41 @@ end
 
 local function HandleWheelSpin()
     if not metaState.wheelReady then
-        SetMetaToast("今日已抽取")
+        SetMetaToast("浠婃棩宸叉娊鍙?)
         return
     end
     ShowAd(function()
         PlayerData.AddDailyCount("wheel", 1)
         local prize = MetaCatalog.RollWheelPrize()
         metaState.wheelPrize = prize
-        GrantParts(prize, "转盘奖励")
+        GrantParts(prize, "杞洏濂栧姳")
     end)
 end
 
--- 钻石兑换：服务端事务原子扣钻并记录累计零件；客户端按权威累计额补领。
+-- 閽荤煶鍏戞崲锛氭湇鍔＄浜嬪姟鍘熷瓙鎵ｉ捇骞惰褰曠疮璁￠浂浠讹紱瀹㈡埛绔寜鏉冨▉绱棰濊ˉ棰嗐€?
 ---@param index integer
 local function HandleGemSpend(index)
     local def = Shared.GEM_SPENDS[index]
     if not def then return end
     if GameMode.IsOffline() then
-        metaState.rechargeToast = "需联网后可用"
+        metaState.rechargeToast = "闇€鑱旂綉鍚庡彲鐢?
         return
     end
-    -- 下一次成功的余额请求会推送权威累计额并补领；每次进商店也会重新拉取。
-    metaState.rechargeToast = "扣款中…"
+    -- 涓嬩竴娆℃垚鍔熺殑浣欓璇锋眰浼氭帹閫佹潈濞佺疮璁￠骞惰ˉ棰嗭紱姣忔杩涘晢搴椾篃浼氶噸鏂版媺鍙栥€?
+    metaState.rechargeToast = "鎵ｆ涓€?
     NetClient.SpendGems(def.key, function(ok, reason)
         if ok then
-            -- 等待服务端同步累计额再补领，不从单次成功回调直接入账。
+            -- 绛夊緟鏈嶅姟绔悓姝ョ疮璁￠鍐嶈ˉ棰嗭紝涓嶄粠鍗曟鎴愬姛鍥炶皟鐩存帴鍏ヨ处銆?
             NetClient.RequestBalance()
-            metaState.rechargeToast = "兑换成功，零件同步中…"
+            metaState.rechargeToast = "鍏戞崲鎴愬姛锛岄浂浠跺悓姝ヤ腑鈥?
         elseif reason == "pending" then
-            metaState.rechargeToast = "上一笔兑换尚未确认，请勿重复点击"
+            metaState.rechargeToast = "涓婁竴绗斿厬鎹㈠皻鏈‘璁わ紝璇峰嬁閲嶅鐐瑰嚮"
         elseif reason == "unknown" then
-            metaState.rechargeToast = "结果待确认，请重新进入游戏对账，勿重复兑换"
+            metaState.rechargeToast = "缁撴灉寰呯‘璁わ紝璇烽噸鏂拌繘鍏ユ父鎴忓璐︼紝鍕块噸澶嶅厬鎹?
         elseif reason == "insufficient" then
-            metaState.rechargeToast = "钻石不足"
+            metaState.rechargeToast = "閽荤煶涓嶈冻"
         else
-            metaState.rechargeToast = "扣款失败，请重试"
+            metaState.rechargeToast = "鎵ｆ澶辫触锛岃閲嶈瘯"
         end
         RefreshMeta()
     end)
@@ -951,20 +984,20 @@ local function HandleGemPurchase(index)
     local pack = Shared.GEM_PACKS[index]
     if not pack then return end
     if GameMode.IsOffline() then
-        metaState.rechargeToast = "需联网后可用"
+        metaState.rechargeToast = "闇€鑱旂綉鍚庡彲鐢?
         return
     end
     if not productsAvailable_ then
-        metaState.rechargeToast = "内购未开通或暂无商品"
+        metaState.rechargeToast = "鍐呰喘鏈紑閫氭垨鏆傛棤鍟嗗搧"
         return
     end
-    metaState.rechargeToast = "正在拉起支付…"
+    metaState.rechargeToast = "姝ｅ湪鎷夎捣鏀粯鈥?
     NetClient.Purchase(pack.sku, function(ok, reason)
         if ok then
-            -- 只是弹窗已拉起；发货由服务端异步完成，到账后会推余额。
-            metaState.rechargeToast = "支付完成后钻石自动到账"
+            -- 鍙槸寮圭獥宸叉媺璧凤紱鍙戣揣鐢辨湇鍔＄寮傛瀹屾垚锛屽埌璐﹀悗浼氭帹浣欓銆?
+            metaState.rechargeToast = "鏀粯瀹屾垚鍚庨捇鐭宠嚜鍔ㄥ埌璐?
         else
-            metaState.rechargeToast = "购买失败：" .. tostring(reason)
+            metaState.rechargeToast = "璐拱澶辫触锛? .. tostring(reason)
         end
         RefreshMeta()
     end)
@@ -984,17 +1017,17 @@ local function HandleRechargeAction(action, index)
         return true
     elseif action == "buy_first_gift" then
         if GameMode.IsOffline() then
-            metaState.rechargeToast = "需联网后可用"
+            metaState.rechargeToast = "闇€鑱旂綉鍚庡彲鐢?
         elseif not productsAvailable_ then
-            metaState.rechargeToast = "内购未开通或暂无商品"
+            metaState.rechargeToast = "鍐呰喘鏈紑閫氭垨鏆傛棤鍟嗗搧"
         else
-            metaState.rechargeToast = "正在拉起支付…"
+            metaState.rechargeToast = "姝ｅ湪鎷夎捣鏀粯鈥?
             NetClient.Purchase(Shared.FIRST_GIFT.sku, function(ok, reason)
                 if ok then
-                    -- 发货由服务端异步完成；钻石/礼包标志到账后推送刷新展示。
-                    metaState.rechargeToast = "支付完成后礼包自动到账"
+                    -- 鍙戣揣鐢辨湇鍔＄寮傛瀹屾垚锛涢捇鐭?绀煎寘鏍囧織鍒拌处鍚庢帹閫佸埛鏂板睍绀恒€?
+                    metaState.rechargeToast = "鏀粯瀹屾垚鍚庣ぜ鍖呰嚜鍔ㄥ埌璐?
                 else
-                    metaState.rechargeToast = "购买失败：" .. tostring(reason)
+                    metaState.rechargeToast = "璐拱澶辫触锛? .. tostring(reason)
                 end
                 RefreshMeta()
             end)
@@ -1006,7 +1039,7 @@ local function HandleRechargeAction(action, index)
     elseif action == "retry" then
         NetClient.RequestBalance()
         RefreshGemProducts()
-        metaState.rechargeToast = GameMode.IsOffline() and "仍处于离线模式" or "已刷新"
+        metaState.rechargeToast = GameMode.IsOffline() and "浠嶅浜庣绾挎ā寮? or "宸插埛鏂?
         return true
     end
     return false
@@ -1014,7 +1047,7 @@ end
 
 local function HandleMetaAction(action, index)
     if HandleRechargeAction(action, index) then return end
-    -- 元层交互音效：购买/解锁/领取类给确认音，其余给轻点击音。
+    -- 鍏冨眰浜や簰闊虫晥锛氳喘涔?瑙ｉ攣/棰嗗彇绫荤粰纭闊筹紝鍏朵綑缁欒交鐐瑰嚮闊炽€?
     if action == "buy" or action == "spend" or action == "buy_first_gift"
         or action == "unlock_talent" or action == "signin" or action == "claim"
         or action == "buy_premium_pass" then
@@ -1031,10 +1064,10 @@ local function HandleMetaAction(action, index)
         TalentTree.SetSelected(nil)
         OpenMetaScreen("talent")
     elseif action == "select_talent" then
-        -- 点圆形卡：TalentTree 内部已记录选中并弹浮窗，这里只需重绘（无副作用）。
+        -- 鐐瑰渾褰㈠崱锛歍alentTree 鍐呴儴宸茶褰曢€変腑骞跺脊娴獥锛岃繖閲屽彧闇€閲嶇粯锛堟棤鍓綔鐢級銆?
         RefreshMeta()
     elseif action == "unlock_talent" and index then
-        -- 天赋树节点解锁：TalentCatalog 校验前置/星级/零件，PlayerData 落盘。
+        -- 澶╄祴鏍戣妭鐐硅В閿侊細TalentCatalog 鏍￠獙鍓嶇疆/鏄熺骇/闆朵欢锛孭layerData 钀界洏銆?
         local nodeId = index
         local node = TalentCatalog.GetNode(nodeId)
         if node then
@@ -1045,24 +1078,24 @@ local function HandleMetaAction(action, index)
                 if PlayerData.UnlockTalent(nodeId, node.cost) then
                     PlayerData.Save()
                     SavePlayerDataToCloud()
-                    SetMetaToast(string.format("已解锁「%s」", node.name))
+                    SetMetaToast(string.format("宸茶В閿併€?s銆?, node.name))
                     print("[Main] talent unlocked: " .. nodeId)
                 end
             else
-                local msg = (reason == "stars" and "星级不足，尚未开放该阶段")
-                    or (reason == "prereq" and "需先解锁同一线路的上一阶段")
-                    or (reason == "parts" and "零件不足")
-                    or (reason == "owned" and "已解锁")
-                    or "无法解锁"
+                local msg = (reason == "stars" and "鏄熺骇涓嶈冻锛屽皻鏈紑鏀捐闃舵")
+                    or (reason == "prereq" and "闇€鍏堣В閿佸悓涓€绾胯矾鐨勪笂涓€闃舵")
+                    or (reason == "parts" and "闆朵欢涓嶈冻")
+                    or (reason == "owned" and "宸茶В閿?)
+                    or "鏃犳硶瑙ｉ攣"
                 SetMetaToast(msg)
             end
             RefreshMeta()
         end
     elseif action == "play_stage" and index then
-        -- 选关界面点某关：解锁校验（StageSelect 命中已过滤，这里兜底），关面板后开该关。
+        -- 閫夊叧鐣岄潰鐐规煇鍏筹細瑙ｉ攣鏍￠獙锛圫tageSelect 鍛戒腑宸茶繃婊わ紝杩欓噷鍏滃簳锛夛紝鍏抽潰鏉垮悗寮€璇ュ叧銆?
         if PlayerData.IsStageUnlocked(index) then
             if index == 1 then
-                -- v0.13.56：进入第 1 关前先询问是否测试后期关卡（每次都问）。
+                -- v0.13.56锛氳繘鍏ョ 1 鍏冲墠鍏堣闂槸鍚︽祴璇曞悗鏈熷叧鍗★紙姣忔閮介棶锛夈€?
                 OpenMetaScreen("test_mode")
                 print("[Main] stage 1 -> ask test mode")
             else
@@ -1073,7 +1106,7 @@ local function HandleMetaAction(action, index)
             end
         end
     elseif action == "test_mode_yes" then
-        -- v0.13.56：测试模式——解锁全部天赋树节点，直入后期关卡（默认第 20 关强度）。
+        -- v0.13.56锛氭祴璇曟ā寮忊€斺€旇В閿佸叏閮ㄥぉ璧嬫爲鑺傜偣锛岀洿鍏ュ悗鏈熷叧鍗★紙榛樿绗?20 鍏冲己搴︼級銆?
         local ids = {}
         for _, node in ipairs(TalentCatalog.GetNodes()) do ids[#ids + 1] = node.id end
         PlayerData.EnsureAutoOwnedTalents(ids)
@@ -1084,36 +1117,36 @@ local function HandleMetaAction(action, index)
             #ids, pendingTestStage_))
         RefreshMeta()
     elseif action == "test_mode_no" then
-        -- v0.13.56：正常开始——从第 1 关起步，不动天赋树。
+        -- v0.13.56锛氭甯稿紑濮嬧€斺€斾粠绗?1 鍏宠捣姝ワ紝涓嶅姩澶╄祴鏍戙€?
         pendingTestStage_ = 1
         RefreshMeta()
         print("[Main] test mode OFF: start stage 1")
     elseif action == "test_mode_close" then
-        -- 询问屏只能通过「是/否」离开；close 由 ESC 触发时视为「否」。
+        -- 璇㈤棶灞忓彧鑳介€氳繃銆屾槸/鍚︺€嶇寮€锛沜lose 鐢?ESC 瑙﹀彂鏃惰涓恒€屽惁銆嶃€?
         metaState.screen = nil
         pendingTestStage_ = 1
         RefreshMeta()
     elseif action == "open_settings" then
-        -- v0.13.59：主菜单左上角齿轮 → 设置屏。
+        -- v0.13.59锛氫富鑿滃崟宸︿笂瑙掗娇杞?鈫?璁剧疆灞忋€?
         OpenMetaScreen("settings")
     elseif action == "toggle_music" then
-        -- v0.13.60：音乐开关——写存档 + 立即作用到音频总控 + 刷新快照。
+        -- v0.13.60锛氶煶涔愬紑鍏斥€斺€斿啓瀛樻。 + 绔嬪嵆浣滅敤鍒伴煶棰戞€绘帶 + 鍒锋柊蹇収銆?
         local on = not PlayerData.IsMusicEnabled()
         PlayerData.SetMusicEnabled(on)
         RenderBackend.SetMusicEnabled(on)
         SavePlayerDataToCloud()
-        SetMetaToast(on and "音乐已开启" or "音乐已关闭")
+        SetMetaToast(on and "闊充箰宸插紑鍚? or "闊充箰宸插叧闂?)
         RefreshMeta()
     elseif action == "toggle_sfx" then
-        -- v0.13.60：音效开关——写存档 + 立即作用到音频总控 + 刷新快照。
+        -- v0.13.60锛氶煶鏁堝紑鍏斥€斺€斿啓瀛樻。 + 绔嬪嵆浣滅敤鍒伴煶棰戞€绘帶 + 鍒锋柊蹇収銆?
         local on = not PlayerData.IsSfxEnabled()
         PlayerData.SetSfxEnabled(on)
         RenderBackend.SetSfxEnabled(on)
         SavePlayerDataToCloud()
-        SetMetaToast(on and "音效已开启" or "音效已关闭")
+        SetMetaToast(on and "闊虫晥宸插紑鍚? or "闊虫晥宸插叧闂?)
         RefreshMeta()
     elseif action == "restore_purchase" then
-        -- 危险操作：先开确认面板，输入正确确认码后才真正恢复购买。
+        -- 鍗遍櫓鎿嶄綔锛氬厛寮€纭闈㈡澘锛岃緭鍏ユ纭‘璁ょ爜鍚庢墠鐪熸鎭㈠璐拱銆?
         Settings.BeginConfirm("restore")
         OpenMetaScreen("reset_confirm")
     elseif action == "reset_save" then
@@ -1127,56 +1160,56 @@ local function HandleMetaAction(action, index)
         Settings.Backspace()
         RefreshMeta()
     elseif action == "confirm_cancel" then
-        -- 取消确认面板：回设置屏（不执行任何危险操作）。
+        -- 鍙栨秷纭闈㈡澘锛氬洖璁剧疆灞忥紙涓嶆墽琛屼换浣曞嵄闄╂搷浣滐級銆?
         OpenMetaScreen("settings")
     elseif action == "confirm_ok" then
         if not Settings.IsConfirmed() then
-            SetMetaToast("确认码不正确")
+            SetMetaToast("纭鐮佷笉姝ｇ‘")
             RefreshMeta()
         else
             local reason = Settings.GetConfirmReason()
             metaState.screen = nil
             if reason == "delete" then
-                -- 清空存档：重置本地存档 + 云存档，回到出厂状态。
+                -- 娓呯┖瀛樻。锛氶噸缃湰鍦板瓨妗?+ 浜戝瓨妗ｏ紝鍥炲埌鍑哄巶鐘舵€併€?
                 PlayerData.ResetAll()
                 PlayerData.Save()
                 SavePlayerDataToCloud()
                 Game.SetItemStock(PlayerData.GetItemStock())
-                -- v0.13.60：清档后音乐/音效回到默认开，重新作用到音频总控。
+                -- v0.13.60锛氭竻妗ｅ悗闊充箰/闊虫晥鍥炲埌榛樿寮€锛岄噸鏂颁綔鐢ㄥ埌闊抽鎬绘帶銆?
                 RenderBackend.SetMusicEnabled(PlayerData.IsMusicEnabled())
                 RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
                 metaState.talents = PlayerData.GetTalents()
                 metaState.gems = 0
-                SetMetaToast("存档已清空")
+                SetMetaToast("瀛樻。宸叉竻绌?)
                 print("[Main] save wiped by player confirm")
             else
-                -- 恢复购买：重新向服务端拉一次余额与已购内容（离线不可用）。
+                -- 鎭㈠璐拱锛氶噸鏂板悜鏈嶅姟绔媺涓€娆′綑棰濅笌宸茶喘鍐呭锛堢绾夸笉鍙敤锛夈€?
                 if GameMode.IsOffline() then
-                    SetMetaToast("需联网后可用")
+                    SetMetaToast("闇€鑱旂綉鍚庡彲鐢?)
                 else
                     NetClient.RequestBalance()
-                    SetMetaToast("正在恢复购买…")
+                    SetMetaToast("姝ｅ湪鎭㈠璐拱鈥?)
                     print("[Main] restore purchase requested")
                 end
             end
             RefreshMeta()
         end
     elseif action == "buy_item" and index then
-        -- v0.13.13：花零件买局内道具（永久库存）。库存上限/零件不足都只给 toast。
+        -- v0.13.13锛氳姳闆朵欢涔板眬鍐呴亾鍏凤紙姘镐箙搴撳瓨锛夈€傚簱瀛樹笂闄?闆朵欢涓嶈冻閮藉彧缁?toast銆?
         local def = StageSelect.ITEM_ORDER[index]
         if def then
             local affordable, atCap = ItemShop.CanBuy(def.key)
             if atCap then
-                SetMetaToast("该道具已达库存上限")
+                SetMetaToast("璇ラ亾鍏峰凡杈惧簱瀛樹笂闄?)
             elseif not affordable then
-                SetMetaToast(string.format("零件不足，还差 %d",
+                SetMetaToast(string.format("闆朵欢涓嶈冻锛岃繕宸?%d",
                     math.max(0, ItemShop.GetPrice(def.key) - PlayerData.GetParts())))
             else
                 local stockBefore = PlayerData.GetItemCount(def.key)
                 if ItemShop.Buy(def.key) then
                     Game.SetItemStock(PlayerData.GetItemStock())
                     SavePlayerDataToCloud()
-                    SetMetaToast(string.format("已购买「%s」×1", def.name))
+                    SetMetaToast(string.format("宸茶喘涔般€?s銆嵜?", def.name))
                     print("[Main] item bought: " .. def.key
                         .. " stock " .. stockBefore .. " -> " .. PlayerData.GetItemCount(def.key))
                 end
@@ -1196,18 +1229,18 @@ local function HandleMetaAction(action, index)
     elseif action == "open_rank" then
         OpenMetaScreen("rank")
     elseif action == "pass_tab" then
-        -- v0.14.0：战斗档案屏切到「战斗档案」页签。
+        -- v0.14.0锛氭垬鏂楁。妗堝睆鍒囧埌銆屾垬鏂楁。妗堛€嶉〉绛俱€?
         metaState.passTab = "pass"
     elseif action == "ach_tab" then
-        -- v0.14.0：战斗档案屏切到「成就」页签——打开前重算一次（折算最新统计 + 幂等外发）。
+        -- v0.14.0锛氭垬鏂楁。妗堝睆鍒囧埌銆屾垚灏便€嶉〉绛锯€斺€旀墦寮€鍓嶉噸绠椾竴娆★紙鎶樼畻鏈€鏂扮粺璁?+ 骞傜瓑澶栧彂锛夈€?
         AchievementSystem.Refresh()
         RefreshMeta()
         metaState.passTab = "ach"
         metaState.achPage = 1
     elseif action == "show_platform_achievements" then
-        -- 跳平台原生成就页（能力不可用时提示）。
+        -- 璺冲钩鍙板師鐢熸垚灏遍〉锛堣兘鍔涗笉鍙敤鏃舵彁绀猴級銆?
         if not AchievementSystem.ShowPlatformAchievements() then
-            SetMetaToast("当前环境不支持平台成就页")
+            SetMetaToast("褰撳墠鐜涓嶆敮鎸佸钩鍙版垚灏遍〉")
         end
     elseif action == "ach_prev_page" then
         metaState.achPage = math.max(1, (metaState.achPage or 1) - 1)
@@ -1218,40 +1251,40 @@ local function HandleMetaAction(action, index)
     elseif action == "open_wheel" then
         OpenMetaScreen("wheel")
     elseif action == "open_pass" then
-        -- v0.14.0：打开战斗档案屏默认落在「战斗档案」页签。
+        -- v0.14.0锛氭墦寮€鎴樻枟妗ｆ灞忛粯璁よ惤鍦ㄣ€屾垬鏂楁。妗堛€嶉〉绛俱€?
         metaState.passTab = "pass"
         OpenMetaScreen("pass")
     elseif action == "claim_pass" and index then
         local reward = PlayerData.ClaimPass(index, metaState.premiumPass and 2 or 1)
         if reward > 0 then
             PersistMeta()
-            SetMetaToast(string.format("战斗档案 +%d 零件", reward))
+            SetMetaToast(string.format("鎴樻枟妗ｆ +%d 闆朵欢", reward))
         end
     elseif action == "claim_gear" then
         local gears = PlayerData.ClaimGear()
         if gears > 0 then
             PersistMeta()
-            SetMetaToast(string.format("存钱罐 +%d 齿轮", gears))
+            SetMetaToast(string.format("瀛橀挶缃?+%d 榻胯疆", gears))
         else
-            SetMetaToast("存钱罐还是空的")
+            SetMetaToast("瀛橀挶缃愯繕鏄┖鐨?)
         end
     elseif action == "buy_premium_pass" then
         if GameMode.IsOffline() then
-            SetMetaToast("需联网后可用")
+            SetMetaToast("闇€鑱旂綉鍚庡彲鐢?)
         else
-            SetMetaToast("扣款中…")
+            SetMetaToast("鎵ｆ涓€?)
             NetClient.SpendGems("pass_premium", function(ok, reason)
                 if ok then
                     NetClient.RequestBalance()
-                    SetMetaToast("付费档案轨已解锁")
+                    SetMetaToast("浠樿垂妗ｆ杞ㄥ凡瑙ｉ攣")
                 elseif reason == "pending" then
-                    SetMetaToast("上一笔兑换尚未确认，请稍候")
+                    SetMetaToast("涓婁竴绗斿厬鎹㈠皻鏈‘璁わ紝璇风◢鍊?)
                 elseif reason == "unknown" then
-                    SetMetaToast("结果待确认，请重新进入游戏对账")
+                    SetMetaToast("缁撴灉寰呯‘璁わ紝璇烽噸鏂拌繘鍏ユ父鎴忓璐?)
                 elseif reason == "already_owned" then
-                    SetMetaToast("付费档案轨已解锁")
+                    SetMetaToast("浠樿垂妗ｆ杞ㄥ凡瑙ｉ攣")
                 else
-                    SetMetaToast("扣款失败，请重试")
+                    SetMetaToast("鎵ｆ澶辫触锛岃閲嶈瘯")
                 end
                 RefreshMeta()
             end)
@@ -1262,7 +1295,7 @@ local function HandleMetaAction(action, index)
         if metaState.supplyAvailable then
             metaState.supplyOpen = true
         else
-            SetMetaToast("今日补给已领取")
+            SetMetaToast("浠婃棩琛ョ粰宸查鍙?)
         end
     elseif action == "supply_claim" then
         HandleSupply("claim")
@@ -1271,7 +1304,7 @@ local function HandleMetaAction(action, index)
     elseif action == "claim" and index then
         HandleClaimTask(index)
     elseif action == "preview_skin" and index then
-        -- 展台浏览只改变预览车型，不购买、不装备、不写存档。
+        -- 灞曞彴娴忚鍙敼鍙橀瑙堣溅鍨嬶紝涓嶈喘涔般€佷笉瑁呭銆佷笉鍐欏瓨妗ｃ€?
         MetaUI.PreviewVehicle(index)
     elseif action == "buy_skin" and index then
         HandleShopSkin(index)
@@ -1288,10 +1321,10 @@ local function HandleMetaAction(action, index)
     end
 end
 
--- v0.12.5：顶端通知条动作处理（在此赋值，函数体引用 HandleMetaAction）。
+-- v0.12.5锛氶《绔€氱煡鏉″姩浣滃鐞嗭紙鍦ㄦ璧嬪€硷紝鍑芥暟浣撳紩鐢?HandleMetaAction锛夈€?
 onBannerAction = function(actionId)
     if actionId == "buy_premium_pass" then
-        -- 扣款走服务端异步回调，结果由 metaToast 呈现；通知条先收起避免重复点击。
+        -- 鎵ｆ璧版湇鍔＄寮傛鍥炶皟锛岀粨鏋滅敱 metaToast 鍛堢幇锛涢€氱煡鏉″厛鏀惰捣閬垮厤閲嶅鐐瑰嚮銆?
         RenderBackend.DismissSystemBanner()
         HandleMetaAction("buy_premium_pass", nil)
     elseif actionId == "open_recharge" then
@@ -1307,8 +1340,8 @@ local function IsMetaCapturing()
     return metaState.screen ~= nil or metaState.supplyOpen
 end
 
--- 元层优先消费输入：弹窗 > 面板 > 主菜单商业区。
--- 返回 true 表示本次输入已被元层处理，玩法层不得再响应。
+-- 鍏冨眰浼樺厛娑堣垂杈撳叆锛氬脊绐?> 闈㈡澘 > 涓昏彍鍗曞晢涓氬尯銆?
+-- 杩斿洖 true 琛ㄧず鏈杈撳叆宸茶鍏冨眰澶勭悊锛岀帺娉曞眰涓嶅緱鍐嶅搷搴斻€?
 ---@return boolean handled
 local function HandleMetaPointerDown(uiX, uiY)
     if metaState.supplyOpen then
@@ -1317,17 +1350,17 @@ local function HandleMetaPointerDown(uiX, uiY)
         return true
     end
     if metaState.screen then
-        -- v0.13.8：天赋树是可滚动面板——按下先交给它记录起点（内容区内），
-        -- 但是否算「拖拽」要等抬手时才定（见 HandleMouseUp/TouchEnd 的 ScrollEnd）。
-        -- ⚠️ 这里不能直接 return：否则点击永远走不到 HitTestMetaScreen，
-        -- 卡片选不中、底部浮窗不弹（v0.13.13 修复）。
-        -- v0.13.13：天赋树的「点卡片选卡」放在抬手时判定——
-        -- 真拖拽过就吞掉抬手（只滚动不选卡），没拖拽过才当作点击。
+        -- v0.13.8锛氬ぉ璧嬫爲鏄彲婊氬姩闈㈡澘鈥斺€旀寜涓嬪厛浜ょ粰瀹冭褰曡捣鐐癸紙鍐呭鍖哄唴锛夛紝
+        -- 浣嗘槸鍚︾畻銆屾嫋鎷姐€嶈绛夋姮鎵嬫椂鎵嶅畾锛堣 HandleMouseUp/TouchEnd 鐨?ScrollEnd锛夈€?
+        -- 鈿狅笍 杩欓噷涓嶈兘鐩存帴 return锛氬惁鍒欑偣鍑绘案杩滆蛋涓嶅埌 HitTestMetaScreen锛?
+        -- 鍗＄墖閫変笉涓€佸簳閮ㄦ诞绐椾笉寮癸紙v0.13.13 淇锛夈€?
+        -- v0.13.13锛氬ぉ璧嬫爲鐨勩€岀偣鍗＄墖閫夊崱銆嶆斁鍦ㄦ姮鎵嬫椂鍒ゅ畾鈥斺€?
+        -- 鐪熸嫋鎷借繃灏卞悶鎺夋姮鎵嬶紙鍙粴鍔ㄤ笉閫夊崱锛夛紝娌℃嫋鎷借繃鎵嶅綋浣滅偣鍑汇€?
         if metaState.screen == "talent" and TalentTree.ScrollBegin(uiX, uiY, designWidth_) then
             talentScrollArmed = true
             return true
         end
-        -- v0.13.13：选关界面同样是可滚动爬塔——按下先记录起点，抬手时按「是否拖动过」分流。
+        -- v0.13.13锛氶€夊叧鐣岄潰鍚屾牱鏄彲婊氬姩鐖鈥斺€旀寜涓嬪厛璁板綍璧风偣锛屾姮鎵嬫椂鎸夈€屾槸鍚︽嫋鍔ㄨ繃銆嶅垎娴併€?
         if metaState.screen == "stage_select" and StageSelect.ScrollBegin(uiX, uiY, designWidth_) then
             stageSelectScrollArmed = true
             return true
@@ -1336,12 +1369,12 @@ local function HandleMetaPointerDown(uiX, uiY)
         if action then HandleMetaAction(action, index) end
         return true
     end
-    -- v0.13.4：主菜单「开始战斗」CTA 打开选关界面（不再直接开局）。
+    -- v0.13.4锛氫富鑿滃崟銆屽紑濮嬫垬鏂椼€岰TA 鎵撳紑閫夊叧鐣岄潰锛堜笉鍐嶇洿鎺ュ紑灞€锛夈€?
     if gameSnapshot and RenderBackend.HitTestMenuCta(uiX, uiY, gameSnapshot) then
         HandleMetaAction("open_stage_select", nil)
         return true
     end
-    -- v0.13.59：主菜单左上角齿轮 → 设置屏。
+    -- v0.13.59锛氫富鑿滃崟宸︿笂瑙掗娇杞?鈫?璁剧疆灞忋€?
     if gameSnapshot and RenderBackend.HitTestMenuGear(uiX, uiY, gameSnapshot) then
         HandleMetaAction("open_settings", nil)
         return true
@@ -1360,7 +1393,7 @@ local function HandleMetaPointerClick(uiX, uiY)
     if action then HandleMetaAction(action, index) end
 end
 
--- 主菜单上的元层点击（鼠标/触摸共用）。返回 true 表示本次输入已被元层消费。
+-- 涓昏彍鍗曚笂鐨勫厓灞傜偣鍑伙紙榧犳爣/瑙︽懜鍏辩敤锛夈€傝繑鍥?true 琛ㄧず鏈杈撳叆宸茶鍏冨眰娑堣垂銆?
 ---@param screenX number
 ---@param screenY number
 ---@return boolean handled
@@ -1370,13 +1403,13 @@ local function TryMenuMetaAt(screenX, screenY)
     return HandleMetaPointerDown(uiX, uiY)
 end
 
--- 松手时若元层面板仍开着，禁止穿透成「点击开始」。
+-- 鏉炬墜鏃惰嫢鍏冨眰闈㈡澘浠嶅紑鐫€锛岀姝㈢┛閫忔垚銆岀偣鍑诲紑濮嬨€嶃€?
 ---@return boolean
 local function MenuMetaBlocksRelease()
     return gameSnapshot ~= nil and gameSnapshot.state == "menu" and IsMetaCapturing()
 end
 
--- v0.12.5：HUD 右上角暂停按钮（移动端唯一暂停入口）。返回 true 表示已消费。
+-- v0.12.5锛欻UD 鍙充笂瑙掓殏鍋滄寜閽紙绉诲姩绔敮涓€鏆傚仠鍏ュ彛锛夈€傝繑鍥?true 琛ㄧず宸叉秷璐广€?
 ---@return boolean handled
 local function TryHudPauseAt(screenX, screenY)
     if not gameSnapshot or gameSnapshot.state ~= "playing" then return false end
@@ -1387,8 +1420,8 @@ local function TryHudPauseAt(screenX, screenY)
     return true
 end
 
--- v0.12.5：局内道具右上角竖列。收起态点标签展开；展开态点槽位用道具或看广告领取。
--- 返回 true 表示点击已被消费（不再穿透成拖拽起手）。
+-- v0.12.5锛氬眬鍐呴亾鍏峰彸涓婅绔栧垪銆傛敹璧锋€佺偣鏍囩灞曞紑锛涘睍寮€鎬佺偣妲戒綅鐢ㄩ亾鍏锋垨鐪嬪箍鍛婇鍙栥€?
+-- 杩斿洖 true 琛ㄧず鐐瑰嚮宸茶娑堣垂锛堜笉鍐嶇┛閫忔垚鎷栨嫿璧锋墜锛夈€?
 ---@return boolean handled
 local function TryUseItemAt(screenX, screenY)
     if not gameSnapshot or gameSnapshot.state ~= "playing" then return false end
@@ -1405,35 +1438,35 @@ local function TryUseItemAt(screenX, screenY)
     if not item then return false end
 
     if (item.charges or 0) > 0 then
-        Game.UseItem(item.key)   -- 效果与飘字都由规则层事件驱动
+        Game.UseItem(item.key)   -- 鏁堟灉涓庨瀛楅兘鐢辫鍒欏眰浜嬩欢椹卞姩
         return true
     end
     if item.canGrant then
         ShowAd(function()
             if Game.GrantItem(item.key) then
                 print("[Main] item granted via ad: " .. item.key)
-                -- 发放成功后保持展开，让玩家看到新入手的道具
+                -- 鍙戞斁鎴愬姛鍚庝繚鎸佸睍寮€锛岃鐜╁鐪嬪埌鏂板叆鎵嬬殑閬撳叿
                 RenderBackend.SetItemPanelOpen(true)
             end
         end)
         return true
     end
-    Presentation.SetAdToast(item.name .. " 本局已领取")
+    Presentation.SetAdToast(item.name .. " 鏈眬宸查鍙?)
     return true
 end
 
--- v0.13.58：左上角附魔卡点击使用。返回 true 表示点击已被消费（不再穿透成拖拽起手）。
+-- v0.13.58锛氬乏涓婅闄勯瓟鍗＄偣鍑讳娇鐢ㄣ€傝繑鍥?true 琛ㄧず鐐瑰嚮宸茶娑堣垂锛堜笉鍐嶇┛閫忔垚鎷栨嫿璧锋墜锛夈€?
 ---@return boolean handled
 local function TryUseEnchantAt(screenX, screenY)
     if not gameSnapshot or gameSnapshot.state ~= "playing" then return false end
     local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
     if not RenderBackend.HitTestEnchant(uiX, uiY, gameSnapshot) then return false end
     if not Game.HasEnchant() then return false end
-    Game.UseEnchant()   -- 效果与反馈都由规则层事件驱动
+    Game.UseEnchant()   -- 鏁堟灉涓庡弽棣堥兘鐢辫鍒欏眰浜嬩欢椹卞姩
     return true
 end
 
--- v0.11.0 商业化：暂停补给站的看广告按钮。返回 true 表示点击已被消费（不触发恢复）。
+-- v0.11.0 鍟嗕笟鍖栵細鏆傚仠琛ョ粰绔欑殑鐪嬪箍鍛婃寜閽€傝繑鍥?true 琛ㄧず鐐瑰嚮宸茶娑堣垂锛堜笉瑙﹀彂鎭㈠锛夈€?
 ---@return boolean handled
 local function TryPauseSupplyAt(screenX, screenY)
     if not Game.IsPaused() then return false end
@@ -1441,51 +1474,51 @@ local function TryPauseSupplyAt(screenX, screenY)
     local kind = RenderBackend.HitTestPausePanel(uiX, uiY, Game.GetSnapshot())
     if kind == "pause_heal" then
         if not Game.CanPauseHeal() then
-            Presentation.SetAdToast("防线已满或急救已用完")
+            Presentation.SetAdToast("闃茬嚎宸叉弧鎴栨€ユ晳宸茬敤瀹?)
             return true
         end
         ShowAd(function()
             if Game.PauseHeal() then
-                Presentation.SetAdToast("防线 +25 血")
+                Presentation.SetAdToast("闃茬嚎 +25 琛€")
             end
         end)
         return true
     elseif kind == "pause_rare" then
         if not Game.CanPauseRarePick() then
-            Presentation.SetAdToast("本局已购买稀有保底")
+            Presentation.SetAdToast("鏈眬宸茶喘涔扮█鏈変繚搴?)
             return true
         end
         ShowAd(function()
             if Game.PauseRarePick() then
-                Presentation.SetAdToast("下次强化面板必出稀有")
+                Presentation.SetAdToast("涓嬫寮哄寲闈㈡澘蹇呭嚭绋€鏈?)
             end
         end)
         return true
     elseif kind == "pause_orbital" then
         if not Game.CanPauseOrbital() then
-            Presentation.SetAdToast("只在首领在场且本局未支援时可用")
+            Presentation.SetAdToast("鍙湪棣栭鍦ㄥ満涓旀湰灞€鏈敮鎻存椂鍙敤")
             return true
         end
         ShowAd(function()
-            if Game.PauseOrbital() then Presentation.SetAdToast("轨道支援已轰击首领") end
+            if Game.PauseOrbital() then Presentation.SetAdToast("杞ㄩ亾鏀彺宸茶桨鍑婚棰?) end
         end)
         return true
     elseif kind == "pause_reload" then
         if not Game.CanPauseReload() then
-            Presentation.SetAdToast("本局弹药补给已领取")
+            Presentation.SetAdToast("鏈眬寮硅嵂琛ョ粰宸查鍙?)
             return true
         end
         ShowAd(function()
-            if Game.PauseReload() then Presentation.SetAdToast("已补充一辆重卡") end
+            if Game.PauseReload() then Presentation.SetAdToast("宸茶ˉ鍏呬竴杈嗛噸鍗?) end
         end)
         return true
     elseif kind == "pause_parts_boost" then
         if not Game.CanPausePartsBoost() then
-            Presentation.SetAdToast("本局零件加倍已领取")
+            Presentation.SetAdToast("鏈眬闆朵欢鍔犲€嶅凡棰嗗彇")
             return true
         end
         ShowAd(function()
-            if Game.PausePartsBoost() then Presentation.SetAdToast("零件 ×2 生效 45 秒") end
+            if Game.PausePartsBoost() then Presentation.SetAdToast("闆朵欢 脳2 鐢熸晥 45 绉?) end
         end)
         return true
     elseif kind == "pause_resume" then
@@ -1500,8 +1533,8 @@ local function TryPauseSupplyAt(screenX, screenY)
     return false
 end
 
--- 升级面板点击命中（v0.12.5 精简：只有选卡 / 锁定 / 免费重抽 / 看广告重抽）。
--- 几何完全由 Scene3DBackend.HitTestUpgradePanel 提供，与绘制同源，禁止在此另写常量。
+-- 鍗囩骇闈㈡澘鐐瑰嚮鍛戒腑锛坴0.12.5 绮剧畝锛氬彧鏈夐€夊崱 / 閿佸畾 / 鍏嶈垂閲嶆娊 / 鐪嬪箍鍛婇噸鎶斤級銆?
+-- 鍑犱綍瀹屽叏鐢?Scene3DBackend.HitTestUpgradePanel 鎻愪緵锛屼笌缁樺埗鍚屾簮锛岀姝㈠湪姝ゅ彟鍐欏父閲忋€?
 local function TryPickUpgradeAt(uiX, uiY)
     local snapshot = Game.GetSnapshot()
     local kind, index = RenderBackend.HitTestUpgradePanel(uiX, uiY, snapshot)
@@ -1510,21 +1543,21 @@ local function TryPickUpgradeAt(uiX, uiY)
         return true
     elseif kind == "hold" and index then
         if Game.ToggleHeldUpgrade(index) then
-            Presentation.SetAdToast("已切换保留卡，下一次升级优先出现")
+            Presentation.SetAdToast("宸插垏鎹繚鐣欏崱锛屼笅涓€娆″崌绾т紭鍏堝嚭鐜?)
         end
         return true
     elseif kind == "reroll_free" then
         if Game.CanFreeReroll() then
             Game.RerollUpgrades("free")
-            Presentation.SetAdToast("已免费重抽")
+            Presentation.SetAdToast("宸插厤璐归噸鎶?)
         else
-            Presentation.SetAdToast("本局免费重抽已用完")
+            Presentation.SetAdToast("鏈眬鍏嶈垂閲嶆娊宸茬敤瀹?)
         end
         return true
     elseif kind == "reroll_ad" then
         ShowAd(function()
             if Game.RerollUpgrades("ad_rare") then
-                Presentation.SetAdToast("已重抽，本次必有稀有强化")
+                Presentation.SetAdToast("宸查噸鎶斤紝鏈蹇呮湁绋€鏈夊己鍖?)
             end
         end)
         return true
@@ -1533,7 +1566,7 @@ local function TryPickUpgradeAt(uiX, uiY)
 end
 
 local function HandleGameOverPointerDown(uiX, uiY)
-    -- 过渡期吞掉点击；仅在跳过提示出现后允许跳过，不武装结算按钮。
+    -- 杩囨浮鏈熷悶鎺夌偣鍑伙紱浠呭湪璺宠繃鎻愮ず鍑虹幇鍚庡厑璁歌烦杩囷紝涓嶆瑁呯粨绠楁寜閽€?
     if StageTransition.IsActive(Game.GetSnapshot()) then
         reviveArmed, doubleArmed, restartArmed, menuArmed = false, false, false, false
         StageTransition.Skip(Game.GetSnapshot())
@@ -1543,7 +1576,7 @@ local function HandleGameOverPointerDown(uiX, uiY)
     reviveArmed = (hit == "revive")
     doubleArmed = (hit == "double")
     restartArmed = (hit == "restart")
-    -- v0.12.5：结算页「回主菜单」出口（同样松手确认，防死亡瞬间误触）
+    -- v0.12.5锛氱粨绠楅〉銆屽洖涓昏彍鍗曘€嶅嚭鍙ｏ紙鍚屾牱鏉炬墜纭锛岄槻姝讳骸鐬棿璇Е锛?
     menuArmed = (hit == "menu")
     return hit ~= nil
 end
@@ -1566,7 +1599,7 @@ local function HandleGameOverPointerUp(uiX, uiY)
         if Game.CanDoubleSettle() then
             ShowDoublePartsAd()
         else
-            Presentation.SetAdToast("本局零件已翻倍")
+            Presentation.SetAdToast("鏈眬闆朵欢宸茬炕鍊?)
         end
         return true
     end
@@ -1595,9 +1628,9 @@ local function HandleGameOverPointerUp(uiX, uiY)
     return false
 end
 
--- v0.13.4：胜利结算页（stagewin）松手确认。Down 只武装命中的按钮，Up 时才真正跳关/重开/回菜单。
+-- v0.13.4锛氳儨鍒╃粨绠楅〉锛坰tagewin锛夋澗鎵嬬‘璁ゃ€侱own 鍙瑁呭懡涓殑鎸夐挳锛孶p 鏃舵墠鐪熸璺冲叧/閲嶅紑/鍥炶彍鍗曘€?
 local function HandleStageWinPointerDown(uiX, uiY)
-    -- 与失败同门控：早期点击只消费，不跳过，也不武装隐藏按钮。
+    -- 涓庡け璐ュ悓闂ㄦ帶锛氭棭鏈熺偣鍑诲彧娑堣垂锛屼笉璺宠繃锛屼篃涓嶆瑁呴殣钘忔寜閽€?
     if StageTransition.IsActive(Game.GetSnapshot()) then
         stageWinArmed = nil
         StageTransition.Skip(Game.GetSnapshot())
@@ -1616,9 +1649,9 @@ local function HandleStageWinPointerUp(uiX, uiY)
     if armed == "next" then
         Game.NextStage()
     elseif armed == "retry" then
-        -- v0.13.56：第 1 关「再战本关」同样先弹测试模式询问（每次都问）。
-        -- ⚠️ 询问屏是「菜单态」屏，必须先回主菜单再开，否则 HandleUpdate 的
-        --    待决跳关判定（要求 state==menu）永远不成立。
+        -- v0.13.56锛氱 1 鍏炽€屽啀鎴樻湰鍏炽€嶅悓鏍峰厛寮规祴璇曟ā寮忚闂紙姣忔閮介棶锛夈€?
+        -- 鈿狅笍 璇㈤棶灞忔槸銆岃彍鍗曟€併€嶅睆锛屽繀椤诲厛鍥炰富鑿滃崟鍐嶅紑锛屽惁鍒?HandleUpdate 鐨?
+        --    寰呭喅璺冲叧鍒ゅ畾锛堣姹?state==menu锛夋案杩滀笉鎴愮珛銆?
         if Game.GetSnapshot().stageResult and Game.GetSnapshot().stageResult.stage == 1 then
             Game.GoToMenu()
             OpenMetaScreen("test_mode")
@@ -1636,11 +1669,11 @@ end
 
 local started_ = false
 
--- 离线降级：云能力（云存档/排行榜/余额）在单机路径上全部短路，只读本地。
+-- 绂荤嚎闄嶇骇锛氫簯鑳藉姏锛堜簯瀛樻。/鎺掕姒?浣欓锛夊湪鍗曟満璺緞涓婂叏閮ㄧ煭璺紝鍙鏈湴銆?
 ---@param opts table|nil { offline = boolean }
 function ClientMain.Start(opts)
-    -- 自建大厅五秒超时先本地启动了游戏；若引擎随后仍完成脚本切换再调一次 Start，
-    -- 重复订阅会让 Game.Update 每帧跑两遍。此处幂等保护，保持已运行的本地局不变。
+    -- 鑷缓澶у巺浜旂瓒呮椂鍏堟湰鍦板惎鍔ㄤ簡娓告垙锛涜嫢寮曟搸闅忓悗浠嶅畬鎴愯剼鏈垏鎹㈠啀璋冧竴娆?Start锛?
+    -- 閲嶅璁㈤槄浼氳 Game.Update 姣忓抚璺戜袱閬嶃€傛澶勫箓绛変繚鎶わ紝淇濇寔宸茶繍琛岀殑鏈湴灞€涓嶅彉銆?
     if started_ then
         print("[ClientMain] already started, ignore duplicate entry")
         return true
@@ -1650,7 +1683,7 @@ function ClientMain.Start(opts)
         GameMode.SetOffline(opts.offline == true)
     end
 
-    graphics.windowTitle = "货车大战飞机"
+    graphics.windowTitle = "璐ц溅澶ф垬椋炴満"
     input.mouseVisible = true
 
     if not RenderBackend.Init() then return false end
@@ -1668,48 +1701,48 @@ function ClientMain.Start(opts)
     ClientMain._pointer.focused = true
     ClientMain.CancelInput()
 
-    -- v0.12.5：平台通知换皮（v0.12.7：付费轨自动曝光已删，无需状态复位）。
+    -- v0.12.5锛氬钩鍙伴€氱煡鎹㈢毊锛坴0.12.7锛氫粯璐硅建鑷姩鏇濆厜宸插垹锛屾棤闇€鐘舵€佸浣嶏級銆?
     installSystemNotificationHandler()
 
-    -- v0.11.0 联机：充值弹层复用游戏 UI 的令牌与原语（UI 无污染）。
+    -- v0.11.0 鑱旀満锛氬厖鍊煎脊灞傚鐢ㄦ父鎴?UI 鐨勪护鐗屼笌鍘熻锛圲I 鏃犳薄鏌擄級銆?
     RechargeShop.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("recharge", RechargeShop.Draw, RechargeShop.HitTest)
-    -- v0.13.4：选关界面同样复用游戏令牌（插件式注册，不反向依赖渲染后端）。
+    -- v0.13.4锛氶€夊叧鐣岄潰鍚屾牱澶嶇敤娓告垙浠ょ墝锛堟彃浠跺紡娉ㄥ唽锛屼笉鍙嶅悜渚濊禆娓叉煋鍚庣锛夈€?
     StageSelect.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("stage_select", StageSelect.Draw, StageSelect.HitTest)
-    -- v0.13.13：局内道具库存 provider——Game.ResetGame 每次开局自动拉取，
-    -- 覆盖选关/下一关/再战/重开全部入口（无需逐个入口注入）。
+    -- v0.13.13锛氬眬鍐呴亾鍏峰簱瀛?provider鈥斺€擥ame.ResetGame 姣忔寮€灞€鑷姩鎷夊彇锛?
+    -- 瑕嗙洊閫夊叧/涓嬩竴鍏?鍐嶆垬/閲嶅紑鍏ㄩ儴鍏ュ彛锛堟棤闇€閫愪釜鍏ュ彛娉ㄥ叆锛夈€?
     Game.SetItemStockProvider(PlayerData.GetItemStock)
-    -- v0.13.5：天赋树界面同源注册。
+    -- v0.13.5锛氬ぉ璧嬫爲鐣岄潰鍚屾簮娉ㄥ唽銆?
     TalentTree.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("talent", TalentTree.Draw, TalentTree.HitTest)
-    -- v0.13.56：第 1 关「测试模式」询问屏同源注册（复用元层窗口动画与命中分发）。
+    -- v0.13.56锛氱 1 鍏炽€屾祴璇曟ā寮忋€嶈闂睆鍚屾簮娉ㄥ唽锛堝鐢ㄥ厓灞傜獥鍙ｅ姩鐢讳笌鍛戒腑鍒嗗彂锛夈€?
     TestModePrompt.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("test_mode", TestModePrompt.Draw, TestModePrompt.HitTest)
-    -- v0.13.59：设置屏 + 危险操作确认面板（手机键盘输入确认码）同源注册。
+    -- v0.13.59锛氳缃睆 + 鍗遍櫓鎿嶄綔纭闈㈡澘锛堟墜鏈洪敭鐩樿緭鍏ョ‘璁ょ爜锛夊悓婧愭敞鍐屻€?
     Settings.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("settings", Settings.Draw, Settings.HitTest)
     MetaUI.RegisterScreen("reset_confirm", Settings.DrawConfirm, Settings.HitTestConfirm)
-    -- v0.14.0：成就列表已并入「战斗档案」屏（MetaUI.DrawPass 直接调用），不再单独注册屏；
-    -- 这里只注入依赖（本地成就为权威，平台成就只做镜像）。
+    -- v0.14.0锛氭垚灏卞垪琛ㄥ凡骞跺叆銆屾垬鏂楁。妗堛€嶅睆锛圡etaUI.DrawPass 鐩存帴璋冪敤锛夛紝涓嶅啀鍗曠嫭娉ㄥ唽灞忥紱
+    -- 杩欓噷鍙敞鍏ヤ緷璧栵紙鏈湴鎴愬氨涓烘潈濞侊紝骞冲彴鎴愬氨鍙仛闀滃儚锛夈€?
     Achievements.Init(MetaUI.GetDeps())
 
     PlayerData.Load()
-    -- v0.13.60：把存档里的音乐/音效开关作用到音频总控（AudioDirector 已在 Backend.Init 就绪）。
+    -- v0.13.60锛氭妸瀛樻。閲岀殑闊充箰/闊虫晥寮€鍏充綔鐢ㄥ埌闊抽鎬绘帶锛圓udioDirector 宸插湪 Backend.Init 灏辩华锛夈€?
     RenderBackend.SetMusicEnabled(PlayerData.IsMusicEnabled())
     RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
-    -- 开局自动拥有初始车的「允许局内出场」节点（幂等；必须在 Load 之后）。
+    -- 寮€灞€鑷姩鎷ユ湁鍒濆杞︾殑銆屽厑璁稿眬鍐呭嚭鍦恒€嶈妭鐐癸紙骞傜瓑锛涘繀椤诲湪 Load 涔嬪悗锛夈€?
     PlayerData.EnsureAutoOwnedTalents(TalentCatalog.AUTO_OWNED)
-    -- 成就重算放在网络降级判定之后，离线启动不向平台外发。
-    -- v0.13.5：天赋提供者——每次开局（选关/下一关/重开）Game 自动拉取最新解锁集合。
+    -- 鎴愬氨閲嶇畻鏀惧湪缃戠粶闄嶇骇鍒ゅ畾涔嬪悗锛岀绾垮惎鍔ㄤ笉鍚戝钩鍙板鍙戙€?
+    -- v0.13.5锛氬ぉ璧嬫彁渚涜€呪€斺€旀瘡娆″紑灞€锛堥€夊叧/涓嬩竴鍏?閲嶅紑锛塆ame 鑷姩鎷夊彇鏈€鏂拌В閿侀泦鍚堛€?
     Game.SetTalentProvider(function() return PlayerData.GetTalents() end)
     metaDate = os.date("%Y-%m-%d")
-    -- ⚠️ 全程 pcall：联机层任何异常都不允许中断游戏启动
-    --    （曾经因为 NetClient.Start 为 nil，在这里抛出，导致后面的事件订阅全部没执行，
-    --     真机表现为「3D 正常但 2D 界面全没」）。
-    -- 离线降级时整层不加载；在线路径才启用余额同步。
-    -- ⚠️ 全程 pcall：联机层任何异常都不允许中断游戏启动（否则后续事件订阅全不执行，
-    --    真机表现为「3D 正常但 2D 界面全没」）。
+    -- 鈿狅笍 鍏ㄧ▼ pcall锛氳仈鏈哄眰浠讳綍寮傚父閮戒笉鍏佽涓柇娓告垙鍚姩
+    --    锛堟浘缁忓洜涓?NetClient.Start 涓?nil锛屽湪杩欓噷鎶涘嚭锛屽鑷村悗闈㈢殑浜嬩欢璁㈤槄鍏ㄩ儴娌℃墽琛岋紝
+    --     鐪熸満琛ㄧ幇涓恒€?D 姝ｅ父浣?2D 鐣岄潰鍏ㄦ病銆嶏級銆?
+    -- 绂荤嚎闄嶇骇鏃舵暣灞備笉鍔犺浇锛涘湪绾胯矾寰勬墠鍚敤浣欓鍚屾銆?
+    -- 鈿狅笍 鍏ㄧ▼ pcall锛氳仈鏈哄眰浠讳綍寮傚父閮戒笉鍏佽涓柇娓告垙鍚姩锛堝惁鍒欏悗缁簨浠惰闃呭叏涓嶆墽琛岋紝
+    --    鐪熸満琛ㄧ幇涓恒€?D 姝ｅ父浣?2D 鐣岄潰鍏ㄦ病銆嶏級銆?
     if GameMode.IsOffline() then
         print("[ClientMain] offline mode: network layer not started")
     else
@@ -1721,20 +1754,20 @@ function ClientMain.Start(opts)
                 local granted = PlayerData.ClaimPurchasedParts(total)
                 if granted > 0 then
                     SavePlayerDataToCloud()
-                    metaState.rechargeToast = string.format("兑换零件到账 +%d", granted)
+                    metaState.rechargeToast = string.format("鍏戞崲闆朵欢鍒拌处 +%d", granted)
                     print("[Main] purchased parts recovered +" .. granted .. " total=" .. total)
                 end
-                -- 首充礼包发货：服务端标志为真且本地未补发时，发一次车型与零件。
+                -- 棣栧厖绀煎寘鍙戣揣锛氭湇鍔＄鏍囧織涓虹湡涓旀湰鍦版湭琛ュ彂鏃讹紝鍙戜竴娆¤溅鍨嬩笌闆朵欢銆?
                 if firstGift and not PlayerData.IsFirstGiftClaimed() then
                     PlayerData.AddParts(Shared.FIRST_GIFT.parts)
                     PlayerData.UnlockSkin(Shared.FIRST_GIFT.skin)
                     PlayerData.MarkFirstGiftClaimed()
                     SavePlayerDataToCloud()
-                    metaState.rechargeToast = "新手礼包已到账"
+                    metaState.rechargeToast = "鏂版墜绀煎寘宸插埌璐?
                     print("[Main] first gift delivered: parts+" .. Shared.FIRST_GIFT.parts
                         .. " skin=" .. Shared.FIRST_GIFT.skin)
                 end
-                -- 每次权威推送都刷新付费轨/首充标志（服务端随同一事件带 premium/first_gift）。
+                -- 姣忔鏉冨▉鎺ㄩ€侀兘鍒锋柊浠樿垂杞?棣栧厖鏍囧織锛堟湇鍔＄闅忓悓涓€浜嬩欢甯?premium/first_gift锛夈€?
                 RefreshMeta()
             end)
             NetClient.Start()
@@ -1789,7 +1822,7 @@ end
 function ClientMain.Stop()
     local highScoreState = ClientMain._highScore
     if highScoreState.active then
-        -- 停止前保全已产生的分数；本地写失败也不能丢掉同 Lua 生命周期的待写值。
+        -- 鍋滄鍓嶄繚鍏ㄥ凡浜х敓鐨勫垎鏁帮紱鏈湴鍐欏け璐ヤ篃涓嶈兘涓㈡帀鍚?Lua 鐢熷懡鍛ㄦ湡鐨勫緟鍐欏€笺€?
         highScoreState.retained = math.max(highScoreState.retained, highScoreDirty,
             math.floor(Game.GetSnapshot().highScore or 0),
             highScoreState.request and highScoreState.request.score or 0)
@@ -1817,21 +1850,21 @@ function ClientMain.IsOffline()
     return GameMode.IsOffline()
 end
 
--- v0.13.8：仅供本地离屏探针/验收使用的窄接口——直接打开某个元层界面，
--- 不改变任何游戏逻辑（正常游玩路径仍走输入 → HandleMetaAction）。
+-- v0.13.8锛氫粎渚涙湰鍦扮灞忔帰閽?楠屾敹浣跨敤鐨勭獎鎺ュ彛鈥斺€旂洿鎺ユ墦寮€鏌愪釜鍏冨眰鐣岄潰锛?
+-- 涓嶆敼鍙樹换浣曟父鎴忛€昏緫锛堟甯告父鐜╄矾寰勪粛璧拌緭鍏?鈫?HandleMetaAction锛夈€?
 ---@param name string|nil
 function ClientMain.DebugOpenScreen(name)
     metaState.screen = name
     if name == "stage_select" then
         metaState.stageSelectLoading = true
-        metaState.stageSelectLoadingTimer = 0.72
+        metaState.stageSelectLoadingTimer = 1.35
     else
         metaState.stageSelectLoading = false
         metaState.stageSelectLoadingTimer = 0
     end
     RefreshMeta()
     RefreshSnapshots()
-    -- 与 OpenMetaScreen 保持一致：打开选关即定位到最新关（无限爬塔）。
+    -- 涓?OpenMetaScreen 淇濇寔涓€鑷达細鎵撳紑閫夊叧鍗冲畾浣嶅埌鏈€鏂板叧锛堟棤闄愮埇濉旓級銆?
     if name == "stage_select" then
         StageSelect.FocusLatest(designWidth_, metaState.maxStage or 1)
     end
@@ -1853,8 +1886,8 @@ function HandleUpdate(eventType, eventData)
     AdService.Update(dt)
     AchievementSystem.Update(dt)
     if not GameMode.IsOffline() then NetClient.Update(dt) end
-    -- v0.13.56：第 1 关「测试模式」询问确认后，在菜单态进入目标关。
-    -- 放在玩法更新之前，保证本帧就切到目标关，不闪一帧菜单。
+    -- v0.13.56锛氱 1 鍏炽€屾祴璇曟ā寮忋€嶈闂‘璁ゅ悗锛屽湪鑿滃崟鎬佽繘鍏ョ洰鏍囧叧銆?
+    -- 鏀惧湪鐜╂硶鏇存柊涔嬪墠锛屼繚璇佹湰甯у氨鍒囧埌鐩爣鍏筹紝涓嶉棯涓€甯ц彍鍗曘€?
     if pendingTestStage_ and Game.GetSnapshot().state == "menu" then
         local target = pendingTestStage_
         pendingTestStage_ = nil
@@ -1867,9 +1900,9 @@ function HandleUpdate(eventType, eventData)
     local hitStop = Presentation.GetSnapshot().hitStop or 0
     local gameDt = dt
     if hitStop > 0 then gameDt = dt * 0.15 end
-    -- v0.12.5：激励视频在途时冻结玩法推进（浏览器 embed 覆盖时游戏循环仍在跑，
-    -- 广告回来敌人已压到防线）。表现层照常衰减，快照不变 = 画面静止。
-    -- 结算/升级/暂停态的广告本就不推进玩法，无需重复处理。
+    -- v0.12.5锛氭縺鍔辫棰戝湪閫旀椂鍐荤粨鐜╂硶鎺ㄨ繘锛堟祻瑙堝櫒 embed 瑕嗙洊鏃舵父鎴忓惊鐜粛鍦ㄨ窇锛?
+    -- 骞垮憡鍥炴潵鏁屼汉宸插帇鍒伴槻绾匡級銆傝〃鐜板眰鐓у父琛板噺锛屽揩鐓т笉鍙?= 鐢婚潰闈欐銆?
+    -- 缁撶畻/鍗囩骇/鏆傚仠鎬佺殑骞垮憡鏈氨涓嶆帹杩涚帺娉曪紝鏃犻渶閲嶅澶勭悊銆?
     ClientMain.ValidatePointer()
     local adInFlight = AdService.IsInFlight()
     if adInFlight and (ClientMain._pointer.source ~= "" or Game.GetSnapshot().timeScale == 2
@@ -1878,8 +1911,8 @@ function HandleUpdate(eventType, eventData)
     end
     local adFreeze = adInFlight
         and gameSnapshot ~= nil and gameSnapshot.state == "playing"
-    -- v0.13.64：拖拽范围是「设计空间圆」的投影——每帧把当前投影缩放喂给规则层，
-    -- 使输入在设计坐标里按圆钳制、再换算成玩法位移（屏幕上的范围始终是圆）。
+    -- v0.13.64锛氭嫋鎷借寖鍥存槸銆岃璁＄┖闂村渾銆嶇殑鎶曞奖鈥斺€旀瘡甯ф妸褰撳墠鎶曞奖缂╂斁鍠傜粰瑙勫垯灞傦紝
+    -- 浣胯緭鍏ュ湪璁捐鍧愭爣閲屾寜鍦嗛挸鍒躲€佸啀鎹㈢畻鎴愮帺娉曚綅绉伙紙灞忓箷涓婄殑鑼冨洿濮嬬粓鏄渾锛夈€?
     do
         local _, _, psx, psy = RenderBackend.GetProjection()
         Game.SetPullSpace(psx, psy)
@@ -1895,7 +1928,7 @@ function HandleUpdate(eventType, eventData)
     PerformanceProbe.BeginPhase("presentation")
     Presentation.Update(dt, snapshot, frameEvents)
     PerformanceProbe.EndPhase("presentation")
-    -- 音频总控消费同一份领域事件（只读），并按其状态机切换 8bit BGM。
+    -- 闊抽鎬绘帶娑堣垂鍚屼竴浠介鍩熶簨浠讹紙鍙锛夛紝骞舵寜鍏剁姸鎬佹満鍒囨崲 8bit BGM銆?
     RenderBackend.TickAudio(dt, snapshot, frameEvents)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
@@ -1903,10 +1936,10 @@ function HandleUpdate(eventType, eventData)
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, adFreeze and 0 or gameDt, dt)
     PerformanceProbe.EndPhase("render")
     PerformanceProbe.EndFrame(inputDt)
-    -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及每
-    -- HIGH_SCORE_COMMIT_INTERVAL 秒的兜底才真正写一次云（配额 300 次/分钟）。
-    -- ⚠️ 结算/菜单是「持续态」——只在**进入**这些态的那一帧提交一次，不能每帧提交，
-    --    否则写失败（error 回调会重新标脏）会每帧重试，形成远超配额的写风暴。
+    -- 鏈€楂樺垎浜戝啓鍚堝苟锛氬眬鍐呭彧绱寰呮彁浜ゅ€硷紱灞€鏈紙缁撶畻锛夈€佸洖鑿滃崟銆佷互鍙婃瘡
+    -- HIGH_SCORE_COMMIT_INTERVAL 绉掔殑鍏滃簳鎵嶇湡姝ｅ啓涓€娆′簯锛堥厤棰?300 娆?鍒嗛挓锛夈€?
+    -- 鈿狅笍 缁撶畻/鑿滃崟鏄€屾寔缁€併€嶁€斺€斿彧鍦?*杩涘叆**杩欎簺鎬佺殑閭ｄ竴甯ф彁浜や竴娆★紝涓嶈兘姣忓抚鎻愪氦锛?
+    --    鍚﹀垯鍐欏け璐ワ紙error 鍥炶皟浼氶噸鏂版爣鑴忥級浼氭瘡甯ч噸璇曪紝褰㈡垚杩滆秴閰嶉鐨勫啓椋庢毚銆?
     if not GameMode.IsOffline() then
         if snapshot.highScore and snapshot.highScore > lastSavedHighScore then
             MarkHighScoreDirty(snapshot.highScore)
@@ -1916,13 +1949,13 @@ function HandleUpdate(eventType, eventData)
         local enteredEndState = state ~= prevHighScoreState_
             and (state == "gameover" or state == "stagewin" or state == "menu")
         prevHighScoreState_ = state
-        -- 云读尚未成功时，状态边沿不能绕过失败后的 15 秒退避。
+        -- 浜戣灏氭湭鎴愬姛鏃讹紝鐘舵€佽竟娌夸笉鑳界粫杩囧け璐ュ悗鐨?15 绉掗€€閬裤€?
         if highScoreCommitCooldown <= 0 or (enteredEndState and ClientMain._highScore.readReady) then
             CommitHighScore()
         end
     end
 
-    -- 跨午夜时同步刷新菜单上的签到/任务/补给/转盘状态。
+    -- 璺ㄥ崍澶滄椂鍚屾鍒锋柊鑿滃崟涓婄殑绛惧埌/浠诲姟/琛ョ粰/杞洏鐘舵€併€?
     local today = os.date("%Y-%m-%d")
     if today ~= metaDate then
         metaDate = today
@@ -1932,19 +1965,19 @@ function HandleUpdate(eventType, eventData)
         RefreshMeta()
         print("[Main] daily state refreshed: " .. today)
     end
-    -- v0.11.0 商业化：元层提示计时与「回到主菜单自动弹每日补给」。
+    -- v0.11.0 鍟嗕笟鍖栵細鍏冨眰鎻愮ず璁℃椂涓庛€屽洖鍒颁富鑿滃崟鑷姩寮规瘡鏃ヨˉ缁欍€嶃€?
     if metaToastTimer > 0 then
         metaToastTimer = metaToastTimer - dt
         if metaToastTimer <= 0 then metaState.toast = nil end
     end
     if snapshot.state ~= "menu" then
-        -- 离开主菜单时收起所有元层界面，避免带着面板进局。
+        -- 绂诲紑涓昏彍鍗曟椂鏀惰捣鎵€鏈夊厓灞傜晫闈紝閬垮厤甯︾潃闈㈡澘杩涘眬銆?
         metaState.screen = nil
         metaState.supplyOpen = false
     end
 
-    -- v0.11.0 商业化：结算页一出现就按 ×1 把本局零件入库（幂等，同帧只结算一次）。
-    -- v0.13.4：胜利结算（stagewin）同样入库，并记录该关星级 + 解锁下一关。
+    -- v0.11.0 鍟嗕笟鍖栵細缁撶畻椤典竴鍑虹幇灏辨寜 脳1 鎶婃湰灞€闆朵欢鍏ュ簱锛堝箓绛夛紝鍚屽抚鍙粨绠椾竴娆★級銆?
+    -- v0.13.4锛氳儨鍒╃粨绠楋紙stagewin锛夊悓鏍峰叆搴擄紝骞惰褰曡鍏虫槦绾?+ 瑙ｉ攣涓嬩竴鍏炽€?
     if (snapshot.state == "gameover" or snapshot.state == "stagewin") and not snapshot.partsSettled then
         local newBricks, firstFinish, newGear = Game.TakeSettlementStats()
         local granted = Game.SettleParts(1)
@@ -1956,7 +1989,7 @@ function HandleUpdate(eventType, eventData)
         end
         PlayerData.AddDailyProgress("reach_wave", math.floor(snapshot.wave or 1), true)
         if firstFinish then PlayerData.AddDailyProgress("play_runs", 1) end
-        -- v0.13.62：成就统计计数器（本地权威）——每局完成 +1、通关 +1、击败首领 +1。
+        -- v0.13.62锛氭垚灏辩粺璁¤鏁板櫒锛堟湰鍦版潈濞侊級鈥斺€旀瘡灞€瀹屾垚 +1銆侀€氬叧 +1銆佸嚮璐ラ棰?+1銆?
         if firstFinish then PlayerData.AddStat("runsTotal", 1) end
         if snapshot.state == "stagewin" then PlayerData.AddStat("stageWins", 1) end
         if snapshot.bossDefeated then PlayerData.AddStat("bossKills", 1) end
@@ -1973,10 +2006,10 @@ function HandleUpdate(eventType, eventData)
             end
         end
         if bonus > 0 then PlayerData.AddParts(bonus) end
-        -- v0.13.62：结算后重算成就（所有统计已更新），并把新解锁外发平台（幂等）。
+        -- v0.13.62锛氱粨绠楀悗閲嶇畻鎴愬氨锛堟墍鏈夌粺璁″凡鏇存柊锛夛紝骞舵妸鏂拌В閿佸鍙戝钩鍙帮紙骞傜瓑锛夈€?
         local newAch = AchievementSystem.Refresh()
-        -- 用 SetMetaToast 而非直接赋 toast：后者不重置 metaToastTimer，提示会永久留在屏上。
-        if newAch > 0 then SetMetaToast(string.format("解锁 %d 个成就！", newAch)) end
+        -- 鐢?SetMetaToast 鑰岄潪鐩存帴璧?toast锛氬悗鑰呬笉閲嶇疆 metaToastTimer锛屾彁绀轰細姘镐箙鐣欏湪灞忎笂銆?
+        if newAch > 0 then SetMetaToast(string.format("瑙ｉ攣 %d 涓垚灏憋紒", newAch)) end
         PlayerData.Save()
         SavePlayerDataToCloud()
         RefreshMeta()
@@ -1995,7 +2028,7 @@ function HandleInputFocus(eventType, eventData)
     if not ClientMain._pointer.focused then ClientMain.CancelInput() end
 end
 
--- v0.12.5：顶端通知条优先消费点击（任意状态都在最上层）。
+-- v0.12.5锛氶《绔€氱煡鏉′紭鍏堟秷璐圭偣鍑伙紙浠绘剰鐘舵€侀兘鍦ㄦ渶涓婂眰锛夈€?
 ---@return boolean consumed
 local function TryBannerAt(screenX, screenY)
     if not RenderBackend.HasSystemBanner() then return false end
@@ -2016,7 +2049,7 @@ function HandleMouseDown(eventType, eventData)
     local pointerX, pointerY = RenderBackend.ScreenToUi(screenX, screenY)
     RenderBackend.SetPointer(pointerX, pointerY)
     RenderBackend.SetPointerPressed(true)
-    -- v0.12.5：顶部通知条永远最先吃点击（覆盖 HUD 下沿，可能与任何模态重叠）。
+    -- v0.12.5锛氶《閮ㄩ€氱煡鏉℃案杩滄渶鍏堝悆鐐瑰嚮锛堣鐩?HUD 涓嬫部锛屽彲鑳戒笌浠讳綍妯℃€侀噸鍙狅級銆?
     if TryBannerAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -2034,14 +2067,14 @@ function HandleMouseDown(eventType, eventData)
     local x, y = RenderBackend.ScreenToGame(screenX, screenY)
     if Game.IsLevelUp() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
-        -- v0.10.24：点在卡片外不关闭面板也不穿透，轻脉冲提示必须三选一。
+        -- v0.10.24锛氱偣鍦ㄥ崱鐗囧涓嶅叧闂潰鏉夸篃涓嶇┛閫忥紝杞昏剦鍐叉彁绀哄繀椤讳笁閫変竴銆?
         if not TryPickUpgradeAt(uiX, uiY) then
             Presentation.PulseUpgradeHint()
         end
         return
     end
-    -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
-    -- v0.12.5：HUD 暂停按钮与道具竖列优先于拖拽起手。
+    -- v0.11.0 鍟嗕笟鍖栵細鏆傚仠琛ョ粰绔欐寜閽紭鍏堜簬銆岀偣浠绘剰澶勬仮澶嶃€嶃€?
+    -- v0.12.5锛欻UD 鏆傚仠鎸夐挳涓庨亾鍏风珫鍒椾紭鍏堜簬鎷栨嫿璧锋墜銆?
     if TryHudPauseAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -2058,7 +2091,7 @@ function HandleMouseDown(eventType, eventData)
         metaPointerConsumed = true
         return
     end
-    -- v0.11.0 商业化：主菜单商业区/功能面板优先消费点击。
+    -- v0.11.0 鍟嗕笟鍖栵細涓昏彍鍗曞晢涓氬尯/鍔熻兘闈㈡澘浼樺厛娑堣垂鐐瑰嚮銆?
     if TryMenuMetaAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -2072,7 +2105,7 @@ function HandleMouseUp(eventType, eventData)
     if not ClientMain.OwnsPointer("mouse") then return end
     ClientMain._pointer.source = ""
     Game.CancelHoldSpeed()
-    -- 所有业务提前返回前释放左键按压；其他鼠标按钮不影响它。
+    -- 鎵€鏈変笟鍔℃彁鍓嶈繑鍥炲墠閲婃斁宸﹂敭鎸夊帇锛涘叾浠栭紶鏍囨寜閽笉褰卞搷瀹冦€?
     RenderBackend.SetPointerPressed(false)
     if talentScrollArmed then
         local moved = TalentTree.ScrollEnd()
@@ -2122,13 +2155,13 @@ function HandleMouseMove(eventType, eventData)
     ClientMain.ValidatePointer()
     if not ClientMain._pointer.focused or AdService.IsInFlight()
         or ClientMain._pointer.source == "touch" then return end
-    -- v0.13.30c：先喂指针位置给后端（悬停发光用），任何模态下都要更新——
-    -- 悬停是「全局交互反馈」，不该被拖拽/模态分支提前 return 掉。
+    -- v0.13.30c锛氬厛鍠傛寚閽堜綅缃粰鍚庣锛堟偓鍋滃彂鍏夌敤锛夛紝浠讳綍妯℃€佷笅閮借鏇存柊鈥斺€?
+    -- 鎮仠鏄€屽叏灞€浜や簰鍙嶉銆嶏紝涓嶈琚嫋鎷?妯℃€佸垎鏀彁鍓?return 鎺夈€?
     local sx, sy = GetScreenCoordinates(eventData)
     local hx, hy = RenderBackend.ScreenToUi(sx, sy)
     RenderBackend.SetPointer(hx, hy)
     if not ClientMain.OwnsPointer("mouse") then return end
-    -- v0.13.8：天赋树拖拽滚动优先于一切（元层面板打开时 IsMetaCapturing 会拦下后续）。
+    -- v0.13.8锛氬ぉ璧嬫爲鎷栨嫿婊氬姩浼樺厛浜庝竴鍒囷紙鍏冨眰闈㈡澘鎵撳紑鏃?IsMetaCapturing 浼氭嫤涓嬪悗缁級銆?
     if talentScrollArmed then
         local _, uiY = RenderBackend.ScreenToUi(sx, sy)
         TalentTree.ScrollMove(uiY, designWidth_)
@@ -2155,7 +2188,7 @@ function HandleTouchBegin(eventType, eventData)
         ClientMain.CancelInput()
         return
     end
-    -- v0.12.5：顶部通知条永远最先吃触摸。
+    -- v0.12.5锛氶《閮ㄩ€氱煡鏉℃案杩滄渶鍏堝悆瑙︽懜銆?
     if TryBannerAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -2178,8 +2211,8 @@ function HandleTouchBegin(eventType, eventData)
         end
         return
     end
-    -- v0.11.0 商业化：暂停补给站按钮优先于「点任意处恢复」。
-    -- v0.12.5：HUD 暂停按钮与道具竖列优先于拖拽起手。
+    -- v0.11.0 鍟嗕笟鍖栵細鏆傚仠琛ョ粰绔欐寜閽紭鍏堜簬銆岀偣浠绘剰澶勬仮澶嶃€嶃€?
+    -- v0.12.5锛欻UD 鏆傚仠鎸夐挳涓庨亾鍏风珫鍒椾紭鍏堜簬鎷栨嫿璧锋墜銆?
     if TryHudPauseAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -2196,7 +2229,7 @@ function HandleTouchBegin(eventType, eventData)
         metaPointerConsumed = true
         return
     end
-    -- v0.11.0 商业化：主菜单商业区/功能面板优先消费触摸。
+    -- v0.11.0 鍟嗕笟鍖栵細涓昏彍鍗曞晢涓氬尯/鍔熻兘闈㈡澘浼樺厛娑堣垂瑙︽懜銆?
     if TryMenuMetaAt(screenX, screenY) then
         metaPointerConsumed = true
         return
@@ -2207,7 +2240,7 @@ end
 
 function HandleTouchMove(eventType, eventData)
     if not ClientMain.OwnsPointer("touch", eventData:GetInt("TouchID")) then return end
-    -- 只移动业务主触点，非主指也不能改变滚动或玩法输入。
+    -- 鍙Щ鍔ㄤ笟鍔′富瑙︾偣锛岄潪涓绘寚涔熶笉鑳芥敼鍙樻粴鍔ㄦ垨鐜╂硶杈撳叆銆?
     local tsx, tsy = GetScreenCoordinates(eventData)
     local thx, thy = RenderBackend.ScreenToUi(tsx, tsy)
     RenderBackend.MoveTouchPointer(eventData:GetInt("TouchID"), thx, thy)
@@ -2231,7 +2264,7 @@ function HandleTouchEnd(eventType, eventData)
     if not ClientMain.OwnsPointer("touch", eventData:GetInt("TouchID")) then return end
     ClientMain._pointer.source = ""
     Game.CancelHoldSpeed()
-    -- 仅主触点结束时清反馈，画布外或第二根手指的抬起不能取消主指按压。
+    -- 浠呬富瑙︾偣缁撴潫鏃舵竻鍙嶉锛岀敾甯冨鎴栫浜屾牴鎵嬫寚鐨勬姮璧蜂笉鑳藉彇娑堜富鎸囨寜鍘嬨€?
     RenderBackend.EndTouchPointer(eventData:GetInt("TouchID"))
     if talentScrollArmed then
         local moved = TalentTree.ScrollEnd()
@@ -2282,7 +2315,7 @@ function HandleKeyDown(eventType, eventData)
     local key = eventData:GetInt("Key")
     if key == KEY_SPACE or key == KEY_RETURN then
         if Game.IsGameOver() then
-            -- 重复按键与过渡期回车不能直接重开，跳过资格与鼠标/触摸一致。
+            -- 閲嶅鎸夐敭涓庤繃娓℃湡鍥炶溅涓嶈兘鐩存帴閲嶅紑锛岃烦杩囪祫鏍间笌榧犳爣/瑙︽懜涓€鑷淬€?
             if StageTransition.IsActive(Game.GetSnapshot()) then
                 if not eventData:GetBool("Repeat") then
                     StageTransition.Skip(Game.GetSnapshot())
@@ -2291,17 +2324,17 @@ function HandleKeyDown(eventType, eventData)
                 Game.RestartFromOver()
             end
         elseif Game.IsStageWin() then
-            -- v0.13.4：胜利结算页要求显式点按钮，回车不自动跳关/重开。
+            -- v0.13.4锛氳儨鍒╃粨绠楅〉瑕佹眰鏄惧紡鐐规寜閽紝鍥炶溅涓嶈嚜鍔ㄨ烦鍏?閲嶅紑銆?
         elseif gameSnapshot and gameSnapshot.state == "menu" then
-            -- 主菜单回车与「开始战斗」CTA 一致：进选关界面，不再直接开局。
+            -- 涓昏彍鍗曞洖杞︿笌銆屽紑濮嬫垬鏂椼€岰TA 涓€鑷达細杩涢€夊叧鐣岄潰锛屼笉鍐嶇洿鎺ュ紑灞€銆?
             HandleMetaAction("open_stage_select", nil)
         else
             Game.HandleAction("start", true)
         end
     elseif key == KEY_P or key == KEY_ESCAPE then
-        -- v0.11.0 商业化：ESC 先关元层面板，再轮到暂停。
+        -- v0.11.0 鍟嗕笟鍖栵細ESC 鍏堝叧鍏冨眰闈㈡澘锛屽啀杞埌鏆傚仠銆?
         if metaState.screen then
-            -- v0.13.56：测试模式询问屏必须显式选择，ESC 等同「否 · 正常开始」。
+            -- v0.13.56锛氭祴璇曟ā寮忚闂睆蹇呴』鏄惧紡閫夋嫨锛孍SC 绛夊悓銆屽惁 路 姝ｅ父寮€濮嬨€嶃€?
             if metaState.screen == "test_mode" then
                 HandleMetaAction("test_mode_close", nil)
             else
