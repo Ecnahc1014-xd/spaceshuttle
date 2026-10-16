@@ -50,7 +50,7 @@ end
 function M.DrawGear(ctx, cx, cy, R, teeth, rot, rgb, alpha)
     if R < 2 then return end
     local a = math.max(0, math.min(255, alpha or 120))
-    local toothH = math.max(2.5, R * 0.24)
+    local toothH = math.max(2.5, R * 0.244)
     local rootR = R - toothH
     nvgSave(ctx)
     nvgShapeAntiAlias(ctx, 0)
@@ -81,7 +81,7 @@ function M.DrawGear(ctx, cx, cy, R, teeth, rot, rgb, alpha)
         for k = 0, math.min(5, teeth - 1) do
             local ba = rot + k * TAU / 6
             nvgBeginPath(ctx)
-            nvgMoveTo(ctx, cx + math.cos(ba) * R * 0.23, cy + math.sin(ba) * R * 0.23)
+            nvgMoveTo(ctx, cx + math.cos(ba) * R * 0.243, cy + math.sin(ba) * R * 0.243)
             nvgLineTo(ctx, cx + math.cos(ba) * R * 0.62, cy + math.sin(ba) * R * 0.62)
             nvgStrokeColor(ctx, nvgRGBA(rgb[1], rgb[2], rgb[3], math.floor(a * 0.72)))
             nvgStrokeWidth(ctx, math.max(2.0, R * 0.09))
@@ -102,7 +102,7 @@ function M.DrawGear(ctx, cx, cy, R, teeth, rot, rgb, alpha)
 
     -- 涓績瀛?
     nvgBeginPath(ctx)
-    nvgCircle(ctx, cx, cy, math.max(2.5, R * 0.23))
+    nvgCircle(ctx, cx, cy, math.max(2.5, R * 0.243))
     nvgFillColor(ctx, nvgRGBA(2, 10, 18, math.floor(a * 0.95)))
     nvgFill(ctx)
     nvgStrokeColor(ctx, nvgRGBA(220, 250, 255, math.floor(a * 0.95)))
