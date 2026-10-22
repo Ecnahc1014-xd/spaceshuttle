@@ -21,9 +21,18 @@ local StageSelect = {}
 
 ---@type table|nil  与 MetaUI.Init 相同的依赖表（C 令牌 + 绘制原语）
 local D = nil
+-- 选关芯片 3D 展示（懒加载；失败不影响 2D 列表）
+local BadgeShowcase = nil
+---@type table|nil 最近一次布局（供视口中心关卡反解）
+local lastLayout_ = nil
 
 ---@param deps table
 function StageSelect.Init(deps)
+    if BadgeShowcase == nil then
+        local ok, mod = pcall(require, "ui.StageBadgeShowcase")
+        BadgeShowcase = ok and mod or false
+        if not ok then print("[StageSelect] badge showcase unavailable: " .. tostring(mod)) end
+    end
     D = deps
 end
 
@@ -163,6 +172,18 @@ end
 -- 把视图滚动到「最新已解锁关」——打开面板时默认定位到它。
 ---@param w number
 ---@param maxStage integer
+-- 视口中心对应的关卡号：芯片展示跟随滚动，滑到哪关就看哪关的芯片。
+---@return integer|nil stage
+function StageSelect.GetFocusStage()
+    local L = lastLayout_
+    if not L then return nil end
+    -- NodeY 随 stage 递减 ROW_STEP，反解出离视口中心最近的那一关
+    local centerY = L.content.y + L.content.h * 0.5
+    local baseY = L.content.y + L.content.h - L.botPad + scrollY_ - L.centerOffset
+    local stage = math.floor((baseY - centerY) / ROW_STEP + 0.5) + 1
+    return math.max(1, math.min(L.maxStage, stage))
+end
+
 function StageSelect.FocusLatest(w, maxStage)
     lastMaxStage_ = math.max(1, maxStage or 1)
     scrollY_ = 0
@@ -363,77 +384,111 @@ end
 local function DrawStageNode(ctx, cx, cy, stage, unlocked, stars, current)
     local C = Style()
     local r = NODE_R
-
+    -- v0.13.84：节点重绘为「六棱柱芯片」语言（与选关右上角的 3D 芯片同款）：
+    -- 投影 → 侧面厚度 → 正面 → 倒角亮面 → 内嵌发光槽 → 粗描边 → 凸起关号 → 菱形星。
+    local accent = stars > 0 and C.warn or C.cyan
+    local bodyCol, faceCol
     if not unlocked then
-        -- 未解锁：暗色六边形 + 程序化小锁 + 压暗关号（贴图叠色表达，不写文字）。
-        HexFill(ctx, cx, cy, r, { 16, 22, 34, 255 })
-        HexStroke(ctx, cx, cy, r, { C.dim[1], C.dim[2], C.dim[3], 95 }, 1.4)
-        D.rect(ctx, cx - 9, cy - 13, 18, 12, { 120, 138, 160, 235 }, 5)
-        D.rect(ctx, cx - 5.5, cy - 9.5, 11, 8, { 16, 22, 34, 255 }, 4)
-        D.rect(ctx, cx - 12, cy - 1, 24, 17, { 74, 88, 108, 235 }, 3)
-        if not DigitFont.DrawNumber(ctx, stage, cx, cy - r + 20, 14, C.dim) then
-            D.text(ctx, cx, cy - r + 22, tostring(stage), 13, C.dim,
-                NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-        end
-        return
+        bodyCol = { 12, 16, 24, 255 }
+        faceCol = { 20, 26, 37, 255 }
+    elseif current then
+        bodyCol = { 16, 22, 33, 255 }
+        faceCol = { accent[1], accent[2], accent[3], 255 }
+    else
+        bodyCol = { 17, 24, 36, 255 }
+        faceCol = { 32, 44, 62, 255 }
     end
 
-    -- 已解锁：亮色六边形芯片（有星=金 / 无星=青，与「稀有/主操作」语义一致）。
-    local accent = stars > 0 and C.warn or C.cyan
-    -- 外发光（宽描边低 alpha，不填充以免糊住底图）
-    HexStroke(ctx, cx, cy, r + 3.5, { accent[1], accent[2], accent[3], 60 }, 7)
-    -- 底盘 + 内环（厚度）
-    HexFill(ctx, cx, cy, r, { 26, 40, 62, 255 })
-    HexStroke(ctx, cx, cy, r - 5, { accent[1], accent[2], accent[3], 105 }, 1)
-    -- 当前关：整片亮色实心底（深字），是全屏最亮的焦点
-    if current then HexFill(ctx, cx, cy, r - 8, accent) end
-    -- 主环
-    HexStroke(ctx, cx, cy, r, accent, current and 3 or 2.2)
-    -- 顶面受光（沿上左/上右两条边画一道亮线，做出「斜切金属」感）
+    -- 1) 地面投影（下方偏移，压出悬浮感）
+    HexFill(ctx, cx, cy + 6, r * 0.94, { 6, 9, 15, 110 })
+
+    -- 2) 侧面厚度：下移 4px 的暗色六棱柱体
+    HexFill(ctx, cx, cy + 4, r, bodyCol)
+
+    -- 3) 正面底板
+    HexFill(ctx, cx, cy, r, bodyCol)
+
+    -- 4) 倒角亮面：内缩 6px，整体上移 1px
+    HexFill(ctx, cx, cy - 1, r - 6, faceCol)
+
+    -- 5) 顶边受光（斜切金属感：左上→顶→右上 一道亮线）
     nvgBeginPath(ctx)
-    nvgMoveTo(ctx, cx - r * 0.5, cy - r * 0.866)
-    nvgLineTo(ctx, cx, cy - r)
-    nvgLineTo(ctx, cx + r * 0.5, cy - r * 0.866)
-    nvgStrokeColor(ctx, nvgRGBA(255, 255, 255, current and 120 or 70))
-    nvgStrokeWidth(ctx, 1.2)
+    nvgMoveTo(ctx, cx - r * 0.5, cy - 1 - (r - 6) * 0.866)
+    nvgLineTo(ctx, cx, cy - 1 - (r - 6))
+    nvgLineTo(ctx, cx + r * 0.5, cy - 1 - (r - 6) * 0.866)
+    nvgStrokeColor(ctx, nvgRGBA(255, 255, 255, current and 150 or (unlocked and 90 or 40)))
+    nvgStrokeWidth(ctx, 1.4)
     nvgStroke(ctx)
 
-    -- 关号（贴图；缺图回退 zpix）。当前关深字、其余亮字。
+    -- 6) 内嵌发光槽（倒角面与外缘之间的一圈细亮线）
+    if unlocked then
+        local glowA = current and 210 or 130
+        HexStroke(ctx, cx, cy, r - 3, { accent[1], accent[2], accent[3], glowA }, 1.6)
+    else
+        HexStroke(ctx, cx, cy, r - 3, { 62, 74, 92, 110 }, 1.2)
+    end
+
+    -- 7) 外缘粗描边（深墨，和 3D 芯片的黑色轮廓壳同语言）
+    HexStroke(ctx, cx, cy, r, unlocked and accent or { 74, 86, 104, 200 },
+        current and 2.6 or 2.0)
+
+    -- 8) 未解锁：程序化小锁（保留原语义）
+    if not unlocked then
+        D.rect(ctx, cx - 9, cy - 15, 18, 12, { 108, 124, 146, 220 }, 5)
+        D.rect(ctx, cx - 5.5, cy - 11.5, 11, 8, { 20, 26, 37, 255 }, 4)
+        D.rect(ctx, cx - 12, cy - 3, 24, 17, { 74, 88, 108, 235 }, 3)
+    end
+
+    -- 9) 关号：先画一层偏移暗影再画亮字，读作"凸起"
     local label = tostring(stage)
-    local size = (#label >= 3) and 28 or 38
-    local digitColor = current and C.ink or C.text
+    local size = (#label >= 3) and 26 or 36
+    local digitColor = current and C.ink or (unlocked and C.text or C.dim)
+    if unlocked then
+        -- 暗影层（右下方 1.5px）
+        if not DigitFont.DrawNumber(ctx, stage, cx + 1.5, cy - size * 0.58 + 1.5, size,
+                { 0, 0, 0, current and 90 or 150 }) then
+            D.text(ctx, cx + 1.5, cy - size * 0.56 + 1.5, label, size,
+                { 0, 0, 0, current and 90 or 150 }, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
+    end
     if not DigitFont.DrawNumber(ctx, stage, cx, cy - size * 0.60, size, digitColor) then
         D.text(ctx, cx, cy - size * 0.58, label, size, digitColor,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    -- 当前关：随共享相位脉冲一圈（低频动态，非随机）。
+    -- 10) 当前关：低频脉冲光环（保留原有动态）
     if current then
         local phase = (D.anim and D.anim() or 0)
         local pulse = 0.5 + 0.5 * math.sin(phase * math.pi * 0.8)
-        HexStroke(ctx, cx, cy, r + 6 + pulse * 3,
+        HexStroke(ctx, cx, cy, r + 5 + pulse * 3,
             { accent[1], accent[2], accent[3], math.floor(120 * (1 - pulse)) }, 2)
     end
 
-    -- 三星：画在芯片**下方外侧**，用菱形（与六边形/科技语言一致），实心=已得。
+    -- 11) 三星：节点下方外侧，菱形（实心=已得），与芯片底部同语言
     local gap = 15
-    local sy = cy + r + 13
+    local sy = cy + r + 15
     for i = 1, 3 do
         local on = i <= stars
         local sx = cx + (i - 2) * gap
+        local half = on and 6 or 5.5
+        local col = on and accent or { 86, 100, 120, 200 }
+        -- 投影
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, sx, sy - half + 1.5); nvgLineTo(ctx, sx + half, sy + 1.5)
+        nvgLineTo(ctx, sx, sy + half + 1.5); nvgLineTo(ctx, sx - half, sy + 1.5)
+        nvgClosePath(ctx)
+        nvgFillColor(ctx, nvgRGBA(6, 9, 15, 120))
+        nvgFill(ctx)
+        -- 本体
+        nvgBeginPath(ctx)
+        nvgMoveTo(ctx, sx, sy - half); nvgLineTo(ctx, sx + half, sy)
+        nvgLineTo(ctx, sx, sy + half); nvgLineTo(ctx, sx - half, sy)
+        nvgClosePath(ctx)
         if on then
-            nvgBeginPath(ctx)
-            nvgMoveTo(ctx, sx, sy - 5.5); nvgLineTo(ctx, sx + 5.5, sy)
-            nvgLineTo(ctx, sx, sy + 5.5); nvgLineTo(ctx, sx - 5.5, sy)
-            nvgClosePath(ctx)
-            nvgFillColor(ctx, nvgRGBA(C.warn[1], C.warn[2], C.warn[3], 255))
+            nvgFillColor(ctx, nvgRGBA(col[1], col[2], col[3], 255))
             nvgFill(ctx)
         else
-            nvgBeginPath(ctx)
-            nvgMoveTo(ctx, sx, sy - 5.5); nvgLineTo(ctx, sx + 5.5, sy)
-            nvgLineTo(ctx, sx, sy + 5.5); nvgLineTo(ctx, sx - 5.5, sy)
-            nvgClosePath(ctx)
-            nvgStrokeColor(ctx, nvgRGBA(96, 112, 132, 200))
+            nvgStrokeColor(ctx, nvgRGBA(col[1], col[2], col[3], col[4] or 200))
             nvgStrokeWidth(ctx, 1.2)
             nvgStroke(ctx)
         end
@@ -489,6 +544,7 @@ function StageSelect.Draw(ctx, w, meta)
     local maxStage = math.max(1, meta.maxStage or 1)
     lastMaxStage_ = maxStage
     local L = GetLayout(w, maxStage)
+    lastLayout_ = L
     D.backdrop(ctx, 0, 0, w, 960)
     D.shell(ctx, 18, 108, w - 36, 780, 48)
     D.rect(ctx, 18, 156, 3, 22, C.cyan, 0)
@@ -580,8 +636,20 @@ function StageSelect.Draw(ctx, w, meta)
         local cx, cy = NodeCenter(L, stage)
         if cy > L.content.y - NODE_R and cy < L.content.y + L.content.h + NODE_R then
             local stars = (meta.stageStars and meta.stageStars[stage]) or 0
-            DrawStageNode(ctx, cx, cy, stage, true, stars, stage == maxStage)
+            -- v0.13.85：当前关由 3D 芯片在**原节点位置**替代，避免同一关 2D/3D 各画一次
+            if stage ~= maxStage then
+                DrawStageNode(ctx, cx, cy, stage, true, stars, false)
+            end
         end
+    end
+
+    -- 当前关 3D 芯片的位置先记下来，等内容区裁剪结束后再画（避免被 scissor 切角）
+    local chipCX, chipCY = NodeCenter(L, maxStage)
+    local chipVisible = chipCY > L.content.y - 20 and chipCY < L.content.y + L.content.h + 20
+    if not chipVisible then
+        -- 当前关滚出视口：照常用 2D 节点，列表里始终看得到它
+        local stars = (meta.stageStars and meta.stageStars[maxStage]) or 0
+        DrawStageNode(ctx, chipCX, chipCY, maxStage, true, stars, true)
     end
 
     -- 右侧装饰插图（确定性挑选）
@@ -595,6 +663,12 @@ function StageSelect.Draw(ctx, w, meta)
     end
 
     nvgRestore(ctx)
+
+    -- v0.13.86：当前关 3D 芯片画在内容区裁剪之外，避免右上角被 scissor 切掉
+    if BadgeShowcase and chipVisible then
+        local bw = 108
+        BadgeShowcase.Draw(ctx, chipCX - bw * 0.5, chipCY - bw * 0.5, bw, bw)
+    end
 
     -- ---- 左侧栏：道具购买（圆形图标 + 角标库存 + 价格）----
     local parts = PlayerData.GetParts()

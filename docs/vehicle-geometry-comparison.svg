@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#07101d"/><stop offset="1" stop-color="#02050b"/></linearGradient>
+    <linearGradient id="cyan" x2="1"><stop stop-color="#16e0d0"/><stop offset="1" stop-color="#4aa6ff"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1200" height="760" fill="url(#bg)"/>
+  <g fill="#8aa7c7" font-family="Arial, Microsoft YaHei, sans-serif">
+    <text x="64" y="70" font-size="30" fill="#d9f8ff" font-weight="700">车辆几何移动端低模对比</text>
+    <text x="64" y="105" font-size="16" fill="#6d8aa7">保留主体轮廓，只压缩远距离杆件和轮毂圆周细节</text>
+  </g>
+  <g transform="translate(70,150)">
+    <rect width="500" height="390" rx="18" fill="#0a1727" stroke="#243c58"/>
+    <text x="32" y="46" font-size="22" fill="#ff879d" font-family="Arial, Microsoft YaHei" font-weight="700">优化前 · 桌面档</text>
+    <text x="32" y="78" font-size="15" fill="#8ba4be" font-family="Arial, Microsoft YaHei">杆件 / 轮毂：4～5 段</text>
+    <g transform="translate(70,125)" stroke="#4aa6ff" stroke-width="4" fill="#183653">
+      <path d="M20 140 L58 88 L245 88 L300 128 L390 128 L430 170 L400 220 L40 220 Z"/>
+      <path d="M72 88 L115 45 L235 45 L270 88" fill="#214a6c"/>
+      <circle cx="105" cy="223" r="39" fill="#081321"/><circle cx="105" cy="223" r="18" fill="none"/>
+      <circle cx="345" cy="223" r="39" fill="#081321"/><circle cx="345" cy="223" r="18" fill="none"/>
+      <path d="M105 184 V262 M66 223 H144 M345 184 V262 M306 223 H384" fill="none" stroke="#ff879d" stroke-width="3"/>
+    </g>
+    <text x="32" y="340" font-size="16" fill="#ffb4c0" font-family="Arial, Microsoft YaHei">细节更圆，但重复顶点和小部件更多</text>
+  </g>
+  <g transform="translate(630,150)">
+    <rect width="500" height="390" rx="18" fill="#0a1727" stroke="#16e0d0" stroke-width="2"/>
+    <text x="32" y="46" font-size="22" fill="#16e0d0" font-family="Arial, Microsoft YaHei" font-weight="700">优化后 · 移动档</text>
+    <text x="32" y="78" font-size="15" fill="#8ba4be" font-family="Arial, Microsoft YaHei">杆件 / 轮毂：统一 3 段</text>
+    <g transform="translate(70,125)" stroke="url(#cyan)" stroke-width="4" fill="#16354d" filter="url(#glow)">
+      <path d="M20 140 L58 88 L245 88 L300 128 L390 128 L430 170 L400 220 L40 220 Z"/>
+      <path d="M72 88 L115 45 L235 45 L270 88" fill="#1d4966"/>
+      <circle cx="105" cy="223" r="39" fill="#081321"/><path d="M105 184 L139 242 L71 242 Z" fill="none" stroke="#16e0d0" stroke-width="3"/>
+      <circle cx="345" cy="223" r="39" fill="#081321"/><path d="M345 184 L379 242 L311 242 Z" fill="none" stroke="#16e0d0" stroke-width="3"/>
+    </g>
+    <text x="32" y="340" font-size="16" fill="#8ffcf4" font-family="Arial, Microsoft YaHei">主体轮廓不变，移动端细节三角形减少</text>
+  </g>
+  <g transform="translate(70,600)" font-family="Arial, Microsoft YaHei">
+    <text x="0" y="0" font-size="18" fill="#d9f8ff" font-weight="700">变化摘要</text>
+    <text x="0" y="38" font-size="16" fill="#8ba4be">圆周段数</text><text x="180" y="38" font-size="16" fill="#ff879d">4～5</text><text x="235" y="38" font-size="16" fill="#6d8aa7">→</text><text x="285" y="38" font-size="16" fill="#16e0d0">3</text>
+    <text x="430" y="38" font-size="16" fill="#8ba4be">主体轮廓</text><text x="570" y="38" font-size="16" fill="#16e0d0">保持</text>
+    <text x="730" y="38" font-size="16" fill="#8ba4be">桌面端</text><text x="835" y="38" font-size="16" fill="#16e0d0">不变</text>
+    <text x="0" y="76" font-size="14" fill="#5f7b98">预计收益：杆件/轮毂局部三角形约减少 25%～40%；最终以 realme 采集的 GPU 时间和 Draw Call 为准。</text>
+  </g>
+</svg>

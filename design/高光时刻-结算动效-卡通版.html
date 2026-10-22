@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>高光时刻 · 关卡结算</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=ZCOOL+KuaiLe&display=swap" rel="stylesheet" />
+<style>
+  /* ============================================================
+     主题变量：等级切换时改这一组值，页面与 3D 同步换色
+     ============================================================ */
+  :root{
+    --ink:#1A1033;            /* 统一深色描边（所有元素共用） */
+    --tier:#3FCB68;
+    --tier-bright:#96F7B2;
+    --tier-deep:#1B6E38;
+    --bg-hot:#0e3524;
+    --bg-cold:#04080a;
+    --sw:6px;                 /* 标题描边粗细 */
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; overflow:hidden; background:#03050a; }
+  body{
+    font-family:"Lilita One","ZCOOL KuaiLe",system-ui,"PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased; user-select:none;
+  }
+
+  #stage{ position:fixed; inset:0; overflow:hidden; }
+  #scene{ position:absolute; inset:0; display:block; }
+
+  /* ---------- 背景：径向热区 + 旋转光芒 ---------- */
+  #bg{
+    position:absolute; inset:0; z-index:0;
+    background:
+      radial-gradient(78% 58% at 50% 52%, var(--bg-hot) 0%, transparent 70%),
+      radial-gradient(130% 100% at 50% 120%, var(--bg-cold) 0%, #02040a 74%);
+    transition:background .8s ease;
+  }
+  #rays{
+    position:absolute; z-index:1; left:50%; top:52%;
+    width:180vmax; height:180vmax; margin:-90vmax 0 0 -90vmax;
+    background:repeating-conic-gradient(from 0deg,
+      color-mix(in srgb, var(--tier) 46%, transparent) 0deg 1.5deg,
+      transparent 1.5deg 9deg);
+    opacity:.26; animation:spin 40s linear infinite; mix-blend-mode:screen;
+    transition:opacity .8s ease;
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, #000 6%, rgba(0,0,0,.5) 30%, transparent 58%);
+            mask-image:radial-gradient(circle at 50% 50%, #000 6%, rgba(0,0,0,.5) 30%, transparent 58%);
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  #glow{
+    position:absolute; z-index:1; left:50%; top:54%;
+    width:58vmin; height:58vmin; margin:-29vmin 0 0 -29vmin; border-radius:50%;
+    background:radial-gradient(circle, color-mix(in srgb, var(--tier-bright) 58%, transparent) 0%, transparent 62%);
+    opacity:0; mix-blend-mode:screen; pointer-events:none;
+  }
+  #flash{
+    position:absolute; inset:0; z-index:3; pointer-events:none; opacity:0;
+    background:radial-gradient(circle at 50% 52%, #fff 0%, color-mix(in srgb, var(--tier-bright) 60%, #fff) 34%, transparent 68%);
+    mix-blend-mode:screen;
+  }
+  #flash.pop{ animation:flashPop .46s ease-out; }
+  @keyframes flashPop{ 0%{ opacity:0 } 12%{ opacity:.78 } 100%{ opacity:0 } }
+
+  #vignette{
+    position:absolute; inset:0; z-index:2; pointer-events:none;
+    background:radial-gradient(135% 96% at 50% 50%, transparent 46%, rgba(2,3,8,.62) 100%);
+  }
+
+  /* ---------- HUD ---------- */
+  #hud{ position:absolute; inset:0; z-index:6; pointer-events:none; }
+
+  #top{
+    position:absolute; left:0; right:0; top:2.6vh;
+    display:flex; flex-direction:column; align-items:center; gap:1.1vh;
+  }
+
+  #chip{
+    display:inline-flex; align-items:center; gap:9px;
+    padding:8px 19px 9px; border-radius:999px;
+    background:var(--tier-deep); border:4px solid var(--ink);
+    letter-spacing:.14em; font-size:clamp(11px,1.35vw,16px); color:#fff;
+    text-shadow:0 2px 0 rgba(0,0,0,.5);
+    box-shadow:0 6px 0 rgba(0,0,0,.45), inset 0 3px 0 rgba(255,255,255,.32);
+    animation:chipIn .55s cubic-bezier(.22,1.7,.4,1) .1s both;
+  }
+  #chip .dot{ width:10px; height:10px; border-radius:50%; background:var(--tier-bright); box-shadow:0 0 12px var(--tier-bright); }
+  @keyframes chipIn{
+    0%{ transform:translateY(-150%) scale(.72); opacity:0; }
+    100%{ transform:none; opacity:1; }
+  }
+  #chip.bounce{ animation:chipPop .5s cubic-bezier(.22,1.7,.4,1); }
+  @keyframes chipPop{ 0%{transform:scale(1)} 45%{transform:scale(1.15) rotate(-2deg)} 100%{transform:scale(1)} }
+
+  /* 标题：纯色填充 + 八向 text-shadow 描边（不使用 background-clip，避免被渲染成色块） */
+  #title{
+    margin:0; display:flex; justify-content:center; align-items:flex-end; gap:.02em;
+    font-size:clamp(44px,7.4vw,116px); line-height:.94;
+    font-family:"ZCOOL KuaiLe","Lilita One",system-ui,sans-serif;
+    font-weight:400;
+  }
+  #title .ch{
+    display:block; position:relative; color:var(--tier-bright);
+    text-shadow:
+      0 var(--sw) 0 var(--ink), 0 calc(var(--sw) * -1) 0 var(--ink),
+      var(--sw) 0 0 var(--ink), calc(var(--sw) * -1) 0 0 var(--ink),
+      var(--sw) var(--sw) 0 var(--ink), calc(var(--sw) * -1) var(--sw) 0 var(--ink),
+      var(--sw) calc(var(--sw) * -1) 0 var(--ink), calc(var(--sw) * -1) calc(var(--sw) * -1) 0 var(--ink),
+      0 calc(var(--sw) * 2) 0 var(--ink),
+      0 calc(var(--sw) * 2 + 10px) 16px rgba(0,0,0,.55);
+    opacity:0; will-change:transform;
+  }
+  /* 上半部高光：独立覆盖层，不依赖 background-clip */
+  #title .ch::after{
+    content:attr(data-ch); position:absolute; left:0; top:0;
+    color:rgba(255,255,255,.55);
+    clip-path:inset(0 0 56% 0);
+    pointer-events:none;
+  }
+  @keyframes slam{
+    0%{ opacity:0; transform:translateY(-62vh) scale(3.0) rotate(-16deg); }
+    50%{ opacity:1; transform:translateY(0) scale(.86) rotate(2.4deg); }
+    70%{ transform:translateY(-5%) scale(1.11) rotate(-1.4deg); }
+    85%{ transform:translateY(0) scale(.975) rotate(.6deg); }
+    100%{ opacity:1; transform:none; }
+  }
+
+  #stars{ display:flex; gap:1.0vw; margin-top:.4vh; }
+  .star{
+    width:clamp(30px,3.9vw,54px); height:auto; opacity:0;
+    filter:drop-shadow(0 5px 0 rgba(0,0,0,.4)) drop-shadow(0 0 20px var(--tier-bright));
+  }
+  @keyframes starPop{
+    0%{ opacity:0; transform:scale(0) rotate(-52deg); }
+    58%{ opacity:1; transform:scale(1.34) rotate(13deg); }
+    100%{ opacity:1; transform:scale(1) rotate(0); }
+  }
+  .star.off{ filter:grayscale(1) brightness(.52) drop-shadow(0 5px 0 rgba(0,0,0,.4)); opacity:.55; }
+
+  #bottom{
+    position:absolute; left:0; right:0; bottom:2.4vh;
+    display:flex; flex-direction:column; align-items:center; gap:1.5vh;
+  }
+  #scoreRow{ display:flex; align-items:flex-end; gap:1.1vw; }
+  #scoreLabel{
+    font-family:"Lilita One",sans-serif; letter-spacing:.2em;
+    font-size:clamp(10px,1.2vw,14px); color:rgba(255,255,255,.62);
+    margin-bottom:.6vh; text-shadow:0 2px 0 rgba(0,0,0,.55);
+  }
+  #score{
+    font-family:"Lilita One",sans-serif; font-size:clamp(28px,4.2vw,58px); line-height:1; color:#fff;
+    text-shadow:
+      0 4px 0 var(--ink), 3px 0 0 var(--ink), -3px 0 0 var(--ink), 0 -3px 0 var(--ink),
+      3px 3px 0 var(--ink), -3px 3px 0 var(--ink), 3px -3px 0 var(--ink), -3px -3px 0 var(--ink),
+      0 10px 18px rgba(0,0,0,.6);
+  }
+  #score .plus{ color:var(--tier-bright); }
+
+  #tiers{
+    pointer-events:auto; display:flex; gap:9px; padding:7px 9px;
+    background:rgba(9,7,20,.68); border:3px solid var(--ink); border-radius:999px;
+    backdrop-filter:blur(6px); box-shadow:0 7px 0 rgba(0,0,0,.38);
+  }
+  #tiers button{
+    pointer-events:auto; border:0; cursor:pointer; font-family:inherit;
+    font-size:clamp(10px,1.15vw,13px); letter-spacing:.06em;
+    padding:8px 16px 9px; border-radius:999px;
+    color:rgba(255,255,255,.70); background:rgba(255,255,255,.08);
+    transition:transform .18s cubic-bezier(.2,1.6,.4,1), color .2s, background .2s, box-shadow .2s;
+  }
+  #tiers button:hover{ transform:translateY(-2px); color:#fff; }
+  #tiers button.on{
+    color:#0b0916; background:var(--tier-bright);
+    box-shadow:0 4px 0 var(--tier-deep), 0 0 20px color-mix(in srgb, var(--tier) 60%, transparent);
+    transform:translateY(-2px) scale(1.04);
+  }
+
+  #boot{
+    position:absolute; inset:0; z-index:20; display:grid; place-items:center;
+    background:#04060c; color:#8e97ad; font-size:14px; letter-spacing:.16em;
+    transition:opacity .5s ease;
+  }
+  #boot.hide{ opacity:0; pointer-events:none; }
+  #boot b{ color:#fff; }
+</style>
+<script type="importmap">
+{
+  "imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage">
+  <div id="bg"></div>
+  <canvas id="scene"></canvas>
+  <div id="rays"></div>
+  <div id="glow"></div>
+  <div id="flash"></div>
+  <div id="vignette"></div>
+
+  <div id="hud">
+    <div id="top">
+      <div id="chip"><span class="dot"></span><span id="chipText">CLEAR</span></div>
+      <h1 id="title"></h1>
+      <div id="stars"></div>
+    </div>
+    <div id="bottom">
+      <div id="scoreRow">
+        <div id="scoreLabel">SCORE</div>
+        <div id="score"><span class="plus">+</span><span id="scoreNum">0</span></div>
+      </div>
+      <div id="tiers"></div>
+    </div>
+  </div>
+
+  <div id="boot">正在加载 3D 场景…</div>
+</div>
+
+<script type="module">
+/* =========================================================================
+   「高光时刻」关卡结算动效 — 原创 3D
+   · 宝箱：真几何建模（木板缝是实体凹槽、包边/铆钉/铰链/锁扣/宝石切面均为零件）
+   · 卡通三阶着色 MeshToonMaterial（4 阶渐变贴图）
+   · 三灯：主光 key / 天光 hemi / 等级色轮廓光 rim
+   · 描边：法线图 + 深度图后处理；外轮廓粗 2.6px、零件交界细 1.4px
+   · 1.5x 超采样 + MSAA 4x
+   ========================================================================= */
+
+const boot = document.getElementById('boot');
+
+let THREE, RoundedBoxGeometry = null;
+try {
+  THREE = await import('three');
+  try {
+    ({ RoundedBoxGeometry } = await import('three/addons/geometries/RoundedBoxGeometry.js'));
+  } catch (e) {
+    console.warn('[highlight] RoundedBoxGeometry 不可用，回退内置圆角盒', e);
+  }
+} catch (err) {
+  boot.innerHTML = '<b>three.js 加载失败</b><br>请检查网络（cdn.jsdelivr.net）后刷新';
+  throw err;
+}
+
+/* ------------------------------ 等级阶梯 ------------------------------ */
+const TIERS = [
+  { key:'common', en:'CLEAR',      name:'普通通关', stars:1, score:1280,
+    color:'#3FCB68', bright:'#96F7B2', deep:'#1B6E38', bgHot:'#0e3524' },
+  { key:'rare',   en:'RARE CLEAR', name:'稀有通关', stars:2, score:3640,
+    color:'#3A9DFF', bright:'#A9D8FF', deep:'#1A5DA8', bgHot:'#0b2643' },
+  { key:'epic',   en:'EPIC CLEAR', name:'史诗通关', stars:3, score:8720,
+    color:'#A26BFF', bright:'#DCC2FF', deep:'#57269E', bgHot:'#1e1244' },
+  { key:'legend', en:'LEGENDARY',  name:'传说通关', stars:3, score:15840,
+    color:'#FFC53D', bright:'#FFEBA8', deep:'#A96F00', bgHot:'#3d2506' },
+];
+
+/* ------------------------------ 渲染基础 ------------------------------ */
+const stage  = document.getElementById('stage');
+const canvas = document.getElementById('scene');
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:false, alpha:true, powerPreference:'high-performance' });
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // 末段自己编码 sRGB
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.setClearColor(0x000000, 0);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 90);
+camera.position.set(0.0, 3.18, 7.70);
+camera.lookAt(0, 1.34, 0);
+
+/* 4 阶卡通渐变贴图 */
+function makeGradientMap(){
+  const data = new Uint8Array([ 62,62,62,255, 112,112,112,255, 176,176,176,255, 236,236,236,255 ]);
+  const t = new THREE.DataTexture(data, 4, 1, THREE.RGBAFormat);
+  t.minFilter = t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+}
+const GRAD = makeGradientMap();
+
+/* 三灯 */
+const keyLight = new THREE.DirectionalLight(0xfff1dc, 1.85);
+keyLight.position.set(4.4, 7.6, 5.4);
+scene.add(keyLight);
+
+const skyLight = new THREE.HemisphereLight(0xcfe8ff, 0x2a1e46, 1.05);
+scene.add(skyLight);
+
+const rimLight = new THREE.DirectionalLight(0x3FCB68, 2.3);   // 等级色轮廓光
+rimLight.position.set(-5.2, 3.6, -7.6);
+scene.add(rimLight);
+
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.45);
+fillLight.position.set(-2.0, -1.6, 4.2);
+scene.add(fillLight);
+
+/* ------------------------------ 圆角盒 ------------------------------ */
+function roundedBox(w, h, d, r){
+  if (RoundedBoxGeometry) return new RoundedBoxGeometry(w, h, d, 4, r);
+  const seg = 7;
+  const g = new THREE.BoxGeometry(w, h, d, seg, seg, seg);
+  const pos = g.attributes.position;
+  const hw = Math.max(.001, w/2 - r), hh = Math.max(.001, h/2 - r), hd = Math.max(.001, d/2 - r);
+  const v = new THREE.Vector3(), q = new THREE.Vector3(), n = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++){
+    v.fromBufferAttribute(pos, i);
+    q.set(THREE.MathUtils.clamp(v.x,-hw,hw), THREE.MathUtils.clamp(v.y,-hh,hh), THREE.MathUtils.clamp(v.z,-hd,hd));
+    n.copy(v).sub(q);
+    if (n.lengthSq() > 1e-8){ n.normalize().multiplyScalar(r).add(q); pos.setXYZ(i, n.x, n.y, n.z); }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/* ------------------------------ 材质 ------------------------------ */
+const toon = (hex) => new THREE.MeshToonMaterial({ color:new THREE.Color(hex), gradientMap:GRAD });
+
+const matWoodDark  = toon('#5E3A2B');
+const matWoodMid   = toon('#7C4A32');
+const matWoodLight = toon('#8E573A');
+const matWoodInner = toon('#231318');   // 缝隙里露出的暗色
+const matInnerTier = toon('#123A24');   // 箱内衬：跟随等级换色
+const matIron      = toon('#3A4257');
+const matIronDark  = toon('#232A3C');
+const matTier      = toon('#3FCB68');   // 随等级变色（锁扣 / 奖章 / 宝石）
+const matTierDeep  = toon('#1B6E38');
+const matGold      = toon('#FFD45E');
+matGold.emissive = new THREE.Color('#FFB01E').multiplyScalar(0.35);
+
+/* ------------------------------ 宝箱主体 ------------------------------ */
+const BODY_W = 2.72, BODY_D = 1.86, BODY_H = 1.16;
+const PLANK_T = 0.13;                 // 木板厚度
+const GAP = 0.055;                    // 板缝宽度（真实间隙）
+const PLANK_H = (BODY_H - 0.14 - GAP * 2) / 3;
+
+const chest = new THREE.Group();
+chest.scale.setScalar(0.90);
+scene.add(chest);
+
+const bodyGroup = new THREE.Group();
+chest.add(bodyGroup);
+
+/* 内壁：尺寸略小于外壳，让板缝透出暗色 */
+{
+  // 内腔不要实心块（会挡住金币堆）：只做一圈内衬侧壁 + 内底台
+  const inset = new THREE.Group();
+  bodyGroup.add(inset);
+
+  const floor = new THREE.Mesh(roundedBox(BODY_W - 0.22, 0.10, BODY_D - 0.22, 0.03), matInnerTier);
+  floor.position.y = 0.17;
+  inset.add(floor);
+
+  const wallT = 0.05;
+  for (const zs of [1, -1]){
+    const w = new THREE.Mesh(roundedBox(BODY_W - 0.22, BODY_H - 0.20, wallT, 0.02), matInnerTier);
+    w.position.set(0, BODY_H / 2 + 0.02, zs * (BODY_D / 2 - PLANK_T - wallT / 2));
+    inset.add(w);
+  }
+  for (const xs of [1, -1]){
+    const w = new THREE.Mesh(roundedBox(wallT, BODY_H - 0.20, BODY_D - 0.22, 0.02), matInnerTier);
+    w.position.set(xs * (BODY_W / 2 - PLANK_T - wallT / 2), BODY_H / 2 + 0.02, 0);
+    inset.add(w);
+  }
+}
+
+/* 三层木板 × 四面：板之间留 GAP，缝底再压一条暗色凹槽条 */
+for (let i = 0; i < 3; i++){
+  const y = 0.12 + PLANK_H / 2 + i * (PLANK_H + GAP);
+  const mat = i === 1 ? matWoodLight : matWoodMid;
+
+  for (const zs of [1, -1]){
+    const plank = new THREE.Mesh(roundedBox(BODY_W, PLANK_H, PLANK_T, 0.03), mat);
+    plank.position.set(0, y, zs * (BODY_D / 2 - PLANK_T / 2));
+    bodyGroup.add(plank);
+    // 缝隙凹槽（只有中间两道）
+    if (i < 2){
+      const groove = new THREE.Mesh(roundedBox(BODY_W - 0.10, GAP + 0.02, PLANK_T * 0.55, 0.012), matWoodInner);
+      groove.position.set(0, y + PLANK_H / 2 + GAP / 2, zs * (BODY_D / 2 - PLANK_T * 0.35));
+      bodyGroup.add(groove);
+    }
+  }
+  for (const xs of [1, -1]){
+    const plank = new THREE.Mesh(roundedBox(PLANK_T, PLANK_H, BODY_D - 0.02, 0.03), mat);
+    plank.position.set(xs * (BODY_W / 2 - PLANK_T / 2), y, 0);
+    bodyGroup.add(plank);
+    if (i < 2){
+      const groove = new THREE.Mesh(roundedBox(PLANK_T * 0.55, GAP + 0.02, BODY_D - 0.14, 0.012), matWoodInner);
+      groove.position.set(xs * (BODY_W / 2 - PLANK_T * 0.35), y + PLANK_H / 2 + GAP / 2, 0);
+      bodyGroup.add(groove);
+    }
+  }
+}
+
+/* 底板 + 四只铁脚 */
+{
+  const base = new THREE.Mesh(roundedBox(BODY_W + 0.10, 0.16, BODY_D + 0.10, 0.05), matWoodDark);
+  base.position.y = 0.08;
+  bodyGroup.add(base);
+  for (const xs of [1, -1]){
+    for (const zs of [1, -1]){
+      const foot = new THREE.Mesh(roundedBox(0.26, 0.13, 0.26, 0.05), matIronDark);
+      foot.position.set(xs * (BODY_W / 2 - 0.16), -0.045, zs * (BODY_D / 2 - 0.16));
+      bodyGroup.add(foot);
+    }
+  }
+}
+
+/* 铁包边：四角竖条 + 上下横条 */
+const IRON_T = 0.20;
+for (const xs of [1, -1]){
+  for (const zs of [1, -1]){
+    const post = new THREE.Mesh(roundedBox(IRON_T, BODY_H + 0.02, IRON_T, 0.05), matIron);
+    post.position.set(xs * (BODY_W / 2 - 0.004), BODY_H / 2, zs * (BODY_D / 2 - 0.004));
+    bodyGroup.add(post);
+  }
+}
+for (const zs of [1, -1]){
+  for (const y of [0.175, BODY_H - 0.095]){
+    const band = new THREE.Mesh(roundedBox(BODY_W + 0.06, 0.15, 0.16, 0.045), matIron);
+    band.position.set(0, y, zs * (BODY_D / 2 + 0.006));
+    bodyGroup.add(band);
+  }
+}
+for (const xs of [1, -1]){
+  for (const y of [0.175, BODY_H - 0.095]){
+    const band = new THREE.Mesh(roundedBox(0.16, 0.15, BODY_D + 0.06, 0.045), matIron);
+    band.position.set(xs * (BODY_W / 2 + 0.006), y, 0);
+    bodyGroup.add(band);
+  }
+}
+
+/* 铆钉：真实半球 + 圆台扣 */
+{
+  const dome = new THREE.SphereGeometry(0.056, 10, 8);
+  const stud = new THREE.CylinderGeometry(0.06, 0.06, 0.045, 10);
+  for (const xs of [1, -1]){
+    for (const zs of [1, -1]){
+      for (let k = 0; k < 4; k++){
+        const y = 0.21 + k * ((BODY_H - 0.44) / 3);
+        const a = new THREE.Mesh(dome, matIronDark);
+        a.position.set(xs * (BODY_W / 2 + 0.078), y, zs * (BODY_D / 2 - 0.015));
+        bodyGroup.add(a);
+        const b = new THREE.Mesh(dome, matIronDark);
+        b.position.set(xs * (BODY_W / 2 - 0.015), y, zs * (BODY_D / 2 + 0.078));
+        bodyGroup.add(b);
+      }
+    }
+  }
+  for (const x of [-0.88, 0, 0.88]){
+    for (const y of [0.175, BODY_H - 0.095]){
+      const s = new THREE.Mesh(stud, matIronDark);
+      s.rotation.x = Math.PI / 2;
+      s.position.set(x, y, BODY_D / 2 + 0.086);
+      bodyGroup.add(s);
+    }
+  }
+}
+
+/* ------------------------------ 箱盖（绕后缘铰链） ------------------------------ */
+const lid = new THREE.Group();
+lid.position.set(0, BODY_H + 0.015, -(BODY_D / 2) + 0.02);
+chest.add(lid);
+
+{
+  const lidW = BODY_W + 0.10, lidD = BODY_D + 0.05;
+  const plate = new THREE.Mesh(roundedBox(lidW, 0.17, lidD, 0.055), matWoodMid);
+  plate.position.set(0, 0.085, lidD / 2);
+  lid.add(plate);
+
+  // 盖内面：整块暗色内衬（避免打开后是亮色大平板）+ 三条加强筋
+  const matLining = new THREE.MeshBasicMaterial({ color: new THREE.Color('#2A1A22') });
+  const lining = new THREE.Mesh(roundedBox(lidW + 0.01, 0.05, lidD + 0.01, 0.03), matLining);
+  lining.position.set(0, -0.004, lidD / 2);
+  lid.add(lining);
+  for (const dz of [0.36, lidD / 2, lidD - 0.36]){
+    const rib = new THREE.Mesh(roundedBox(lidW - 0.30, 0.055, 0.18, 0.02), matWoodInner);
+    rib.position.set(0, -0.032, dz);
+    lid.add(rib);
+  }
+  for (const dz of [0.10, lidD - 0.10]){
+    const rail = new THREE.Mesh(roundedBox(lidW - 0.06, 0.05, 0.12, 0.02), matIron);
+    rail.position.set(0, -0.012, dz);
+    lid.add(rail);
+  }
+  const capDome = new THREE.SphereGeometry(0.04, 8, 6);
+  for (const x of [-0.95, 0, 0.95]){
+    for (const dz of [0.34, lidD - 0.34]){
+      const r = new THREE.Mesh(capDome, matIronDark);
+      r.position.set(x, -0.032, dz);
+      lid.add(r);
+    }
+  }
+
+  // 拱顶（半圆柱，带厚度与两端封盖）
+  const archGeo = new THREE.CylinderGeometry(0.575, 0.575, lidW, 22, 1, false, 0, Math.PI);
+  archGeo.rotateZ(Math.PI / 2);
+  const arch = new THREE.Mesh(archGeo, matWoodLight);
+  arch.position.set(0, 0.16, lidD / 2);
+  lid.add(arch);
+
+  for (const xs of [1, -1]){
+    const cap = new THREE.Mesh(new THREE.CircleGeometry(0.575, 22, 0, Math.PI), matWoodDark);
+    cap.position.set(xs * (lidW / 2 - 0.001), 0.16, lidD / 2);
+    cap.rotation.y = xs * Math.PI / 2;
+    lid.add(cap);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.575, 0.042, 8, 22, Math.PI), matIron);
+    rim.position.set(xs * (lidW / 2 + 0.004), 0.16, lidD / 2);
+    rim.rotation.y = Math.PI / 2;
+    lid.add(rim);
+  }
+
+  // 盖包边
+  for (const dz of [0.10, lidD - 0.10]){
+    const band = new THREE.Mesh(roundedBox(lidW + 0.05, 0.12, 0.14, 0.04), matIron);
+    band.position.set(0, 0.15, dz);
+    lid.add(band);
+  }
+  for (const x of [-0.92, 0, 0.92]){
+    const band = new THREE.Mesh(roundedBox(0.14, 0.09, lidD - 0.05, 0.04), matIron);
+    band.position.set(x, 0.19, lidD / 2);
+    lid.add(band);
+  }
+
+  // 盖铆钉
+  const dome = new THREE.SphereGeometry(0.05, 8, 6);
+  for (const x of [-1.18, -0.59, 0, 0.59, 1.18]){
+    for (const dz of [0.10, lidD - 0.10]){
+      const r = new THREE.Mesh(dome, matIronDark);
+      r.position.set(x, 0.222, dz);
+      lid.add(r);
+    }
+  }
+
+  // 铰链：圆柱轴 + 连接片
+  for (const x of [-0.78, 0.78]){
+    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.082, 0.32, 12), matIronDark);
+    h.rotation.z = Math.PI / 2;
+    h.position.set(x, 0.005, -0.015);
+    lid.add(h);
+    const tab = new THREE.Mesh(roundedBox(0.17, 0.11, 0.32, 0.045), matIron);
+    tab.position.set(x, 0.06, -0.10);
+    lid.add(tab);
+  }
+}
+
+/* ------------------------------ 锁扣（等级色金属） ------------------------------ */
+{
+  const lock = new THREE.Group();
+  lock.position.set(0, BODY_H - 0.16, BODY_D / 2 + 0.035);
+  chest.add(lock);
+
+  const plate = new THREE.Mesh(roundedBox(0.44, 0.42, 0.085, 0.04), matTier);
+  lock.add(plate);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.040, 10, 18), matTierDeep);
+  ring.position.z = 0.065;
+  lock.add(ring);
+  const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.055, 10), matIronDark);
+  hole.rotation.x = Math.PI / 2;
+  hole.position.set(0, -0.108, 0.05);
+  lock.add(hole);
+}
+
+/* ------------------------------ 箱内金币 + 奖章 ------------------------------ */
+{
+  const coin = new THREE.CylinderGeometry(0.13, 0.13, 0.045, 14);
+  for (let i = 0; i < 6; i++){
+    const c = new THREE.Mesh(coin, matGold);
+    const a = (i / 6) * Math.PI * 2 + 0.35;
+    const r = 0.38 + (i % 2) * 0.16;
+    c.position.set(Math.cos(a) * r, 0.46 + (i % 2) * 0.07, Math.sin(a) * r * 0.58);
+    c.rotation.z = Math.PI / 2 + (i % 2 ? 0.1 : -0.1);
+    c.rotation.y = a;
+    bodyGroup.add(c);
+  }
+}
+
+const medal = new THREE.Group();
+medal.position.set(0, 0.62, 0);
+bodyGroup.add(medal);
+let medalStar, medalGem;
+{
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.20, 30), matTierDeep);
+  disc.rotation.x = Math.PI / 2;
+  medal.add(disc);
+
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.495, 0.056, 12, 34), matTier);
+  ring.position.z = 0.06;
+  medal.add(ring);
+
+  // 绶带（两条，从盘后上方垂下）
+  const ribbonMat = matWoodDark;
+  for (const sx of [-1, 1]){
+    const ribbon = new THREE.Mesh(roundedBox(0.11, 0.34, 0.045, 0.02), ribbonMat);
+    ribbon.position.set(sx * 0.17, 0.44, -0.02);
+    ribbon.rotation.z = sx * 0.30;
+    medal.add(ribbon);
+  }
+
+  const shape = new THREE.Shape();
+  const OUT = 0.355, IN = 0.152, P = 5;
+  for (let i = 0; i < P * 2; i++){
+    const r = i % 2 === 0 ? OUT : IN;
+    const a = (i / (P * 2)) * Math.PI * 2 - Math.PI / 2;
+    const x = Math.cos(a) * r, y = Math.sin(a) * r;
+    if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+  }
+  shape.closePath();
+  const starGeo = new THREE.ExtrudeGeometry(shape, {
+    depth:0.15, bevelEnabled:true, bevelThickness:0.040, bevelSize:0.040, bevelSegments:2, curveSegments:1
+  });
+  starGeo.center();
+  medalStar = new THREE.Mesh(starGeo, matTier);
+  medalStar.position.z = 0.15;
+  medal.add(medalStar);
+  // 背面同款星徽：绕竖轴转到背面时也不会只剩一个空盘
+  const starBack = new THREE.Mesh(starGeo, matTier);
+  starBack.position.z = -0.15;
+  starBack.rotation.y = Math.PI;
+  medal.add(starBack);
+
+  medalGem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.125, 0), toon('#FFFFFF'));
+  medalGem.position.z = 0.30;
+  medal.add(medalGem);
+}
+medal.visible = false;
+
+/* ------------------------------ 地面柔和投影 ------------------------------ */
+function makeShadowTex(){
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(128, 128, 6, 128, 128, 124);
+  g.addColorStop(0, 'rgba(0,0,0,.66)');
+  g.addColorStop(.46, 'rgba(0,0,0,.32)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(128, 128, 124, 100, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const shadow = new THREE.Mesh(
+  new THREE.PlaneGeometry(3.7, 2.8),
+  new THREE.MeshBasicMaterial({ map:makeShadowTex(), transparent:true, opacity:.5, depthWrite:false })
+);
+shadow.rotation.x = -Math.PI / 2;
+shadow.position.y = -0.46;
+scene.add(shadow);
+
+/* ------------------------------ 光柱 & 星光 ------------------------------ */
+function makeBeamAlpha(){
+  const c = document.createElement('canvas');
+  c.width = 8; c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 128, 0, 0);
+  g.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.42)');
+  g.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 8, 128);
+  return new THREE.CanvasTexture(c);
+}
+const beam = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.50, 0.96, 3.7, 26, 1, true),
+  new THREE.MeshBasicMaterial({ color:0x96F7B2, transparent:true, opacity:0, side:THREE.DoubleSide,
+    blending:THREE.AdditiveBlending, depthWrite:false, alphaMap:makeBeamAlpha() })
+);
+beam.position.y = 1.95;
+scene.add(beam);
+
+function makeSparkTex(){
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(.38, 'rgba(255,255,255,.6)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const SPARK_N = 90;
+const sPos = new Float32Array(SPARK_N * 3);
+const sVel = new Float32Array(SPARK_N * 3);
+const sLife = new Float32Array(SPARK_N);
+const sparkGeo = new THREE.BufferGeometry();
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+const sparkMat = new THREE.PointsMaterial({
+  size:0.13, map:makeSparkTex(), transparent:true, opacity:0,
+  blending:THREE.AdditiveBlending, depthWrite:false, color:new THREE.Color('#96F7B2')
+});
+const sparks = new THREE.Points(sparkGeo, sparkMat);
+sparks.visible = false;
+scene.add(sparks);
+
+function burstSparks(hex){
+  sparkMat.color.set(hex);
+  for (let i = 0; i < SPARK_N; i++){
+    const a = Math.random() * Math.PI * 2;
+    const r = 0.10 + Math.random() * 0.48;
+    sPos[i*3]   = Math.cos(a) * r;
+    sPos[i*3+1] = 0.72 + Math.random() * 0.25;
+    sPos[i*3+2] = Math.sin(a) * r * 0.62;
+    const sp = 0.9 + Math.random() * 2.0;
+    sVel[i*3]   = Math.cos(a) * sp * 0.5;
+    sVel[i*3+1] = 1.9 + Math.random() * 2.6;
+    sVel[i*3+2] = Math.sin(a) * sp * 0.4;
+    sLife[i] = 0.9 + Math.random() * 1.0;
+  }
+  sparkGeo.attributes.position.needsUpdate = true;
+  sparks.visible = true;
+  sparkMat.opacity = 0.95;
+}
+
+/* =========================================================================
+   后处理：法线 + 深度 → 描边
+   ========================================================================= */
+const RT_BASE = { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, depthBuffer:true };
+let colorRT, normalRT, depthRT;
+let dispW = 2, dispH = 2;
+const SS = 1.5;
+const MAX_PIXELS = 3.2e6;
+
+const normalMat = new THREE.ShaderMaterial({
+  vertexShader: `
+    varying vec3 vN;
+    void main(){ vN = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `
+    varying vec3 vN;
+    void main(){ gl_FragColor = vec4(normalize(vN) * 0.5 + 0.5, 1.0); }`
+});
+
+const depthMat = new THREE.ShaderMaterial({
+  uniforms:{ uFar:{ value:90 } },
+  vertexShader: `
+    varying float vD;
+    void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vD = -mv.z;
+      gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `
+    uniform float uFar; varying float vD;
+    vec4 pack(float v){
+      vec4 e = vec4(1.0, 255.0, 65025.0, 16581375.0) * v;
+      e = fract(e);
+      e -= e.yzww * vec4(1.0/255.0, 1.0/255.0, 1.0/255.0, 0.0);
+      return e;
+    }
+    void main(){ gl_FragColor = pack(clamp(vD / uFar, 0.0, 1.0)); }`
+});
+
+const postMat = new THREE.ShaderMaterial({
+  uniforms:{
+    tColor:{ value:null }, tNormal:{ value:null }, tDepth:{ value:null },
+    uRes:{ value:new THREE.Vector2(2,2) }, uFar:{ value:90 },
+    uEdge:{ value:new THREE.Color('#1A1033') },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: `
+    precision highp float;
+    uniform sampler2D tColor, tNormal, tDepth;
+    uniform vec2 uRes; uniform float uFar; uniform vec3 uEdge;
+    varying vec2 vUv;
+
+    float unpackD(vec4 c){ return dot(c, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0)); }
+    float linD(vec2 uv){ return unpackD(texture2D(tDepth, uv)) * uFar; }
+    vec3 nrm(vec2 uv){ return texture2D(tNormal, uv).xyz * 2.0 - 1.0; }
+    float mk(vec2 uv){ return smoothstep(0.30, 0.52, texture2D(tColor, uv).a); }
+    vec3 toSRGB(vec3 c){
+      return mix(1.055 * pow(max(c, vec3(0.0)), vec3(1.0/2.4)) - 0.055, c * 12.92, step(c, vec3(0.0031308)));
+    }
+
+    void main(){
+      vec2 px = 1.0 / uRes;
+      vec4 base = texture2D(tColor, vUv);
+      float m = mk(vUv);
+
+      /* --- 外轮廓：2.6px 环采样，邻域出现背景即画粗线 --- */
+      float sil = 0.0;
+      for (int i = 0; i < 8; i++){
+        float a = float(i) * 0.7853982;
+        sil = max(sil, 1.0 - mk(vUv + vec2(cos(a), sin(a)) * px * 2.6));
+      }
+      sil *= m;
+
+      /* --- 零件交界：以法线为主（阈值放宽），深度只做 18% 辅助 --- */
+      vec3 n0 = nrm(vUv);
+      float d0 = linD(vUv);
+      float crease = 0.0;
+      for (int i = 0; i < 4; i++){
+        float a = float(i) * 1.5707963 + 0.7853982;
+        vec2 off = vec2(cos(a), sin(a)) * px * 1.4;
+        float ms = mk(vUv + off);
+        float nd = 1.0 - dot(n0, nrm(vUv + off));
+        float dd = abs(linD(vUv + off) - d0) / max(d0, 0.001);
+        float nE = smoothstep(0.20, 0.52, nd);       // 放宽，只在真交界处出线
+        float dE = smoothstep(0.10, 0.22, dd) * 0.18;
+        crease = max(crease, max(nE, dE) * ms);
+      }
+      crease *= m;
+
+      float edge = clamp(max(sil, crease * 0.96), 0.0, 1.0);
+      vec3 col = mix(base.rgb, uEdge, edge);
+      gl_FragColor = vec4(toSRGB(col), base.a);
+    }`,
+  transparent:true, depthTest:false, depthWrite:false
+});
+
+const quadScene = new THREE.Scene();
+const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat);
+quad.frustumCulled = false;
+quadScene.add(quad);
+const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+function buildTargets(){
+  const scale = Math.min(1, Math.sqrt(MAX_PIXELS / (dispW * SS * dispH * SS)));
+  const w = Math.max(2, Math.round(dispW * SS * scale));
+  const h = Math.max(2, Math.round(dispH * SS * scale));
+  [colorRT, normalRT, depthRT].forEach(rt => rt && rt.dispose());
+  colorRT  = new THREE.WebGLRenderTarget(w, h, { ...RT_BASE, samples:4, type:THREE.UnsignedByteType });
+  normalRT = new THREE.WebGLRenderTarget(w, h, { ...RT_BASE, samples:4, type:THREE.UnsignedByteType });
+  depthRT  = new THREE.WebGLRenderTarget(w, h, {
+    minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter,
+    depthBuffer:true, samples:0, type:THREE.UnsignedByteType
+  });
+  depthMat.uniforms.uFar.value = camera.far;
+  postMat.uniforms.uFar.value = camera.far;
+  postMat.uniforms.uRes.value.set(dispW, dispH);
+}
+
+function resize(){
+  const cw = stage.clientWidth, ch = stage.clientHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  dispW = Math.max(2, Math.round(cw * dpr));
+  dispH = Math.max(2, Math.round(ch * dpr));
+  renderer.setPixelRatio(1);
+  renderer.setSize(dispW, dispH, false);
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  camera.aspect = cw / ch;
+  camera.updateProjectionMatrix();
+  buildTargets();
+}
+window.addEventListener('resize', resize);
+
+/* ------------------------------ HUD 逻辑 ------------------------------ */
+const titleEl = document.getElementById('title');
+const chip = document.getElementById('chip');
+const chipText = document.getElementById('chipText');
+const starsEl = document.getElementById('stars');
+const scoreNum = document.getElementById('scoreNum');
+const tiersEl = document.getElementById('tiers');
+const glowEl = document.getElementById('glow');
+const flashEl = document.getElementById('flash');
+
+titleEl.innerHTML = ['高','光','时','刻']
+  .map(ch => `<span class="ch" data-ch="${ch}">${ch}</span>`).join('');
+const titleChars = [...titleEl.querySelectorAll('.ch')];
+
+const starSVG = (fill) => `
+<svg class="star" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M50 4 L62.6 35.6 L96.5 38.2 L70.2 60.4 L78.6 93.4 L50 75.1 L21.4 93.4 L29.8 60.4 L3.5 38.2 L37.4 35.6 Z"
+        fill="${fill}" stroke="#1A1033" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M50 18 L57 37 L77 39 L62 51 L66.5 70 L50 60 L33.5 70 L38 51 L23 39 L43 37 Z"
+        fill="rgba(255,255,255,.45)"/>
+</svg>`;
+
+let tierIndex = 0;
+let scoreShown = 0, scoreTarget = 0;
+let autoLoop = true;
+let lastSwitch = performance.now();
+
+function applyTier(i, opts = {}){
+  const t = TIERS[i];
+  tierIndex = i;
+
+  const root = document.documentElement.style;
+  root.setProperty('--tier', t.color);
+  root.setProperty('--tier-bright', t.bright);
+  root.setProperty('--tier-deep', t.deep);
+  root.setProperty('--bg-hot', t.bgHot);
+
+  /* 3D：材质 / 灯光 / 光效统一换主色 */
+  matTier.color.set(t.color);
+  matTierDeep.color.set(t.deep);
+  rimLight.color.set(t.color).lerp(new THREE.Color('#ffffff'), 0.28);
+  rimLight.intensity = 1.65 + i * 0.36;
+  keyLight.intensity = 2.00 + i * 0.12;
+  skyLight.intensity = 1.00 + i * 0.10;
+  // 金属包边也吃一点等级色，避免四级看起来只有锁扣在变
+  matIron.color.set('#3A4257').lerp(new THREE.Color(t.deep), 0.34);
+  matInnerTier.color.set(t.deep).lerp(new THREE.Color('#0b0712'), 0.66);
+  matTier.emissive = new THREE.Color(t.color).multiplyScalar(0.22);
+  matTier.emissiveIntensity = 1;
+  beam.material.color.set(t.bright);
+  sparkMat.color.set(t.bright);
+  glowEl.style.background =
+    `radial-gradient(circle, color-mix(in srgb, ${t.bright} 58%, transparent) 0%, transparent 62%)`;
+
+  /* 星级 */
+  starsEl.innerHTML = '';
+  for (let s = 0; s < 3; s++){
+    const wrap = document.createElement('div');
+    wrap.innerHTML = starSVG(s < t.stars ? t.bright : '#565c73');
+    const svg = wrap.firstElementChild;
+    if (s >= t.stars) svg.classList.add('off');
+    svg.style.animation = `starPop .58s cubic-bezier(.2,1.7,.4,1) ${0.30 + s * 0.12}s forwards`;
+    starsEl.appendChild(svg);
+  }
+
+  /* 徽章 / 分数 */
+  chipText.textContent = t.en;
+  chip.classList.remove('bounce');
+  void chip.offsetWidth;
+  chip.classList.add('bounce');
+  scoreTarget = t.score;
+
+  /* 标题逐字砸入（每级重播） */
+  titleChars.forEach((el, k) => {
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = `slam .80s cubic-bezier(.16,1.02,.3,1) ${0.05 + k * 0.085}s forwards`;
+  });
+
+  [...tiersEl.children].forEach((b, k) => b.classList.toggle('on', k === i));
+  lastSwitch = performance.now();
+  if (opts.restart !== false) showStart = performance.now();
+}
+
+TIERS.forEach((t, i) => {
+  const b = document.createElement('button');
+  b.textContent = t.name;
+  b.addEventListener('click', () => { autoLoop = false; applyTier(i); });
+  tiersEl.appendChild(b);
+});
+
+/* ------------------------------ 展示循环（真时间驱动） ------------------------------ */
+const CYCLE = 7.2;
+let showStart = performance.now();
+let lastBurstCycle = -1;
+
+const clamp01 = x => Math.min(1, Math.max(0, x));
+const seg = (t, a, b) => clamp01((t - a) / (b - a));
+const easeOut = x => 1 - Math.pow(1 - x, 3);
+const easeInOut = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+
+/* ------------------------------ 主循环 ------------------------------ */
+const clock = new THREE.Clock();
+let elapsed = 0;
+let lastNow = performance.now();
+
+function tick(){
+  const now = performance.now();
+  const rdt = Math.min((now - lastNow) / 1000, 0.25);   // 真实时间（不因低帧率漂移）
+  lastNow = now;
+  elapsed += rdt;
+  const dt = Math.min(rdt, 1 / 30);
+
+  const showT = ((now - showStart) / 1000) % CYCLE;
+
+  /* 待机：缓慢左右转（看得到侧面与厚度）+ 轻微上下浮动 */
+  chest.rotation.y = Math.sin(elapsed * 0.52) * 0.44;
+  const bob = Math.sin(elapsed * 1.15) * 0.055;
+  chest.position.y = bob;
+
+  /* 投影随高度变化 */
+  const k = (bob + 0.055) / 0.11;
+  shadow.scale.setScalar(1 - k * 0.15);
+  shadow.material.opacity = 0.52 - k * 0.20;
+
+  /* 盖子：开 → 停 → 合 */
+  const openT  = seg(showT, 0.45, 1.30);
+  const closeT = seg(showT, 5.55, 6.35);
+  const openAngle = (easeInOut(openT) - easeInOut(closeT)) * 2.55;
+  lid.rotation.x = -openAngle;
+
+  /* 奖章：升起 → 旋转展示 → 收回 */
+  const riseT = clamp01(seg(showT, 1.05, 1.85) - seg(showT, 5.05, 5.55));
+  const rise = easeOut(riseT);
+  medal.visible = rise > 0.002;
+  medal.position.y = 0.62 + rise * 1.02;
+  medal.scale.setScalar(0.34 + 0.66 * rise);
+  // 绕竖轴旋转 + 轻微往复，避免长时间侧对镜头只剩一条薄边
+  medal.rotation.y = elapsed * 0.72;                 // 绕竖轴持续旋转（盘够厚，侧面也读得出是硬币）
+  medalStar.rotation.z = Math.sin(elapsed * 1.8) * 0.08;
+  medalGem.rotation.y = -elapsed * 2.4;
+  medalGem.rotation.x = Math.sin(elapsed * 1.5) * 0.34;
+
+  /* 光柱 / 光晕 */
+  const beamT = clamp01(openT - closeT * 0.9);
+  beam.material.opacity = beamT * (0.20 + tierIndex * 0.045) * (0.82 + 0.18 * Math.sin(elapsed * 3.6));
+  beam.visible = beam.material.opacity > 0.004;
+  beam.rotation.y = elapsed * 0.4;
+  beam.scale.setScalar(1 + 0.05 * Math.sin(elapsed * 2.2));
+  glowEl.style.opacity = String(beamT * (0.30 + 0.09 * Math.sin(elapsed * 2.8)));
+
+  /* 每轮开盖只喷一次星光 */
+  const cycleId = Math.floor((now - showStart) / (CYCLE * 1000));
+  if (openT > 0.05 && openT < 0.6 && cycleId !== lastBurstCycle){
+    burstSparks(TIERS[tierIndex].bright);
+    lastBurstCycle = cycleId;
+    flashEl.classList.remove('pop');
+    void flashEl.offsetWidth;
+    flashEl.classList.add('pop');
+  }
+  if (sparks.visible){
+    let alive = 0;
+    for (let i = 0; i < SPARK_N; i++){
+      if (sLife[i] <= 0) continue;
+      sLife[i] -= dt;
+      alive++;
+      sPos[i*3]   += sVel[i*3] * dt;
+      sPos[i*3+1] += sVel[i*3+1] * dt;
+      sPos[i*3+2] += sVel[i*3+2] * dt;
+      sVel[i*3+1] -= 4.6 * dt;
+    }
+    sparkGeo.attributes.position.needsUpdate = true;
+    sparkMat.opacity = Math.max(0, sparkMat.opacity - dt * 0.55);
+    if (alive === 0 || sparkMat.opacity <= 0.01){ sparks.visible = false; }
+  }
+
+  /* 分数滚动 */
+  if (Math.abs(scoreShown - scoreTarget) > 0.5){
+    scoreShown += (scoreTarget - scoreShown) * Math.min(1, dt * 7);
+  } else scoreShown = scoreTarget;
+  scoreNum.textContent = Math.round(scoreShown).toLocaleString('en-US');
+
+  /* 自动演示：每 7.6s 升一级 */
+  if (autoLoop && now - lastSwitch > 7600) applyTier((tierIndex + 1) % TIERS.length);
+
+  render();
+  requestAnimationFrame(tick);
+}
+
+/* ------------------------------ 三遍渲染 + 合成 ------------------------------ */
+const hidden = [sparks, beam, shadow];
+
+function render(){
+  /* 1) 颜色：超采样 + MSAA，透明背景 */
+  scene.overrideMaterial = null;
+  renderer.setRenderTarget(colorRT);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  /* 2) 法线 / 3) 深度：隐藏半透明辅助物，避免它们进描边 */
+  const vis = hidden.map(o => o.visible);
+  hidden.forEach(o => o.visible = false);
+
+  scene.overrideMaterial = normalMat;
+  renderer.setRenderTarget(normalRT);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  scene.overrideMaterial = depthMat;
+  renderer.setRenderTarget(depthRT);
+  renderer.setClearColor(0xffffff, 1);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  scene.overrideMaterial = null;
+  hidden.forEach((o, i) => o.visible = vis[i]);
+
+  /* 4) 合成描边 */
+  postMat.uniforms.tColor.value = colorRT.texture;
+  postMat.uniforms.tNormal.value = normalRT.texture;
+  postMat.uniforms.tDepth.value = depthRT.texture;
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(quadScene, quadCam);
+}
+
+/* 调试钩子（给自动化截图 / 手动验收用，不影响正常播放） */
+window.__hl = {
+  seek(seconds){ showStart = performance.now() - seconds * 1000; },
+  setTier(i){ autoLoop = false; applyTier(i); },
+  stats(){ return { tier: TIERS[tierIndex].key, score: Math.round(scoreShown) }; },
+};
+
+/* ------------------------------ 启动 ------------------------------ */
+resize();
+applyTier(0, { restart:false });
+showStart = performance.now();
+boot.classList.add('hide');
+setTimeout(() => boot.remove(), 700);
+tick();
+</script>
+</body>
+</html>

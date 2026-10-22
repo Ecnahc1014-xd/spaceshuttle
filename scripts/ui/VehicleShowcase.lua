@@ -277,7 +277,8 @@ function VehicleShowcase.Init(width, height)
         CreateMaterial(opaque, {1, 0.24, 0.055}, 0.56, 0.34, 1)
         CreateMaterial(opaque, {0.035, 0.045, 0.065}, 0, 0.88, 1)
         CreateMaterial(opaque, {0.44, 0.48, 0.56}, 0.96, 0.18, 1)
-        local glass = CreateMaterial(alpha, {0.16, 0.07, 0.13}, 0.05, 0.08, 0.68)
+        -- 有 IBL 后 0.08 粗糙度的玻璃会把明亮天空反射成一块死白，抬到 0.20 让反射散开。
+        local glass = CreateMaterial(alpha, {0.16, 0.07, 0.13}, 0.05, 0.20, 0.68)
         glass:SetRenderOrder(180)
         CreateMaterial(opaque, {1, 0.18, 0.035}, 0.05, 0.20, 1, {3.2, 0.576, 0.112})
         -- 第 7 段白色轮廓壳；CreateMaterial 已把材质登记进 state.materials，随展台一并释放。
@@ -289,8 +290,23 @@ function VehicleShowcase.Init(width, height)
         local zoneNode = scene:CreateChild("ShowcaseZone", LOCAL)
         local zone = assert(zoneNode:CreateComponent("Zone", LOCAL), "Zone unavailable")
         zone.boundingBox = BoundingBox(-1000, 1000)
-        zone.ambientSource = AMBIENT_COLOR
-        zone.ambientColor = Color(0.18, 0.20, 0.24)
+        -- 展台是全项目唯一的“打光写真”光位：金属度 0.72 的车漆必须有环境反射（IBL）
+        -- 才有金属感，否则只剩三盏灯的直接高光，深红漆会暗成近黑。
+        -- 战斗场景仍保持 AMBIENT_COLOR 平光（低配移动端不依赖 cubemap），此处单独烘。
+        -- 官方预制写实天空 A 走 uuid:// 直接取，无需自备贴图；取不到时回退均光，不报错。
+        local envCube = nil
+        pcall(function()
+            envCube = cache:GetResource("TextureCube", "uuid://E4ehad-5axjv7Ml9zasxNx06")
+        end)
+        if envCube then
+            zone.ambientSource = AMBIENT_PREBAKED
+            -- v0.13.68：1.7 时展台车明显比实战车“孤高”，回落到只比战斗环境高一点。
+            zone.ambientIntensity = 1.15
+            zone.sourceTexture = envCube -- 触发后台烘焙 SH + 镜面 IBL
+        else
+            zone.ambientSource = AMBIENT_COLOR
+            zone.ambientColor = Color(0.18, 0.20, 0.24)
+        end
         zone.fogColor = Color(0, 0, 0, 0)
         zone.fogDensity = 0
         zone.heightFog = false

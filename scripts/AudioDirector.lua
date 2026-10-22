@@ -76,6 +76,38 @@ local BGM_TRACKS = {
 }
 
 local SFX_POOL_SIZE = 8
+
+-- v0.13.71 防噪（音效重复）：高频事件（连续击碎/暴击/爆炸/附魔）会在同一帧或几十毫秒内
+-- 反复触发同一个采样，叠加后既糊又刺耳。三道上限：
+--   ① gap      —— 同键最小间隔（秒），窗口内直接丢弃；
+--   ② max      —— 同键"近期并发"上限（窗口 SFX_STACK_WINDOW），超了丢弃；
+--   ③ frameCap —— 每帧总播放预算，防止一帧几十个击碎同时爆。
+-- 未列出的键走 DEFAULT（gap 0.05 / max 2），既有调用点不用改。
+local SFX_GATE = {
+    brick_hit   = { gap = 0.045, max = 2 },
+    brick_break = { gap = 0.030, max = 3 },
+    explode     = { gap = 0.080, max = 2 },
+    enemy_clear = { gap = 0.100, max = 2 },
+    crit        = { gap = 0.060, max = 2 },
+    pierce      = { gap = 0.060, max = 2 },
+    launch      = { gap = 0.050, max = 2 },
+    base_hit    = { gap = 0.100, max = 1 },
+    heal        = { gap = 0.200, max = 1 },
+    shield      = { gap = 0.120, max = 1 },
+    coin        = { gap = 0.050, max = 2 },
+    split       = { gap = 0.060, max = 2 },
+    enchant     = { gap = 0.080, max = 1 },
+    levelup     = { gap = 0.200, max = 1 },
+    wave        = { gap = 0.300, max = 1 },
+    boss        = { gap = 0.300, max = 1 },
+    game_over   = { gap = 0.500, max = 1 },
+    ui_click    = { gap = 0.050, max = 1 },
+    ui_confirm  = { gap = 0.060, max = 1 },
+} ---@type table<string, {gap: number, max: integer}>
+local SFX_GATE_DEFAULT = { gap = 0.05, max = 2 }
+local SFX_FRAME_BUDGET = 5      -- 每帧最多 5 个音效
+local SFX_STACK_WINDOW = 0.12   -- "近期并发"统计窗口（秒）
+local SFX_DUCK = 0.72           -- 同键叠加时每次衰减，避免削波
 local BGM_GAIN = 0.34
 local BGM_FADE_IN = 1.1
 local BGM_FADE_OUT = 0.7
@@ -88,6 +120,13 @@ local state = {
     sfxPool = {},       -- SoundSource[]
     sfxCursor = 1,
     throttle = {},      -- key → 上次播放时刻
+    sfxGateAt = {},     -- v0.13.71 key → 上次真正播放时刻（防噪最小间隔）
+    sfxStack = {},      -- v0.13.71 key → 近期并发计数
+    sfxStackUntil = {}, -- v0.13.71 key → 并发窗口截止时刻
+    sfxFramePlays = 0,  -- v0.13.71 本帧已播放数（每帧预算）
+    sfxFrameCap = SFX_FRAME_BUDGET,
+    sfxThrottled = 0,   -- v0.13.71 被最小间隔挡掉的次数
+    sfxDropped = 0,     -- v0.13.71 被并发/预算挡掉的次数
     clock = 0,
     bgmPlaylist = {},   -- key → Sound[]（该态的全部曲目，缺文件已剔除）
     bgmSources = {},    -- 两条通道做交叉淡入淡出
@@ -98,6 +137,7 @@ local state = {
     bgmTrackLen = 0,    -- 当前曲目时长（秒）
     bgmGain = {},       -- 每通道当前增益
     bgmFade = {},       -- 每通道目标增益
+    bgmMixViolations = 0, -- v0.13.68：两通道同时发声的帧数（应恒为 0，用于自证不混音）
     lastState = nil,
     bossAlive = false,  -- 由 wave_started(isBoss) / boss_defeated 事件跟踪，决定是否切首领主题
     musicEnabled = true, -- 设置页开关：关则 BGM 淡出并静音（不动曲目状态，开回来可续）
@@ -131,6 +171,12 @@ function AudioDirector.Init(scene)
     state.sfxPool = {}
     state.sfxCursor = 1
     state.throttle = {}
+    state.sfxGateAt = {}
+    state.sfxStack = {}
+    state.sfxStackUntil = {}
+    state.sfxFramePlays = 0
+    state.sfxThrottled = 0
+    state.sfxDropped = 0
     state.clock = 0
     state.bgmPlaylist = {}
     state.bgmSources = {}
@@ -184,6 +230,35 @@ function AudioDirector.PlaySfx(key, gain, pitch)
     if not sound then return end
     local pool = state.sfxPool
     if #pool == 0 then return end
+
+    -- ==== v0.13.71 防噪闸门：三道限制都在这里统一执行，调用点无需改动 ====
+    local gate = SFX_GATE[key] or SFX_GATE_DEFAULT
+    local now = state.clock
+    -- ① 同键最小间隔
+    local last = state.sfxGateAt[key]
+    if last and now - last < gate.gap then
+        state.sfxThrottled = state.sfxThrottled + 1
+        return
+    end
+    -- ② 同键近期并发上限（窗口内累加）
+    if not state.sfxStackUntil[key] or now >= state.sfxStackUntil[key] then
+        state.sfxStack[key] = 0
+    end
+    local stack = state.sfxStack[key] or 0
+    if stack >= gate.max then
+        state.sfxDropped = state.sfxDropped + 1
+        return
+    end
+    -- ③ 每帧总预算
+    if state.sfxFramePlays >= state.sfxFrameCap then
+        state.sfxDropped = state.sfxDropped + 1
+        return
+    end
+    state.sfxGateAt[key] = now
+    state.sfxStack[key] = stack + 1
+    state.sfxStackUntil[key] = now + SFX_STACK_WINDOW
+    state.sfxFramePlays = state.sfxFramePlays + 1
+
     local source = pool[state.sfxCursor]
     state.sfxCursor = state.sfxCursor % #pool + 1
     if not source then return end
@@ -192,7 +267,9 @@ function AudioDirector.PlaySfx(key, gain, pitch)
         local ok, base = pcall(function() return sound:GetFrequency() end)
         if ok and base then freq = base * pitch end
     end
-    pcall(function() source:Play(sound, freq, gain or 0.55) end)
+    -- 同键叠加时按 0.72^n 衰减，避免多个同采样同相位叠成削波噪音。
+    local ducked = (gain or 0.55) * (SFX_DUCK ^ math.min(stack, 4))
+    pcall(function() source:Play(sound, freq, ducked) end)
     state.sfxPlays = state.sfxPlays + 1
 end
 
@@ -238,13 +315,9 @@ local function HandleEvent(event)
         state.bossAlive = false
     end
     if etype == "brick_hit" then
+        -- v0.13.71：节流统一交给 PlaySfx 的防噪闸门（避免两层 gap 叠加把节奏压太稀）。
         local key = event.destroyed and "brick_break" or "brick_hit"
-        local minGap = event.destroyed and 0.03 or 0.045
-        local last = state.throttle[key]
-        if not last or state.clock - last >= minGap then
-            state.throttle[key] = state.clock
-            AudioDirector.PlaySfx(key, event.destroyed and 0.45 or 0.32, 0.92 + math.random() * 0.18)
-        end
+        AudioDirector.PlaySfx(key, event.destroyed and 0.45 or 0.32, 0.92 + math.random() * 0.18)
         return
     end
     if etype == "item_used" then
@@ -295,23 +368,34 @@ local function TargetGain()
 end
 
 -- 在另一条通道上播放指定曲目并淡入，旧通道淡出（用于切状态与曲终轮播）。
+-- v0.13.68 修「多轨混音」：任何时刻只允许一条通道在响——
+--   ① 目标通道若正是上一首还在淡出的通道，先 Stop 再 Play（不叠尾音）；
+--   ② 其余非活动通道一律清零增益，并立刻 Stop，绝不与新区并行发声。
 local function StartTrack(key, idx)
     local sound, realIdx = PlaylistTrack(key, idx)
     local nextCh = state.bgmActive % 2 + 1
     local source = state.bgmSources[nextCh]
     if sound and source then
-        pcall(function() source:Play(sound, 0, 0) end)
         state.bgmGain[nextCh] = 0
         state.bgmFade[nextCh] = TargetGain()
+        pcall(function() source:Stop() end)
+        pcall(function() source:Play(sound, 0, 0) end)
+        pcall(function() source:SetGain(0) end)
         state.bgmTrackIdx = realIdx
         local okLen, len = pcall(function() return sound:GetLength() end)
         state.bgmTrackLen = (okLen and len) or 0
     else
-        -- 目标缺失：只让当前通道淡出。
-        state.bgmFade[state.bgmActive] = 0
         state.bgmTrackLen = 0
     end
-    state.bgmFade[state.bgmActive] = 0
+    -- 旧通道：立即停声（交叉段已经由新版从 0 淡入承担，不需要两条同时响）。
+    for ch = 1, 2 do
+        if ch ~= nextCh then
+            state.bgmFade[ch] = 0
+            state.bgmGain[ch] = 0
+            local other = state.bgmSources[ch]
+            if other then pcall(function() other:Stop() end) end
+        end
+    end
     state.bgmActive = nextCh
     state.bgmKey = key
     state.bgmTime = 0
@@ -331,14 +415,27 @@ local function UpdateBgm(dt)
             StartTrack(state.bgmKey, state.bgmTrackIdx + 1)
         end
     end
-    -- 开关切换：把当前通道的目标增益同步到音乐开关（关闭时淡出静音）。
+    -- 开关切换：只同步**活动通道**的目标增益（关闭时淡出静音）。
+    -- v0.13.68：旧版对两条通道都写 tgt，会把正在淡出的旧曲重新拉回满增益，
+    -- 造成两首 BGM 同时响（多轨混音）。非活动通道永远保持 0 并停声。
     local tgt = TargetGain()
     if state.bgmKey then
         for ch = 1, 2 do
-            if (state.bgmGain[ch] or 0) > 0 or (state.bgmFade[ch] or 0) > 0 then
+            if ch == state.bgmActive then
                 state.bgmFade[ch] = tgt
+            else
+                state.bgmFade[ch] = 0
+                if (state.bgmGain[ch] or 0) > 0 then
+                    state.bgmGain[ch] = 0
+                    local other = state.bgmSources[ch]
+                    if other then pcall(function() other:Stop() end) end
+                end
             end
         end
+    end
+    -- v0.13.68 不混音自证：任一帧出现两条通道同时有增益就算违规（正常应恒为 0）。
+    if (state.bgmGain[1] or 0) > 0.01 and (state.bgmGain[2] or 0) > 0.01 then
+        state.bgmMixViolations = (state.bgmMixViolations or 0) + 1
     end
     for ch = 1, 2 do
         local gain = state.bgmGain[ch] or 0
@@ -367,6 +464,7 @@ end
 function AudioDirector.Update(dt, snapshot, events)
     if not state.ready then return end
     state.clock = state.clock + dt
+    state.sfxFramePlays = 0 -- v0.13.71：每帧音效预算从 0 起算
     if events then
         for i = 1, #events do
             local ev = events[i]
@@ -398,9 +496,28 @@ function AudioDirector.Shutdown()
 end
 
 --- 只读诊断：返回当前 BGM 键与是否就绪，供探针自证数据通路。
+--- v0.13.68：含 bgmMixViolations（两通道同时发声帧数，正常恒 0）。
 ---@return string|nil, boolean
 function AudioDirector.DebugState()
     return state.bgmKey, state.ready
+end
+
+--- v0.13.68：不混音自证（两通道同时有增益的帧数，正常恒 0）。
+---@return integer
+function AudioDirector.DebugMixViolations()
+    return state.bgmMixViolations or 0
+end
+
+--- v0.13.71：防噪统计（played 真正播放 / throttled 被最小间隔挡 / dropped 被并发或帧预算挡）。
+---@return table
+function AudioDirector.DebugSfxStats()
+    return {
+        played = state.sfxPlays or 0,
+        throttled = state.sfxThrottled or 0,
+        dropped = state.sfxDropped or 0,
+        frameCap = state.sfxFrameCap or 0,
+        framePlays = state.sfxFramePlays or 0,
+    }
 end
 
 --- 只读诊断：返回某态播放列表的曲目数（供探针断言轮播池）。

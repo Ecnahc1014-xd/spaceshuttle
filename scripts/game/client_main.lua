@@ -23,8 +23,13 @@ local MetaUI = require "MetaUI"
 local RechargeShop = require "ui.RechargeShop"
 local StageSelect = require "ui.StageSelect"
 local ItemShop = require "ui.ItemShop"
+-- v0.13.77b：全屏大地图版（ui/TalentBoard.lua）6×13 塞一屏仍看不清，回退旧面板；
+-- Board/Grove 两个实验版文件保留但都不再接线。
+-- 旧说明：全屏 2D 大画布：6 列 × 13 阶大卡片、
+-- 拖拽平移 + ＋/－缩放、底部详情卡。接口名与旧面板一致，3D 版文件保留但不再接线。
 local TalentTree = require "ui.TalentTree"
 local TestModePrompt = require "ui.TestModePrompt"
+local AdConfirm = require "ui.AdConfirm" -- v0.13.72：广告二次确认弹窗
 local Settings = require "ui.Settings"
 local Achievements = require "ui.Achievements"
 local AchievementSystem = require "AchievementSystem"
@@ -329,17 +334,46 @@ function ClientMain.OwnsPointer(source, touchId)
         and (source == "mouse" or ClientMain._pointer.touchId == touchId)
 end
 
--- v0.11.0 商业化：所有激励视频统一走 AdService，保证一次性完成与防重复发奖。
+-- v0.13.72：每个广告点位给玩家看得到的奖励说明（确认弹窗里原样显示）。
+local AD_CONFIRM_REWARD = {
+    revive            = "复活并回 50 血 · 本局一次",
+    gameover_double   = "本局结算零件 ×2",
+    supply_double     = "今日补给零件 ×2（含存量加成）",
+    ad_gift           = "免费零件（基础 + 存量加成）",
+    wheel             = "幸运转盘抽奖 1 次",
+    item_grant        = "随机道具 +1 · 本局一次",
+    pause_heal        = "防线 +25 血 · 本局一次",
+    pause_rare        = "下次强化必出稀有 · 本局一次",
+    pause_orbital     = "轨道支援轰击首领 · 本局一次",
+    pause_reload      = "补充一辆待发重卡 · 本局一次",
+    pause_parts_boost = "45 秒零件产出 ×2 · 本局一次",
+    reroll_ad         = "重抽强化，本次必出稀有",
+    stagewin_double   = "本关分数与零件各再领一次",
+}
+
+---@type table|nil { point: string, onReward: fun() }
+local adConfirmPending = nil
+
+-- 真正发起广告（只有确认弹窗点了「看广告」才会走到这里）。
 ---@param onReward fun()
-local function ShowAd(onReward)
+---@param point string
+local function StartAd(onReward, point)
     local function fail(msg)
         Presentation.SetAdStatus(nil)
         Presentation.SetAdToast(msg)
         RefreshSnapshots()
     end
+    -- v0.13.71：点位维度埋点 + 可用性预检（SDK 未接入/日上限/硬失败冷却时不再打广告）。
+    local available, reason = AdService.IsAvailable()
+    if not available then
+        Presentation.SetAdToast(reason .. "，稍后再试")
+        RefreshSnapshots()
+        return
+    end
     ClientMain.CancelInput()
     Presentation.SetAdStatus("loading")
     AdService.Show({
+        point = point or "unknown",
         onReward = function()
             Presentation.SetAdStatus(nil)
             Presentation.SetAdToast(nil)
@@ -351,6 +385,42 @@ local function ShowAd(onReward)
     })
 end
 
+-- v0.13.72：对外入口先弹确认屏（写明奖励、可取消、取消不扣次数），确认后才发起 SDK。
+---@param onReward fun()
+---@param point string
+local function ShowAd(onReward, point)
+    local key = point or "unknown"
+    adConfirmPending = { point = key, onReward = onReward }
+    Presentation.SetAdConfirm({
+        point = key,
+        title = "确认观看一段广告？",
+        reward = AD_CONFIRM_REWARD[key] or "完整观看后立即发放奖励",
+        hint = "中途关闭不会发放；取消不消耗任何次数。",
+    })
+    RefreshSnapshots()
+end
+
+-- 确认弹窗结果：接受则发起广告；取消只提示，不打 SDK、不扣次数。
+---@param accept boolean
+local function ResolveAdConfirm(accept)
+    local pending = adConfirmPending
+    adConfirmPending = nil
+    Presentation.SetAdConfirm(nil)
+    if pending then
+        if accept then
+            StartAd(pending.onReward, pending.point)
+        else
+            Presentation.SetAdToast("已取消观看广告")
+        end
+    end
+    RefreshSnapshots()
+end
+
+---@return boolean 是否有确认弹窗在等待
+local function AdConfirmActive()
+    return adConfirmPending ~= nil
+end
+
 local function ShowReviveAd()
     if not Game.CanRevive() then
         Presentation.SetAdToast("本局已复活")
@@ -360,7 +430,7 @@ local function ShowReviveAd()
         if not Game.ReviveFromAd() then
             Presentation.SetAdToast("复活未能生效")
         end
-    end)
+    end, "revive")
 end
 
 local function ShowDoublePartsAd()
@@ -372,7 +442,7 @@ local function ShowDoublePartsAd()
             SavePlayerDataToCloud()
             Presentation.SetAdToast(string.format("双倍到账 +%d 零件", extra))
         end
-    end)
+    end, "gameover_double")
 end
 
 -- ============================================================================
@@ -672,6 +742,25 @@ end
 -- 零件入账统一出口：写入 + 存档 + 云同步 + 刷新界面。
 ---@param amount integer
 ---@param label string|nil
+-- v0.13.72：广告零件奖励按**账号现有零件**给额外收益（防后期贬值）。
+-- 经济锚点：车辆全解锁 11700 + 拖尾 9800 ≈ 2.15 万零件，天赋另计，后期持有常见 1~3 万。
+-- 加成 = 存量 × 12%，上限 = 基础值 × 8（即最多 9 倍基础）——
+-- 长线玩家看广告的收益不再被 200/500 的固定值锁死，同时仍有硬顶防一次领爆。
+local AD_HOLDINGS_RATE = 0.12
+local AD_HOLDINGS_CAP_MULT = 8
+
+---@param base integer 基础奖励
+---@return integer bonus 额外加成（可为 0）
+local function AdHoldingsBonus(base)
+    if not base or base <= 0 then return 0 end
+    local hold = PlayerData.GetParts() or 0
+    if hold <= 0 then return 0 end
+    local bonus = math.floor(hold * AD_HOLDINGS_RATE)
+    local cap = math.floor(base * AD_HOLDINGS_CAP_MULT)
+    if bonus > cap then bonus = cap end
+    return math.max(0, bonus)
+end
+
 local function GrantParts(amount, label)
     if amount <= 0 then return end
     PlayerData.AddParts(amount)
@@ -681,6 +770,21 @@ local function GrantParts(amount, label)
     if label then
         SetMetaToast(string.format("%s +%d 零件", label, amount))
     end
+end
+
+-- 广告零件奖励统一入口：基础 + 存量加成，并把加成写进提示。
+-- ⚠️ 必须定义在 GrantParts 之后：否则函数体里的 GrantParts 会解析成全局 nil（AB-100）。
+---@param base integer
+---@param label string
+---@return integer total
+local function GrantAdParts(base, label)
+    local bonus = AdHoldingsBonus(base)
+    local total = base + bonus
+    GrantParts(total, label)
+    if bonus > 0 then
+        SetMetaToast(string.format("%s +%d 零件（含存量加成 +%d）", label, total, bonus))
+    end
+    return total
 end
 
 local function PersistMeta()
@@ -819,8 +923,8 @@ local function HandleSupply(mode)
         ShowAd(function()
             PlayerData.AddDailyCount("supply", 1)
             metaState.supplyOpen = false
-            GrantParts(metaState.supplyReward * 2, "每日补给 双倍")
-        end)
+            GrantAdParts(metaState.supplyReward * 2, "每日补给 双倍")
+        end, "supply_double")
         return
     end
     PlayerData.AddDailyCount("supply", 1)
@@ -890,8 +994,8 @@ local function HandleAdGift(index)
     end
     ShowAd(function()
         PlayerData.AddDailyCount(key, 1)
-        GrantParts(MetaCatalog.GetAdGiftReward(gift.key), gift.name)
-    end)
+        GrantAdParts(MetaCatalog.GetAdGiftReward(gift.key), gift.name)
+    end, "ad_gift")
 end
 
 local function HandleWheelSpin()
@@ -903,8 +1007,8 @@ local function HandleWheelSpin()
         PlayerData.AddDailyCount("wheel", 1)
         local prize = MetaCatalog.RollWheelPrize()
         metaState.wheelPrize = prize
-        GrantParts(prize, "转盘奖励")
-    end)
+        GrantAdParts(prize, "转盘奖励")
+    end, "wheel")
 end
 
 -- 钻石兑换：服务端事务原子扣钻并记录累计零件；客户端按权威累计额补领。
@@ -1405,7 +1509,7 @@ local function TryUseItemAt(screenX, screenY)
                 -- 发放成功后保持展开，让玩家看到新入手的道具
                 RenderBackend.SetItemPanelOpen(true)
             end
-        end)
+        end, "item_grant")
         return true
     end
     Presentation.SetAdToast(item.name .. " 本局已领取")
@@ -1434,49 +1538,69 @@ local function TryPauseSupplyAt(screenX, screenY)
             Presentation.SetAdToast("防线已满或急救已用完")
             return true
         end
+        if not Game.CanPauseAdSlot() then
+            Presentation.SetAdToast("本局补给名额已用完（每局 2 次）")
+            return true
+        end
         ShowAd(function()
             if Game.PauseHeal() then
                 Presentation.SetAdToast("防线 +25 血")
             end
-        end)
+        end, "pause_heal")
         return true
     elseif kind == "pause_rare" then
         if not Game.CanPauseRarePick() then
             Presentation.SetAdToast("本局已购买稀有保底")
             return true
         end
+        if not Game.CanPauseAdSlot() then
+            Presentation.SetAdToast("本局补给名额已用完（每局 2 次）")
+            return true
+        end
         ShowAd(function()
             if Game.PauseRarePick() then
                 Presentation.SetAdToast("下次强化面板必出稀有")
             end
-        end)
+        end, "pause_rare")
         return true
     elseif kind == "pause_orbital" then
         if not Game.CanPauseOrbital() then
             Presentation.SetAdToast("只在首领在场且本局未支援时可用")
             return true
         end
+        if not Game.CanPauseAdSlot() then
+            Presentation.SetAdToast("本局补给名额已用完（每局 2 次）")
+            return true
+        end
         ShowAd(function()
             if Game.PauseOrbital() then Presentation.SetAdToast("轨道支援已轰击首领") end
-        end)
+        end, "pause_orbital")
         return true
     elseif kind == "pause_reload" then
         if not Game.CanPauseReload() then
             Presentation.SetAdToast("本局弹药补给已领取")
             return true
         end
+        if not Game.CanPauseAdSlot() then
+            Presentation.SetAdToast("本局补给名额已用完（每局 2 次）")
+            return true
+        end
         ShowAd(function()
             if Game.PauseReload() then Presentation.SetAdToast("已补充一辆重卡") end
-        end)
+        end, "pause_reload")
         return true
     elseif kind == "pause_parts_boost" then
         if not Game.CanPausePartsBoost() then
             Presentation.SetAdToast("本局零件加倍已领取")
             return true
         end
+        if not Game.CanPauseAdSlot() then
+            Presentation.SetAdToast("本局补给名额已用完（每局 2 次）")
+            return true
+        end
         ShowAd(function()
             if Game.PausePartsBoost() then Presentation.SetAdToast("零件 ×2 生效 45 秒") end
-        end)
+        end, "pause_parts_boost")
         return true
     elseif kind == "pause_resume" then
         Game.Resume()
@@ -1516,7 +1640,7 @@ local function TryPickUpgradeAt(uiX, uiY)
             if Game.RerollUpgrades("ad_rare") then
                 Presentation.SetAdToast("已重抽，本次必有稀有强化")
             end
-        end)
+        end, "reroll_ad")
         return true
     end
     return false
@@ -1617,6 +1741,33 @@ local function HandleStageWinPointerUp(uiX, uiY)
         else
             Game.RetryStage()
         end
+    elseif armed == "double" then
+        -- v0.13.71：结算广告翻倍（每关一次）。发奖走规则层，UI 只做门控与提示。
+        if not Game.CanDoubleStageReward() then
+            Presentation.SetAdToast("本关奖励已翻倍")
+            RefreshSnapshots()
+            return true
+        end
+        ShowAd(function()
+            local snap = Game.GetSnapshot()
+            local baseResult = snap and snap.stageResult
+            local baseParts = baseResult and math.floor(baseResult.bonusParts or 0) or 0
+            if Game.DoubleStageReward() then
+                -- 结算也吃存量加成（按本关基础零件算，不会因为翻倍而翻倍加成）。
+                local bonus = AdHoldingsBonus(baseParts)
+                if bonus > 0 then
+                    GrantParts(bonus, nil)
+                    PlayerData.Save()
+                    Presentation.SetAdToast(string.format("本关奖励已翻倍 · 存量加成 +%d 零件", bonus))
+                else
+                    Presentation.SetAdToast("本关奖励已翻倍")
+                end
+            else
+                Presentation.SetAdToast("翻倍失败，请稍后重试")
+            end
+            RefreshSnapshots()
+        end, "stagewin_double")
+        return true
     elseif armed == "menu" then
         Game.GoToMenu()
     end
@@ -1659,7 +1810,7 @@ function ClientMain.Start(opts)
     -- v0.13.13：局内道具库存 provider——Game.ResetGame 每次开局自动拉取，
     -- 覆盖选关/下一关/再战/重开全部入口（无需逐个入口注入）。
     Game.SetItemStockProvider(PlayerData.GetItemStock)
-    -- v0.13.5：天赋树界面同源注册。
+    -- v0.13.5：天赋树界面同源注册（v0.13.74：3D 叶脉场景；旧 2D 面板保留可回滚）。
     TalentTree.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("talent", TalentTree.Draw, TalentTree.HitTest)
     -- v0.13.56：第 1 关「测试模式」询问屏同源注册（复用元层窗口动画与命中分发）。
@@ -1813,6 +1964,7 @@ end
 function HandleUpdate(eventType, eventData)
     local inputDt = math.max(0, eventData:GetFloat("TimeStep"))
     local dt = math.min(inputDt, 0.05)
+
     AdService.Update(dt)
     AchievementSystem.Update(dt)
     if not GameMode.IsOffline() then NetClient.Update(dt) end
@@ -1972,6 +2124,12 @@ function HandleMouseDown(eventType, eventData)
     local pointerX, pointerY = RenderBackend.ScreenToUi(screenX, screenY)
     RenderBackend.SetPointer(pointerX, pointerY)
     RenderBackend.SetPointerPressed(true)
+    -- v0.13.72：广告确认弹窗压在最上层，先消费这次点击（含「点窗外=取消」）。
+    if AdConfirmActive() then
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        ResolveAdConfirm(AdConfirm.HitTest(uiX, uiY, designWidth_) == "ad_confirm_yes")
+        return
+    end
     -- v0.12.5：顶部通知条永远最先吃点击（覆盖 HUD 下沿，可能与任何模态重叠）。
     if TryBannerAt(screenX, screenY) then
         metaPointerConsumed = true
@@ -2026,6 +2184,12 @@ end
 function HandleMouseUp(eventType, eventData)
     if eventData:GetInt("Button") ~= MOUSEB_LEFT then return end
     if not ClientMain.OwnsPointer("mouse") then return end
+    if AdConfirmActive() then
+        -- 确认弹窗期间抬手不传给底下按钮，但必须释放按压状态。
+        RenderBackend.SetPointerPressed(false)
+        ClientMain._pointer.source = ""
+        return
+    end
     ClientMain._pointer.source = ""
     Game.CancelHoldSpeed()
     -- 所有业务提前返回前释放左键按压；其他鼠标按钮不影响它。
@@ -2111,6 +2275,12 @@ function HandleTouchBegin(eventType, eventData)
         ClientMain.CancelInput()
         return
     end
+    -- v0.13.72：广告确认弹窗最优先（点窗外=取消，不穿透到底下按钮）。
+    if AdConfirmActive() then
+        local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
+        ResolveAdConfirm(AdConfirm.HitTest(uiX, uiY, designWidth_) == "ad_confirm_yes")
+        return
+    end
     -- v0.12.5：顶部通知条永远最先吃触摸。
     if TryBannerAt(screenX, screenY) then
         metaPointerConsumed = true
@@ -2185,6 +2355,7 @@ end
 
 function HandleTouchEnd(eventType, eventData)
     if not ClientMain.OwnsPointer("touch", eventData:GetInt("TouchID")) then return end
+    if AdConfirmActive() then return end -- 确认弹窗期间抬手不传给底下按钮
     ClientMain._pointer.source = ""
     Game.CancelHoldSpeed()
     -- 仅主触点结束时清反馈，画布外或第二根手指的抬起不能取消主指按压。
@@ -2255,6 +2426,11 @@ function HandleKeyDown(eventType, eventData)
             Game.HandleAction("start", true)
         end
     elseif key == KEY_P or key == KEY_ESCAPE then
+        -- v0.13.72：广告确认弹窗最先吃 ESC（等同取消）。
+        if AdConfirmActive() then
+            ResolveAdConfirm(false)
+            return
+        end
         -- v0.11.0 商业化：ESC 先关元层面板，再轮到暂停。
         if metaState.screen then
             -- v0.13.56：测试模式询问屏必须显式选择，ESC 等同「否 · 正常开始」。

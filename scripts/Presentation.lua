@@ -96,6 +96,8 @@ local ejectedBoxes = {}
 local baseImpacts = {}
 local baseBarrierFlash = 0
 local shockRings = {}    -- v0.10.23：击毁砖块的扩散环（少量、点缀）
+local wallFlashes = {}   -- v0.13.66：撞墙贴墙闪光（白热芯短线段，钉在墙面上）
+local wallFlashPool = {}
 ---@class CombatImpact
 ---@field kind string
 ---@field x number
@@ -113,6 +115,9 @@ local reloadFlash = 0    -- v0.10.24：主球回库补弹的 Dock 轻闪
 local upgradeHintPulse = 0    -- v0.10.24：升级面板空白点击时的提示轻脉冲
 local adStatus = nil          -- v0.10.32：nil / "loading"
 local adToast = nil
+-- v0.13.72：广告二次确认弹窗内容（编排层写入，后端 overlay 末段绘制）
+---@type table|nil
+local adConfirm = nil
 local adToastTimer = 0
 -- 云存档状态（**只描述云存档**，不描述联机模式；两者是不同服务，禁止混用文案）：
 -- idle / syncing / ok / unavailable
@@ -188,7 +193,9 @@ end
 
 -- v0.10.21：粒子分三类，小而稀疏、偶尔点缀。
 --  spark 小亮点（软圆）/ shard 三角碎片（自旋、重力）/ smoke 烟雾（上飘、膨胀、半透明）。
-local function SpawnParticles(x, y, color, count, kind)
+-- v0.13.66：可选 (dirX, dirY) 单位方向——火花沿该方向带抖动喷出（撞墙内法线），
+-- 不传时保持原全向随机。
+local function SpawnParticles(x, y, color, count, kind, dirX, dirY)
     kind = kind or "spark"
     count = count or 4
     for _ = 1, count do
@@ -218,7 +225,13 @@ local function SpawnParticles(x, y, color, count, kind)
             p.angle = math.random() * math.pi * 2
             p.spin = (math.random() - 0.5) * 16
         else
-            local angle = math.random() * math.pi * 2
+            local dx, dy = dirX or 0, dirY or 0
+            local angle
+            if dx == 0 and dy == 0 then
+                angle = math.random() * math.pi * 2
+            else
+                angle = math.atan2(dy, dx) + (math.random() - 0.5) * 1.1
+            end
             local speed = 40 + math.random() * 140
             p.vx = math.cos(angle) * speed
             p.vy = math.sin(angle) * speed - 35
@@ -379,11 +392,14 @@ local FEEDBACK_HANDLERS = {
         baseImpacts = {}
         baseBarrierFlash = 0
         shockRings = {}
+        wallFlashes = {}
         ClearCombatImpacts()
         reloadFlash = 0
         upgradeHintPulse = 0
         adStatus = nil
         adToast = nil
+    adConfirm = nil
+        adConfirm = nil
         adToastTimer = 0
         nextDebrisId = 1
         truckLaunchFlash = {
@@ -522,7 +538,16 @@ local FEEDBACK_HANDLERS = {
             r0 = 5, r1 = 22,
             r = rgb[1], g = rgb[2], b = rgb[3],
         }
-        SpawnParticles(event.x, event.y, rgb, math.random(2, 4), "spark")
+        -- v0.13.66：火花沿内法线定向喷出（从墙面弹向场内），并钉一条贴墙闪光，
+        -- 明确读出「撞在墙上」而不是在墙内侧凭空爆发。
+        local nx, ny = event.nx or 0, event.ny or 0
+        SpawnParticles(event.x, event.y, rgb, math.random(3, 5), "spark", nx, ny)
+        local wf = table.remove(wallFlashPool) or {}
+        wf.x, wf.y = event.x, event.y
+        wf.nx, wf.ny = nx, ny
+        wf.life, wf.maxLife = 0.16, 0.16
+        wf.r, wf.g, wf.b = rgb[1], rgb[2], rgb[3]
+        wallFlashes[#wallFlashes + 1] = wf
         screenShake = math.max(screenShake, 0.05)
     end,
     splitSpark = function(event)
@@ -584,7 +609,7 @@ local FEEDBACK_HANDLERS = {
         screenShake = math.max(screenShake, 0.05)
     end,
     reviveConfirm = function(event)
-        SpawnFloatText(270, 430, "复活  +" .. tostring(event.hp or 50) .. " 血", {0, 229, 208}, 1.2)
+        SpawnFloatText(270, 430, "复活  +" .. tostring(event.hp or 50) .. " 血", {226, 228, 232}, 1.2)
         screenShake = math.max(screenShake, 0.12)
     end,
     -- v0.11.0 商业化 P4：道具槽反馈（只写瞬时状态，不触达规则层）
@@ -857,6 +882,15 @@ local function UpdateShockRings(dt)
             shockRings[#shockRings] = nil
         end
     end
+    for i = #wallFlashes, 1, -1 do
+        local f = wallFlashes[i]
+        f.life = f.life - dt
+        if f.life <= 0 then
+            wallFlashes[i] = wallFlashes[#wallFlashes]
+            wallFlashes[#wallFlashes] = nil
+            wallFlashPool[#wallFlashPool + 1] = f
+        end
+    end
 end
 
 local function UpdateTruckLaunchFlashes(dt)
@@ -880,6 +914,7 @@ function Presentation.Init()
     baseImpacts = {}
     baseBarrierFlash = 0
     shockRings = {}
+    wallFlashes = {}
     combatImpacts = {}
     impactPool = {}
     reloadFlash = 0
@@ -955,6 +990,7 @@ function Presentation.GetSnapshot()
         brickDebris = brickDebris,
         baseImpacts = baseImpacts,
         shockRings = shockRings,
+        wallFlashes = wallFlashes,
         combatImpacts = combatImpacts,
         ejectedBoxes = ejectedBoxes,
         baseBarrierFlash = baseBarrierFlash,
@@ -962,6 +998,7 @@ function Presentation.GetSnapshot()
         upgradeHintPulse = upgradeHintPulse,
         adStatus = adStatus,
         adToast = adToast,
+        adConfirm = adConfirm, -- v0.13.72：广告确认弹窗
         cloudStatus = cloudStatus,
         truckLaunchFlash = truckLaunchFlash,
         visualCatalog = VisualCatalog,
@@ -980,6 +1017,12 @@ end
 function Presentation.SetAdToast(message)
     adToast = message
     adToastTimer = 2.2
+end
+
+-- v0.13.72：广告二次确认弹窗状态（nil = 不显示）。绘制在后端 overlay 末段。
+---@param state table|nil { point, title, reward, hint }
+function Presentation.SetAdConfirm(state)
+    adConfirm = state
 end
 
 function Presentation.SetCloudStatus(status)

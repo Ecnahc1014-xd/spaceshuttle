@@ -11,6 +11,11 @@ local vehicleFx_ = {charge = nil, orbs = nil, chargeReady = false, orbsReady = f
 
 local selectedSkin_ = "default"
 
+-- 低配移动端不依赖环境 cubemap/IBL；PBRNoTexture 在部分 Android GPU 上会出现
+-- HUD 正常但所有 3D 几何为黑的情况。桌面端继续保留原 PBR 外观。
+local mobileUnlit_ = type(GetPlatform) == "function"
+    and (GetPlatform() == "Android" or GetPlatform() == "HarmonyOS" or GetPlatform() == "iOS")
+
 local WORLD_SCALE = 0.018
 local DESIGN_CENTER_X = 270
 local DESIGN_CENTER_Y = 480
@@ -232,8 +237,10 @@ local function CreateMaterial(rgb, metallic, roughness, emissive)
     if materialCache_[key] then return materialCache_[key] end
 
     local material = Material:new()
-    material:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
+    local techniquePath = mobileUnlit_
+        and "Techniques/NoTextureUnlit.xml"
+        or "Techniques/PBR/PBRNoTexture.xml"
+    material:SetTechnique(0, cache:GetResource("Technique", techniquePath))
     material:SetShaderParameter("MatDiffColor", Variant(ToColor(rgb)))
     material:SetShaderParameter("Metallic", Variant(metallic or 0.0))
     material:SetShaderParameter("Roughness", Variant(roughness or 0.5))
@@ -501,13 +508,19 @@ local function EnsureVoxelPalette(visualCatalog)
                 end
                 local index = visualCatalog.GetVoxelMatIndex(key, slot, frozen)
                 voxelWorld_:SetPaletteEntry(index, Color(r, g, b), 0.2, 0, VOXEL_COLOR_DOMAIN)
-                local metallic = (slot == "hullMain" or slot == "hullDark") and 0.55 or 0.08
+                -- v0.13.68 提亮：0.55 金属度在无 IBL 的战斗场景里只剩 45% 漫反射，
+                -- 暗装甲整块发黑；降到 0.20 并给暗装甲一点自发光兜底。
+                local metallic = (slot == "hullMain" or slot == "hullDark") and 0.20 or 0.08
                 local roughness = slot == "canopy" and 0.18 or 0.42
                 local emissive = nil
                 if slot == "engine" then
                     emissive = Color(r, g, b, frozen and 2.0 or 4.0)
                 elseif slot == "canopy" then
                     emissive = Color(r, g, b, 1.2)
+                elseif slot == "hullDark" then
+                    emissive = Color(r, g, b, frozen and 0.55 or 0.42)
+                elseif slot == "hullMain" then
+                    emissive = Color(r, g, b, 0.18)
                 end
                 if emissive then
                     voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5, emissive,
@@ -516,7 +529,7 @@ local function EnsureVoxelPalette(visualCatalog)
                     voxelWorld_:SetPaletteEntryPBR(index, roughness, metallic, 0.5,
                         Color(0, 0, 0, 0), VOXEL_COLOR_DOMAIN)
                 end
-                voxelWorld_:SetPaletteCutColor(index, Color(r * 0.55, g * 0.55, b * 0.55),
+                voxelWorld_:SetPaletteCutColor(index, Color(r * 0.72, g * 0.72, b * 0.72),
                     VOXEL_COLOR_DOMAIN)
             end
         end
@@ -900,9 +913,11 @@ end
 
 local function CreateGlassMaterial(rgb)
     local material = Material:new()
-    material:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/PBR/PBRNoTextureAlpha.xml"))
-    material:SetShaderParameter("MatDiffColor", Variant(Color(rgb[1], rgb[2], rgb[3], 0.68)))
+    local techniquePath = mobileUnlit_
+        and "Techniques/NoTextureUnlit.xml"
+        or "Techniques/PBR/PBRNoTextureAlpha.xml"
+    material:SetTechnique(0, cache:GetResource("Technique", techniquePath))
+    material:SetShaderParameter("MatDiffColor", Variant(Color(rgb[1], rgb[2], rgb[3], mobileUnlit_ and 1.0 or 0.68)))
     material:SetShaderParameter("Metallic", Variant(0.05))
     material:SetShaderParameter("Roughness", Variant(0.08))
     material:SetRenderOrder(180)
@@ -915,9 +930,13 @@ local function GetVehicleMaterials(ballType)
     if cached then return cached end
     local palette = VEHICLE_PALETTES[ballType] or VEHICLE_PALETTES.normal
     local lightColor = BALL_COLORS[ballType] or BALL_COLORS.normal
+    -- v0.13.68 提亮：战斗场景无 IBL，金属度 0.72 会把漫反射压到 28%，实战车暗到看不清。
+    -- 降到 0.34/0.30 并把一点车漆色做成自发光兜底；不引入环境反射（金属反光只留展台）。
+    local bodyGlow = {palette.body[1] * 0.30, palette.body[2] * 0.30, palette.body[3] * 0.30}
+    local sideGlow = {palette.side[1] * 0.16, palette.side[2] * 0.16, palette.side[3] * 0.16}
     cached = {
-        CreateMaterial(palette.body, 0.72, 0.27),
-        CreateMaterial(palette.side, 0.56, 0.34),
+        CreateMaterial(palette.body, 0.34, 0.30, bodyGlow),
+        CreateMaterial(palette.side, 0.30, 0.36, sideGlow),
         CreateMaterial(WHEEL_COLOR, 0.0, 0.88),
         CreateMaterial(HUB_COLOR, 0.96, 0.18),
         CreateGlassMaterial(palette.glass),
@@ -934,8 +953,10 @@ local function GetVehicleOutlineMaterial()
     -- 不需要描边 shader；MatEmissiveColor 保证深空暗场里白边依然可辨。
     if vehicleOutlineMaterial_ then return vehicleOutlineMaterial_ end
     local material = Material:new()
-    material:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
+    local techniquePath = mobileUnlit_
+        and "Techniques/NoTextureUnlit.xml"
+        or "Techniques/PBR/PBRNoTexture.xml"
+    material:SetTechnique(0, cache:GetResource("Technique", techniquePath))
     material:SetShaderParameter("MatDiffColor", Variant(Color(0.94, 0.96, 1.0, 1.0)))
     material:SetShaderParameter("Metallic", Variant(0.0))
     material:SetShaderParameter("Roughness", Variant(0.55))
@@ -967,8 +988,10 @@ local function GetVehicleChildOutlineMaterial()
     -- 子车轮廓不用白亮壳，改暗灰；再压低自发光，让“低层级”在深空暗场里也成立。
     if vehicleChildOutlineMaterial_ then return vehicleChildOutlineMaterial_ end
     local material = Material:new()
-    material:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
+    local techniquePath = mobileUnlit_
+        and "Techniques/NoTextureUnlit.xml"
+        or "Techniques/PBR/PBRNoTexture.xml"
+    material:SetTechnique(0, cache:GetResource("Technique", techniquePath))
     material:SetShaderParameter("MatDiffColor", Variant(Color(0.30, 0.32, 0.36, 1.0)))
     material:SetShaderParameter("Metallic", Variant(0.0))
     material:SetShaderParameter("Roughness", Variant(0.62))
@@ -2195,8 +2218,10 @@ function Renderer3D.Init(scene, voxelWorld)
     end
     do
         local ok, result = pcall(function()
-            vehicleFx_.orbs = require "VehicleEnchantOrbs"
-            return vehicleFx_.orbs.Init(scene_)
+            -- v0.13.68c：只是叠在原版车头 V 波外面的一层包边动效（原波零改动），
+            -- 颜色沿用弹种色（与 bow wave 同源），按附魔类型补分叉与流动脉冲。
+            vehicleFx_.orbs = require "VehicleEnchantWave"
+            return vehicleFx_.orbs.Init(scene_, BALL_COLORS)
         end)
         vehicleFx_.orbsReady = ok and result == true
         if not vehicleFx_.orbsReady then

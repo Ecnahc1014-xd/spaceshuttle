@@ -17,11 +17,11 @@ local StageIntro = {}
 
 -- 内置 dark-tech 令牌（与 Scene3DBackend.C 同值；本模块不反向依赖后端）。
 local C = {
-    cyan    = {0, 229, 208, 255},
-    cyanDim = {0, 150, 148, 220},
-    text    = {240, 248, 252, 255},
-    dim     = {120, 148, 162, 255},
-    warn    = {255, 196, 72, 255},
+    cyan    = {226, 228, 232, 255},
+    cyanDim = {150, 152, 158, 220},
+    text    = {242, 239, 234, 255},
+    dim     = {148, 147, 145, 255},
+    warn    = {243, 167, 62, 255},
 }
 
 local function rgba(c, a)

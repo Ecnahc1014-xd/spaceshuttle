@@ -148,6 +148,11 @@ function MetaUI.Update(dt, meta, gameState)
     local rect = MetaUI.GetVehicleStageRect(screen, 540)
     local pixelScale = D and D.pixelScale and D.pixelScale() or 1
     VehicleShowcase.Update(dt, visible, showroom.key, rect.w * pixelScale, rect.h * pixelScale)
+    -- v0.13.74：天赋叶脉（3D 叶脉大场景）的 RT 渲染同样在更新阶段完成。
+    local grove = D and D.talentGrove
+    if grove and grove.Update then
+        grove.Update(dt, screen == "talent", meta)
+    end
 end
 
 function MetaUI.PreviewVehicle(index)
@@ -1394,6 +1399,30 @@ local function DrawShopPurchase(ctx, layout, equipped, owned, cost, parts, owned
     Button(ctx, layout.purchase, label, "", kind)
 end
 
+-- v0.13.78：页签切换过渡（商店 车型↔拖尾 / 档案 档案↔成就）共用的相位状态。
+-- key 区分不同页签组，方向按切换顺序给，内容淡入 + 横向滑入，页签本身不动。
+local tabPhaseSeen = {}
+local tabPhaseAt = {}
+local tabPhaseDir = {}
+
+---@param anim number|nil
+---@param key string
+---@param value string
+---@return number phase 0..1, integer dir
+local function TabPhase(anim, key, value)
+    if anim == nil then return 1, 1 end
+    local seen = tabPhaseSeen[key]
+    if seen ~= value then
+        local order = { vehicle = 1, trail = 2, pass = 1, ach = 2 }
+        local a = order[seen] or 0
+        local b = order[value] or 0
+        tabPhaseDir[key] = (b >= a) and 1 or -1
+        tabPhaseSeen[key], tabPhaseAt[key] = value, anim
+    end
+    local phase = math.min(1, math.max(0, (anim - (tabPhaseAt[key] or anim)) / 0.22))
+    return phase, tabPhaseDir[key] or 1
+end
+
 local function DrawShop(ctx, w, meta)
     local C = Colors()
     local content, close = Shell(ctx, w, 960, "皮肤商店", "外观 · 不改变属性", meta)
@@ -1401,6 +1430,15 @@ local function DrawShop(ctx, w, meta)
     nvgSave(ctx)
     nvgIntersectScissor(ctx, content.x, content.y, content.w, content.h)
     DrawShopTabs(ctx, layout)
+    -- 分页内容淡入 + 横向滑入（页签本身不动，保持定位稳定）
+    local anim = D and D.anim and D.anim() or nil
+    local phase, dir = TabPhase(anim, "shop", shopTab)
+    local ease = 1 - (1 - phase) * (1 - phase) * (1 - phase)
+    nvgSave(ctx)
+    if ease < 1 then
+        nvgGlobalAlpha(ctx, 0.25 + 0.75 * ease)
+        nvgTranslate(ctx, dir * (1 - ease) * 18, 0)
+    end
     if shopTab == "trail" then
         local trails = MetaCatalog.GetTrails()
         local trail = trails[trailIndex]
@@ -1458,7 +1496,9 @@ local function DrawShop(ctx, w, meta)
                 used < limit and string.format("%d/%d", used, limit) or "", used < limit and "ad" or "disabled")
         end
     end
-    nvgRestore(ctx)
+    nvgGlobalAlpha(ctx, 1.0)
+    nvgRestore(ctx) -- 分页过渡层
+    nvgRestore(ctx) -- 内容裁切层
     return content, close
 end
 
@@ -1556,13 +1596,29 @@ local function DrawPass(ctx, w, meta)
     Tab(tabPass, "战斗档案", not achTab)
     Tab(tabAch, string.format("成就 %d/%d", meta.achUnlocked or 0, meta.achTotal or 0), achTab)
 
+    -- v0.13.78：档案↔成就页签切换过渡（内容淡入 + 横向滑入，页签不动）
+    local passAnim = D and D.anim and D.anim() or nil
+    local passPhase, passDir = TabPhase(passAnim, "pass", achTab and "ach" or "pass")
+    local passEase = 1 - (1 - passPhase) * (1 - passPhase) * (1 - passPhase)
+
     local body = GetPassBody(content)
     if achTab then
+        nvgSave(ctx)
+        if passEase < 1 then
+            nvgGlobalAlpha(ctx, 0.25 + 0.75 * passEase)
+            nvgTranslate(ctx, passDir * (1 - passEase) * 18, 0)
+        end
         Achievements.Draw(ctx, body, meta)
+        nvgGlobalAlpha(ctx, 1.0)
+        nvgRestore(ctx)
         return content, close
     end
 
     nvgSave(ctx)
+    if passEase < 1 then
+        nvgGlobalAlpha(ctx, 0.25 + 0.75 * passEase)
+        nvgTranslate(ctx, passDir * (1 - passEase) * 18, 0)
+    end
     nvgIntersectScissor(ctx, body.x, body.y, body.w, body.h)
 
     -- v0.14.x 存钱罐式：档案领满 6 级后改为无限积累、随时领取的存钱罐。
@@ -1642,7 +1698,9 @@ local function DrawPass(ctx, w, meta)
         local label = item.claimed and "已领取" or (item.claimable and "领取奖励" or "未解锁")
         Button(ctx, btn, label, "", item.claimable and "primary" or "disabled")
     end
-    nvgRestore(ctx)
+    nvgGlobalAlpha(ctx, 1.0)
+    nvgRestore(ctx) -- 页签过渡层
+    nvgRestore(ctx) -- 内容裁切层
     return content, close
 end
 

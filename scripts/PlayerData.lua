@@ -7,6 +7,7 @@ local PlayerData = {}
 
 local SAVE_FILE = "player_" .. string.char(100, 97, 116, 97) .. ".json"
 local DATA_VERSION = 1
+local updatedAt_ = 0
 
 ---@class PlayerDataState
 ---@field version integer 存档结构版本
@@ -148,6 +149,7 @@ end
 function PlayerData.Load()
     state = NewState()
     state.createdAt = os.time()
+    updatedAt_ = 0
     if not fileSystem:FileExists(SAVE_FILE) then
         print("[PlayerData] no local save, start fresh")
         return false
@@ -166,6 +168,7 @@ function PlayerData.Load()
         return false
     end
     local d = decoded --[[@as table]]
+    updatedAt_ = math.max(0, AsInt(d.updatedAt))
     state.version      = AsInt(d.version) ~= 0 and AsInt(d.version) or DATA_VERSION
     state.parts        = math.max(0, AsInt(d.parts))
     state.totalParts   = math.max(0, AsInt(d.totalParts), state.parts)
@@ -220,7 +223,11 @@ function PlayerData.Save()
         print("[PlayerData] save failed: file not openable")
         return false
     end
-    file:WriteString(cjson.encode(state))
+    updatedAt_ = math.max(updatedAt_ + 1, os.time())
+    local saved = {}
+    for k, v in pairs(state) do saved[k] = v end
+    saved.updatedAt = updatedAt_
+    file:WriteString(cjson.encode(saved))
     file:Close()
     return true
 end
@@ -236,7 +243,15 @@ end
 -- 云同步：只做字符串编解码，真正的读写由编排层（main.lua）执行。
 ---@return string
 function PlayerData.ExportForCloud()
-    return cjson.encode(state)
+    local exported = {}
+    for k, v in pairs(state) do exported[k] = v end
+    exported.updatedAt = updatedAt_
+    return cjson.encode(exported)
+end
+
+---@return integer
+function PlayerData.GetUpdatedAt()
+    return updatedAt_
 end
 
 ---@param text any
@@ -249,6 +264,7 @@ function PlayerData.ImportFromCloud(text)
         return false
     end
     local d = decoded --[[@as table]]
+    updatedAt_ = math.max(updatedAt_, AsInt(d.updatedAt))
     local cloudParts = math.max(0, AsInt(d.parts))
     local cloudTotal = math.max(0, AsInt(d.totalParts), cloudParts)
     local cloudSpent = math.max(0, AsInt(d.totalSpent), cloudTotal - cloudParts)

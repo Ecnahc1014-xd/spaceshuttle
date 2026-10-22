@@ -185,6 +185,46 @@ function CombatImpact.DrawRings(ctx, presentation, project)
     return drawn
 end
 
+-- v0.13.66：贴墙闪光——沿墙线一段白热芯 + 弹种色光晕，读出撞击发生在墙面上。
+function CombatImpact.DrawWallFlashes(ctx, presentation, project)
+    local flashes = presentation.wallFlashes or {}
+    if #flashes == 0 then return 0 end
+    nvgSave(ctx)
+    nvgIntersectScissor(ctx, 0, 92, 540, 774)
+    local drawn = 0
+    for i = #flashes, 1, -1 do
+        local f = flashes[i]
+        if f.life > 0 and f.maxLife > 0 then
+            local t = math.max(0, math.min(1, f.life / f.maxLife))
+            local alpha = math.floor(230 * t)
+            local half = 17
+            local ax, ay, bx, by
+            if math.abs(f.nx or 0) > 0.5 then
+                ax, ay = project(f.x, f.y - half)
+                bx, by = project(f.x, f.y + half)
+            else
+                ax, ay = project(f.x - half, f.y)
+                bx, by = project(f.x + half, f.y)
+            end
+            nvgBeginPath(ctx)
+            nvgMoveTo(ctx, ax, ay)
+            nvgLineTo(ctx, bx, by)
+            nvgStrokeColor(ctx, nvgRGBA(f.r, f.g, f.b, math.floor(alpha * 0.5)))
+            nvgStrokeWidth(ctx, 7)
+            nvgStroke(ctx)
+            nvgBeginPath(ctx)
+            nvgMoveTo(ctx, ax, ay)
+            nvgLineTo(ctx, bx, by)
+            nvgStrokeColor(ctx, nvgRGBA(240, 248, 252, alpha))
+            nvgStrokeWidth(ctx, 2.2)
+            nvgStroke(ctx)
+            drawn = drawn + 1
+        end
+    end
+    nvgRestore(ctx)
+    return drawn
+end
+
 -- 受伤但未击碎的砖块：**方块本身**极短闪白一下（不是十字标记），让玩家一眼看出"这块挨了一下"。
 -- 寿命须与 `Presentation.brickSpark` 写入 `hitFlashes` 的时长一致（0.12s）。
 local HIT_FLASH_SECONDS = 0.12

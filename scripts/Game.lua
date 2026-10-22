@@ -96,6 +96,9 @@ local BALANCE = {
     dragTimeScale = 0.2,
     -- 蓄力达到此比例即视为「已完成」：发射时立刻补满，享受满蓄伤害与全息爆发。
     chargeCompleteThreshold = 0.85,
+    -- v0.13.68：首领被击碎后先留一段消散窗口再进结算。窗口内冻结残余编队下移、
+    -- 不判越线扣血，让碎块飞散与收尾特效播完，避免“场上还有块没散完”就弹结算。
+    stageClearHoldSeconds = 1.75,
 }
 
 local BALL_TYPES = {
@@ -266,6 +269,9 @@ local pauseRareUsed = 0            -- 已用「下次强化保底稀有」次数
 local pendingRareRoll = false      -- 下次抽卡强制稀有（由暂停补给站购买）
 -- v0.13.58：暂停补给站的常量收进一张表（Game.lua 顶层 local 逼近 Lua 200 上限，AB-166）。
 local PAUSE_SUPPLY = { healMax = 1, healAmount = 25, rareMax = 1 }
+-- v0.13.72「别烦到玩家」：暂停面板的广告补给**每局最多 2 次**，用完直接收起行；
+-- 计数收在表里（不新增顶层 local，AB-166）。
+local PAUSE_AD = { perRun = 2, used = 0 }
 local EjectBrick
 -- v0.13.58：附魔挂载函数——CreateMarble（约 500 行）先于其定义使用，必须前向声明（AB-100）。
 local ApplyEnchantToMarble
@@ -842,6 +848,7 @@ ResetGame = function(startStage)
     pauseOrbitalUsed = false
     pauseReloadUsed = false
     pausePartsBoostUsed = false
+    PAUSE_AD.used = 0 -- v0.13.72：新局重置暂停面板广告名额
     partsBoostTime = 0
     aimX = SLING_X
     aimY = SLING_Y
@@ -1890,6 +1897,24 @@ end
 -- ============================================================================
 
 ---@return boolean
+--- v0.13.72：本局暂停面板还剩几次广告补给（用于 UI 收起/提示）。
+---@return integer
+function Game.GetPauseAdLeft()
+    return math.max(0, PAUSE_AD.perRun - PAUSE_AD.used)
+end
+
+---@return boolean
+function Game.CanPauseAdSlot()
+    return PAUSE_AD.used < PAUSE_AD.perRun
+end
+
+---@return boolean
+function Game.ConsumePauseAdSlot()
+    if not Game.CanPauseAdSlot() then return false end
+    PAUSE_AD.used = PAUSE_AD.used + 1
+    return true
+end
+
 function Game.CanPauseHeal()
     return gameState == "paused" and pauseHealUsed < PAUSE_SUPPLY.healMax and baseHp < GetMaxBaseHp()
 end
@@ -1902,6 +1927,7 @@ end
 ---@return boolean ok
 function Game.PauseHeal()
     if not Game.CanPauseHeal() then return false end
+    if not Game.ConsumePauseAdSlot() then return false end
     pauseHealUsed = pauseHealUsed + 1
     baseHp = math.min(GetMaxBaseHp(), baseHp + PAUSE_SUPPLY.healAmount)
     Emit("base_healed", {amount = PAUSE_SUPPLY.healAmount, hp = baseHp})
@@ -1923,6 +1949,7 @@ end
 ---@return boolean ok
 function Game.PauseRarePick()
     if not Game.CanPauseRarePick() then return false end
+    if not Game.ConsumePauseAdSlot() then return false end
     pauseRareUsed = pauseRareUsed + 1
     pendingRareRoll = true
     Emit("rare_roll_armed", {})
@@ -1940,6 +1967,7 @@ end
 
 function Game.PauseOrbital()
     if not Game.CanPauseOrbital() then return false end
+    if not Game.ConsumePauseAdSlot() then return false end
     pauseOrbitalUsed = true
     local destroyed = 0
     for _, enemy in ipairs(veggies) do
@@ -1962,6 +1990,7 @@ end
 
 function Game.PauseReload()
     if not Game.CanPauseReload() then return false end
+    if not Game.ConsumePauseAdSlot() then return false end
     pauseReloadUsed = true
     -- v0.13.19：兜底用初始车类型（加速车），不再写死分裂车。
     local nextType = ballQueue[1] or (activeBall and activeBall.ballType) or STARTING_BALL_TYPE
@@ -1980,6 +2009,7 @@ end
 
 function Game.PausePartsBoost()
     if not Game.CanPausePartsBoost() then return false end
+    if not Game.ConsumePauseAdSlot() then return false end
     pausePartsBoostUsed = true
     partsBoostTime = 45
     Emit("parts_boost", {duration = 45})
@@ -3251,6 +3281,9 @@ UpdateEnemies = function(dt)
 
         enemy.phase = enemy.phase + dt * enemy.swayFreq
         local drift = math.sin(enemy.phase) * enemy.swayAmp
+        -- v0.13.68：结算消散窗口内只保留摆动，不再下移（防止残余块继续越线/抢先扣血）。
+        local holdMotion = stageResult ~= nil and stageResult.holdUntil ~= nil
+            and elapsed < stageResult.holdUntil
         if enemy.isElite then
             local beh = AircraftData.behavior[enemy.aircraftKey]
             local dodge = beh.dodge or {}
@@ -3268,10 +3301,14 @@ UpdateEnemies = function(dt)
                 drift = drift + (dodge.amp or 12) * math.sin(t * (dodge.freq or 2))
             end
             -- 纵向瞬时速度 0.75～1.05 × 普通机；均值不超过 1.1 倍。
-            enemy.y = enemy.y + math.min(enemy.normalVy * 1.1,
-                enemy.vy * (0.90 + 0.15 * math.sin(t * 1.9))) * speedMultiplier * dt
+            if not holdMotion then
+                enemy.y = enemy.y + math.min(enemy.normalVy * 1.1,
+                    enemy.vy * (0.90 + 0.15 * math.sin(t * 1.9))) * speedMultiplier * dt
+            end
         else
-            enemy.y = enemy.y + enemy.vy * speedMultiplier * dt
+            if not holdMotion then
+                enemy.y = enemy.y + enemy.vy * speedMultiplier * dt
+            end
         end
         enemy.x = enemy.baseX + drift
         enemy.drift = drift
@@ -3290,8 +3327,11 @@ UpdateEnemies = function(dt)
     -- 第二趟：在最终位置上做越线判定（按行）、碎裂、清空与移除。
     -- 本帧所有越线行先收集并逐块碎裂，扣血在整体合计后只结算一次。
     local breachedRows = {}
+    -- v0.13.68：结算消散窗口内不判越线，避免残余块在收尾期扣血甚至翻成败局。
+    local breachHold = stageResult ~= nil and stageResult.holdUntil ~= nil
+        and elapsed < stageResult.holdUntil
     for i = #veggies, 1, -1 do
-        if gameState == "gameover" then break end
+        if gameState == "gameover" or breachHold then break end
         local enemy = veggies[i]
 
         -- 越线判定按“行”分组：同一架飞机里越过目标线的方块按 brick.row 归组。
@@ -3406,6 +3446,30 @@ UpdateReload = function()
     if not activeBall and #ballQueue > 0 then QueueNextBall() end
 end
 
+-- v0.13.71：结算「看广告奖励×2」。状态全部收在 stageResult 上（不新增顶层 local）。
+-- 每关只能翻倍一次；翻倍把 bonusScore / bonusParts 再加一遍（等于 ×2），并同步最高分。
+---@return boolean
+function Game.CanDoubleStageReward()
+    return gameState == "stagewin" and stageResult ~= nil and not stageResult.doubled
+end
+
+---@return boolean ok
+function Game.DoubleStageReward()
+    if not Game.CanDoubleStageReward() then return false end
+    stageResult.doubled = true
+    local extraScore = math.floor(stageResult.bonusScore or 0)
+    local extraParts = math.floor(stageResult.bonusParts or 0)
+    score = score + extraScore
+    partsEarned = partsEarned + extraParts * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
+    if score > highScore then highScore = score end
+    Emit("stage_reward_doubled", {
+        stage = stage, extraScore = extraScore, extraParts = extraParts,
+        bonusScore = stageResult.bonusScore, bonusParts = stageResult.bonusParts,
+    })
+    print("[Game] stage reward doubled: +" .. extraScore .. " score, +" .. extraParts .. " parts")
+    return true
+end
+
 -- 通关评级（v0.13.4）：剩余防线血量决定星级；额外分数与零件奖励进结算。
 -- 一星=险胜（<40%）、两星=优良（40~74%）、三星=完美（>=75%）。
 local function ComputeStageResult()
@@ -3447,7 +3511,16 @@ UpdateWaveLogic = function(dt)
         -- v0.13.4：首领击败即**结束本关并进入胜利结算态**（不再自动进下一关）。
         -- 残余护航与召唤机退场；星级由剩余防线血量决定，玩家看完结算后手动进关。
         if bossDefeated then
-            stageResult = ComputeStageResult()
+            -- v0.13.68：星级在击碎瞬间锁定（之后不再扣血影响评级），但先等消散窗口。
+            stageResult = stageResult or ComputeStageResult()
+            if not stageResult.holdUntil then
+                stageResult.holdUntil = elapsed + BALANCE.stageClearHoldSeconds
+                Emit("stage_clearing", { stage = stage, holdSeconds = BALANCE.stageClearHoldSeconds })
+                return
+            end
+            if elapsed < stageResult.holdUntil then return end
+            -- 真正进结算：过渡动画从这一刻起算（否则 1.75 秒窗口会吃掉动画前段）。
+            stageResult.animAt = elapsed
             score = score + stageResult.bonusScore
             partsEarned = partsEarned + stageResult.bonusParts * (partsBoostTime > 0 and 2 or 1) * BALL_TUNING.partsMul
             if score > highScore then highScore = score end
@@ -3717,7 +3790,15 @@ function Game.PointerUp(px, py, uiX, uiY)
         Game.ClearLaunchCharge()
         return
     end
-    if activeBall then LaunchMarble(dx, dy, distance / BALANCE.maxPull) end
+    -- v0.13.73：初速改由**蓄力进度**决定（按住时间 / 蓄满 1.2s），拖拽只决定方向。
+    -- 旧版用 distance / maxPull：拉得远就快，导致「短拉蓄满」拿不到满速、手感与蓄力条不一致。
+    local chargeProgress = 0
+    if Game._launchCharge.total > 0 then
+        chargeProgress = math.max(0, math.min(1, Game._launchCharge.time / Game._launchCharge.total))
+        -- 与 chargeBoosted 同规则：到 85% 即按满蓄处理，速度/伤害/全息一致。
+        if chargeProgress >= BALANCE.chargeCompleteThreshold then chargeProgress = 1 end
+    end
+    if activeBall then LaunchMarble(dx, dy, chargeProgress) end
     Game.ClearLaunchCharge()
 end
 
@@ -3978,9 +4059,11 @@ local function ComputeAimLine()
         t = math.min(t, (TOP_BOUND_Y + radius - y0) / dirY)
     end
     if t == math.huge or t <= 0 then return nil end
-    -- v0.10.23：输出归一化蓄力 (死区→满拉 映射到 0..1)，供渲染层做弱拉渐显。
-    -- v0.13.64：改用设计像素拉距 uiDist 归一，避免投影缩放影响「弱拉渐显」。
-    local power01 = math.max(0, math.min(1, (uiDist - AIM_DEAD_ZONE) / (MAX_PULL - AIM_DEAD_ZONE)))
+    -- v0.13.73：预瞄线同样按**蓄力进度**（与发射初速同源），不再按拉距。
+    local power01 = 0
+    if Game._launchCharge.total > 0 then
+        power01 = math.max(0, math.min(1, Game._launchCharge.time / Game._launchCharge.total))
+    end
     return {
         x1 = x0, y1 = y0,
         x2 = x0 + dirX * t, y2 = y0 + dirY * t,
@@ -4120,6 +4203,8 @@ function Game.GetSnapshot()
     s.rerollFreeTotal = Game.GetFreeRerollTotal()
     -- 暂停补给站（只读，供暂停面板画按钮）
     s.canPauseHeal = Game.CanPauseHeal()
+    s.canDoubleReward = Game.CanDoubleStageReward()
+    s.pauseAdLeft = Game.GetPauseAdLeft() -- v0.13.72：暂停面板广告名额（0 时收起补给行）
     s.pauseHealLeft = Game.GetPauseHealLeft()
     s.canPauseRarePick = Game.CanPauseRarePick()
     s.pauseRareLeft = Game.GetPauseRareLeft()

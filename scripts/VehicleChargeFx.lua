@@ -72,8 +72,12 @@ end
 function M.Init(scene)
     M.Shutdown()
     local ok, err = pcall(function()
-        local opaque = cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml")
-        local alpha = cache:GetResource("Technique", "Techniques/PBR/PBRNoTextureAlpha.xml")
+        local mobile = type(GetPlatform) == "function"
+            and (GetPlatform() == "Android" or GetPlatform() == "HarmonyOS" or GetPlatform() == "iOS")
+        local opaque = cache:GetResource("Technique", mobile and "Techniques/NoTextureUnlit.xml"
+            or "Techniques/PBR/PBRNoTexture.xml")
+        local alpha = cache:GetResource("Technique", mobile and "Techniques/NoTextureUnlit.xml"
+            or "Techniques/PBR/PBRNoTextureAlpha.xml")
         assert(opaque and alpha, "charge techniques unavailable")
         S.scene = scene
         S.outline = Material()
@@ -187,15 +191,13 @@ function M.Sync(game, presentation, records, skin)
         S.rotation = Quaternion(r.w, r.x, r.y, r.z)
         S.scale = Vector3(sc.x, sc.y, sc.z)
         if S.skin ~= skin then
+            -- v0.13.66：残像/外套改用预烘焙低模（车身+侧围+轮胎+灯具单段合并），
+            -- 不再拷全量 7 段网格；爆发期每份拷贝顶点约 -60%。
             for _, copy in ipairs(S.copies) do
-                local mats = {copy.material, copy.material, copy.material,
-                    copy.material, copy.material, copy.material}
-                VehicleGeometry.Build(copy.geometry, skin, mats, copy.material)
+                VehicleGeometry.BuildHologram(copy.geometry, skin, copy.material)
             end
             if S.shell then
-                local shellMats = {S.shell.material, S.shell.material, S.shell.material,
-                    S.shell.material, S.shell.material, S.shell.material}
-                VehicleGeometry.Build(S.shell.geometry, skin, shellMats, S.shell.material)
+                VehicleGeometry.BuildHologram(S.shell.geometry, skin, S.shell.material)
             end
             S.skin = skin
         end

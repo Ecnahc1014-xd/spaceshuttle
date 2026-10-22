@@ -224,8 +224,11 @@ end
 
 local function CreateMaterial(rgb, roughness)
     local material = Material:new()
-    material:SetTechnique(0,
-        cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml"))
+    local mobile = type(GetPlatform) == "function"
+        and (GetPlatform() == "Android" or GetPlatform() == "HarmonyOS" or GetPlatform() == "iOS")
+    local technique = mobile and "Techniques/NoTextureUnlit.xml"
+        or "Techniques/PBR/PBRNoTexture.xml"
+    material:SetTechnique(0, cache:GetResource("Technique", technique))
     material:SetShaderParameter("MatDiffColor", Variant(Color(rgb[1], rgb[2], rgb[3], 1)))
     material:SetShaderParameter("Metallic", Variant(0.0))
     material:SetShaderParameter("Roughness", Variant(roughness or 0.8))
@@ -438,34 +441,37 @@ local SLOT_COLORS = {
 }
 
 -- Dark-tech 令牌（ecnach-ui-skill）：深黑蓝层级 + 品牌青唯一强调。
+-- 主题色令牌（v0.13.68 去偏色）：原青绿主色把整页染成水绿，按「正常颜色」参考图
+-- 改成中性石墨底 + 暖白字 + 银白主操作 + 琥珀金（付费/稀有）+ 绿（广告）+ 红（错误）。
+-- 语义三分不变：银=主操作/进度、金=付费/稀有、绿=看广告，仍能一眼区分。
 local C = {
-    bg      = {7, 11, 20, 255},
-    panel   = {10, 16, 28, 255},
-    rail    = {12, 20, 34, 255},
-    card    = {16, 26, 44, 255},
-    widget  = {22, 36, 56, 255},
-    cyan    = {0, 229, 208, 255},
-    cyanDim = {0, 150, 148, 220},
-    ink     = {4, 8, 16, 255},
-    text    = {240, 248, 252, 255},
-    dim     = {120, 148, 162, 255},
-    warn    = {255, 196, 72, 255},
+    bg      = {9, 10, 13, 255},
+    panel   = {14, 15, 19, 255},
+    rail    = {18, 19, 24, 255},
+    card    = {24, 25, 31, 255},
+    widget  = {34, 35, 42, 255},
+    cyan    = {226, 228, 232, 255},
+    cyanDim = {150, 152, 158, 220},
+    ink     = {5, 5, 7, 255},
+    text    = {242, 239, 234, 255},
+    dim     = {148, 147, 145, 255},
+    warn    = {243, 167, 62, 255},
     -- v0.11.0 商业化：付费/稀有语义的「未激活」态（金色降饱和，不与 warn 抢焦点）。
-    warnDim = {170, 128, 48, 220},
-    -- v0.11.0 商业化三色语义：绿色＝看广告（免费获取）。与青（主操作/进度）、
+    warnDim = {158, 108, 42, 220},
+    -- v0.11.0 商业化三色语义：绿色＝看广告（免费获取）。与银（主操作/进度）、
     -- 金（稀有/付费）三分，避免玩家分不清「哪个要花钱、哪个看广告就行」。
     ad      = {46, 232, 107, 255},
     adDim   = {28, 138, 70, 220},
     error   = {232, 76, 76, 255},
     -- v0.13.17：dark-tech skill 的「氛围层/装饰母题」令牌（tokens.md 同名）。
     -- wash 与 cyan 同族但更脏，克制档下只用于装饰与残影，不顶替主强调色。
-    wash     = {0, 176, 168, 255},
-    washDim  = {0, 90, 88, 255},
-    ghost    = {186, 214, 255, 255},
+    wash     = {170, 168, 162, 255},
+    washDim  = {74, 73, 70, 255},
+    ghost    = {228, 224, 216, 255},
     klein    = {48, 80, 240, 255},
-    halftone = {20, 48, 120, 255},
-    ash      = {128, 148, 154, 255},
-    railMark = {92, 168, 162, 255},
+    halftone = {40, 42, 48, 255},
+    ash      = {152, 152, 150, 255},
+    railMark = {178, 176, 170, 255},
 }
 
 local BUILD_VERSION = "0.13.66"
@@ -1172,6 +1178,69 @@ local function UpdateUiState(game, meta)
     end
     -- 每帧同步过渡生命周期，菜单/重开也必须清掉旧 skip 状态。
     StageTransition.Update(game)
+
+    -- v0.13.80：结算页「空投补给舱」3D 展示。RT 只能在更新阶段刷新，
+    -- 绘制阶段只取图；模块懒加载，失败不影响结算页其余内容。
+    if uiFx.pod == nil then
+        local okPod, modPod = pcall(require, "ui.SupplyPodShowcase")
+        uiFx.pod = okPod and modPod or false
+        if not okPod then print("[Scene3DBackend] supply pod showcase unavailable: " .. tostring(modPod)) end
+    end
+    -- v0.13.83：选关界面关卡芯片 3D 展示（RT 同样只能在更新阶段刷新）
+    if uiFx.badge == nil then
+        local okBadge, modBadge = pcall(require, "ui.StageBadgeShowcase")
+        uiFx.badge = okBadge and modBadge or false
+        if not okBadge then
+            print("[Scene3DBackend] stage badge showcase unavailable: " .. tostring(modBadge))
+        end
+    end
+    if uiFx.badge then
+        -- ⚠️ 必须 pcall：UpdateScene 里这段在「控件按压缓动」之前，
+        -- 一旦 3D 展示抛错，整段按钮反馈会跟着不执行（点击没反应）。
+        local okBadgeRun, errBadgeRun = pcall(function()
+            local badgeOn = meta ~= nil and meta.screen == "stage_select"
+            if badgeOn then
+                -- 芯片固定展示「当前关」（与塔里被替代的那个节点是同一关）
+                local badgeStage = math.max(1, math.floor(meta.maxStage or 1))
+                local badgeStars = 0
+                if meta.stageStars and meta.stageStars[badgeStage] then
+                    badgeStars = math.min(3, math.max(0, math.floor(meta.stageStars[badgeStage])))
+                end
+                local dtBadge = uiClock_ - (uiFx.badgeClock or uiClock_)
+                uiFx.badgeClock = uiClock_
+                local badgeScale = scale_ or 1
+                -- 2 倍超采样：RT 做大，NanoVG 缩回 132 设计像素显示
+                uiFx.badge.Update(dtBadge, true, badgeStage, badgeStars,
+                    132 * badgeScale * 2, 132 * badgeScale * 2)
+            else
+                uiFx.badge.Update(0, false, 0, 0)
+            end
+        end)
+        if not okBadgeRun and not uiFx.badgeErr then
+            uiFx.badgeErr = tostring(errBadgeRun)
+            print("[Scene3DBackend] stage badge update failed: " .. uiFx.badgeErr)
+        end
+    end
+    if uiFx.pod then
+        -- 同样 pcall：结算舱体出错不能连累结算页按钮反馈
+        local okPodRun, errPodRun = pcall(function()
+            local dtPod = uiClock_ - (uiFx.podClock or uiClock_)
+            uiFx.podClock = uiClock_
+            local podOn = game.state == "stagewin"
+            local podStars = 1
+            if game.stageResult and game.stageResult.stars then
+                podStars = math.min(3, math.max(1, math.floor(game.stageResult.stars)))
+            end
+            local podTier = podStars - 1
+            if game.newRecord then podTier = math.min(3, podTier + 1) end
+            local podScale = scale_ or 1
+            uiFx.pod.Update(dtPod, podOn, podTier, 472 * podScale, 300 * podScale)
+        end)
+        if not okPodRun and not uiFx.podErr then
+            uiFx.podErr = tostring(errPodRun)
+            print("[Scene3DBackend] supply pod update failed: " .. uiFx.podErr)
+        end
+    end
     uiFx.UpdateGameWindow(game)
     if game.state == "gameover" or game.state == "levelup" or game.state == "paused"
         or game.state == "stagewin" then
@@ -1562,7 +1631,7 @@ local function DrawItemSlots(ctx, game)
     uiFx.battle.DrawItems(ctx, game, tab, slots, itemPanelOpen_)
 end
 
-local function DrawLetterboxBackground(ctx, width, height)
+local function DrawLetterboxBackground(ctx, width, height, game)
     -- NanoVG 位于 3D Viewport 之后：只填充设计画布外的 letterbox，绝不能覆盖画布内部。
     nvgFillColor(ctx, nvgRGBA(C.bg[1], C.bg[2], C.bg[3], 255))
     if offsetY_ > 0 then
@@ -1575,6 +1644,91 @@ local function DrawLetterboxBackground(ctx, width, height)
         nvgBeginPath(ctx)
         nvgRect(ctx, 0, offsetY_, offsetX_, DESIGN_H)
         nvgRect(ctx, offsetX_ + DESIGN_W, offsetY_, math.max(0, width - offsetX_ - DESIGN_W), DESIGN_H)
+        nvgFill(ctx)
+    end
+    -- v0.13.73：两侧 letterbox 留白里画竖排蓄力进度条（蓝→黄，满蓄洪荒闪烁）。
+    if Backend.DrawChargeGauge then Backend.DrawChargeGauge(ctx, width, height, game) end
+end
+
+--- 蓄力进度条：画在「墙与屏幕边缘之间」的 letterbox 竖条里。
+--- 颜色沿进度由蓝过渡到黄；达到 chargeReady 阈值后进入高频闪烁（洪荒感）。
+---@param ctx any
+---@param width number 设计宽度（含 letterbox）
+---@param height number 设计高度
+---@param game table|nil 游戏快照
+function Backend.DrawChargeGauge(ctx, width, height, game)
+    if not game then return end
+    if game.state ~= "playing" then return end
+    local voidW = offsetX_ or 0
+    -- 有侧边留白（手机宽屏）就画在留白中间；没有留白（9:16 桌面预览）就贴在画布内侧，
+    -- 两条分支都在同一套「缩放后设计坐标」里，不会随窗口比例消失。
+    local inVoid = voidW >= 10
+    local progress = math.max(0, math.min(1, game.chargeProgress or 0))
+    local active = game.chargeActive == true
+    local ready = game.chargeReady == true
+    local elapsed = game.elapsed or 0
+    local top = (offsetY_ or 0) + 18
+    local bottom = (offsetY_ or 0) + DESIGN_H - 18
+    local trackH = bottom - top
+    if trackH <= 20 then return end
+    local barW = inVoid and math.max(4, math.min(7, voidW * 0.16)) or 5
+    -- 蓝 (90,164,255) → 黄 (255,212,74)
+    local rr = 90 + (255 - 90) * progress
+    local gg = 164 + (212 - 164) * progress
+    local bb = 255 + (74 - 255) * progress
+    -- 满蓄「洪荒」：每秒 4 次（两轮）红黄交替闪烁 —— 0.25s 换一次色、0.5s 一个完整周期。
+    -- 用 floor 做硬切而不是正弦插值，肉眼读作"闪"，不是"渐变呼吸"。
+    local alpha = 0.92
+    if ready then
+        local step = math.floor(elapsed * 4) % 2
+        if step == 0 then
+            rr, gg, bb = 255, 212, 74    -- 黄
+            alpha = 1.00
+        else
+            rr, gg, bb = 255, 74, 60     -- 红
+            alpha = 0.82
+        end
+    elseif active then
+        alpha = 0.80 + 0.12 * math.sin(elapsed * 6)
+    end
+    for side = 0, 1 do
+        local cx
+        if side == 0 then
+            cx = inVoid and (voidW * 0.5) or (offsetX_ + 12)
+        else
+            cx = inVoid and (width - voidW * 0.5) or (offsetX_ + DESIGN_W - 12)
+        end
+        -- 轨道
+        nvgBeginPath(ctx)
+        nvgRoundedRect(ctx, cx - barW * 0.5, top, barW, trackH, barW * 0.5)
+        nvgFillColor(ctx, nvgRGBA(14, 15, 19, 220))
+        nvgFill(ctx)
+        nvgBeginPath(ctx)
+        nvgRoundedRect(ctx, cx - barW * 0.5 + 0.5, top + 0.5, barW - 1, trackH - 1, barW * 0.5)
+        nvgStrokeColor(ctx, nvgRGBA(90, 96, 108, 120))
+        nvgStrokeWidth(ctx, 1)
+        nvgStroke(ctx)
+        -- 填充（自下而上）
+        if active and progress > 0.004 then
+            local fillH = trackH * progress
+            -- v0.13.79：满蓄不再加宽/外发光（用户要求洪荒只换色、不加粗），
+            -- 红黄硬切本身已经足够醒目，条宽与普通状态保持一致。
+            nvgBeginPath(ctx)
+            nvgRoundedRect(ctx, cx - barW * 0.5, bottom - fillH, barW, fillH, barW * 0.5)
+            nvgFillColor(ctx, nvgRGBA(rr, gg, bb, math.floor(255 * alpha)))
+            nvgFill(ctx)
+            -- 头部亮帽
+            local capH = math.max(3, barW * 0.9)
+            nvgBeginPath(ctx)
+            nvgRoundedRect(ctx, cx - barW * 0.5, bottom - fillH, barW, capH, barW * 0.5)
+            nvgFillColor(ctx, nvgRGBA(255, 255, 255, math.floor(200 * alpha)))
+            nvgFill(ctx)
+        end
+        -- 85% 蓄满阈值刻度
+        local ty = bottom - trackH * 0.85
+        nvgBeginPath(ctx)
+        nvgRect(ctx, cx - barW * 1.5, ty, barW * 3.0, 1.5)
+        nvgFillColor(ctx, nvgRGBA(243, 167, 62, ready and 230 or 130))
         nvgFill(ctx)
     end
 end
@@ -1618,7 +1772,20 @@ local function GetHudPauseRect(game)
 end
 
 local function DrawHud(ctx, game, presentation)
+    -- v0.13.78：HUD 入场过渡（菜单→战斗、重开进局都淡入 + 轻微下移收位）
+    local age = math.max(0, uiClock_ - uiStateMotionEnter_)
+    local t = math.min(1, age / 0.24)
+    local ease = 1 - (1 - t) * (1 - t) * (1 - t)
+    if ease < 1 then
+        nvgSave(ctx)
+        nvgGlobalAlpha(ctx, ease)
+        nvgTranslate(ctx, 0, -(1 - ease) * 8)
+    end
     uiFx.battle.DrawHud(ctx, game, presentation, GetHudPauseRect(game))
+    if ease < 1 then
+        nvgGlobalAlpha(ctx, 1.0)
+        nvgRestore(ctx)
+    end
 end
 
 -- v0.12.7：像素大 logo。⚠️ zpix 位图字体逐字（单码位）绘制在超大字号会退化成
@@ -1769,8 +1936,8 @@ local function DrawGameOver(ctx, game, presentation)
 
     -- v0.13.60：窗口垂直居中于可视区（92..960，高 868）——原 200..720 偏上、下方大片空白。
     -- winH=620 → winY=92+(868-620)/2=216，上下留白各 124，窗口内按钮下方也留白均匀。
-    local winY = 216
-    local winX, winW, winH = 24, game.width - 48, 620
+    local winY = 176
+    local winX, winW, winH = 24, game.width - 48, 660
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
     DrawModalTechDecor(ctx, winX, winY, winW, winH, game.elapsed)
     DrawPixelText(ctx, winX + 18, winY + 10, "防线失守", 22, C.cyan)
@@ -1866,7 +2033,7 @@ local function DrawGameOver(ctx, game, presentation)
 
     local toast = presentation and presentation.adToast
     if toast and toast ~= "" then
-        DrawPixelText(ctx, game.width * 0.5, menuBtn.y + menuBtn.h + 10, toast, 15, C.warn,
+        DrawPixelText(ctx, game.width * 0.5, menuBtn.y + menuBtn.h + 8, toast, 14, C.warn,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     nvgRestore(ctx)
@@ -1903,10 +2070,14 @@ local function GetStageWinButtonLayout(game)
     local rowX = (w - rowPairW) * 0.5
     -- v0.13.60：主 CTA「下一关」置顶整行宽（唯一实心青，视觉焦点）；
     -- 再战本关 + 回主菜单并列一行（次级）。与失败页同语言。
-    local nextBtn = { x = rowX, y = 560, w = rowPairW, h = btnH }
-    local retry = { x = rowX, y = nextBtn.y + btnH + gap, w = rowW, h = btnH }
+    -- v0.13.71：结算「看广告 奖励×2」独占一行（广告语义=warn 金），主 CTA 下移。
+    -- v0.13.82：窗口上移到 176、加高到 660；按钮压薄并下移，把最大竖向空间让给 3D 主视觉。
+    -- 结算窗口范围 176..836，主 CTA 底边 766，距窗口底还有 70。
+    local bonus = { x = rowX, y = 648, w = rowPairW, h = 44 }
+    local nextBtn = { x = rowX, y = 704, w = rowPairW, h = 52 }
+    local retry = { x = rowX, y = nextBtn.y + 52 + gap, w = rowW, h = 46 }
     local menu = { x = rowX + rowW + gap, y = retry.y, w = rowW, h = btnH }
-    return retry, nextBtn, menu
+    return retry, nextBtn, menu, bonus
 end
 
 local function DrawStageWin(ctx, game, presentation)
@@ -1922,52 +2093,85 @@ local function DrawStageWin(ctx, game, presentation)
     end
 
     -- v0.13.60：窗口垂直居中于可视区（92..960，高 868）——原 200..668 偏上、下方大片空白。
-    local winY = 216
-    local winX, winW, winH = 24, game.width - 48, 620
+    local winY = 176
+    local winX, winW, winH = 24, game.width - 48, 660
     DrawWindowShell(ctx, winX, winY, winW, winH, 48)
     DrawModalTechDecor(ctx, winX, winY, winW, winH, game.elapsed)
     DrawPixelText(ctx, winX + 18, winY + 10, "防线守住", 22, C.cyan)
     DrawPixelText(ctx, winX + winW - 16, winY + 14,
-        string.format("第 %d 关告捷", result.stage or game.stage or 1), 15, C.warn,
+        string.format("第 %d 关告捷%s", result.stage or game.stage or 1,
+            game.newRecord and " · 新纪录" or ""), 15, C.warn,
         NVG_ALIGN_RIGHT + NVG_ALIGN_TOP)
 
-    DrawPixelText(ctx, game.width * 0.5, winY + 78, result.rating or "通关", 34, C.text,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawStarRow(ctx, game.width * 0.5, winY + 128, stars, 44, 20)
-
-    DrawPixelText(ctx, game.width * 0.5, winY + 208,
-        string.format("剩余防线 %d / %d", math.floor(game.baseHp or 0), game.maxBaseHp or 100),
-        18, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, winY + 238,
-        string.format("本关奖励  +%d 分   +%d 零件", math.floor(result.bonusScore or 0),
-            math.floor(result.bonusParts or 0)), 17, C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    if game.newRecord then
-        DrawPixelText(ctx, game.width * 0.5, winY + 268, "刷新最高分", 17, C.warn,
+    -- v0.13.80：结算主视觉改为 3D 空投补给舱（RT 图），标题与星级叠在它上方。
+    local podDrawn = false
+    if uiFx.pod and uiFx.pod.Draw then
+        podDrawn = uiFx.pod.Draw(ctx, winX + 10, winY + 38, winW - 20, 300)
+    end
+    if not podDrawn then
+        -- 降级：3D 不可用时保留原来的居中标题位，不空一块
+        DrawPixelText(ctx, game.width * 0.5, winY + 78, result.rating or "通关", 34, C.text,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
 
-    local retryBtn, nextBtn, menuBtn = GetStageWinButtonLayout(game)
+    -- 评级与星级同行：竖向寸土寸金，不再各占一行
+    local ratingText = result.rating or "通关"
+    local ratingW = 32 * #ratingText
+    local starSize, starGap = 26, 10
+    local starsW = stars * starSize + (stars - 1) * starGap
+    local rowW2 = ratingW + 16 + starsW
+    local rowX2 = game.width * 0.5 - rowW2 * 0.5
+    DrawPixelText(ctx, rowX2, winY + 352, ratingText, 30, C.text)
+    DrawStarRow(ctx, rowX2 + ratingW + 16, winY + 356, stars, starSize, starGap)
+
+    -- 防线与奖励压成一行（3D 展示占走了上半区，按钮区从 508 开始不可动）
+    DrawPixelText(ctx, game.width * 0.5, winY + 400,
+        string.format("防线 %d/%d   ·   +%d 分   +%d 零件",
+            math.floor(game.baseHp or 0), math.floor(game.maxBaseHp or 100),
+            math.floor(result.bonusScore or 0), math.floor(result.bonusParts or 0)),
+        16, C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+
+    local retryBtn, nextBtn, menuBtn, bonusBtn = GetStageWinButtonLayout(game)
+    -- v0.13.71：结算广告翻倍（每关一次）。已翻倍置灰；加载中显示等待。
+    if bonusBtn then
+        if result.doubled then
+            DrawRect(ctx, bonusBtn.x, bonusBtn.y, bonusBtn.w, bonusBtn.h, C.widget, 8)
+            DrawStroke(ctx, bonusBtn.x, bonusBtn.y, bonusBtn.w, bonusBtn.h, C.warnDim, 8, 1)
+            DrawPixelText(ctx, bonusBtn.x + bonusBtn.w * 0.5, bonusBtn.y + 13,
+                "奖励已翻倍", 17, C.warnDim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        elseif presentation and presentation.adStatus == "loading" then
+            DrawRect(ctx, bonusBtn.x, bonusBtn.y, bonusBtn.w, bonusBtn.h, C.card, 8)
+            DrawStroke(ctx, bonusBtn.x, bonusBtn.y, bonusBtn.w, bonusBtn.h, C.warnDim, 8, 1.4)
+            DrawPixelText(ctx, bonusBtn.x + bonusBtn.w * 0.5, bonusBtn.y + 13,
+                "广告加载中…", 17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        else
+            DrawRect(ctx, bonusBtn.x, bonusBtn.y, bonusBtn.w, bonusBtn.h, C.card, 8)
+            DrawStroke(ctx, bonusBtn.x, bonusBtn.y, bonusBtn.w, bonusBtn.h, C.warn, 8, 1.6)
+            DrawPixelText(ctx, bonusBtn.x + bonusBtn.w * 0.5, bonusBtn.y + 13,
+                "看广告 · 本关奖励 ×2", 17, C.warn, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        end
+    end
     -- 主 CTA「下一关」：唯一实心青块，置顶整行宽；通关到最后一关时置灰。
     if game.stageHasNext then
         DrawRect(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.cyan, 8)
-        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 16, "下一关", 22, C.ink,
+        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 15, "下一关", 21, C.ink,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     else
         DrawRect(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.widget, 8)
         DrawStroke(ctx, nextBtn.x, nextBtn.y, nextBtn.w, nextBtn.h, C.cyanDim, 8, 1)
-        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 16, "已通关全部", 19, C.dim,
+        DrawPixelText(ctx, nextBtn.x + nextBtn.w * 0.5, nextBtn.y + 15, "已通关全部", 18, C.dim,
             NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     end
     -- 再战本关 + 回主菜单（并列次级）。
     DrawRect(ctx, retryBtn.x, retryBtn.y, retryBtn.w, retryBtn.h, C.card, 8)
     DrawStroke(ctx, retryBtn.x, retryBtn.y, retryBtn.w, retryBtn.h, C.cyanDim, 8, 1.4)
-    DrawPixelText(ctx, retryBtn.x + retryBtn.w * 0.5, retryBtn.y + 16, "再战本关", 20, C.text,
+    DrawPixelText(ctx, retryBtn.x + retryBtn.w * 0.5, retryBtn.y + 12, "再战本关", 19, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     DrawRect(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.widget, 8)
     DrawStroke(ctx, menuBtn.x, menuBtn.y, menuBtn.w, menuBtn.h, C.cyanDim, 8, 1.4)
-    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 16, 24, 1)
-    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 16, "回主菜单", 18, C.text,
+    DrawIcon(ctx, "home", menuBtn.x + menuBtn.w * 0.5 - 58, menuBtn.y + 11, 24, 1)
+    DrawPixelText(ctx, menuBtn.x + menuBtn.w * 0.5 + 14, menuBtn.y + 12, "回主菜单", 17, C.text,
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
 
     local toast = presentation and presentation.adToast
@@ -2332,19 +2536,45 @@ end
 ---@field partsBoost UiRect
 
 ---@return PausePanelLayout
-local function GetPausePanelLayout(w)
+-- v0.13.72「别烦到玩家」：暂停补给只列**当前真能用**的项（血量满 / 无首领 / 已领过的不占位），
+-- 每局广告名额（game.pauseAdLeft）用完就整块收起，只留继续/回主菜单。
+function Backend.BuildPauseOffers(game)
+    local g = game or {}
+    local out = {}
+    if (g.pauseAdLeft or 0) <= 0 then return out end
+    local function add(action, icon, ready, title, detail)
+        if not ready then return end
+        out[#out + 1] = { action = action, icon = icon, title = title, detail = detail, tag = "看广告" }
+    end
+    add("pause_heal", "premium_supply_crate", g.canPauseHeal, "防线急救", "+25 基地生命")
+    add("pause_rare", "premium_pass_crest", g.canPauseRarePick, "稀有强化保障", "下一次强化必出稀有")
+    add("pause_orbital", "orbital", g.canPauseOrbital, "首领轨道支援", "轰击首领装甲")
+    add("pause_reload", "reload", g.canPauseReload, "弹药补给", "补充一辆待发重卡")
+    add("pause_parts_boost", "double", g.canPausePartsBoost, "零件加倍协议", "45 秒零件产出 ×2")
+    return out
+end
+
+local function GetPausePanelLayout(w, game)
     local margin = 44
     local innerW = w - margin * 2
     local btnW, btnGap = 216, 12
     local pairW = btnW * 2 + btnGap
     local pairX = (w - pairW) * 0.5
+    local offers = Backend.BuildPauseOffers(game)
+    local rows = {}
+    -- 0~2 行：垂直居中在补给区，少项时不会空出一大块。
+    local rowH, rowGap = 64, 8
+    local areaTop, areaBottom = 372, 700
+    local totalH = #offers * rowH + math.max(0, #offers - 1) * rowGap
+    local y = areaTop + math.max(0, (areaBottom - areaTop - totalH) * 0.5)
+    for i, offer in ipairs(offers) do
+        rows[i] = { offer = offer, rect = { x = margin, y = y, w = innerW, h = rowH } }
+        y = y + rowH + rowGap
+    end
     return {
         win = { x = 24, y = 178, w = w - 48, h = 630 },
-        heal = { x = margin, y = 380, w = innerW, h = 64 },
-        rare = { x = margin, y = 452, w = innerW, h = 64 },
-        orbital = { x = margin, y = 524, w = innerW, h = 64 },
-        reload = { x = margin, y = 596, w = innerW, h = 64 },
-        partsBoost = { x = margin, y = 668, w = innerW, h = 64 },
+        offers = rows,
+        empty = (#rows == 0),
         -- v0.12.5：显式出口按钮（移动端无键盘，必须给「继续/回主菜单」）
         resume = { x = pairX, y = 740, w = btnW, h = 48 },
         menu = { x = pairX + btnW + btnGap, y = 740, w = btnW, h = 48 },
@@ -2356,7 +2586,7 @@ local function DrawPaused(ctx, game, meta, presentation)
     nvgIntersectScissor(ctx, 0, MENU_CONTENT_TOP,
         game.width, game.height - MENU_CONTENT_TOP)
     DrawModalBackdrop(ctx, 0, MENU_CONTENT_TOP, game.width, game.height - MENU_CONTENT_TOP)
-    local layout = GetPausePanelLayout(game.width)
+    local layout = GetPausePanelLayout(game.width, game)
     DrawWindowShell(ctx, layout.win.x, layout.win.y, layout.win.w, layout.win.h, 46)
     DrawModalTechDecor(ctx, layout.win.x, layout.win.y, layout.win.w, layout.win.h, game.elapsed)
     DrawPixelText(ctx, layout.win.x + 18, layout.win.y + 10, "暂停控制台", 18, C.text)
@@ -2371,51 +2601,33 @@ local function DrawPaused(ctx, game, meta, presentation)
         NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
     DrawSegmentedRule(ctx, 62, 354, game.width - 124, 12, C.cyanDim, 6)
 
-    local offers = {
-        {rect=layout.heal, icon="premium_energy_core", ready=game.canPauseHeal,
-         title=game.canPauseHeal and "防线急救" or (game.baseHp >= game.maxBaseHp and "防线状态良好" or "急救补给已用完"),
-         detail=game.canPauseHeal and "+25 基地生命" or "恢复基地耐久", tag=game.canPauseHeal and "看广告" or "已用完"},
-        {rect=layout.rare, icon="premium_pass_crest", ready=game.canPauseRarePick,
-         title=game.canPauseRarePick and "稀有强化保障" or "稀有保障已启用",
-         detail=game.canPauseRarePick and "下一次强化必出稀有" or "本局已购买", tag=game.canPauseRarePick and "看广告" or "已启用"},
-        {rect=layout.orbital, icon="orbital", ready=game.canPauseOrbital,
-         title=game.canPauseOrbital and "首领轨道支援" or "轨道支援待命",
-         detail=game.canPauseOrbital and "轰击首领装甲" or "首领出现时开放", tag=game.canPauseOrbital and "看广告" or "未开放"},
-        {rect=layout.reload, icon="reload", ready=game.canPauseReload,
-         title=game.canPauseReload and "弹药补给" or "弹药补给已领取",
-         detail=game.canPauseReload and "补充一辆待发重卡" or "本局限领一次", tag=game.canPauseReload and "看广告" or "已领取"},
-        {rect=layout.partsBoost, icon="double", ready=game.canPausePartsBoost,
-         title=game.canPausePartsBoost and "零件加倍协议" or "加倍协议已领取",
-         detail=game.canPausePartsBoost and "45 秒零件产出 ×2" or "本局限领一次", tag=game.canPausePartsBoost and "看广告" or "已领取"},
-    }
-    for i, offer in ipairs(offers) do
-        local r = offer.rect
-        local glow, press = Backend.GetControlFx(r, offer.ready == true and presentation.adStatus ~= "loading")
+    if layout.empty then
+        DrawPixelText(ctx, game.width * 0.5, 470,
+            (game.pauseAdLeft or 0) <= 0 and "本局补给名额已用完（每局 2 次）" or "当前没有可用的补给",
+            17, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        DrawPixelText(ctx, game.width * 0.5, 500, "补给会在防线受损 / 首领出现 / 弹药不足时开放",
+            13, C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    end
+    for i, row in ipairs(layout.offers or {}) do
+        local offer = row.offer
+        local r = row.rect
+        local glow, press = Backend.GetControlFx(r, presentation.adStatus ~= "loading")
         nvgSave(ctx)
         nvgTranslate(ctx, 0, press * 2)
-        DrawMachinedPanel(ctx, r.x, r.y, r.w, r.h,
-            offer.ready and C.card or C.widget,
-            offer.ready and C.adDim or C.cyanDim, 7, offer.ready)
+        DrawMachinedPanel(ctx, r.x, r.y, r.w, r.h, C.card, C.adDim, 7, true)
         if glow > 0.01 then
             DrawStroke(ctx, r.x, r.y, r.w, r.h,
                 {C.ad[1], C.ad[2], C.ad[3], math.floor(glow * 210)}, 7, 1.8)
         end
-        DrawRect(ctx, r.x + 10, r.y + 8, 48, 48,
-            offer.ready and C.rail or C.panel, 6)
-        DrawStroke(ctx, r.x + 10, r.y + 8, 48, 48,
-            offer.ready and C.adDim or C.cyanDim, 6, 1)
-        local iconKey = offer.icon
-        if i == 1 and offer.ready then iconKey = "premium_supply_crate" end
-        DrawIcon(ctx, iconKey, r.x + 18, r.y + 16, 32, offer.ready and 1 or 0.5)
-        DrawPixelText(ctx, r.x + 68, r.y + 7, offer.title, 16,
-            offer.ready and C.text or C.dim)
+        DrawRect(ctx, r.x + 10, r.y + 8, 48, 48, C.rail, 6)
+        DrawStroke(ctx, r.x + 10, r.y + 8, 48, 48, C.adDim, 6, 1)
+        DrawIcon(ctx, offer.icon, r.x + 18, r.y + 16, 32, 1)
+        DrawPixelText(ctx, r.x + 68, r.y + 7, offer.title, 16, C.text)
         DrawPixelText(ctx, r.x + 68, r.y + 34, offer.detail, 12, C.dim)
         local pill = {x=r.x+r.w-92,y=r.y+18,w=78,h=28}
-        local pillFill = offer.ready and C.ad or C.panel
-        DrawRect(ctx, pill.x, pill.y, pill.w, pill.h, pillFill, 5)
-        if not offer.ready then DrawStroke(ctx, pill.x, pill.y, pill.w, pill.h, C.cyanDim, 5, 1) end
+        DrawRect(ctx, pill.x, pill.y, pill.w, pill.h, C.ad, 5)
         DrawPixelText(ctx, pill.x + pill.w * 0.5, pill.y + 7, offer.tag, 12,
-            offer.ready and C.ink or C.dim, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+            C.ink, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
         nvgRestore(ctx)
     end
 
@@ -2751,7 +2963,7 @@ local function RenderOverlay(game, presentation, meta)
         nvgResetTransform(vg_)
         nvgGlobalAlpha(vg_, 1.0)
         nvgScale(vg_, scale_, scale_)
-        DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_)
+        DrawLetterboxBackground(vg_, screenDesignWidth_, screenDesignHeight_, game)
     end)
 
     RunOverlayStage("frame-decoration", function()
@@ -2774,6 +2986,7 @@ local function RenderOverlay(game, presentation, meta)
             end
             DrawBaseImpactFeedback(vg_, game, presentation)
             DrawShockRings(vg_, game, presentation)
+            uiFx.impact.DrawWallFlashes(vg_, presentation, ProjectGamePoint)
             uiFx.impact.DrawHits(vg_, game, presentation, ProjectGamePoint)
             uiFx.impact.Draw(vg_, presentation, ProjectGamePoint)
             DrawFloatTexts(vg_, game, presentation)
@@ -2824,7 +3037,16 @@ local function RenderOverlay(game, presentation, meta)
             end)
         end
     elseif game.state == "menu" then
-        RunOverlayStage("menu", function() DrawMenu(vg_, game, meta) end)
+        RunOverlayStage("menu", function()
+            -- v0.13.78：菜单入场过渡（从战斗/结算回菜单、冷启动进菜单都走同一条边沿）
+            local age = math.max(0, uiClock_ - uiStateMotionEnter_)
+            local t = math.min(1, age / 0.26)
+            local ease = 1 - (1 - t) * (1 - t) * (1 - t)
+            ApplyOverlayDesignTransform()
+            nvgGlobalAlpha(vg_, ease)
+            if ease < 1 then nvgTranslate(vg_, 0, (1 - ease) * 10) end
+            DrawMenu(vg_, game, meta)
+        end)
     end
 
     local currentWindow = uiFx.UpdateGameWindow(game)
@@ -2893,6 +3115,30 @@ local function RenderOverlay(game, presentation, meta)
     if meta and meta.supplyOpen then
         DrawAnimatedWindow("supply-in", metaSupplyEnter_, false,
             function() MetaUI.DrawSupplyPopup(vg_, DESIGN_W, meta) end)
+    end
+    -- v0.13.72：广告二次确认弹窗永远画在最上层（暂停/结算/元层按钮都不会被误触）。
+    if presentation and presentation.adConfirm then
+        if not uiFx.adConfirm then uiFx.adConfirm = require "ui.AdConfirm" end
+        -- v0.13.78：确认弹窗也走入场过渡（遮罩淡入 + 卡片 0.94→1 弹入）
+        if not uiFx.adConfirmAt then uiFx.adConfirmAt = uiClock_ end
+        local age = math.max(0, uiClock_ - uiFx.adConfirmAt)
+        local t = math.min(1, age / 0.20)
+        local ease = 1 - (1 - t) * (1 - t) * (1 - t)
+        nvgSave(vg_)
+        ApplyOverlayDesignTransform()
+        nvgGlobalAlpha(vg_, ease)
+        if ease < 1 then
+            nvgTranslate(vg_, DESIGN_W * 0.5, DESIGN_H * 0.5)
+            local scale = 0.94 + 0.06 * ease
+            nvgScale(vg_, scale, scale)
+            nvgTranslate(vg_, -DESIGN_W * 0.5, -DESIGN_H * 0.5)
+        end
+        local adConfirmDraw = uiFx.adConfirm
+        if adConfirmDraw then adConfirmDraw.Draw(vg_, DESIGN_W, presentation.adConfirm) end
+        nvgGlobalAlpha(vg_, 1.0)
+        nvgRestore(vg_)
+    else
+        uiFx.adConfirmAt = nil -- 关闭后复位，下次重新弹入
     end
     ApplyOverlayDesignTransform()
     RunOverlayStage("launch-charge", function()
@@ -3054,8 +3300,10 @@ function Backend.Init()
     local zoneNode = scene_:CreateChild("MobileSafeZone")
     zone_ = zoneNode:CreateComponent("Zone")
     zone_.boundingBox = BoundingBox(Vector3(-80.0, -40.0, -80.0), Vector3(80.0, 40.0, 80.0))
+    -- v0.13.68 提亮：原 0.16/0.18/0.24 在无 IBL 的暗场里把 PBR 暗部全压死（敌机暗装甲、
+    -- 实战车漆都塌成近黑）。环境光拉高到接近中灰，只抬亮部与暗部，不动背景雾色。
     zone_.ambientSource = AMBIENT_COLOR
-    zone_.ambientColor = Color(0.16, 0.18, 0.24, 1.0)
+    zone_.ambientColor = Color(0.34, 0.36, 0.40, 1.0)
     zone_.fogColor = Color(0.006, 0.008, 0.025, 1.0)
     zone_.fogStart = 32.0
     zone_.fogEnd = 80.0
@@ -3389,11 +3637,12 @@ function Backend.HitTestStageWinButton(uiX, uiY, game)
     -- 过渡动画期间结算窗尚未显示，任何按钮都不可点（点击由编排层用于「跳过」）。
     if not game or not uiFx.UpdateGameWindow(game) then return nil end
     uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
-    local retry, nextBtn, menu = GetStageWinButtonLayout(game or {})
+    local retry, nextBtn, menu, bonusBtn = GetStageWinButtonLayout(game or {})
     local function inside(btn)
         return uiX >= btn.x and uiX <= btn.x + btn.w
             and uiY >= btn.y and uiY <= btn.y + btn.h
     end
+    if bonusBtn and game and game.canDoubleReward and inside(bonusBtn) then return "double" end
     if inside(retry) then return "retry" end
     -- 「下一关」仅在还有下一关时可点。
     if inside(nextBtn) then return (game and game.stageHasNext) and "next" or nil end
@@ -3456,18 +3705,16 @@ end
 ---@return string|nil kind "pause_heal" | "pause_rare" | "pause_orbital" | "pause_reload" | "pause_parts_boost" | "pause_resume" | "pause_menu"
 function Backend.HitTestPausePanel(uiX, uiY, game)
     uiX, uiY = WindowInput(uiX, uiY, uiStateMotionEnter_)
-    local layout = GetPausePanelLayout((game and game.width) or DESIGN_W)
+    local layout = GetPausePanelLayout((game and game.width) or DESIGN_W, game)
     local function inside(r)
         return uiX >= r.x and uiX <= r.x + r.w and uiY >= r.y and uiY <= r.y + r.h
     end
     -- v0.12.5：出口按钮先于补给行（虽几何不重叠，保持顺序防御后续改布局）
     if inside(layout.resume) then return "pause_resume" end
     if inside(layout.menu) then return "pause_menu" end
-    if inside(layout.heal) then return "pause_heal" end
-    if inside(layout.rare) then return "pause_rare" end
-    if inside(layout.orbital) then return "pause_orbital" end
-    if inside(layout.reload) then return "pause_reload" end
-    if inside(layout.partsBoost) then return "pause_parts_boost" end
+    for _, row in ipairs(layout.offers or {}) do
+        if inside(row.rect) then return row.offer.action end
+    end
     return nil
 end
 

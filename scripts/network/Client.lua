@@ -22,6 +22,9 @@ local seq_ = 0
 local spendPending_ = false
 local spendElapsed_ = 0
 local SPEND_TIMEOUT = 30
+local balanceRetryElapsed_ = 0
+local balanceRetryPending_ = false
+local BALANCE_RETRY_INTERVAL = 3
 ---@type table<integer, fun(ok: boolean, reason: string)>
 local spendWaiters_ = {}
 ---@type fun(gems: integer)|nil
@@ -118,7 +121,11 @@ end
 local function Send(eventType)
     local conn = ServerConnection()
     if not conn then
-        print("[Client] no server connection, drop " .. eventType)
+        if eventType == Shared.EVENTS.REQUEST_BALANCE then
+            balanceRetryPending_ = true
+            balanceRetryElapsed_ = 0
+        end
+        print("[Client] no server connection, defer " .. eventType)
         return false
     end
     conn:SendRemoteEvent(eventType, true)
@@ -128,6 +135,8 @@ end
 -- 向服务端报到并拉一次余额。
 function Client.RequestBalance()
     if not Client.Available() then return end
+    balanceRetryPending_ = false
+    balanceRetryElapsed_ = 0
     Send(Shared.EVENTS.REQUEST_BALANCE)
 end
 
@@ -160,6 +169,12 @@ function Client.SpendGems(key, cb)
 end
 
 function Client.Update(dt)
+    if balanceRetryPending_ and Client.Available() then
+        balanceRetryElapsed_ = balanceRetryElapsed_ + math.max(0, dt or 0)
+        if balanceRetryElapsed_ >= BALANCE_RETRY_INTERVAL then
+            Client.RequestBalance()
+        end
+    end
     if not spendPending_ or spendElapsed_ >= SPEND_TIMEOUT then return end
     spendElapsed_ = spendElapsed_ + dt
     if spendElapsed_ < SPEND_TIMEOUT then return end
@@ -299,6 +314,8 @@ function Client.Stop()
     spendWaiters_ = {}
     spendPending_ = false
     spendElapsed_ = 0
+    balanceRetryElapsed_ = 0
+    balanceRetryPending_ = false
 end
 
 return Client

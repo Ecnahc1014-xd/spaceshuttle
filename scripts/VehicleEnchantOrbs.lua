@@ -212,7 +212,10 @@ function M.Init(scene)
     S.faulted, S.lastError = false, ""
     local ok, err = pcall(function()
         -- materials skill 的真实内置路径；无资源文件、外部模型或自定义 shader。
-        local sphereTech = cache:GetResource("Technique", "Techniques/PBR/PBRNoTexture.xml")
+        local mobile = type(GetPlatform) == "function"
+            and (GetPlatform() == "Android" or GetPlatform() == "HarmonyOS" or GetPlatform() == "iOS")
+        local sphereTech = cache:GetResource("Technique", mobile and "Techniques/NoTextureUnlit.xml"
+            or "Techniques/PBR/PBRNoTexture.xml")
         local haloTech = cache:GetResource("Technique", "Techniques/DiffAlpha.xml")
         assert(sphereTech and haloTech, "required built-in technique unavailable")
         BuildUnitSphere()

@@ -28,8 +28,8 @@ local COL = {
     panel   = { 10, 16, 28, 255 },
     card    = { 16, 26, 44, 255 },
     rail    = { 22, 36, 56, 255 },
-    cyan    = { 0, 229, 208, 255 },
-    cyanDim = { 0, 150, 148, 220 },
+    cyan    = { 226, 228, 232, 255 },
+    cyanDim = { 150, 152, 158, 220 },
     text    = { 240, 248, 252, 255 },
     dim     = { 120, 148, 162, 255 },
     warn    = { 255, 196, 72, 255 },
@@ -100,8 +100,14 @@ return function(ctx)
     -- =========================================================================
     local statusLabel = UI.Label { text = "正在连接服务器", fontSize = 26,
         fontColor = COL.text, textAlign = "center" }
+    local phaseLabel = UI.Label { text = "MATCH / SECURE LINK", fontSize = 12,
+        fontColor = COL.cyanDim, textAlign = "center", letterSpacing = 1 }
     local subLabel = UI.Label { text = WAIT_SECONDS .. " 秒后自动进入单机模式",
         fontSize = 15, fontColor = COL.dim, textAlign = "center" }
+    local assetLabel = UI.Label { text = "资源预载：等待匹配窗口", fontSize = 13,
+        fontColor = COL.dim, textAlign = "left" }
+    local nodeLabel = UI.Label { text = "节点：扫描中", fontSize = 13,
+        fontColor = COL.dim, textAlign = "right" }
     local fillWidget = UI.Panel { width = "8%", height = 10, borderRadius = 5,
         backgroundColor = COL.cyan }
     local dot1 = UI.Panel { width = 8, height = 8, borderRadius = 4,
@@ -148,11 +154,18 @@ return function(ctx)
                         flexDirection = "column", alignItems = "center", gap = 16,
                         children = {
                             statusLabel,
+                            phaseLabel,
                             -- 进度轨（rail 底 + 青色填充，按连服进度%）
                             UI.Panel {
                                 width = "100%", height = 10, borderRadius = 5,
                                 backgroundColor = COL.rail,
                                 children = { fillWidget },
+                            },
+                            UI.Panel {
+                                width = "100%", flexDirection = "row",
+                                justifyContent = "spaceBetween", alignItems = "center",
+                                paddingTop = 4,
+                                children = { assetLabel, nodeLabel },
                             },
                             subLabel,
                             -- 扫描点（依次点亮，暗示链路活动）
@@ -172,10 +185,22 @@ return function(ctx)
         if statusLabel then pcall(function() statusLabel:SetText(text) end) end
     end
 
+    local function setPhase(text)
+        if phaseLabel then pcall(function() phaseLabel:SetText(text) end) end
+    end
+
+    local function setNode(text)
+        if nodeLabel then pcall(function() nodeLabel:SetText(text) end) end
+    end
+
     local function refreshCountdown()
         if not subLabel then return end
         local left = math.max(0, math.ceil(WAIT_SECONDS - elapsed))
         pcall(function() subLabel:SetText(left .. " 秒后自动进入单机模式") end)
+        if assetLabel and elapsed > 0 then
+            local pct = math.floor(math.min(99, elapsed / WAIT_SECONDS * 100))
+            pcall(function() assetLabel:SetText("资源预载：" .. pct .. "% · 保持连接") end)
+        end
     end
 
     local function setFill(percent)
@@ -264,12 +289,24 @@ return function(ctx)
             onMatchFound = function()
                 print("[Lobby] server found, connecting")
                 setStatus("正在接入战斗服务器")
+                setPhase("MATCH FOUND / HANDSHAKE")
+                setNode("节点：已发现")
                 setFill(0.5)
             end,
             onProgress = function(progress)
                 if not active then return end
                 if progress ~= nil then
                     setFill(progress)
+                    if progress < 0.35 then
+                        setPhase("MATCH / SEARCHING")
+                        setNode("节点：搜索中")
+                    elseif progress < 1 then
+                        setPhase("MATCH / CONNECTING")
+                        setNode("节点：握手中")
+                    else
+                        setPhase("MATCH / READY")
+                        setNode("节点：已就绪")
+                    end
                     if progress >= 1 then
                         -- 连服完成，引擎即将切游戏脚本：撤销兜底计时，防双起竞态。
                         print("[Lobby] server connection completed")
