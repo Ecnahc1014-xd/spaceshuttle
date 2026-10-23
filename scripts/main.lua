@@ -14,15 +14,29 @@
 ---@type table|nil
 local Module = nil
 
+-- 性能压测开关：引擎命令行带 --perf-autoplay 时，客户端自动进关并持续发射。
+-- 正式包不带该参数，行为与以往完全一致。
+---@return boolean
+local function PerfAutoplayRequested()
+    local ok, args = pcall(function() return GetArguments() end)
+    if not ok or type(args) ~= "table" then return false end
+    for i = 1, #args do
+        local a = tostring(args[i])
+        if a:find("perf%-autoplay") then return true end
+    end
+    return false
+end
+
 function Start()
     if IsServerMode() then
         Module = require "network.Server"
         print("[Main] runtime mode = server")
+        Module.Start()
     else
         Module = require "game.client_main"
         print("[Main] runtime mode = client")
+        Module.Start({ perfAutoplay = PerfAutoplayRequested() })
     end
-    Module.Start()
 end
 
 function Stop()

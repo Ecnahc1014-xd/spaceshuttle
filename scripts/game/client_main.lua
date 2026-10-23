@@ -1846,6 +1846,8 @@ function ClientMain.Start(opts)
         return true
     end
     opts = opts or {}
+    -- 性能压测模式：仅当启动参数带 --perf-autoplay 时启用，正式包恒为 nil。
+    PERF_AUTOPLAY = (opts.perfAutoplay == true) or false
     if opts.offline ~= nil then
         GameMode.SetOffline(opts.offline == true)
     end
@@ -2032,12 +2034,44 @@ function ClientMain.DebugOpenScreen(name)
     end
 end
 
----@param eventType string
+-- 性能压测自动驱动：自动进关、自动选车、周期性发射，用于采集战斗态 [PerfProbe]。
+-- 仅在 ClientMain.Start({ perfAutoplay = true }) 时赋值，正式包 PERF_AUTOPLAY 为 false，
+-- 该函数体不会被执行。
+PERF_AUTOPLAY = false
+local perfAutoClock_ = 0
+local perfAutoEntered_ = false
+local perfAutoNextFire_ = 0
+
+function PerfAutoplay(dt)
+    perfAutoClock_ = perfAutoClock_ + dt
+    local snap = Game.GetSnapshot()
+    if not snap then return end
+    if not perfAutoEntered_ and snap.state == "menu" and perfAutoClock_ > 1.0 then
+        Game.StartStageAt(1)
+        perfAutoEntered_ = true
+        print("[PerfAuto] entered stage 1")
+        return
+    end
+    if not perfAutoEntered_ then return end
+    if snap.state == "levelup" and snap.openingSelection then
+        for i = 1, 3 do
+            if Game.PickUpgrade(i) then return end
+        end
+    elseif snap.state == "playing" then
+        if perfAutoClock_ > perfAutoNextFire_ then
+            perfAutoNextFire_ = perfAutoClock_ + 1.0
+            Game.HandleAction("start", true)
+        end
+    end
+end
+
 ---@param eventData UpdateEventData
 function HandleUpdate(eventType, eventData)
     local inputDt = math.max(0, eventData:GetFloat("TimeStep"))
     local dt = math.min(inputDt, 0.05)
     PerfProbe.BeginFrame(inputDt)
+    -- 性能压测驱动（仅 --perf-autoplay 时生效，正式包无此分支）。
+    if PERF_AUTOPLAY then PerfAutoplay(dt) end
 
     AdService.Update(dt)
     AchievementSystem.Update(dt)
