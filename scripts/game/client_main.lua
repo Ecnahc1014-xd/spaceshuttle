@@ -18,6 +18,7 @@ local StageCatalog = require "StageCatalog"
 local TalentCatalog = require "TalentCatalog"
 local AchievementCatalog = require "AchievementCatalog"
 local GameMode = require "GameMode"
+local PerfProbe = require "PerformanceProbe"
 local NetClient = require "network.Client"
 local MetaUI = require "MetaUI"
 local RechargeShop = require "ui.RechargeShop"
@@ -1848,6 +1849,20 @@ function ClientMain.Start(opts)
     if opts.offline ~= nil then
         GameMode.SetOffline(opts.offline == true)
     end
+    -- 低配安卓性能基线：每 5 秒输出一条 [PerfProbe]（三阶段耗时 + FPS + 内存）。
+    PerfProbe.Start({
+        enabled = opts.perfProbe ~= false,
+        reportInterval = 5.0,
+    })
+    PerfProbe.SetProvider(function()
+        local s = gameSnapshot
+        if not s then return nil end
+        return {
+            state = s.state,
+            wave = s.wave,
+            enemies = s.enemies and #s.enemies or 0,
+        }
+    end)
 
     graphics.windowTitle = "货车大战飞机"
     input.mouseVisible = true
@@ -2022,6 +2037,7 @@ end
 function HandleUpdate(eventType, eventData)
     local inputDt = math.max(0, eventData:GetFloat("TimeStep"))
     local dt = math.min(inputDt, 0.05)
+    PerfProbe.BeginFrame(inputDt)
 
     AdService.Update(dt)
     AchievementSystem.Update(dt)
@@ -2058,17 +2074,23 @@ function HandleUpdate(eventType, eventData)
         Game.SetPullSpace(psx, psy)
     end
     if not adFreeze then
+        PerfProbe.BeginPhase("game")
         Game.Update(gameDt, inputDt)
+        PerfProbe.EndPhase("game")
     end
     ClientMain.ValidatePointer()
     local snapshot = Game.GetSnapshot()
     local frameEvents = Game.DrainEvents()
+    PerfProbe.BeginPhase("presentation")
     Presentation.Update(dt, snapshot, frameEvents)
+    PerfProbe.EndPhase("presentation")
     -- 音频总控消费同一份领域事件（只读），并按其状态机切换 8bit BGM。
     RenderBackend.TickAudio(dt, snapshot, frameEvents)
     gameSnapshot = snapshot
     presentationSnapshot = Presentation.GetSnapshot()
+    PerfProbe.BeginPhase("render")
     RenderBackend.UpdateScene(gameSnapshot, presentationSnapshot, metaState, adFreeze and 0 or gameDt, dt)
+    PerfProbe.EndPhase("render")
     -- 最高分云写合并：局内只累计待提交值；局末（结算）、回菜单、以及每
     -- HIGH_SCORE_COMMIT_INTERVAL 秒的兜底才真正写一次云（配额 300 次/分钟）。
     -- ⚠️ 结算/菜单是「持续态」——只在**进入**这些态的那一帧提交一次，不能每帧提交，
@@ -2161,6 +2183,7 @@ function HandleUpdate(eventType, eventData)
         RefreshMeta()
         print("[Main] run settled, parts +" .. granted .. ", codex bonus +" .. bonus)
     end
+    PerfProbe.EndFrame(inputDt)
 end
 
 function HandleScreenMode()
