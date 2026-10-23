@@ -1,6 +1,10 @@
 {
   "$schema": "../schemas/resources.schema.json",
-  "preload_groups": [],
+
+  "preload_groups": [
+    "default"
+  ],
+
   "groups": {
     "default": [
       "**"
