@@ -290,23 +290,14 @@ function VehicleShowcase.Init(width, height)
         local zoneNode = scene:CreateChild("ShowcaseZone", LOCAL)
         local zone = assert(zoneNode:CreateComponent("Zone", LOCAL), "Zone unavailable")
         zone.boundingBox = BoundingBox(-1000, 1000)
-        -- 展台是全项目唯一的“打光写真”光位：金属度 0.72 的车漆必须有环境反射（IBL）
+        -- 展台是全项目唯一的“打光写真”光位：金属度 0.72 的车漆有环境反射（IBL）
         -- 才有金属感，否则只剩三盏灯的直接高光，深红漆会暗成近黑。
-        -- 战斗场景仍保持 AMBIENT_COLOR 平光（低配移动端不依赖 cubemap），此处单独烘。
-        -- 官方预制写实天空 A 走 uuid:// 直接取，无需自备贴图；取不到时回退均光，不报错。
-        local envCube = nil
-        pcall(function()
-            envCube = cache:GetResource("TextureCube", "uuid://E4ehad-5axjv7Ml9zasxNx06")
-        end)
-        if envCube then
-            zone.ambientSource = AMBIENT_PREBAKED
-            -- v0.13.68：1.7 时展台车明显比实战车“孤高”，回落到只比战斗环境高一点。
-            zone.ambientIntensity = 1.15
-            zone.sourceTexture = envCube -- 触发后台烘焙 SH + 镜面 IBL
-        else
-            zone.ambientSource = AMBIENT_COLOR
-            zone.ambientColor = Color(0.18, 0.20, 0.24)
-        end
+        -- ⚠️ v0.14.x：不再引用官方 res 的 uuid:// 天空盒——那会把整个
+        --    __official_pinned_refs__ 素材集（18 个引用）钉进构建清单的 #blocking 组，
+        --    运行时逐个 DWP 下载，任一失败即刷平台 XHR 错误。
+        --    改用本地程序化环境光，金属感略降但零外部依赖。
+        zone.ambientSource = AMBIENT_COLOR
+        zone.ambientColor = Color(0.18, 0.20, 0.24)
         zone.fogColor = Color(0, 0, 0, 0)
         zone.fogDensity = 0
         zone.heightFog = false
