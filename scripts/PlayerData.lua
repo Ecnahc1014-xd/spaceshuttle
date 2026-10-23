@@ -244,6 +244,20 @@ function PlayerData.Load()
     return true
 end
 
+-- 精确写入 UTF-8 文本：File:WriteString 会额外追加一个 \x00 终止符
+-- （Urho3D 的字符串序列化语义），落盘文件会比内容长 1 字节。
+-- 存档要能被外部工具按字节校验，因此改用 VectorBuffer 逐字节写，
+-- 再由 File:Write(VectorBuffer) 原样落盘（实测 1KB 约 0.4ms，可忽略）。
+---@param file File
+---@param text string
+local function WriteTextExact(file, text)
+    local buf = VectorBuffer()
+    for i = 1, #text do
+        buf:WriteUByte(string.byte(text, i))
+    end
+    file:Write(buf)
+end
+
 -- 原子写盘：先写 .tmp → 成功后再把旧主档转成 .bak → .tmp 改名为正式档。
 -- 任一步失败都保留原主档，绝不产生半截 JSON。
 ---@param payload string
@@ -254,7 +268,7 @@ local function WriteSaveFileAtomic(payload)
         print("[PlayerData] save failed: tmp not openable")
         return false
     end
-    tmp:WriteString(payload)
+    WriteTextExact(tmp, payload)
     tmp:Close()
     if not fileSystem:FileExists(TMP_FILE) then
         print("[PlayerData] save failed: tmp not written")
