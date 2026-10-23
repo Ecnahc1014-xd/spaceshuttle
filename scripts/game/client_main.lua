@@ -71,9 +71,18 @@ local pendingTestStage_ = nil
 local designWidth_ = 540
 local CLOUD_HIGH_SCORE_KEY = "high_score"
 local CLOUD_META_KEY = "player_meta"
-local metaCloudSynced = false
+local metaCloudSynced = false   -- 首次云读是否已完成（读成功才允许覆盖写）
 local metaRevision = 0
 local metaSaveInFlight = false
+-- 云读失败后的退避重试：此前 error 只打印，一次失败会让 metaCloudSynced 永久为 false，
+-- 整个会话的云存档静默丢弃。改为按间隔重试，直到成功。
+local META_LOAD_RETRY_INTERVAL = 5
+local META_LOAD_RETRY_MAX = 12
+---@type integer
+local metaLoadRetryCount = 0
+---@type number
+local metaLoadRetryCooldown = 0
+local metaLoadInFlight = false
 -- 最高分云写合并：局内只累计待提交值，局末 / 回菜单 / 周期兜底才真正写一次，
 -- 避免「每击碎一块砖刷新最高分就写一次云」（云写配额 300 次/分钟）。
 local highScoreDirty = 0        -- 待提交的最高分（0 表示无待提交）
@@ -82,6 +91,7 @@ local HIGH_SCORE_COMMIT_INTERVAL = 15
 -- 上一帧的 game.state：用于「进入结算/菜单态时提交一次」（避免持续态每帧提交）。
 ---@type string|nil
 local prevHighScoreState_ = nil
+---@type fun()
 local RefreshMeta
 
 local function RefreshSnapshots()
@@ -215,74 +225,114 @@ local function CommitHighScore()
 end
 
 -- v0.11.0 商业化：玩家元数据（零件/图鉴/签到/任务）云同步。
--- 云变量只在编排层读写；PlayerData 只负责编解码。
-local function SavePlayerDataToCloud()
+-- 云变量只在编排层读写；PlayerData 只负责编解码与合并策略。
+---@type fun()
+local SavePlayerDataToCloud
+---@type fun()
+local LoadPlayerDataFromCloud
+
+SavePlayerDataToCloud = function()
     if GameMode.IsOffline() then return end
     metaRevision = metaRevision + 1
     -- 初次云档读取尚未完成时仅记脏；先写会把另一台设备的档案覆盖掉。
+    -- 写失败也不再丢：脏标记留在 PlayerData 里，下次触发或下次启动会补传。
     if not metaCloudSynced or metaSaveInFlight then return end
     metaSaveInFlight = true
     local revision = metaRevision
     local payload = PlayerData.ExportForCloud()
+    local function finish(ok, why)
+        metaSaveInFlight = false
+        if ok then
+            PlayerData.MarkCloudSynced()
+            print("[Main] player meta saved to cloud")
+            -- 经上值自递归（而不是直接写函数名），避免 LSP 认为它可能为 nil。
+            if metaRevision ~= revision then SavePlayerDataToCloud() end
+        else
+            print("[Main] meta cloud save failed: " .. tostring(why) .. " (will retry)")
+        end
+    end
     local okCall, errCall = pcall(function()
         clientCloud:Set(CLOUD_META_KEY, payload, {
-            ok = function()
-                metaSaveInFlight = false
-                print("[Main] player meta saved to cloud")
-                if metaRevision ~= revision and metaCloudSynced then SavePlayerDataToCloud() end
-            end,
+            ok = function() finish(true) end,
             error = function(code, reason)
-                metaSaveInFlight = false
-                print("[Main] meta cloud save failed: " .. tostring(reason) .. " code=" .. tostring(code))
+                finish(false, tostring(reason) .. " code=" .. tostring(code))
             end,
-            timeout = function()
-                metaSaveInFlight = false
-                print("[Main] meta cloud save timed out; local save retained")
-            end,
+            timeout = function() finish(false, "timeout") end,
         })
     end)
     if not okCall then
-        metaSaveInFlight = false
-        print("[Main] meta cloud save unavailable: " .. tostring(errCall))
+        finish(false, "call error: " .. tostring(errCall))
     end
 end
 
-local function LoadPlayerDataFromCloud()
+LoadPlayerDataFromCloud = function()
     if GameMode.IsOffline() then
         print("[Main] offline: skip cloud player data")
         return
     end
+    if metaLoadInFlight or metaCloudSynced then return end
+    metaLoadInFlight = true
     local requestRevision = metaRevision
-    pcall(function()
+    local function finish()
+        metaLoadInFlight = false
+    end
+    local okCall = pcall(function()
         clientCloud:Get(CLOUD_META_KEY, {
             ok = function(values, _)
+                finish()
                 local raw = nil
                 if values then raw = values[CLOUD_META_KEY] end
                 if type(raw) == "table" then raw = cjson.encode(raw) end
                 if type(raw) == "string" and raw ~= "" then
-                    local merged = PlayerData.ImportFromCloud(raw)
+                    local merged, _, shouldUpload = PlayerData.ImportFromCloud(raw)
                     if merged then
-                        PlayerData.Save()
+                        -- 合并后本地已是「云档 + 本地单调统计」的超集：
+                        -- 需要回传就让云写成功去清脏标记；不需要则直接落盘为干净基线。
+                        if shouldUpload or metaRevision ~= requestRevision then
+                            PlayerData.Save()
+                            SavePlayerDataToCloud()
+                        else
+                            PlayerData.MarkCloudSynced()
+                        end
                         RefreshSnapshots()
                         RefreshMeta()
                         metaCloudSynced = true
-                        if metaRevision ~= requestRevision or PlayerData.ExportForCloud() ~= raw then
-                            SavePlayerDataToCloud()
-                        end
+                        metaLoadRetryCount = 0
                         print("[Main] player meta merged from cloud")
+                    else
+                        -- 解析失败：云端档案损坏，不上传覆盖，避免把坏档推广到别的设备。
+                        print("[Main] cloud meta unusable; keep local and retry later")
+                        metaLoadRetryCooldown = META_LOAD_RETRY_INTERVAL
                     end
                 else
                     -- 云端尚无档案时把本地进度上传，避免换设备后找不到已有存档。
                     metaCloudSynced = true
+                    metaLoadRetryCount = 0
                     SavePlayerDataToCloud()
                 end
                 if not GameMode.IsOffline() then NetClient.RequestBalance() end
             end,
             error = function(code, reason)
-                print("[Main] meta cloud load failed: " .. tostring(reason) .. " code=" .. tostring(code))
+                finish()
+                metaLoadRetryCooldown = META_LOAD_RETRY_INTERVAL
+                metaLoadRetryCount = metaLoadRetryCount + 1
+                print("[Main] meta cloud load failed: " .. tostring(reason)
+                    .. " code=" .. tostring(code) .. " retry#" .. metaLoadRetryCount)
+            end,
+            timeout = function()
+                finish()
+                metaLoadRetryCooldown = META_LOAD_RETRY_INTERVAL
+                metaLoadRetryCount = metaLoadRetryCount + 1
+                print("[Main] meta cloud load timeout, retry#" .. metaLoadRetryCount)
             end,
         })
     end)
+    if not okCall then
+        finish()
+        metaLoadRetryCooldown = META_LOAD_RETRY_INTERVAL
+        metaLoadRetryCount = metaLoadRetryCount + 1
+        print("[Main] meta cloud load call error, retry#" .. metaLoadRetryCount)
+    end
 end
 
 -- 取消而非模拟松手：失焦/广告/模态不能误发射，也不能保留旧按压。
@@ -740,8 +790,6 @@ RefreshMeta = function()
 end
 
 -- 零件入账统一出口：写入 + 存档 + 云同步 + 刷新界面。
----@param amount integer
----@param label string|nil
 -- v0.13.72：广告零件奖励按**账号现有零件**给额外收益（防后期贬值）。
 -- 经济锚点：车辆全解锁 11700 + 拖尾 9800 ≈ 2.15 万零件，天赋另计，后期持有常见 1~3 万。
 -- 加成 = 存量 × 12%，上限 = 基础值 × 8（即最多 9 倍基础）——
@@ -761,10 +809,11 @@ local function AdHoldingsBonus(base)
     return math.max(0, bonus)
 end
 
+---@param amount integer
+---@param label string|nil
 local function GrantParts(amount, label)
     if amount <= 0 then return end
-    PlayerData.AddParts(amount)
-    PlayerData.Save()
+    PlayerData.AddParts(amount)   -- AddParts 内部已落盘，无需再 Save 一次
     SavePlayerDataToCloud()
     RefreshMeta()
     if label then
@@ -1392,6 +1441,7 @@ onBannerAction = function(actionId)
         HandleMetaAction("open_recharge", nil)
         RenderBackend.DismissSystemBanner()
     elseif actionId == "banner_exit" then
+        ClientMain.FlushSave()
         engine:Exit()
     end
 end
@@ -1499,7 +1549,15 @@ local function TryUseItemAt(screenX, screenY)
     if not item then return false end
 
     if (item.charges or 0) > 0 then
-        Game.UseItem(item.key)   -- 效果与飘字都由规则层事件驱动
+        if Game.UseItem(item.key) then   -- 效果与飘字都由规则层事件驱动
+            -- 局内使用消耗一份永久库存：否则库存只增不减，价格体系形同虚设。
+            if PlayerData.ConsumeItem(item.key) then
+                Game.SetItemStock(PlayerData.GetItemStock())
+                SavePlayerDataToCloud()
+                print("[Main] item consumed: " .. item.key
+                    .. " stock left=" .. PlayerData.GetItemCount(item.key))
+            end
+        end
         return true
     end
     if item.canGrant then
@@ -2030,6 +2088,19 @@ function HandleUpdate(eventType, eventData)
         end
     end
 
+    -- 云读失败后的退避重试：保证「一次网络抖动」不会让整个会话的云存档失效。
+    if not GameMode.IsOffline() and not metaCloudSynced and not metaLoadInFlight then
+        if metaLoadRetryCooldown > 0 then
+            metaLoadRetryCooldown = metaLoadRetryCooldown - dt
+        elseif metaLoadRetryCount < META_LOAD_RETRY_MAX then
+            LoadPlayerDataFromCloud()
+        elseif metaLoadRetryCount == META_LOAD_RETRY_MAX then
+            -- 到上限后只提示一次，不阻塞玩法。
+            metaLoadRetryCount = META_LOAD_RETRY_MAX + 1
+            print("[Main] cloud meta unreachable, keep local save this session")
+        end
+    end
+
     -- 跨午夜时同步刷新菜单上的签到/任务/补给/转盘状态。
     local today = os.date("%Y-%m-%d")
     if today ~= metaDate then
@@ -2099,8 +2170,21 @@ end
 ---@param eventType string
 ---@param eventData InputFocusEventData
 function HandleInputFocus(eventType, eventData)
-    ClientMain._pointer.focused = eventData:GetBool("Focus") and not eventData:GetBool("Minimized")
-    if not ClientMain._pointer.focused then ClientMain.CancelInput() end
+    local focused = eventData:GetBool("Focus") and not eventData:GetBool("Minimized")
+    ClientMain._pointer.focused = focused
+    if not focused then
+        ClientMain.CancelInput()
+        -- 切后台是最常见的「被杀进程」前兆：先把本地落盘，再尽快提交一次云。
+        ClientMain.FlushSave()
+    end
+end
+
+-- 立即把内存态写入本地并尝试提交云端。用于失焦 / 退出 / 关键结算后。
+function ClientMain.FlushSave()
+    PlayerData.Save()
+    if not GameMode.IsOffline() and metaCloudSynced and not metaSaveInFlight then
+        SavePlayerDataToCloud()
+    end
 end
 
 -- v0.12.5：顶端通知条优先消费点击（任意状态都在最上层）。

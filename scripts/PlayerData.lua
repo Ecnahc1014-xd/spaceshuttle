@@ -6,8 +6,16 @@
 local PlayerData = {}
 
 local SAVE_FILE = "player_" .. string.char(100, 97, 116, 97) .. ".json"
-local DATA_VERSION = 1
+local BAK_FILE = SAVE_FILE .. ".bak"
+local TMP_FILE = SAVE_FILE .. ".tmp"
+local DATA_VERSION = 2
 local updatedAt_ = 0
+-- 自上次成功云同步后本地是否改过。用于两件事：
+-- ① 云档比较时压过设备时钟偏差（本地刚改过就不让更"新"的云档覆盖本地）；
+-- ② 跨会话记住「云写没成功」，下次启动优先补传。
+local dirty_ = false
+-- 旧档（升级前写出的、没有 updatedAt）首次与云端比对时走一次性兼容合并。
+local wasLegacy_ = false
 
 ---@class PlayerDataState
 ---@field version integer 存档结构版本
@@ -146,29 +154,48 @@ end
 -- 存档读写
 -- ============================================================================
 
+-- 读并解码一个存档文件；不存在 / 打不开 / JSON 损坏都返回 nil。
+---@param path string
+---@return table|nil
+local function ReadSaveFile(path)
+    if not fileSystem:FileExists(path) then return nil end
+    local file = File(path, FILE_READ)
+    if not file:IsOpen() then
+        print("[PlayerData] save file not openable: " .. path)
+        return nil
+    end
+    local text = file:ReadString()
+    file:Close()
+    local ok, decoded = pcall(cjson.decode, text)
+    if not ok or type(decoded) ~= "table" then
+        print("[PlayerData] save decode failed: " .. path)
+        return nil
+    end
+    return decoded --[[@as table]]
+end
+
 function PlayerData.Load()
     state = NewState()
     state.createdAt = os.time()
     updatedAt_ = 0
-    if not fileSystem:FileExists(SAVE_FILE) then
-        print("[PlayerData] no local save, start fresh")
-        return false
-    end
-    local file = File(SAVE_FILE, FILE_READ)
-    if not file:IsOpen() then
-        print("[PlayerData] save file not openable")
-        return false
-    end
-    local text = file:ReadString()
-    file:Close()
+    dirty_ = false
+    wasLegacy_ = false
 
-    local ok, decoded = pcall(cjson.decode, text)
-    if not ok or type(decoded) ~= "table" then
-        print("[PlayerData] save decode failed, start fresh")
+    -- 主档优先；主档损坏（如上次写盘途中被杀导致 JSON 截断）回退备份，避免整档归零。
+    local d = ReadSaveFile(SAVE_FILE)
+    if not d then
+        d = ReadSaveFile(BAK_FILE)
+        if d then print("[PlayerData] primary save unusable, restored from backup") end
+    end
+    if not d then
+        print("[PlayerData] no usable local save, start fresh")
         return false
     end
-    local d = decoded --[[@as table]]
+
     updatedAt_ = math.max(0, AsInt(d.updatedAt))
+    -- 旧档（v1）从未写过 updatedAt：记下来，首次与云端比对时走一次性兼容合并。
+    wasLegacy_ = updatedAt_ == 0
+    dirty_ = d.dirty == true
     state.version      = AsInt(d.version) ~= 0 and AsInt(d.version) or DATA_VERSION
     state.parts        = math.max(0, AsInt(d.parts))
     state.totalParts   = math.max(0, AsInt(d.totalParts), state.parts)
@@ -217,18 +244,58 @@ function PlayerData.Load()
     return true
 end
 
-function PlayerData.Save()
-    local file = File(SAVE_FILE, FILE_WRITE)
-    if not file:IsOpen() then
-        print("[PlayerData] save failed: file not openable")
+-- 原子写盘：先写 .tmp → 成功后再把旧主档转成 .bak → .tmp 改名为正式档。
+-- 任一步失败都保留原主档，绝不产生半截 JSON。
+---@param payload string
+---@return boolean
+local function WriteSaveFileAtomic(payload)
+    local tmp = File(TMP_FILE, FILE_WRITE)
+    if not tmp:IsOpen() then
+        print("[PlayerData] save failed: tmp not openable")
         return false
     end
-    updatedAt_ = math.max(updatedAt_ + 1, os.time())
+    tmp:WriteString(payload)
+    tmp:Close()
+    if not fileSystem:FileExists(TMP_FILE) then
+        print("[PlayerData] save failed: tmp not written")
+        return false
+    end
+    -- 旧主档转备份（失败不致命，只是少一层保险）。
+    if fileSystem:FileExists(SAVE_FILE) then
+        pcall(function() fileSystem:Delete(BAK_FILE) end)
+        local okBak, errBak = pcall(function() fileSystem:Rename(SAVE_FILE, BAK_FILE) end)
+        if not okBak then
+            print("[PlayerData] backup rotate failed: " .. tostring(errBak))
+        end
+    end
+    local okMove, errMove = pcall(function() fileSystem:Rename(TMP_FILE, SAVE_FILE) end)
+    if not okMove then
+        print("[PlayerData] save failed: rename " .. tostring(errMove))
+        -- 主档此刻不在（已被转成 .bak），把备份挪回来，至少保住旧数据。
+        pcall(function()
+            if not fileSystem:FileExists(SAVE_FILE) and fileSystem:FileExists(BAK_FILE) then
+                fileSystem:Rename(BAK_FILE, SAVE_FILE)
+            end
+        end)
+        return false
+    end
+    return true
+end
+
+function PlayerData.Save()
+    -- 一次 Save 代表本地有改动：标记脏，等云写成功后再由 MarkCloudSynced 清除。
+    dirty_ = true
+    -- 只有真正写入才递增时间戳，且严格单调，避免同秒内多次保存无法区分新旧。
+    local nextStamp = math.max(updatedAt_ + 1, os.time())
+    ---@type table<string, any>
     local saved = {}
     for k, v in pairs(state) do saved[k] = v end
-    saved.updatedAt = updatedAt_
-    file:WriteString(cjson.encode(saved))
-    file:Close()
+    saved.updatedAt = nextStamp
+    saved.dirty = dirty_
+    local ok = WriteSaveFileAtomic(cjson.encode(saved))
+    if not ok then return false end
+    updatedAt_ = nextStamp
+    wasLegacy_ = false
     return true
 end
 
@@ -240,9 +307,10 @@ function PlayerData.ResetAll()
     print("[PlayerData] reset all to fresh state")
 end
 
--- 云同步：只做字符串编解码，真正的读写由编排层（main.lua）执行。
+-- 云同步：只做字符串编解码，真正的读写由编排层（client_main）执行。
 ---@return string
 function PlayerData.ExportForCloud()
+    ---@type table<string, any>
     local exported = {}
     for k, v in pairs(state) do exported[k] = v end
     exported.updatedAt = updatedAt_
@@ -254,107 +322,233 @@ function PlayerData.GetUpdatedAt()
     return updatedAt_
 end
 
----@param text any
+-- 本地是否有尚未成功同步到云端的改动。编排层用它决定启动时是否要补传，
+-- 以及比较云档时是否让本地压过设备时钟偏差。
 ---@return boolean
-function PlayerData.ImportFromCloud(text)
-    if type(text) ~= "string" or text == "" then return false end
-    local ok, decoded = pcall(cjson.decode, text)
-    if not ok or type(decoded) ~= "table" then
-        print("[PlayerData] cloud decode failed")
-        return false
-    end
-    local d = decoded --[[@as table]]
-    updatedAt_ = math.max(updatedAt_, AsInt(d.updatedAt))
-    local cloudParts = math.max(0, AsInt(d.parts))
-    local cloudTotal = math.max(0, AsInt(d.totalParts), cloudParts)
-    local cloudSpent = math.max(0, AsInt(d.totalSpent), cloudTotal - cloudParts)
-    local cloudCodex = AsBoolMap(d.codex)
-    local cloudSkins = AsBoolMap(d.skins)
-    local cloudStats = AsIntMap(d.stats)
-    local cloudItems = AsIntMap(d.itemStock)
-    local cloudHigh  = math.max(0, AsInt(d.highScore))
+function PlayerData.IsDirty()
+    return dirty_
+end
 
-    local cloudClaimed = math.max(0, AsInt(d.purchasedPartsClaimed))
-    -- 累计兑换额已经包含在 totalParts 中，先拆出普通收入再合并，
-    -- 否则旧设备本地补领后再读取未更新的云档，会把同一笔零件算两遍。
-    -- 注意普通收入/消费仍是跨设备取最大值，并非事务账本；并发游玩无法保证无损。
+-- 云写成功后调用：清除脏标记、推进时间戳并落盘，让本次写成为「已同步基线」。
+-- 没有这一步，下一次合并会把刚上传的内容当成未同步改动，反复回传。
+function PlayerData.MarkCloudSynced()
+    dirty_ = false
+    local nextStamp = math.max(updatedAt_ + 1, os.time())
+    ---@type table<string, any>
+    local saved = {}
+    for k, v in pairs(state) do saved[k] = v end
+    saved.updatedAt = nextStamp
+    saved.dirty = false
+    if WriteSaveFileAtomic(cjson.encode(saved)) then
+        updatedAt_ = nextStamp
+    else
+        -- 落盘失败仍算同步成功（云上已有），但下次启动会因旧 dirty 标记再传一次。
+        dirty_ = true
+    end
+    wasLegacy_ = false
+end
+
+-- 标记「有尚未同步的改动」（供编排层在本地写入后立即调用，也可由 Save 隐式承担）。
+function PlayerData.MarkDirty()
+    dirty_ = true
+end
+
+-- ============================================================================
+-- 云端合并：按权威分工分四组处理
+--
+--   组 1 经济组 —— 整组按 updatedAt 后写覆盖（LWW）。这些字段与零件发放/消费
+--                耦合，逐字段取 max 会凭空造钱：两台设备各花 1000 解锁不同天赋，
+--                消费取 max=1000、解锁取并集=两个 → 付一份钱拿两份。
+--   组 2 单调统计 —— 取较大值/并集。不产出货币，多拿只是进度，不会破经济。
+--   组 3 本机偏好 —— 本机保留（音量、当前选用的车型/拖尾）。
+--   组 4 服务端镜像 —— 只前进不回退（已兑换零件累计、首次运行时间）。
+-- ============================================================================
+
+-- 组 1：把经济组整体替换成 src。
+---@param src table
+local function AdoptEconomyGroup(src)
+    local parts_ = math.max(0, AsInt(src.parts))
+    local total_ = math.max(0, AsInt(src.totalParts), parts_)
+    state.parts = parts_
+    state.totalParts = total_
+    state.totalSpent = math.max(0, AsInt(src.totalSpent), total_ - parts_)
+    local talents = AsBoolMap(src.talents)
+    talents.normal_1 = true
+    state.talents = talents
+    local skins = AsBoolMap(src.skins)
+    skins.default = true
+    state.skins = skins
+    local trails = AsBoolMap(src.trails)
+    trails.classic = true
+    state.trails = trails
+    state.shopBought = AsBoolMap(src.shopBought)
+    state.codex = AsBoolMap(src.codex)
+    state.passClaimed = math.max(0, AsInt(src.passClaimed))
+    state.piggyBank = math.max(0, AsInt(src.piggyBank))
+    state.piggyClaimed = src.piggyClaimed == true
+    state.firstGiftClaimed = src.firstGiftClaimed == true
+    state.itemStock = AsIntMap(src.itemStock)
+    state.signInDate = AsStr(src.signInDate)
+    state.signInStreak = math.max(0, AsInt(src.signInStreak))
+    state.signInTotal = math.max(0, AsInt(src.signInTotal))
+    state.dailyDate = AsStr(src.dailyDate)
+    state.dailyProgress = AsIntMap(src.dailyProgress)
+    state.dailyClaimed = AsBoolMap(src.dailyClaimed)
+end
+
+-- 组 2：单调统计。返回是否有变化。
+---@param src table
+---@return boolean
+local function MergeMonotonicGroup(src)
+    local changed = false
+    local cloudHigh = math.max(0, AsInt(src.highScore))
+    if cloudHigh > state.highScore then state.highScore = cloudHigh; changed = true end
+    for stage, stars in pairs(AsStageStars(src.stageStars)) do
+        if (state.stageStars[stage] or 0) < stars then
+            state.stageStars[stage] = stars; changed = true
+        end
+    end
+    local cloudMax = math.max(1, AsInt(src.maxStage))
+    if cloudMax > state.maxStage then state.maxStage = cloudMax; changed = true end
+    for k, v in pairs(AsIntMap(src.stats)) do
+        if v > (state.stats[k] or 0) then state.stats[k] = v; changed = true end
+    end
+    for k, v in pairs(AsIntMap(src.achProgress)) do
+        if v > (state.achProgress[k] or 0) then state.achProgress[k] = v; changed = true end
+    end
+    for k in pairs(AsBoolMap(src.achUnlocked)) do
+        if not state.achUnlocked[k] then state.achUnlocked[k] = true; changed = true end
+    end
+    for k, v in pairs(AsIntMap(src.achPushed)) do
+        if v > (state.achPushed[k] or 0) then state.achPushed[k] = v; changed = true end
+    end
+    return changed
+end
+
+-- 组 3：保证当前选用项仍然合法；音量与当前选择不被云端改写。
+---@return boolean
+local function ReconcileLocalPreferences()
+    local changed = false
+    if not state.skins[state.selectedSkin] then
+        state.selectedSkin = "default"; changed = true
+    end
+    if not state.trails[state.selectedTrail] then
+        state.selectedTrail = "classic"; changed = true
+    end
+    return changed
+end
+
+-- 组 4：服务端镜像，只前进不回退。
+---@param src table
+---@return boolean
+local function MergeServerMirror(src)
+    local changed = false
+    local claimed = math.max(0, AsInt(src.purchasedPartsClaimed))
+    if claimed > state.purchasedPartsClaimed then
+        state.purchasedPartsClaimed = claimed; changed = true
+    end
+    local cloudCreated = math.max(0, AsInt(src.createdAt))
+    if cloudCreated > 0 and (state.createdAt == 0 or cloudCreated < state.createdAt) then
+        state.createdAt = cloudCreated; changed = true
+    end
+    return changed
+end
+
+-- 旧档（v1，无 updatedAt）一次性兼容合并：各级经济字段取「对玩家更有利」的一侧，
+-- 保证升级当次不丢数据；之后写入时间戳，全面转入 LWW。
+---@param src table
+local function LegacyMerge(src)
+    local cloudParts = math.max(0, AsInt(src.parts))
+    local cloudTotal = math.max(0, AsInt(src.totalParts), cloudParts)
+    local cloudClaimed = math.max(0, AsInt(src.purchasedPartsClaimed))
     local localEarned = math.max(0, state.totalParts - state.purchasedPartsClaimed)
     local cloudEarned = math.max(0, cloudTotal - cloudClaimed)
     state.purchasedPartsClaimed = math.max(state.purchasedPartsClaimed, cloudClaimed)
     state.totalParts = math.max(localEarned, cloudEarned) + state.purchasedPartsClaimed
-    state.totalSpent = math.max(state.totalSpent, cloudSpent)
+    state.totalSpent = math.max(state.totalSpent,
+        math.max(0, AsInt(src.totalSpent), cloudTotal - cloudParts))
     state.parts = math.max(0, state.totalParts - state.totalSpent)
-    -- 仅合并当天的每日状态；不同日期的任务/广告限次不能互相污染。
-    if AsStr(d.dailyDate) == Today() then
-        if state.dailyDate ~= Today() then PlayerData.RollDaily() end
-        for k, v in pairs(AsIntMap(d.dailyProgress)) do
-            state.dailyProgress[k] = math.max(state.dailyProgress[k] or 0, v)
-        end
-        for k in pairs(AsBoolMap(d.dailyClaimed)) do state.dailyClaimed[k] = true end
+
+    for k in pairs(AsBoolMap(src.talents)) do state.talents[k] = true end
+    for k in pairs(AsBoolMap(src.skins)) do state.skins[k] = true end
+    for k in pairs(AsBoolMap(src.trails)) do state.trails[k] = true end
+    for k in pairs(AsBoolMap(src.shopBought)) do state.shopBought[k] = true end
+    for k in pairs(AsBoolMap(src.codex)) do state.codex[k] = true end
+    for k, v in pairs(AsIntMap(src.itemStock)) do
+        if v > (state.itemStock[k] or 0) then state.itemStock[k] = v end
     end
-    local cloudSignDate = AsStr(d.signInDate)
+    state.passClaimed = math.max(state.passClaimed, math.max(0, AsInt(src.passClaimed)))
+    state.piggyBank = math.max(state.piggyBank, math.max(0, AsInt(src.piggyBank)))
+    if src.piggyClaimed == true then state.piggyClaimed = true end
+    if src.firstGiftClaimed == true then state.firstGiftClaimed = true end
+    state.signInTotal = math.max(state.signInTotal, math.max(0, AsInt(src.signInTotal)))
+    local cloudSignDate = AsStr(src.signInDate)
     if cloudSignDate <= Today() and cloudSignDate > state.signInDate then
         state.signInDate = cloudSignDate
-        state.signInStreak = math.max(0, AsInt(d.signInStreak))
+        state.signInStreak = math.max(0, AsInt(src.signInStreak))
     elseif cloudSignDate == state.signInDate then
-        state.signInStreak = math.max(state.signInStreak, math.max(0, AsInt(d.signInStreak)))
+        state.signInStreak = math.max(state.signInStreak, math.max(0, AsInt(src.signInStreak)))
     end
-    state.passClaimed = math.max(state.passClaimed, math.max(0, AsInt(d.passClaimed)))
-    -- 存钱罐跨设备取更大累积值；领取标志取并集（任一台领过即保留）。
-    state.piggyBank = math.max(state.piggyBank, math.max(0, AsInt(d.piggyBank)))
-    if d.piggyClaimed == true then state.piggyClaimed = true end
-    if d.firstGiftClaimed == true then state.firstGiftClaimed = true end
-    local cloudCreated = math.max(0, AsInt(d.createdAt))
-    -- 首次运行时间取两台设备中更早的那个（限时窗基准）。
-    if cloudCreated > 0 and (state.createdAt == 0 or cloudCreated < state.createdAt) then
-        state.createdAt = cloudCreated
+    -- 每日状态只合并同一天的，避免不同日期的限次互相污染。
+    if AsStr(src.dailyDate) == Today() then
+        if state.dailyDate ~= Today() then PlayerData.RollDaily() end
+        for k, v in pairs(AsIntMap(src.dailyProgress)) do
+            state.dailyProgress[k] = math.max(state.dailyProgress[k] or 0, v)
+        end
+        for k in pairs(AsBoolMap(src.dailyClaimed)) do state.dailyClaimed[k] = true end
     end
-    state.highScore  = math.max(state.highScore, cloudHigh)
-    for k in pairs(cloudCodex) do state.codex[k] = true end
-    -- 关卡星级跨设备取更大值；解锁范围取更远的关。
-    for stage, stars in pairs(AsStageStars(d.stageStars)) do
-        if (state.stageStars[stage] or 0) < stars then state.stageStars[stage] = stars end
+    MergeMonotonicGroup(src)
+    MergeServerMirror(src)
+end
+
+---@param text any
+---@return boolean merged       是否成功导入云端数据（false = 解析失败）
+---@return boolean localChanged 本地观感/进度是否变化（界面需要刷新）
+---@return boolean shouldUpload 是否需要把本地档案回传云端
+function PlayerData.ImportFromCloud(text)
+    if type(text) ~= "string" or text == "" then return false, false, false end
+    local ok, decoded = pcall(cjson.decode, text)
+    if not ok or type(decoded) ~= "table" then
+        print("[PlayerData] cloud decode failed")
+        return false, false, false
     end
-    state.maxStage = math.max(state.maxStage, math.max(1, AsInt(d.maxStage)))
-    -- 天赋解锁跨设备取并集（任一台设备买过即保留）。
-    for k in pairs(AsBoolMap(d.talents)) do state.talents[k] = true end
-    for k in pairs(cloudSkins) do state.skins[k] = true end
-    local cloudSelected = AsStr(d.selectedSkin)
-    if state.selectedSkin == "default" and state.skins[cloudSelected] then
-        state.selectedSkin = cloudSelected
+    local d = decoded --[[@as table]]
+    local cloudStamp = math.max(0, AsInt(d.updatedAt))
+
+    -- 旧档迁移：本机是升级前写出的、云端已有带时间戳的档案。
+    if wasLegacy_ then
+        print("[PlayerData] legacy local save, running one-time merge")
+        LegacyMerge(d)
+        updatedAt_ = math.max(updatedAt_, cloudStamp, os.time())
+        wasLegacy_ = false
+        dirty_ = true
+        PlayerData.RollDaily()
+        print("[PlayerData] legacy merge done parts=" .. state.parts)
+        return true, true, true
     end
-    -- 拖尾样式解锁跨设备取并集；装备仍是本地选择，仅当本机还是默认时接受云端选择。
-    for k in pairs(AsBoolMap(d.trails)) do state.trails[k] = true end
-    local cloudSelectedTrail = AsStr(d.selectedTrail)
-    if state.selectedTrail == "classic" and state.trails[cloudSelectedTrail] then
-        state.selectedTrail = cloudSelectedTrail
+
+    local localNewer = dirty_ or cloudStamp <= updatedAt_
+    if localNewer then
+        -- 本地更新：经济组保持本地，只补齐单调统计；随后回传刷新云端备份。
+        local changed = MergeMonotonicGroup(d)
+        MergeServerMirror(d)
+        if ReconcileLocalPreferences() then changed = true end
+        PlayerData.RollDaily()
+        print("[PlayerData] local newer, economy kept parts=" .. state.parts)
+        return true, changed, true
     end
-    for k, v in pairs(cloudStats) do
-        local cur = state.stats[k] or 0
-        if v > cur then state.stats[k] = v end
-    end
-    -- 道具库存跨设备取更大值（任一台买过即保留）。
-    for k, v in pairs(cloudItems) do
-        local cur = state.itemStock[k] or 0
-        if v > cur then state.itemStock[k] = v end
-    end
-    -- 音乐/音效开关是纯偏好：云端显式布尔才覆盖本地（旧档无此字段则保留本机）。
-    if type(d.musicEnabled) == "boolean" then state.musicEnabled = d.musicEnabled end
-    if type(d.sfxEnabled) == "boolean" then state.sfxEnabled = d.sfxEnabled end
-    -- 成就：进度取更大值、解锁取并集、已外发步数取更大值（避免换设备重复上报平台）。
-    for k, v in pairs(AsIntMap(d.achProgress)) do
-        local cur = state.achProgress[k] or 0
-        if v > cur then state.achProgress[k] = v end
-    end
-    for k in pairs(AsBoolMap(d.achUnlocked)) do state.achUnlocked[k] = true end
-    for k, v in pairs(AsIntMap(d.achPushed)) do
-        local cur = state.achPushed[k] or 0
-        if v > cur then state.achPushed[k] = v end
-    end
-    local cloudSignTotal = math.max(0, AsInt(d.signInTotal))
-    state.signInTotal = math.max(state.signInTotal, cloudSignTotal)
-    print("[PlayerData] cloud merged parts=" .. state.parts)
-    return true
+
+    -- 云端更新：经济组整组替换（LWW），再补齐单调统计。
+    AdoptEconomyGroup(d)
+    updatedAt_ = cloudStamp
+    dirty_ = false
+    local changed = MergeMonotonicGroup(d)
+    MergeServerMirror(d)
+    if ReconcileLocalPreferences() then changed = true end
+    PlayerData.RollDaily()
+    print("[PlayerData] cloud newer, economy adopted parts=" .. state.parts)
+    -- 若云端缺少本地独有的单调统计，需要回传一次；否则无需写。
+    return true, true, changed
 end
 
 -- ============================================================================
@@ -427,6 +621,23 @@ function PlayerData.AddItem(key, amount)
     if n <= 0 then return end
     state.itemStock[key] = (state.itemStock[key] or 0) + n
     PlayerData.Save()
+end
+
+-- 消耗一个道具库存。局内使用成功后由编排层调用，返回是否真的扣到。
+-- 没有这一步，库存只增不减，「每局限用 1 次」的价格体系会被绕过。
+---@param key string
+---@return boolean consumed
+function PlayerData.ConsumeItem(key)
+    local cur = state.itemStock[key] or 0
+    if cur <= 0 then return false end
+    local next_ = cur - 1
+    if next_ <= 0 then
+        state.itemStock[key] = nil
+    else
+        state.itemStock[key] = next_
+    end
+    PlayerData.Save()
+    return true
 end
 
 -- ============================================================================
