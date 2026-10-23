@@ -91,6 +91,18 @@ Client.Purchase(sku, cb)
 
 客户端只缓存最近一次服务端推送的余额。断线时普通数据继续使用本地存档，钻石余额请求后台每 3 秒重试；不弹重连界面，不暂停、重启或切换游戏进程。钻石扣除不会自动重复发送，超时按未知结果处理，等待下一次余额查询对账。
 
+### 3.4 引擎 API 适配要点
+
+以下三点已对着当前引擎（`.emmylua/` 类型定义）核对，写新代码时必须遵守：
+
+| 项目 | 约束 |
+|---|---|
+| **回调字段名** | 所有云变量回调表只有 `ok` / `error` / `timeout` 三个字段（`ScoreEvents`）。写成 `err` 会让失败分支永不触发，异常彻底静默 |
+| **`serverCloudCommit:Commit` 签名** | `Commit(events)` 只接受一个事件表参数，**没有 options 参数**。幂等由平台侧 `Shop.onDeliver` 保证，不要试图往 Commit 塞 `orderId` |
+| **`File:WriteString` 落盘行为** | 磁盘上恒多写一个 `\x00` 结尾；`File:ReadString` 读到 NUL 即停，所以读回内容正确。**不要用外部工具按字节长度校验存档**，用 `cjson.decode` 判合法性 |
+
+> 实测环境：`UrhoXRuntime ... -tool_mode`，FileSystem 的 `Rename` / `Delete` / `FileExists` 在沙箱内均可用且行为符合预期（覆盖式 Rename 可用），原子写方案成立。
+
 ## 4. Server 侧实现
 
 `scripts/network/Server.lua` 只处理服务端权威业务。

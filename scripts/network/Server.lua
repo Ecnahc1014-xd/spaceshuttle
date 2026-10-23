@@ -134,7 +134,9 @@ local function Deliver(ctx)
         end
     end
 
-    batch:Commit({ orderId = orderId }, {
+    -- ⚠️ 回调字段名必须是 error（ScoreEvents = { ok, error, timeout }）；
+    --    写成 err 会让失败分支永不触发，发货异常将彻底静默。
+    batch:Commit({
         ok = function()
             print("[Server] delivery ok orderId=" .. tostring(orderId))
             -- 通知该客户端刷新余额；玩家已离线时 conn 为 nil，跳过推送即可，
@@ -145,10 +147,13 @@ local function Deliver(ctx)
                 conn:SendRemoteEvent(Shared.EVENTS.BALANCE_DIRTY, true, data)
             end
         end,
-        err = function(code, msg)
+        error = function(code, msg)
             -- 失败时订单仍是待发货状态，下次登录会再触发 onDeliver 自动补发。
             print("[Server] delivery failed orderId=" .. tostring(orderId)
                 .. " code=" .. tostring(code) .. " msg=" .. tostring(msg))
+        end,
+        timeout = function()
+            print("[Server] delivery timeout orderId=" .. tostring(orderId))
         end,
     })
 end
