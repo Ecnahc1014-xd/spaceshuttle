@@ -48,12 +48,34 @@ PlayerData.ImportFromCloud(payload)
 
 `scripts/game/client_main.lua` 启动后读取 `clientCloud` 的 `player_meta`。
 
-同步策略：
+同步策略（**整档按 `updatedAt` 比较，不做逐字段取最大值**）：
 
-1. 服务端云档 `updatedAt` 大于本地：导入服务端档案并保存本地。
-2. 本地时间较新或相同：保留本地，并上传 `clientCloud:Set("player_meta", payload)`。
+1. 云端云档 `updatedAt` 更新（且本地无未同步改动）：**经济组整组替换为云档**，单调统计取较大值。
+2. 本地时间较新、或本地有未同步改动（`dirty`）：保留本地经济组，只补齐云端独有的单调统计，然后回传。
 3. 云端没有档案：上传本地档案。
-4. 同步失败：继续使用本地档案，不弹窗、不暂停游戏。
+4. 同步失败：继续使用本地档案，不弹窗、不暂停游戏；**后台每 5 秒重试，最多 12 次**。
+
+#### 权威分工（四组）
+
+| 组 | 字段 | 合并方式 | 理由 |
+|---|---|---|---|
+| 经济组 | `parts` `totalParts` `totalSpent` `talents` `skins` `trails` `shopBought` `codex` `passClaimed` `piggyBank` `piggyClaimed` `firstGiftClaimed` `itemStock` `signIn*` `daily*` | **整组 LWW** | 与零件发放/消费耦合。逐字段取 max 会造钱：两台设备各花 1000 解锁不同天赋，消费取 max=1000、解锁取并集=两个 → 付一份钱拿两份 |
+| 单调统计 | `highScore` `stageStars` `maxStage` `stats.*` `achProgress` `achUnlocked` `achPushed` | 取较大值 / 并集 | 不产出货币，多拿只是进度 |
+| 本机偏好 | `musicEnabled` `sfxEnabled` `selectedSkin` `selectedTrail` | 保留本机 | 设备级偏好，云覆盖会导致「换设备音量就变」 |
+| 服务端镜像 | `purchasedPartsClaimed` `createdAt` | 只前进不回退 | 跟随 serverCloud 累计值单调前进 |
+
+> ⚠️ 「皮肤/拖尾」的**解锁**属于经济组（LWW），而**当前选用**属于本机偏好（组 3）。
+> 选用项若在合并后不再已解锁，会回落为 `default` / `classic`。
+
+#### 旧档迁移
+
+升级前写出的存档没有 `updatedAt`。首次与云端比对时走一次性兼容合并（各经济字段取对玩家更有利的一侧），保住老玩家数据后写入时间戳，此后全面转入 LWW。
+
+#### 本地存档可靠性
+
+- **原子写**：先写 `.tmp` → 校验存在 → 旧主档转 `.bak` → `.tmp` 改名为正式档；任一步失败都保留原主档，绝不产生半截 JSON。
+- **损坏回退**：`Load()` 主档解码失败时自动回退 `.bak`，不会整档归零。
+- **落盘时机**：`InputFocus` 失焦、退出、关键结算后均调用 `ClientMain.FlushSave()`。
 
 最高分可使用 `clientCloud:SetInt("high_score", score)` 和 `Get`，读取失败时保留本地最高分。
 
@@ -118,8 +140,9 @@ batch:Commit({
 
 游戏中获得零件
   -> 修改内存 PlayerData
-  -> PlayerData.Save() 写本地
+  -> PlayerData.Save() 原子写本地（.tmp -> .bak -> 主档）
   -> 后台 clientCloud.Set() 备份
+  -> 成功后 MarkCloudSynced() 清脏标记并推进 updatedAt
 
 购买/钻石兑换
   -> client 发起请求
