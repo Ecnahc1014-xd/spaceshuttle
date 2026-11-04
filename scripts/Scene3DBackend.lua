@@ -1319,6 +1319,12 @@ end
 -- 纯表现层，只读快照 showPullHint / slingX / slingY，不触达规则层。
 local function DrawPullHint(ctx, game)
     if not game.showPullHint then return end
+    if game.launchMode == "direct" then
+        local x, y = ProjectGamePoint(game.slingX, game.slingY)
+        DrawPixelText(ctx, x, math.min(BOTTOM_DOCK_Y - 100, y - 150),
+            "按住目标位置瞄准 松手发射", 17, C.cyan, NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+        return
+    end
     if not handImage_ or handImage_ <= 0 then return end
 
     local slingX, projectedY = ProjectGamePoint(game.slingX or DESIGN_W * 0.5,
@@ -2575,6 +2581,7 @@ local function GetPausePanelLayout(w, game)
         win = { x = 24, y = 178, w = w - 48, h = 630 },
         offers = rows,
         empty = (#rows == 0),
+        controls = { x = margin, y = 286, w = innerW, h = 60 },
         -- v0.12.5：显式出口按钮（移动端无键盘，必须给「继续/回主菜单」）
         resume = { x = pairX, y = 740, w = btnW, h = 48 },
         menu = { x = pairX + btnW + btnGap, y = 740, w = btnW, h = 48 },
@@ -2595,10 +2602,12 @@ local function DrawPaused(ctx, game, meta, presentation)
     DrawRect(ctx, game.width * 0.5 - 31, 218, 62, 62, C.rail, 10)
     DrawStroke(ctx, game.width * 0.5 - 31, 218, 62, 62, C.cyanDim, 10, 1.2)
     DrawIcon(ctx, "pause", game.width * 0.5 - 18, 231, 36, 1)
-    DrawPixelText(ctx, game.width * 0.5, 291, "补给战场优势", 25, C.text,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
-    DrawPixelText(ctx, game.width * 0.5, 326, "限时资源 · 本局可用", 14, C.dim,
-        NVG_ALIGN_CENTER + NVG_ALIGN_TOP)
+    DrawMachinedPanel(ctx, layout.controls.x, layout.controls.y, layout.controls.w,
+        layout.controls.h, C.card, C.cyanDim, 7, false)
+    DrawPixelText(ctx, layout.controls.x + 16, 296,
+        game.launchMode == "direct" and "发射方式：点击松手" or "发射方式：反向拖动", 19, C.text)
+    DrawPixelText(ctx, layout.controls.x + 16, 323, "点击调整 · 不退出当前关卡", 14, C.dim)
+    DrawPixelText(ctx, layout.controls.x + layout.controls.w - 20, 302, "›", 24, C.cyan)
     DrawSegmentedRule(ctx, 62, 354, game.width - 124, 12, C.cyanDim, 6)
 
     if layout.empty then
@@ -3712,6 +3721,7 @@ function Backend.HitTestPausePanel(uiX, uiY, game)
     -- v0.12.5：出口按钮先于补给行（虽几何不重叠，保持顺序防御后续改布局）
     if inside(layout.resume) then return "pause_resume" end
     if inside(layout.menu) then return "pause_menu" end
+    if inside(layout.controls) then return "pause_controls" end
     for _, row in ipairs(layout.offers or {}) do
         if inside(row.rect) then return row.offer.action end
     end

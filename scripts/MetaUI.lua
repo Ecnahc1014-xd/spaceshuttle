@@ -82,6 +82,8 @@ local TRAIL_PREVIEW_OPACITY = 0.30
 ---@field wheelPrize integer
 ---@field musicEnabled boolean 设置页：BGM 开关
 ---@field sfxEnabled boolean 设置页：音效开关
+---@field launchMode string 发射方式
+---@field launchModeChosen boolean 已完成首次发射方式选择
 ---@field passTab string|nil 战斗档案屏页签："pass"（档案）| "ach"（成就）
 ---@field achievements table[] 成就列表（id/title/desc/steps/icon/tone/progress/unlocked）
 ---@field achUnlocked integer

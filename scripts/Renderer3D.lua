@@ -1019,8 +1019,8 @@ end
 
 local function GetVehicleTargetHeading(game, marble)
     if marble.onSling and game.aiming then
-        local launchX = game.slingX - marble.x
-        local launchY = marble.y - game.slingY
+        local launchX = game.slingX - (game.launchMode == "direct" and game.aimX or marble.x)
+        local launchY = (game.launchMode == "direct" and game.aimY or marble.y) - game.slingY
         if launchX * launchX + launchY * launchY > 0.0001 then
             return math.deg(math.atan(launchY, launchX))
         end

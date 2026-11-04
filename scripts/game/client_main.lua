@@ -39,6 +39,8 @@ local Shared = require "network.Shared"
 local SysNotif = require "urhox-libs.System.SystemNotification"
 
 local ClientMain = {}
+ClientMain._launchChoice = { stage = nil, returnScreen = nil }
+ClientMain.LaunchMode = require "ui.LaunchMode"
 -- 业务手势与后端视觉使用同一主指针；0 是合法 TouchID。
 ClientMain._pointer = { source = "", touchId = -1, state = "", epoch = 0, focused = true }
 -- 请求槽跨 Stop/Start 保留到真实终态，避免旧写尚未结束就启动新写。
@@ -710,6 +712,8 @@ RefreshMeta = function()
     -- 设置页开关（v0.13.60）：音乐 / 音效，供设置屏只读渲染。
     metaState.musicEnabled = PlayerData.IsMusicEnabled()
     metaState.sfxEnabled = PlayerData.IsSfxEnabled()
+    metaState.launchMode = PlayerData.GetLaunchMode()
+    metaState.launchModeChosen = PlayerData.HasChosenLaunchMode()
 
     -- 天赋树界面数据（v0.13.5）：已解锁节点 + 星级汇总。
     metaState.talents = PlayerData.GetTalents()
@@ -1156,6 +1160,17 @@ local function HandleRechargeAction(action, index)
     return false
 end
 
+-- 首次进关的选择发生在菜单态，不推进关卡、选车或蓄力计时。
+function ClientMain.BeginSelectedStage(stageNumber)
+    ClientMain._launchChoice.stage = nil
+    if stageNumber == 1 then
+        OpenMetaScreen("test_mode")
+    else
+        pendingTestStage_ = stageNumber
+        metaState.screen = nil
+    end
+end
+
 local function HandleMetaAction(action, index)
     if HandleRechargeAction(action, index) then return end
     -- 元层交互音效：购买/解锁/领取类给确认音，其余给轻点击音。
@@ -1205,7 +1220,11 @@ local function HandleMetaAction(action, index)
     elseif action == "play_stage" and index then
         -- 选关界面点某关：解锁校验（StageSelect 命中已过滤，这里兜底），关面板后开该关。
         if PlayerData.IsStageUnlocked(index) then
-            if index == 1 then
+            if not PlayerData.HasChosenLaunchMode() then
+                ClientMain._launchChoice.stage = index
+                ClientMain._launchChoice.returnScreen = "stage_select"
+                OpenMetaScreen("launch_mode")
+            elseif index == 1 then
                 -- v0.13.56：进入第 1 关前先询问是否测试后期关卡（每次都问）。
                 OpenMetaScreen("test_mode")
                 print("[Main] stage 1 -> ask test mode")
@@ -1240,6 +1259,29 @@ local function HandleMetaAction(action, index)
     elseif action == "open_settings" then
         -- v0.13.59：主菜单左上角齿轮 → 设置屏。
         OpenMetaScreen("settings")
+    elseif action == "open_launch_mode" then
+        ClientMain.CancelInput()
+        ClientMain._launchChoice.stage = nil
+        ClientMain._launchChoice.returnScreen = metaState.screen
+        OpenMetaScreen("launch_mode")
+    elseif action == "launch_mode_direct" or action == "launch_mode_reverse" then
+        ClientMain.CancelInput()
+        local mode = action == "launch_mode_direct" and "direct" or "reverse"
+        PlayerData.SetLaunchMode(mode)
+        Game.SetLaunchMode(mode)
+        SavePlayerDataToCloud()
+        if ClientMain._launchChoice.stage then
+            ClientMain.BeginSelectedStage(ClientMain._launchChoice.stage)
+        else
+            metaState.screen = ClientMain._launchChoice.returnScreen
+        end
+        RefreshMeta()
+        RefreshSnapshots()
+    elseif action == "launch_mode_close" then
+        if not PlayerData.HasChosenLaunchMode() then return end
+        ClientMain._launchChoice.stage = nil
+        metaState.screen = ClientMain._launchChoice.returnScreen
+        RefreshMeta()
     elseif action == "toggle_music" then
         -- v0.13.60：音乐开关——写存档 + 立即作用到音频总控 + 刷新快照。
         local on = not PlayerData.IsMusicEnabled()
@@ -1287,6 +1329,7 @@ local function HandleMetaAction(action, index)
                 SavePlayerDataToCloud()
                 Game.SetItemStock(PlayerData.GetItemStock())
                 -- v0.13.60：清档后音乐/音效回到默认开，重新作用到音频总控。
+                Game.SetLaunchMode(PlayerData.GetLaunchMode())
                 RenderBackend.SetMusicEnabled(PlayerData.IsMusicEnabled())
                 RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
                 metaState.talents = PlayerData.GetTalents()
@@ -1592,6 +1635,10 @@ local function TryPauseSupplyAt(screenX, screenY)
     if not Game.IsPaused() then return false end
     local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
     local kind = RenderBackend.HitTestPausePanel(uiX, uiY, Game.GetSnapshot())
+    if kind == "pause_controls" then
+        HandleMetaAction("open_launch_mode", nil)
+        return true
+    end
     if kind == "pause_heal" then
         if not Game.CanPauseHeal() then
             Presentation.SetAdToast("防线已满或急救已用完")
@@ -1895,11 +1942,14 @@ function ClientMain.Start(opts)
     Settings.Init(MetaUI.GetDeps())
     MetaUI.RegisterScreen("settings", Settings.Draw, Settings.HitTest)
     MetaUI.RegisterScreen("reset_confirm", Settings.DrawConfirm, Settings.HitTestConfirm)
+    ClientMain.LaunchMode.Init(MetaUI.GetDeps())
+    MetaUI.RegisterScreen("launch_mode", ClientMain.LaunchMode.Draw, ClientMain.LaunchMode.HitTest)
     -- v0.14.0：成就列表已并入「战斗档案」屏（MetaUI.DrawPass 直接调用），不再单独注册屏；
     -- 这里只注入依赖（本地成就为权威，平台成就只做镜像）。
     Achievements.Init(MetaUI.GetDeps())
 
     PlayerData.Load()
+    Game.SetLaunchMode(PlayerData.GetLaunchMode())
     -- v0.13.60：把存档里的音乐/音效开关作用到音频总控（AudioDirector 已在 Backend.Init 就绪）。
     RenderBackend.SetMusicEnabled(PlayerData.IsMusicEnabled())
     RenderBackend.SetSfxEnabled(PlayerData.IsSfxEnabled())
@@ -2002,6 +2052,10 @@ function ClientMain.Stop()
         if not ok then print("[Main] local high_score save failed; retained in memory: " .. tostring(err)) end
     end
     AchievementSystem.Shutdown()
+    ClientMain.LaunchMode.Shutdown()
+    ClientMain._launchChoice.stage = nil
+    ClientMain._launchChoice.returnScreen = nil
+    pendingTestStage_ = nil
     highScoreState.active = false
     highScoreState.readReady = false
     highScoreState.lifetime = {}
@@ -2276,6 +2330,11 @@ function HandleMouseDown(eventType, eventData)
         metaPointerConsumed = true
         return
     end
+    if metaState.screen and Game.IsPaused() then
+        HandleMetaPointerDown(pointerX, pointerY)
+        metaPointerConsumed = true
+        return
+    end
     if Game.IsGameOver() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         HandleGameOverPointerDown(uiX, uiY)
@@ -2427,6 +2486,11 @@ function HandleTouchBegin(eventType, eventData)
         metaPointerConsumed = true
         return
     end
+    if metaState.screen and Game.IsPaused() then
+        HandleMetaPointerDown(pointerX, pointerY)
+        metaPointerConsumed = true
+        return
+    end
     if Game.IsGameOver() then
         local uiX, uiY = RenderBackend.ScreenToUi(screenX, screenY)
         HandleGameOverPointerDown(uiX, uiY)
@@ -2548,6 +2612,10 @@ end
 function HandleKeyDown(eventType, eventData)
     if not ClientMain._pointer.focused or AdService.IsInFlight() then return end
     local key = eventData:GetInt("Key")
+    if metaState.screen == "launch_mode" then
+        if key == KEY_ESCAPE or key == KEY_P then HandleMetaAction("launch_mode_close", nil) end
+        return
+    end
     if key == KEY_SPACE or key == KEY_RETURN then
         if Game.IsGameOver() then
             -- 重复按键与过渡期回车不能直接重开，跳过资格与鼠标/触摸一致。

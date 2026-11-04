@@ -69,11 +69,11 @@ end
 -- 仅 46px，真机字体/缩放差异下仍可能压字；加高后间距 ~86px，稳妥。
 -- v0.13.61：640→690——新增「账号进度摘要卡」把鸣谢整体下推 ~104px，实测关闭按钮顶边
 -- (756) 距鸣谢末行(743) 只剩 13px，真机必压字；加高后间距 ~53px（AB-259 同族）。
-local PANEL_H = 690
+local PANEL_H = 762
 
 ---@return table panel
 local function GetSettingsPanel(w)
-    return { x = 54, y = 180, w = w - 108, h = PANEL_H }
+    return { x = 54, y = 108, w = w - 108, h = PANEL_H }
 end
 
 -- 行顺序：音乐 / 音效 / 恢复购买 / 清空存档。
@@ -89,7 +89,8 @@ local function GetSettingRows(w)
     return { x = p.x + 24, y = y0,            w = bw, h = 60 },
            { x = p.x + 24, y = y0 + step,     w = bw, h = 60 },
            { x = p.x + 24, y = y0 + step * 2, w = bw, h = 60 },
-           { x = p.x + 24, y = y0 + step * 3, w = bw, h = 60 }
+           { x = p.x + 24, y = y0 + step * 3, w = bw, h = 60 },
+           { x = p.x + 24, y = y0 + step * 4, w = bw, h = 60 }
 end
 
 ---@return table close
@@ -251,9 +252,11 @@ function Settings.Draw(ctx, w, meta)
     if D.icon(ctx, "gear", p.x + 12, p.y + 8, 32, 1) then titleX = p.x + 52 end
     D.text(ctx, titleX, p.y + 8, "设置", 27, C.text)
 
-    local music, sfx, restore, del = GetSettingRows(w)
+    local music, sfx, controls, restore, del = GetSettingRows(w)
     ToggleRow(ctx, music, "boost", "音乐", "背景音乐开关", meta.musicEnabled ~= false)
     ToggleRow(ctx, sfx, "premium_energy_core", "音效", "游戏音效开关", meta.sfxEnabled ~= false)
+    SettingRow(ctx, controls, "reload", "发射方式",
+        meta.launchMode == "direct" and "点击松手 · 点击目标位置瞄准" or "反向拖动 · 向目标反方向拉动", C.cyan)
     SettingRow(ctx, restore, "gem", "恢复购买", "重新同步已购商品与内容", C.warn)
     SettingRow(ctx, del, "reroll", "清空存档", "重置全部进度、零件与解锁", C.error)
 
@@ -285,14 +288,13 @@ function Settings.Draw(ctx, w, meta)
         end
     end
 
-    -- 制作鸣谢（分区标题 + 三行）。
+    -- 制作鸣谢。
     local cy = sum.y + sum.h + 16
     D.text(ctx, p.x + 24, cy, "制作鸣谢", 16, C.cyan)
     D.rect(ctx, p.x + 24, cy + 22, p.w - 48, 1, C.rail, 0)
     local credits = {
         { "制作者", "薪主" },
         { "导入素材", "工作室出品" },
-        { "特别鸣谢", "TapTap" },
     }
     for i, line in ipairs(credits) do
         local ly = cy + 32 + (i - 1) * 24
@@ -311,7 +313,8 @@ end
 ---@return string|nil action
 ---@return integer|nil index
 function Settings.HitTest(uiX, uiY, w, meta)
-    local music, sfx, restore, del = GetSettingRows(w)
+    local music, sfx, controls, restore, del = GetSettingRows(w)
+    if Inside(controls, uiX, uiY) then return "open_launch_mode", nil end
     if Inside(music, uiX, uiY) then return "toggle_music", nil end
     if Inside(sfx, uiX, uiY) then return "toggle_sfx", nil end
     if Inside(restore, uiX, uiY) then return "restore_purchase", nil end

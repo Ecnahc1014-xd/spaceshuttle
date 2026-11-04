@@ -47,6 +47,8 @@ local wasLegacy_ = false
 ---@field itemStock table<string, integer> 局内道具永久库存（选关界面花零件购买）
 ---@field musicEnabled boolean 设置页：BGM 开关（默认开）
 ---@field sfxEnabled boolean 设置页：音效开关（默认开）
+---@field launchMode string 发射方式：reverse / direct
+---@field launchModeChosen boolean 是否已选择过发射方式
 ---@field achProgress table<string, integer> 成就进度（多步成就累计值）
 ---@field achUnlocked table<string, boolean> 成就是否已达成（本地权威）
 ---@field achPushed table<string, integer> 已外发平台的步数（幂等外发用，避免重复上报）
@@ -85,6 +87,8 @@ local function NewState()
         itemStock = {},
         musicEnabled = true,
         sfxEnabled = true,
+        launchMode = "reverse",
+        launchModeChosen = false,
         achProgress = {},
         achUnlocked = {},
         achPushed = {},
@@ -222,6 +226,8 @@ function PlayerData.Load()
     -- 设置页开关：缺省（旧档/首次）为开；显式 false 才关。
     state.musicEnabled = d.musicEnabled ~= false
     state.sfxEnabled   = d.sfxEnabled ~= false
+    state.launchMode = d.launchMode == "direct" and "direct" or "reverse"
+    state.launchModeChosen = d.launchModeChosen == true
     state.achProgress  = AsIntMap(d.achProgress)
     state.achUnlocked  = AsBoolMap(d.achUnlocked)
     state.achPushed    = AsIntMap(d.achPushed)
@@ -661,6 +667,21 @@ end
 ---@return boolean
 function PlayerData.IsMusicEnabled()
     return state.musicEnabled ~= false
+end
+
+function PlayerData.GetLaunchMode()
+    return state.launchMode
+end
+
+function PlayerData.HasChosenLaunchMode()
+    return state.launchModeChosen == true
+end
+
+function PlayerData.SetLaunchMode(mode)
+    if mode ~= "direct" and mode ~= "reverse" then return false end
+    state.launchMode, state.launchModeChosen = mode, true
+    PlayerData.Save()
+    return true
 end
 
 ---@return boolean

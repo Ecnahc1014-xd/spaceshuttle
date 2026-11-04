@@ -7,6 +7,13 @@ local TalentCatalog = require "TalentCatalog"
 local EnchantCatalog = require "EnchantCatalog"
 
 local Game = {}
+
+-- 操作偏好由客户端存档注入；不参与战斗存档或服务端权威。
+Game._launchMode = "reverse"
+function Game.SetLaunchMode(mode)
+    Game.CancelPointer()
+    Game._launchMode = mode == "direct" and "direct" or "reverse"
+end
 -- 空手长按只缩放战斗模拟，不改变表现时钟；收表避免增加主块 local 槽位。
 Game._holdSpeed = { down = false, active = false, time = 0, threshold = 0.35, epoch = 0 }
 -- 发射蓄力独立于拉量/初速，使用允许输入时间，不受空手倍速或顿帧倍率影响。
@@ -2561,8 +2568,9 @@ end
 
 local function UpdateAiming()
     if aiming and activeBall then
-        activeBall.x = SLING_X + (aimX - SLING_X) * BALANCE.pullPositionScale
-        activeBall.y = SLING_Y + (aimY - SLING_Y) * BALANCE.pullPositionScale
+        local scale = Game._launchMode == "direct" and 0 or BALANCE.pullPositionScale
+        activeBall.x = SLING_X + (aimX - SLING_X) * scale
+        activeBall.y = SLING_Y + (aimY - SLING_Y) * scale
     elseif activeBall and activeBall.onSling then
         activeBall.x = SLING_X
         activeBall.y = SLING_Y
@@ -3733,6 +3741,7 @@ function Game.PointerDown(px, py, uiX, uiY)
     pull.dist = 0
     aimX = SLING_X
     aimY = SLING_Y
+    if Game._launchMode == "direct" then Game.PointerMove(px, py, uiX, uiY) end
     print("[Game] launch charge started")
 end
 
@@ -3763,7 +3772,20 @@ function Game.PointerMove(px, py, uiX, uiY)
     if not aiming or gameState ~= "playing" then return end
     Game._launchCharge.x, Game._launchCharge.y = px, py
     Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
-    local dx, dy = PullToGameplay(uiX, uiY)
+    local dx, dy
+    if Game._launchMode == "direct" then
+        -- 点击目标位置即瞄准，车辆保持在发射位。转换为旧发射器的反向向量，
+        -- 预瞄线、车型朝向、松手发射共用一份方向，不依赖按下后的拖动距离。
+        local pull = Game._pullSpace
+        dx, dy = SLING_X - px, SLING_Y - py
+        local distance = math.sqrt((dx * pull.sx) ^ 2 + (dy * pull.sy) ^ 2)
+        pull.dist = math.min(MAX_PULL, distance)
+        if distance > MAX_PULL then
+            dx, dy = dx * MAX_PULL / distance, dy * MAX_PULL / distance
+        end
+    else
+        dx, dy = PullToGameplay(uiX, uiY)
+    end
     aimX = SLING_X + dx
     aimY = SLING_Y + dy
     UpdateAiming()
@@ -3779,10 +3801,9 @@ function Game.PointerUp(px, py, uiX, uiY)
     startArmed = false
     Game._launchCharge.x, Game._launchCharge.y = px, py
     Game._launchCharge.uiX, Game._launchCharge.uiY = uiX, uiY
-    local dx, dy, distance = PullToGameplay(uiX, uiY)
-    aimX = SLING_X + dx
-    aimY = SLING_Y + dy
-    UpdateAiming()
+    Game.PointerMove(px, py, uiX, uiY)
+    local dx, dy = aimX - SLING_X, aimY - SLING_Y
+    local distance = Game._pullSpace.dist
     aiming = false
     -- 死区按**设计像素**判定（15 设计像素），与投影缩放无关，保证手感一致。
     if distance <= 15 then
@@ -4076,6 +4097,7 @@ function Game.GetSnapshot()
     local s = snapshotBuffer_ or {}
     snapshotBuffer_ = s
     s.state = gameState
+    s.launchMode = Game._launchMode
     s.score = score
     s.highScore = highScore
     s.newRecord = (gameState == "gameover" or gameState == "stagewin")
